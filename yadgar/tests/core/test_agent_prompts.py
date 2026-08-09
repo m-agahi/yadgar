@@ -327,13 +327,20 @@ class TestAgentPromptDoubleWrap:
 
 
 class TestAgentPromptToolSurface:
-    """v5.85 S4 (I32): bespoke get/search tools removed; save stays a tool."""
+    """0047 Car I: ``agent_prompt_list`` / ``agent_prompt_get`` are BACK as tools.
 
-    def test_get_and_search_tools_removed_from_all(self):
+    v5.85 S4 (I32) retired bespoke get/search tools and pointed callers at
+    ``recall(type="wiki", tags=["agent-prompt"])`` for discovery. 0047 Car I
+    re-introduces ``agent_prompt_get`` + ``agent_prompt_list`` keyed by the
+    ``agent_pattern`` ledger table — the table is now the source-of-truth
+    discovery surface, the wiki page is the body.
+    """
+
+    def test_get_and_list_tools_present_in_all(self):
         from yadgar.core.server import tools
 
-        assert "agent_prompt_get" not in tools.__all__
-        assert "agent_prompt_search" not in tools.__all__
+        assert "agent_prompt_get" in tools.__all__
+        assert "agent_prompt_list" in tools.__all__
 
     def test_save_tool_still_exported(self):
         from yadgar.core.server import tools
@@ -343,6 +350,10 @@ class TestAgentPromptToolSurface:
     def test_removed_tools_not_importable(self):
         import yadgar.core.server.tools.agent_prompts as ap_mod
 
-        assert not hasattr(ap_mod, "agent_prompt_get")
+        # ``agent_prompt_search`` stays retired — semantic search is still
+        # ``recall(type="wiki", tags=["agent-prompt"])``.
         assert not hasattr(ap_mod, "agent_prompt_search")
+        # ``agent_prompt_get`` / ``agent_prompt_list`` ARE present (Car I).
+        assert hasattr(ap_mod, "agent_prompt_get")
+        assert hasattr(ap_mod, "agent_prompt_list")
         assert hasattr(ap_mod, "agent_prompt_save")

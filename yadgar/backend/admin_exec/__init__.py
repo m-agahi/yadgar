@@ -104,7 +104,9 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "wiki_insert_at": wiki.wiki_insert_at,
     "wiki_replace_markdown_block": wiki.wiki_replace_markdown_block,
     "agent_prompt_save": wiki.agent_prompt_save,
-    "increment_prompt_usage": wiki.increment_prompt_usage,
+    # Car I: ``increment_prompt_usage`` (memory-row path) is gone — uses is a
+    # SQL integer on ``agent_pattern`` (D40). The new op is registered below
+    # under ``ledger``.
     # anchor-audit + invariants + project writes (R3 Car 3d / R5 final group)
     "audit_apply_mutations": audit.audit_apply_mutations,
     "write_audit_sentinel": audit.write_audit_sentinel,
@@ -147,6 +149,16 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "list_adr_rows": ledger.list_adr_rows,
     "get_adr_row": ledger.get_adr_row,
     "list_agent_prompt_rows": ledger.list_agent_prompt_rows,
+    # Car I additions: uses-DESC list, single-row lookup, composes reads,
+    # ledger-row upserts for ``agent_prompt_save`` / ``discipline_save``,
+    # and ``uses`` increment over the table (D40).
+    "list_agent_pattern_rows_uses_desc": ledger.list_agent_pattern_rows_uses_desc,
+    "get_agent_pattern_row": ledger.get_agent_pattern_row,
+    "list_pattern_composes": ledger.list_pattern_composes,
+    "save_agent_pattern_row": ledger.save_agent_pattern_row,
+    "save_agent_discipline_row": ledger.save_agent_discipline_row,
+    "increment_agent_pattern_uses": ledger.increment_agent_pattern_uses,
+    "get_agent_prompt_toc_updated_at": ledger.get_agent_prompt_toc_updated_at,
     # Car B: runtime_config READ ops (SurrealDB sync path). Closes the in-process
     # _get_storage() read violation in core/server/tools/_runtime_config.py.
     "get_config_row": runtime_config.get_config_row,

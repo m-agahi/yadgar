@@ -385,30 +385,84 @@ async def check_config_row_baseline(engine: Any, engine_head: dict) -> dict:
     return {"status": STATUS_OK, "detail": {"rows": rows, "expected": EXPECTED_CONFIG_ROWS}}
 
 
-# ── assertion 3: cross-engine page/row desync — SHAPE ONLY (spine-gated) ─────
+# ── assertion 3: cross-engine page/row desync — ADR-0209 LIVE comparison ─────
+
+
+# Tables where ADR-0209's ``content_hash`` is mirrored: a wiki body page (slug
+# keyed) lives next to a ledger row (name keyed). The probe below reads both
+# sides and reports a violation when the hash disagrees. ADR-0198 names the
+# spine ledger tables; only those with a corresponding wiki body participate.
+_HASH_MIRRORED_TABLES = (
+    ("agent_pattern", "agent-prompt-"),
+    ("agent_discipline", "agent-discipline-"),
+)
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.compare_page_row")
+def _compare_page_row(*, tbl: str, slug_prefix: str, row: dict, storage: Any) -> dict | None:
+    """Compare one ledger row's ``content_hash`` against its wiki body page.
+
+    Returns one of:
+      - ``{"reason": "matched", ...}`` — hashes agree; caller records it.
+      - ``{"reason": "wiki_page_missing" | "content_hash_mismatch", ...}`` —
+        a real disagreement; caller records a violation.
+      - ``None`` — no row data; caller skips.
+
+    Extracted from ``check_page_row_desync`` to keep the parent's cyclomatic
+    below the 15 HARD cap: each row's branching (lookup, hash, compare) is
+    naturally three-way and would push the orchestrator above the cap if kept
+    inline. The helper preserves the tripwire semantic — each return shape is
+    the same shape ``check_page_row_desync`` previously appended to
+    ``violations`` or ``compared`` — and stays private to this module.
+    """
+    import hashlib
+
+    name = row.get("name")
+    body_slug = row.get("body_slug") or f"{slug_prefix}{name}"
+    row_hash = row.get("content_hash") or ""
+    try:
+        page = storage.get_wiki_page_by_slug(body_slug)
+    except Exception:  # noqa: BLE001
+        page = None
+    if page is None:
+        return {
+            "table": tbl,
+            "name": name,
+            "body_slug": body_slug,
+            "reason": "wiki_page_missing",
+        }
+    content = page.get("content", "")
+    page_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    if page_hash != row_hash:
+        return {
+            "table": tbl,
+            "name": name,
+            "body_slug": body_slug,
+            "reason": "content_hash_mismatch",
+            "page_hash": page_hash[:16],
+            "row_hash": row_hash[:16],
+        }
+    return {"reason": "matched", "name": name, "body_slug": body_slug}
 
 
 @observe(tier="stage", metric="backend.invariants.cross_engine.page_row_desync")
 async def check_page_row_desync(engine: Any) -> dict:
-    """ADR-0209's mirrored ``content_hash`` — the SHAPE, not yet the comparison.
+    """ADR-0209's mirrored ``content_hash`` — LIVE for 0047 Car I.
 
-    ADR-0209 defines ``content_hash`` written BOTH as wiki-page metadata and as a
-    ledger-row column, where disagreement between the two copies IS the signal,
-    plus a row-side ``baseline_hash``. NEITHER IS IMPLEMENTED: the ledger tables
-    belong to the spine train (task 0047), and this car deliberately does not
-    invent them.
+    Compares the wiki body page's bytes (sha256 of the content column) against
+    the ledger row's ``content_hash`` column for every ``agent_pattern`` /
+    ``agent_discipline`` row. Disagreement IS the violation (ADR-0209, D40).
+    Probes once per ledger table; surfaces per-row disagreement in ``detail``.
 
-    So the check runs, probes, and reports honestly that it cannot assert. What it
-    does NOT do is return ok — and it is written as a TRIPWIRE rather than a
-    comment: the moment any spine ledger table APPEARS, the precondition for the
-    real comparison is satisfied and the stub turns itself RED. Without that, the
-    spine train would ship the tables and this arm would keep reporting a
-    comfortable "unavailable" over data it should have been comparing, which is
-    the vacuous pass one layer up.
+    ``adr`` is listed in ``SPINE_LEDGER_TABLES`` but excluded here because adr
+    pages live in ``wiki_page`` alongside other types and do not carry a
+    ``content_hash`` mirror (the adr→wiki-page invariant lives elsewhere —
+    see ``yadgar.core.server.tools.project._build_adr_log``). Car J keeps the
+    list scoped to the agent-prompt/discipline mirrors where the contract is
+    written.
 
-    Also spine-gated and covered by this same shape, per ADR-0198's consequences:
-    ``adr.status='superseded'`` must agree with the ``adr_supersedes`` join table
-    (task 0136). It is named here rather than built, for the same reason.
+    Engine-#2 absence still returns ``unavailable`` (car H's vacuous-pass
+    guard — never silently pass on absent data).
     """
     if engine is None:
         return {
@@ -425,28 +479,63 @@ async def check_page_row_desync(engine: Any) -> dict:
             "detail": {"error": str(exc)},
         }
 
-    present = sorted(tables & set(SPINE_LEDGER_TABLES))
-    if present:
+    if not any(tbl in tables for tbl, _slug_prefix in _HASH_MIRRORED_TABLES):
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_SPINE_NOT_SHIPPED,
+            "detail": {
+                "absent_tables": [tbl for tbl, _ in _HASH_MIRRORED_TABLES],
+                "message": (
+                    "ADR-0209's content_hash mirror tables are absent; spine train "
+                    "table create (0047 Car A / Car I) hasn't shipped."
+                ),
+            },
+        }
+
+    # Live comparison per row. Car I: read every pattern/discipline row,
+    # fetch the corresponding wiki body, sha256 the wiki content, compare.
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+
+    storage = _get_storage()
+    violations: list[dict] = []
+    compared: list[dict] = []
+    for tbl, slug_prefix, list_method in (
+        ("agent_pattern", "agent-prompt-", "list_agent_prompt_rows"),
+        ("agent_discipline", "agent-discipline-", "list_agent_discipline_rows"),
+    ):
+        if tbl not in tables:
+            continue
+        try:
+            rows = await getattr(engine, list_method)()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": STATUS_UNAVAILABLE,
+                "reason": REASON_QUERY_FAILED,
+                "detail": {"table": tbl, "error": str(exc)},
+            }
+        for row in rows:
+            entry = _compare_page_row(tbl=tbl, slug_prefix=slug_prefix, row=row, storage=storage)
+            if entry is None:
+                continue
+            if entry.get("reason") == "matched":
+                compared.append(
+                    {"table": tbl, "name": entry["name"], "body_slug": entry["body_slug"]}
+                )
+            else:
+                violations.append(entry)
+
+    if violations:
         return {
             "status": STATUS_VIOLATION,
             "message": (
-                f"spine ledger table(s) {present} exist, so ADR-0209's page/row "
-                "content_hash comparison is now assertable — but it is still STUBBED. "
-                "Implement it (engine-#2 car H left the shape; the spine train owns "
-                "the hashes) rather than letting this arm pass over real data"
+                f"{len(violations)} page/row desync violation(s) across "
+                f"{sorted({v['table'] for v in violations})} — see detail"
             ),
-            "detail": {"present_tables": present},
+            "detail": {"violations": violations, "compared": len(compared)},
         }
     return {
-        "status": STATUS_UNAVAILABLE,
-        "reason": REASON_SPINE_NOT_SHIPPED,
-        "detail": {
-            "absent_tables": sorted(SPINE_LEDGER_TABLES),
-            "message": (
-                "ADR-0209's content_hash / baseline_hash are not implemented; the ledger "
-                "tables are the spine train's (task 0047). This check is shape-only."
-            ),
-        },
+        "status": STATUS_OK,
+        "detail": {"compared": len(compared), "tables": [t for t, _ in _HASH_MIRRORED_TABLES]},
     }
 
 

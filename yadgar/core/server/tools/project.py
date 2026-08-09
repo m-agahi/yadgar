@@ -1421,32 +1421,32 @@ def _apply_adr_signal(resolved: str, storage, actions: list) -> None:
 
 @observe(tier="stage", metric="tools.project._get_agent_prompt_toc_updated_at")
 def _get_agent_prompt_toc_updated_at(storage, resolved: str) -> float | None:
-    """Return the global agent-prompt TOC page updated_at as a unix timestamp float.
+    """Return the global agent-prompt library's last-grow timestamp as a unix float.
 
-    The TOC (slug `agent-prompt-toc`, directory_context='global') is upserted on
-    EVERY agent_prompt_save, so its updated_at is a faithful "library last grew"
-    signal.  Returns None when the page is absent or the timestamp is unparseable.
+    0047 Car I: the S6 restore-surface signal reads ``MAX(agent_pattern.updated_at)``
+    instead of the old wiki-TOC page's ``updated_at`` (the TOC page is retired
+    per D35a — kept as an ignored pointer slug). The new op reaches
+    ``get_agent_prompt_toc_updated_at`` via the backend /admin dispatcher; the
+    engine-#2 absence path returns ``None`` so the S6 caller treats the
+    restore surface as missing rather than crashing the project_brief build.
+    Returns None when the table is empty or unreachable.
     Same pattern as _get_adr_log_updated_at.
     """
     try:
-        rows = storage._q(
-            "SELECT updated_at FROM wiki_page WHERE slug = $slug LIMIT 1",
-            {"slug": "agent-prompt-toc"},
-        )
-        if not rows:
-            return None
-        ts_raw = rows[0].get("updated_at")
-        if ts_raw is None:
-            return None
-        if isinstance(ts_raw, (int, float)):
-            return float(ts_raw)
-        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
-        dt = datetime.fromisoformat(ts_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        return dt.timestamp()
+        result = _forward_admin("get_agent_prompt_toc_updated_at", {})
     except Exception:
         return None
+    if not isinstance(result, dict):
+        return None
+    if result.get("ok") is False:
+        return None
+    ts = result.get("timestamp")
+    if ts is None:
+        return None
+    try:
+        return float(ts)
+    except (TypeError, ValueError):  # fmt: off
+        return None  # fmt: on
 
 
 @observe(tier="stage", metric="tools.project._get_dispatch_prelude_updated_at")
@@ -1823,24 +1823,27 @@ def _build_adr_log(resolved: str) -> dict:
 def _build_agent_prompt_toc(storage) -> dict:
     """Build the agent_prompt_toc field for restore mode (S6 discovery surface).
 
-    GLOBAL (not per-project): reads the fixed slug `agent-prompt-toc` (saved with
-    directory_context='global'), so it surfaces in EVERY project's restore.
-    Returns a cheap metadata-only dict: slug + capped pattern list (no body) to
-    keep the restore token budget safe. Graceful on any error → empty patterns.
+    0047 Car I: the TOC is now the ``agent_pattern`` ledger table (replaces the
+    wiki-TOC page scan). The page slug ``agent-prompt-toc`` is KEPT as a
+    pointer-only entry (D35d) for one cycle — the restore surface reaches the
+    table instead. Slug-shaped response is preserved so callers that pin the
+    slug still see a stable shape; ``patterns`` carries the pattern NAMES
+    (top 20 by ``uses`` DESC) instead of wiki-row regex matches.
+    Returns a cheap metadata-only dict: slug + capped pattern list (no body)
+    to keep the restore token budget safe. Graceful on any error → empty
+    patterns.
     """
-    from yadgar.core.server.tools.agent_prompts import (  # noqa: PLC0415
-        _TOC_ROW_RE,
-        _TOC_SLUG,
-    )
+    from yadgar.core.server.tools.agent_prompts import _TOC_POINTER_SLUG  # noqa: PLC0415
 
     patterns: list[str] = []
     try:
-        page = storage.get_wiki_page_by_slug(_TOC_SLUG)
-        if page and page.get("content"):
-            patterns = [m.group("pattern") for m in _TOC_ROW_RE.finditer(page["content"])][:20]
+        result = _forward_admin("list_agent_pattern_rows_uses_desc", {"limit": 20})
+        if isinstance(result, dict) and result.get("ok") is not False:
+            rows = result.get("rows") or []
+            patterns = [str(r.get("name", "")) for r in rows if r.get("name")][:20]
     except Exception:
         patterns = []
-    return {"slug": _TOC_SLUG, "patterns": patterns}
+    return {"slug": _TOC_POINTER_SLUG, "patterns": patterns}
 
 
 @observe(tier="stage", metric="tools.project._project_brief_restore")

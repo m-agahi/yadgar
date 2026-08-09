@@ -130,14 +130,55 @@ def _cached_agent_prompt(pattern: str, storage) -> dict | None:
 # deduped (CONTRACT_COVERS + repeated slugs), within the budget. Overflow drops
 # disciplines last-listed-first with a warning. Seed-on-miss applies to
 # referenced disciplines (genesis text is the last-resort fallback).
+#
+# 0047 Car I: the composed-order read (which discipline slugs an agent_pattern
+# pulls in, in what order) is now the ``agent_pattern_composes`` ledger table,
+# not the ## Composes regex over the wiki body. The wiki body still CARRY the
+# section as human-readable doc, but the source-of-truth for composition is the
+# ledger row (see ``_ledger_composes_for``). The regex + parsers below stay as
+# a fallback when the ledger is unavailable (engine #2 down, test seam, etc.).
 
-import re as _re  # noqa: E402
 
-_COMPOSES_SECTION_RE = _re.compile(
-    r"^##+\s+Composes\s*$(?P<body>.*?)(?=^##+\s|\Z)",
-    _re.MULTILINE | _re.DOTALL | _re.IGNORECASE,
-)
-_WIKI_LINK_RE = _re.compile(r"\[\[([a-zA-Z0-9_-]+)\]\]")
+@observe(tier="hot", metric="tools.dispatch_helper._ledger_composes_for")
+def _ledger_composes_for(pattern: str) -> list[str] | None:
+    """Read composed discipline slugs from ``agent_pattern_composes`` (table-backed).
+
+    Returns an ordered list of discipline slugs (per ``position`` ASC), or
+    ``None`` when the ledger is unavailable — the caller falls back to the
+    wiki-body regex in that case. An empty list is a real answer
+    (pattern exists with no composes) and is returned as ``[]`` (NOT None).
+
+    The ledger is the source-of-truth (D40, schema §3.3): the wiki body may
+    carry a free-form ``## Composes`` section as documentation, but the order
+    the prelude actually composes them in comes from this table.
+    """
+    try:
+        result = _forward_admin("list_pattern_composes", {"pattern_name": pattern})
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("agent_dispatch_prelude: list_pattern_composes forward failed: %s", _e)
+        return None
+    if not isinstance(result, dict):
+        return None
+    if result.get("ok") is False:
+        return None
+    rows = result.get("rows") or []
+    return [str(r.get("discipline_name", "")) for r in rows if r.get("discipline_name")]
+
+
+@observe(tier="hot", metric="tools.dispatch_helper._composes_for")
+def _composes_for(pattern: str, content: str | None) -> list[str]:
+    """Resolve the composed-discipline slug list for *pattern*.
+
+    0047 Car I: ledger first (table-backed source-of-truth), wiki-body regex
+    as fallback. Returns [] when neither yields an answer.
+    """
+    if pattern:
+        ledger = _ledger_composes_for(pattern)
+        if ledger is not None:
+            return ledger
+    if isinstance(content, str):
+        return _parse_composes(content)
+    return []
 
 
 @observe(tier="hot", metric="tools.dispatch_helper._parse_composes")
@@ -149,11 +190,17 @@ def _parse_composes(content: str) -> list[str]:
     """
     if not isinstance(content, str):
         return []
-    m = _COMPOSES_SECTION_RE.search(content)
+    import re as _re  # noqa: PLC0415
+
+    m = _re.search(
+        r"^##+\s+Composes\s*$(?P<body>.*?)(?=^##+\s|\Z)",
+        content,
+        _re.MULTILINE | _re.DOTALL | _re.IGNORECASE,
+    )
     if m is None:
         return []
     slugs: list[str] = []
-    for slug in _WIKI_LINK_RE.findall(m.group("body")):
+    for slug in _re.findall(r"\[\[([a-zA-Z0-9_-]+)\]\]", m.group("body")):
         if slug not in slugs:
             slugs.append(slug)
     return slugs
@@ -165,7 +212,14 @@ def _strip_composes_section(content: str) -> str:
     discipline sections replace it in the assembled prelude)."""
     if not isinstance(content, str):
         return content
-    return _COMPOSES_SECTION_RE.sub("", content).rstrip()
+    import re as _re  # noqa: PLC0415
+
+    return _re.sub(
+        r"^##+\s+Composes\s*$(?P<body>.*?)(?=^##+\s|\Z)",
+        "",
+        content,
+        flags=_re.MULTILINE | _re.DOTALL | _re.IGNORECASE,
+    ).rstrip()
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._resolve_discipline_text")
@@ -309,13 +363,15 @@ def _record_pattern_usage(pattern: str) -> None:
 
     Fires once per prelude assembly that RESOLVED a pattern page (unresolved
     patterns are not counted). The DB write forwards to the backend
-    increment_prompt_usage admin op (ADR-0078); transport errors are swallowed
-    — the counter is telemetry, never load-bearing.
+    increment_agent_pattern_uses admin op (D40, schema §3.3): the memory-row
+    read-modify-write path is gone; ``uses`` is a SQL integer bumped via
+    ``UPDATE agent_pattern SET uses = uses + 1 WHERE name = :name``. Transport
+    errors are swallowed — the counter is telemetry, never load-bearing.
     """
     try:
-        _forward_admin("increment_prompt_usage", {"pattern": pattern})
+        _forward_admin("increment_agent_pattern_uses", {"pattern": pattern})
     except Exception as _e:  # noqa: BLE001
-        logger.debug("agent_dispatch_prelude: increment_prompt_usage forward failed: %s", _e)
+        logger.debug("agent_dispatch_prelude: increment_agent_pattern_uses forward failed: %s", _e)
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._record_prelude_marker")
@@ -411,10 +467,11 @@ def agent_dispatch_prelude(
             if prompt_result and prompt_result.get("content"):
                 raw_content = prompt_result["content"]
                 version = prompt_result.get("version", "?")
-                # Stage 3: resolve ## Composes refs (seed-on-miss + dedup inside),
-                # then strip the section from the injected pattern snippet.
+                # Stage 3 + 0047 Car I: ledger-first composed-order read
+                # (agent_pattern_composes is the source-of-truth); wiki-body
+                # regex is the fallback when the ledger is unavailable.
                 discipline_sections = _build_discipline_sections(
-                    _parse_composes(raw_content), storage
+                    _composes_for(pattern, raw_content), storage
                 )
                 body = _strip_composes_section(raw_content)
                 # Truncate if needed to respect the pattern-snippet budget

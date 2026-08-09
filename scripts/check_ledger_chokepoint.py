@@ -72,6 +72,8 @@ LEDGER_TABLES: tuple[str, ...] = (
     "agent_discipline",
     "agent_pattern",
     "agent_pattern_composes",
+    "agent_pattern_model",
+    "client",
     "task",
     "task_blocked_by",
 )

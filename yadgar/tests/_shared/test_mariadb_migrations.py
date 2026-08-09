@@ -29,7 +29,7 @@ from yadgar._shared.storage.sql.migrate import (  # noqa: E402
     script_directory,
 )
 
-EXPECTED_HEAD = "003_project_registry"
+EXPECTED_HEAD = "004_agent_pattern_model_client"
 
 
 # ── the chain itself ─────────────────────────────────────────────────────
@@ -70,6 +70,68 @@ def test_003_project_registry_descends_from_002():
     script = script_directory()
     rev_003 = script.get_revision("003_project_registry")
     assert rev_003.down_revision == "002_ledger_tables"
+
+
+def test_004_agent_pattern_model_client_descends_from_003():
+    """Car I's ``004_agent_pattern_model_client`` chains off A0's ``003_project_registry``.
+
+    §3.3 (task 0094): model tier is a property of (pattern × client), never of
+    the pattern — the seed corpus's hardcoded ``DISPATCH: model=opus`` lines
+    assume Claude Code tiers and are wrong for every other client.
+    """
+    script = script_directory()
+    rev_004 = script.get_revision("004_agent_pattern_model_client")
+    assert rev_004.down_revision == "003_project_registry"
+
+
+def test_004_creates_agent_pattern_model_and_client(upgrade_sql):
+    """Car I adds ``agent_pattern_model`` + ``client`` (§3.3) — model tier + lookup."""
+    expected = {"agent_pattern_model", "client"}
+    found = set(re.findall(r"CREATE TABLE\s+([A-Za-z_]+)", upgrade_sql, re.IGNORECASE))
+    missing = expected - {name.lower() for name in found}
+    assert not missing, f"004 missing CREATE TABLE for: {sorted(missing)}"
+
+
+def test_004_agent_pattern_model_has_composite_pk(upgrade_sql):
+    """``(pattern_name, client)`` composite PK — model tier is per-pattern × per-client."""
+    body = _create_table_body(upgrade_sql, "agent_pattern_model")
+    assert re.search(
+        r"PRIMARY KEY\s*\(\s*`?pattern_name`?\s*,\s*`?client`?\s*\)",
+        body,
+        re.IGNORECASE,
+    ), "agent_pattern_model missing PRIMARY KEY (pattern_name, client)"
+
+
+def test_004_agent_pattern_model_fks_cascade(upgrade_sql):
+    """CASCADE on both FKs — deleting a pattern or a client wipes its model tiers.
+
+    RESTRICT would leave dangling rows that no resolver could reach; the
+    whole reason the table exists is the model tier lookup, so a dangling
+    row is a silent miss.
+    """
+    body = _create_table_body(upgrade_sql, "agent_pattern_model")
+    assert re.search(
+        r"FOREIGN KEY\s*\(\s*`?pattern_name`?\s*\)\s+REFERENCES\s+`?agent_pattern`?\s*\(\s*`?name`?\s*\)"
+        r"\s+ON DELETE CASCADE",
+        body,
+        re.IGNORECASE,
+    ), "agent_pattern_model.pattern_name FK must ON DELETE CASCADE"
+    assert re.search(
+        r"FOREIGN KEY\s*\(\s*`?client`?\s*\)\s+REFERENCES\s+`?client`?\s*\(\s*`?name`?\s*\)"
+        r"\s+ON DELETE CASCADE",
+        body,
+        re.IGNORECASE,
+    ), "agent_pattern_model.client FK must ON DELETE CASCADE"
+
+
+def test_004_client_name_is_pk(upgrade_sql):
+    """``client.name`` is the PK — lookup mirroring CLIENT_REGISTRY."""
+    body = _create_table_body(upgrade_sql, "client")
+    assert re.search(
+        r"PRIMARY KEY\s*\(\s*`?name`?\s*\)",
+        body,
+        re.IGNORECASE,
+    ), "client missing PRIMARY KEY (name)"
 
 
 def test_config_is_the_first_revision():

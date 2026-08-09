@@ -32,6 +32,8 @@ EXPECTED_GRANT_TABLES = (
     "adr",
     "agent_pattern",
     "agent_discipline",
+    "agent_pattern_model",
+    "client",
     "task_blocked_by",
     "adr_supersedes",
     "agent_pattern_composes",

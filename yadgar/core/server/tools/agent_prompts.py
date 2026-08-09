@@ -1,26 +1,35 @@
-"""Agent-prompt library MCP tools — v5.85 S4/S5 rework.
+"""Agent-prompt library MCP tools — v5.85 S4/S5 + 0047 Car I.
 
-Tool:
-  agent_prompt_save(pattern, content) — upserts one page per pattern
+Tools:
+  agent_prompt_save(pattern, content) — upserts one page per pattern +
+    mirrors the body in the ``agent_pattern`` ledger row
+  agent_prompt_list(...) — uses-DESC list of patterns from the ledger
+  agent_prompt_get(pattern, ...) — single-row lookup, returns ledger metadata +
+    the wiki body page in one round-trip
 
-Storage convention (v5.85 rework):
+Storage convention (v5.85 rework + 0047 Car I):
   - Slug pattern: agent-prompt-<task-pattern>  (deterministic, no -vN suffix)
   - Tags: ["agent-prompt", "task:<pattern>"]
   - Category: "reference"
   - page_type: "agent_pattern" (ADR-0209; was "agent_prompt" pre-split.
-    Discipline pages carry "agent_discipline", the TOC "agent_index").
+    Discipline pages carry "agent_discipline", the TOC "agent_index" RETIRED).
   - wiki versioning (wiki_page_version table) carries history.
+  - ``agent_pattern`` ledger row mirrors the body via content_hash (D40); the
+    row is the discovery surface (list/get) and the page is the editable body.
 
-Retrieval (S4/S5 collapse):
+Retrieval (S4/S5 collapse + 0047 Car I):
   - Semantic lookup is now `recall(type="wiki", tags=["agent-prompt"])`
     (the bespoke agent_prompt_search tool was removed; the SQL pre-filter lives
     in WikiStore.query via search_wiki_vectors_tagged).
-  - Exact-key lookup is the internal helper `_read_agent_prompt(slug, storage)`
-    (the bespoke agent_prompt_get tool was removed; dispatch_helper uses this).
+  - Ledger lookup is `agent_prompt_list` / `agent_prompt_get` — backed by the
+    ``agent_pattern`` MariaDB table, replaces the old wiki-TOC page scan.
+  - Internal exact-key helper stays `_read_agent_prompt(slug, storage)`
+    (dispatch_helper uses this).
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 
@@ -36,20 +45,14 @@ from yadgar.core.server._app import _tool
 
 logger = logging.getLogger(__name__)
 
-# ── S6 discovery surface ──────────────────────────────────────────────────────
-# Global TOC page: title "Agent Prompt TOC" → slug "agent-prompt-toc" (_slugify).
-_TOC_TITLE = "Agent Prompt TOC"
-_TOC_SLUG = "agent-prompt-toc"
-# One row per pattern: `- `<pattern>` → <purpose>`. Regex pins the pattern column
-# so re-save scan-replaces the existing line (idempotent upsert, no dupes).
-_TOC_ROW_RE = re.compile(r"^- `(?P<pattern>[^`]+)` → .*$", re.MULTILINE)
-# Reason tag that identifies the single library-discovery anchor (create-if-absent).
-_LIBRARY_ANCHOR_REASON = "agent-prompt-library"
-_LIBRARY_ANCHOR_CONTENT = (
-    "Agent-prompt library: see wiki [[agent-prompt-toc]] for available prompts; "
-    "recall(type='wiki', tags=['agent-prompt']) to search; "
-    "agent_prompt_save to add."
-)
+# ── S6 discovery surface (0047 Car I: pointer-only) ───────────────────────────
+# The wiki-TOC page ("agent-prompt-toc") is RETIRED as the discovery surface —
+# the agent_pattern ledger row IS the row, the wiki body page is the body, and
+# ``agent_prompt_list`` / ``agent_prompt_get`` are the read tools. D35d keeps
+# the slug available as a kept-ignored pointer so callers that still pin the
+# old slug see an explanatory page rather than a 404 (one cycle of soft retire).
+_TOC_POINTER_SLUG = "agent-prompt-toc"
+_TOC_POINTER_TITLE = "Agent Prompt TOC (retired — see agent_prompt_list)"
 
 
 _DOUBLE_WRAP_RE = re.compile(
@@ -103,8 +106,13 @@ def _extract_purpose(wrapped_content: str) -> str | None:
 # R3 Car 3c: the TOC-upsert + library-anchor writes (previously _upsert_toc_row /
 # _ensure_library_anchor here) moved backend-side into
 # yadgar.backend.admin_exec.wiki (they are DB writes on the agent_prompt_save path,
-# which now forwards to POST /admin). The _TOC_* / _LIBRARY_ANCHOR_* constants
-# above stay: _TOC_SLUG + _TOC_ROW_RE are still read core-side (project.py TOC scan).
+# which now forwards to POST /admin).
+#
+# 0047 Car I: TOC-upsert + library-anchor are RETIRED entirely. The discovery
+# surface is the ``agent_pattern`` ledger row written below in agent_prompt_save
+# via ``save_agent_pattern_row`` (page-first ordering: a crash leaves an orphan
+# page, not an orphan row; ``check_page_row_desync`` is the detection arm).
+# project.py's TOC scan re-points to the ledger table.
 
 
 @_tool()
@@ -163,12 +171,11 @@ def agent_prompt_save(
     full_content = f"## Purpose\n\n{_purpose}\n\n## Prompt\n\n{content}"
 
     # R3 Car 3c: directory-validation + I26 secret-gate + content-wrap stay core;
-    # the DB writes (wiki.add + TOC upsert + library anchor) forward to the backend
-    # /admin op. All three go backend-side (wiki + replay are in the slim engine
-    # set). The wiki.add → _bump_wiki_epoch hook busts the core agent_prompt_prelude
-    # cache namespace cross-process (file-backed epoch, Car 2). The `storage=` test
+    # the wiki body write forwards to the backend /admin op. The `storage=` test
     # seam is dropped on the forward path — bypass tests use admin_backend_bypass.
-    return _forward_admin(
+    # The wiki.add → _bump_wiki_epoch hook busts the core agent_prompt_prelude
+    # cache namespace cross-process (file-backed epoch, Car 2).
+    page_result = _forward_admin(
         "agent_prompt_save",
         {
             "slug": slug,
@@ -190,6 +197,36 @@ def agent_prompt_save(
             ),
         },
     )
+    # 0047 Car I: after the page write, mirror the body in the agent_pattern
+    # ledger row (the discovery surface). Page-first ordering per §9: a crash
+    # between the two forwards leaves an orphan page (detected by
+    # check_page_row_desync), not an orphan row. content_hash pins the row
+    # to the wiki body's bytes (D40). Disciplines are mirrored below in
+    # discipline_save via _save_discipline_page.
+    if page_result.get("saved"):
+        try:
+            _forward_admin(
+                "save_agent_pattern_row",
+                {
+                    "name": pattern,
+                    "body_slug": slug,
+                    "content_hash": _content_hash(full_content),
+                    "purpose": _purpose,
+                    "status": "active",
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "agent_pattern ledger write failed for pattern=%s: %s",
+                pattern,
+                exc,
+            )
+            # Page-first ordering: surface the page result with a row-side note.
+            return {
+                **page_result,
+                "ledger_warning": f"agent_pattern row not written: {exc}",
+            }
+    return page_result
 
 
 # ── S8 starter library ───────────────────────────────────────────────────────
@@ -321,12 +358,16 @@ def _save_discipline_page(
 
     Same write path as agent_prompt_save (I26 secret gate core-side, DB write
     forwarded to the backend agent_prompt_save admin op — the op keys everything
-    off the payload slug, so discipline slugs ride the existing machinery, incl.
-    the TOC row + wiki-epoch bump). Disciplines keep the same Purpose/Prompt
-    wrap + lint shape as patterns, but carry their OWN page_type since ADR-0209
+    off the payload slug). Disciplines keep the same Purpose/Prompt wrap + lint
+    shape as patterns, but carry their OWN page_type since ADR-0209
     (``agent_discipline``) — ADR-0208 gives them different governance (the
     asymmetric removal guard), and page_type is the lever that governance keys
     off, not the slug prefix.
+
+    0047 Car I: AFTER the wiki page write, mirror the body in the
+    ``agent_discipline`` ledger row (page-first ordering per §9). The ledger
+    row keys on the slug (``agent-discipline-<name>``), same as the wiki
+    body page. ``check_page_row_desync`` is the detection arm for the gap.
     """
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -337,14 +378,14 @@ def _save_discipline_page(
     tags = ["agent-prompt", "agent-discipline", f"discipline:{name}"]
     content = _unwrap_purpose_prompt(content)
     full_content = f"## Purpose\n\n{purpose}\n\n## Prompt\n\n{content}"
-    return _forward_admin(
+    page_result = _forward_admin(
         "agent_prompt_save",
         {
             "slug": slug,
             "title": title,
             "full_content": full_content,
             "tags": tags,
-            # TOC row keys on the full slug so discipline rows are unambiguous
+            # Ledger row keys on the slug so discipline rows are unambiguous
             # next to dispatch-pattern rows.
             "pattern": slug,
             "purpose": purpose,
@@ -352,6 +393,28 @@ def _save_discipline_page(
             "page_type": PAGE_TYPE_AGENT_DISCIPLINE,
         },
     )
+    if page_result.get("saved"):
+        try:
+            _forward_admin(
+                "save_agent_discipline_row",
+                {
+                    "name": name,
+                    "body_slug": slug,
+                    "content_hash": _content_hash(full_content),
+                    "meta": {"purpose": purpose, "status": "active"},
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "agent_discipline ledger write failed for name=%s: %s",
+                name,
+                exc,
+            )
+            return {
+                **page_result,
+                "ledger_warning": f"agent_discipline row not written: {exc}",
+            }
+    return page_result
 
 
 #: ADR-0208 line-delta primitive. The BODY moved to
@@ -584,4 +647,128 @@ def _read_agent_prompt(slug: str, storage=None) -> dict | None:
         "page_id": page_id,
         "tags": page.get("tags", []),
         "title": page.get("title", ""),
+    }
+
+
+# ── 0047 Car I: ledger-backed discovery tools ────────────────────────────────
+
+
+@observe(tier="hot", metric="tools.agent_prompts._content_hash")
+def _content_hash(text: str) -> str:
+    """Stable sha256 hex digest of text content.
+
+    The ``agent_pattern.content_hash`` / ``agent_discipline.content_hash``
+    column pins the ledger row to the wiki body bytes for ``check_page_row_desync``
+    (invariant arm in admin_exec/invariants_cross_engine.py). Same algorithm
+    everywhere — content_hash equality across engines is the contract.
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+@_tool(power=True)
+def agent_prompt_list(
+    status: str | None = None,
+    directory: str | None = None,  # noqa: ARG001 — accepted for tool surface parity; ledger is reach-global (D3)
+    limit: int = 20,
+) -> dict:
+    """List agent_prompt library entries from the ``agent_pattern`` ledger table.
+
+    0047 Car I: replaces the S6 wiki-TOC scan (the TOC page
+    ``agent-prompt-toc`` is retired; the kept-ignored pointer slug remains so
+    legacy callers see an explanatory page rather than 404, D35d).
+
+    Ordering: ``uses`` DESC, ``name`` ASC. ``uses`` is the D40 SQL integer
+    bumped by ``increment_agent_pattern_uses`` on each dispatch — replaces the
+    old memory-row read-modify-write path.
+
+    Args:
+        status: Optional filter (``"active"`` is the only known status today;
+                ``None`` returns every row). Reaches the backend op as a passthrough.
+        directory: Accepted for tool surface parity (recall/seed tools take it).
+                    The ledger table is reach-global (D3); the argument is unused.
+        limit: Max rows returned (default 20, mirrors the old TOC page's 20-row cap).
+
+    Returns:
+        On success: {"patterns": [{"name", "purpose", "uses", "status",
+                                    "body_slug", "content_hash"}, ...],
+                       "count": N, "engine": "mariadb"}.
+        On engine unavailable: {"ok": False, "error": "...", "patterns": []}.
+    """
+    payload: dict = {"limit": int(limit)}
+    if status is not None:
+        payload["status"] = status
+    result = _forward_admin("list_agent_pattern_rows_uses_desc", payload)
+    if result.get("ok") is False:
+        return result
+    rows = result.get("rows") or []
+    return {
+        "patterns": [
+            {
+                "name": row.get("name"),
+                "purpose": row.get("purpose") or "",
+                "uses": int(row.get("uses") or 0),
+                "status": row.get("status") or "active",
+                "body_slug": row.get("body_slug") or f"agent-prompt-{row.get('name')}",
+                "content_hash": row.get("content_hash") or "",
+            }
+            for row in rows
+        ],
+        "count": len(rows),
+        "engine": "mariadb",
+    }
+
+
+@_tool(power=True)
+def agent_prompt_get(
+    pattern: str,
+    directory: str | None = None,  # noqa: ARG001 — accepted for tool surface parity; ledger is reach-global (D3)
+) -> dict:
+    """Read a single agent_prompt library entry (ledger row + wiki body).
+
+    0047 Car I: replaces the bespoke ``agent_prompt_get`` removal path (the old
+    MCP tool was retired in v5.85 S5; this is its table-backed re-introduction,
+    now reaching the ``agent_pattern`` ledger row first, then the wiki body
+    page keyed by ``body_slug``). Returns both surfaces so callers can render
+    the row metadata + the editable body without two round-trips.
+
+    Args:
+        pattern: Task pattern identifier, e.g. ``"dispatch-fix-bug"``.
+                 Equivalent to ``agent_pattern.name``.
+        directory: Accepted for tool surface parity; the ledger table is
+                    reach-global (D3); the argument is unused.
+
+    Returns:
+        On success: {"name", "purpose", "uses", "status", "body_slug",
+                     "content_hash", "baseline_hash",
+                     "content" (wiki body), "version" (wiki version N),
+                     "page_id", "title", "tags"}.
+        On absent row: {"error": "not_found", "name": pattern}.
+        On engine unavailable: {"ok": False, "error": "..."}.
+    """
+    row_result = _forward_admin("get_agent_pattern_row", {"name": pattern})
+    if row_result.get("ok") is False:
+        return row_result
+    row = row_result.get("row")
+    if row is None:
+        return {"error": "not_found", "name": pattern}
+
+    body_slug = row.get("body_slug") or f"agent-prompt-{pattern}"
+    page = _read_agent_prompt(body_slug)
+    content = page["content"] if page is not None else ""
+    version = page["version"] if page is not None else 0
+    page_id = page["page_id"] if page is not None else None
+
+    return {
+        "name": row.get("name"),
+        "purpose": row.get("purpose") or "",
+        "uses": int(row.get("uses") or 0),
+        "status": row.get("status") or "active",
+        "body_slug": body_slug,
+        "content_hash": row.get("content_hash") or "",
+        "baseline_hash": row.get("baseline_hash"),
+        "content": content,
+        "version": version,
+        "page_id": page_id,
+        "title": (page or {}).get("title", f"Agent Prompt: {pattern}"),
+        "tags": (page or {}).get("tags", ["agent-prompt", f"task:{pattern}"]),
     }

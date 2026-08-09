@@ -411,11 +411,12 @@ def _build_provider_tasks(  # noqa: PLR0913 — mirrors _fanout_recall's threade
         tags = [t for t in tags if t != "agent-prompt"] or None
 
     # S3 precedence: tags=["agent-prompt"] suppresses the default exclude. Without
-    # tags, general recall excludes agent-prompt pages + the global toc page so
-    # tool-prompt fragments don't pollute general wiki results (the every-project
-    # leak S3 exists to kill). Targeted recall(tags=["agent-prompt"]) still won't
-    # pull the TOC (SQL pre-filter), so excluding it here is safe both ways.
-    wiki_exclude = None if tags else ["agent-prompt", "agent-prompt-toc"]
+    # tags, general recall excludes agent-prompt pages so tool-prompt fragments
+    # don't pollute general wiki results (the every-project leak S3 exists to
+    # kill). Targeted recall(tags=["agent-prompt"]) pulls the actual prompt
+    # bodies; the old wiki-TOC page is gone (0047 Car I, D35a: retired,
+    # kept-ignored pointer slug). The exclude stays "agent-prompt" only.
+    wiki_exclude = None if tags else ["agent-prompt"]
 
     # Memory provider — active when type_filter is "all" or "memory".
     if type_filter in ("all", "memory") and _st._retriever is not None:

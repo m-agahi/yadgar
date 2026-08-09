@@ -52,6 +52,7 @@ the parsed file rather than hardcoding ``yadgar_app``.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import re
 from pathlib import Path
@@ -747,6 +748,93 @@ class MariaStorageEngine:
                         "position": position,
                     },
                 )
+
+    # ── agent_pattern: uses-DESC list (Car I, D40 / §16) ─────────────────
+    #
+    # ``agent_prompt_list`` returns patterns ordered by ``uses`` DESC (the
+    # default sort, D40). Distinct from ``list_agent_prompt_rows`` (which
+    # is name-ordered) — kept as a separate method so the chokepoint
+    # surface area is one query shape per call site, not one method with
+    # a sort kwarg the lint would have to special-case.
+
+    @observe(tier="boundary", metric="backend.sql.agent_pattern.list_uses_desc")
+    async def list_agent_pattern_rows_uses_desc(
+        self,
+        *,
+        limit: int = 20,
+    ) -> list[dict]:
+        """``agent_pattern`` rows ordered by ``uses`` DESC, then ``name`` ASC.
+
+        D40 — the prelude discovery surface sorts by usage so the most-
+        dispatched patterns surface first. The ``name`` ASC tiebreaker is
+        deterministic so two patterns with the same ``uses`` never swap
+        places between calls.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        if not isinstance(limit, int) or limit < 1:
+            raise ValueError(f"limit must be a positive int: {limit!r}")
+        sql = text(
+            "SELECT id, name, body_slug, purpose, status, baseline_hash, "
+            "content_hash, uses, created_at, updated_at "
+            "FROM agent_pattern ORDER BY uses DESC, name ASC LIMIT :limit"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"limit": limit})
+            return [dict(row._mapping) for row in result]
+
+    @observe(tier="boundary", metric="backend.sql.agent_pattern.max_updated_at")
+    async def max_agent_pattern_updated_at(self) -> datetime.datetime | None:
+        """Return the most recent ``updated_at`` across every ``agent_pattern`` row.
+
+        Returns ``None`` when the table is empty (Car I signal: the
+        library has never been seeded). Used by ``_get_agent_prompt_toc_updated_at``
+        to replace the wiki-TOC-page timestamp the S6 restore surface
+        used to read.
+        """
+        from datetime import datetime  # noqa: PLC0415
+
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text("SELECT MAX(updated_at) AS ts FROM agent_pattern")
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(sql)).first()
+        if row is None:
+            return None
+        ts = row._mapping.get("ts")
+        if ts is None:
+            return None
+        # MariaDB may hand back a ``datetime`` or a ``None``; coerce so the
+        # caller gets a real ``datetime`` (typed).
+        if not isinstance(ts, datetime):
+            ts = datetime.fromisoformat(str(ts))
+        return ts
+
+    # ── agent_pattern_composes: read (Car I, replaces wiki section parse) ──
+
+    @observe(tier="boundary", metric="backend.sql.agent_pattern_composes.list")
+    async def list_pattern_composes(
+        self,
+        *,
+        pattern_name: str,
+    ) -> list[dict]:
+        """Return the ordered list of composed discipline slugs for *pattern_name*.
+
+        Ordered by ``position`` ASC so the prelude assembly order is
+        deterministic (the dispatch_helper drops disciplines
+        last-listed-first at the budget overflow). Empty list when the
+        pattern composes nothing or the row is absent — never raises.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT pattern_name, discipline_name, position "
+            "FROM agent_pattern_composes "
+            "WHERE pattern_name = :pattern_name ORDER BY position ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"pattern_name": pattern_name})
+            return [dict(row._mapping) for row in result]
 
     # ── D17 — no-op scope filter hook ────────────────────────────────────
 

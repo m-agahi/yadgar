@@ -102,6 +102,8 @@ from yadgar.core.server.tools.misc import (
     resource_processes,
 )
 from yadgar.core.server.tools.agent_prompts import (
+    agent_prompt_get,
+    agent_prompt_list,
     agent_prompt_save,
     discipline_save,
     seed_agent_prompts,
@@ -189,6 +191,8 @@ __all__ = [
     "resource_stale",
     "resource_processes",
     "agent_prompt_save",
+    "agent_prompt_list",
+    "agent_prompt_get",
     "discipline_save",
     "seed_agent_prompts",
     "agent_dispatch_prelude",

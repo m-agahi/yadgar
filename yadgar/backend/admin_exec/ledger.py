@@ -245,3 +245,162 @@ async def list_agent_prompt_rows(payload: dict) -> dict:
         logger.warning("list_agent_prompt_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
     return {"rows": rows}
+
+
+# ── Car I additions: uses-DESC list, single-row lookup, composes read ──────
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.list_agent_pattern_rows_uses_desc")
+async def list_agent_pattern_rows_uses_desc(payload: dict) -> dict:
+    """``agent_pattern`` rows ordered by ``uses`` DESC, then ``name`` ASC.
+
+    payload: ``{"limit": int = 20}`` — default 20 caps the restore token
+    budget (mirrors the old wiki-TOC page's 20-row cap). D40.
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        rows = await storage.list_agent_pattern_rows_uses_desc(
+            limit=int(payload.get("limit", 20)),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list_agent_pattern_rows_uses_desc error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    return {"rows": rows}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.get_agent_pattern_row")
+async def get_agent_pattern_row(payload: dict) -> dict:
+    """Single ``agent_pattern`` lookup by ``name``.
+
+    payload: ``{"name": str}``. Returns ``{"row": dict | None}`` —
+    ``None`` for an unknown name so the caller can distinguish "absent"
+    from "engine unavailable".
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        row = await storage.get_agent_prompt_row(str(payload["name"]))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_agent_pattern_row error name=%s: %s", payload.get("name"), exc)
+        return {"ok": False, "error": str(exc)}
+    return {"row": row}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.list_pattern_composes")
+async def list_pattern_composes(payload: dict) -> dict:
+    """Ordered list of composed discipline slugs for one ``agent_pattern``.
+
+    payload: ``{"pattern_name": str}``. Returns
+    ``{"rows": [{"pattern_name", "discipline_name", "position"}, ...]}``,
+    ordered by ``position`` ASC. Empty list for an absent row.
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        rows = await storage.list_pattern_composes(
+            pattern_name=str(payload["pattern_name"]),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "list_pattern_composes error pattern=%s: %s", payload.get("pattern_name"), exc
+        )
+        return {"ok": False, "error": str(exc)}
+    return {"rows": rows}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.save_agent_pattern_row")
+async def save_agent_pattern_row(payload: dict) -> dict:
+    """Upsert one ``agent_pattern`` row by ``name``.
+
+    payload: ``{name, body_slug, content_hash, purpose?, status?, baseline_hash?}``.
+    Used by ``agent_prompt_save`` to mirror the wiki body page as a
+    ledger row (the cross-engine invariant arm compares the two via
+    ``content_hash``).
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        return await storage.save_agent_prompt(
+            name=str(payload["name"]),
+            body_slug=str(payload["body_slug"]),
+            content_hash=str(payload["content_hash"]),
+            purpose=payload.get("purpose"),
+            status=str(payload.get("status", "active")),
+            baseline_hash=payload.get("baseline_hash"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("save_agent_pattern_row error name=%s: %s", payload.get("name"), exc)
+        return {"ok": False, "error": str(exc)}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.save_agent_discipline_row")
+async def save_agent_discipline_row(payload: dict) -> dict:
+    """Upsert one ``agent_discipline`` row by ``name``.
+
+    payload: ``{name, body_slug, content_hash, baseline_hash?, meta?}``.
+    ``meta`` carries ``{purpose?, always_applied?, position?, status?}``
+    (per the engine method's signature).
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        return await storage.save_agent_discipline(
+            name=str(payload["name"]),
+            body_slug=str(payload["body_slug"]),
+            content_hash=str(payload["content_hash"]),
+            baseline_hash=payload.get("baseline_hash"),
+            meta=payload.get("meta"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("save_agent_discipline_row error name=%s: %s", payload.get("name"), exc)
+        return {"ok": False, "error": str(exc)}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.increment_agent_pattern_uses")
+async def increment_agent_pattern_uses(payload: dict) -> dict:
+    """``UPDATE agent_pattern SET uses = uses + 1 WHERE name = :name``.
+
+    payload: ``{"pattern": str}``. Replaces the old
+    ``increment_prompt_usage`` op (the memory-row read-modify-write
+    path is gone; ``uses`` is a SQL integer, D40).
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        await storage.increment_agent_prompt_uses(str(payload["pattern"]))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("increment_agent_pattern_uses error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "pattern": payload["pattern"]}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.get_agent_prompt_toc_updated_at")
+async def get_agent_prompt_toc_updated_at(payload: dict) -> dict:  # noqa: ARG001
+    """Return ``MAX(agent_pattern.updated_at)`` as a unix timestamp float.
+
+    payload: ``{}``. The S6 restore-surface signal that used to read the
+    wiki-TOC page's ``updated_at`` now reads the table directly. Returns
+    ``{"timestamp": float | None}`` — ``None`` when the table is empty.
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {
+            "ok": False,
+            "error": "engine #2 not composed (MariaStorageEngine is None)",
+            "timestamp": None,
+        }
+    try:
+        dt = await storage.max_agent_pattern_updated_at()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_agent_prompt_toc_updated_at error: %s", exc)
+        return {"ok": False, "error": str(exc), "timestamp": None}
+    if dt is None:
+        return {"timestamp": None}
+    return {"timestamp": dt.timestamp()}
