@@ -223,6 +223,19 @@ repos:
         # never) is exactly the drift this guard exists to catch. Sub-second.
         always_run: true
 
+      - id: check-plan-signature-drift
+        name: Check docs/plans/** cross-document signature drift (call kwargs vs in-corpus def)
+        language: system
+        entry: python scripts/check_plan_signature_drift.py
+        pass_filenames: false
+        # files: (NOT always_run). The corpus half is safe to filter — no commit
+        # can add a signature or a call site without staging a docs/plans/*.md.
+        # But the verdict is a function of the corpus AND this script's
+        # suppression rules, so the script is in scope too: editing _MIN_KWARGS
+        # or dropping a suppression must re-run the guard (ADR-0080).
+        # ~60 non-archive plan docs, well under a second.
+        files: ^(docs/plans/.*\.md|scripts/check_plan_signature_drift\.py)$
+
       - id: check-changelog-unreleased-versions
         name: Check docs/CHANGELOG.md [Unreleased] carries no shipped-version markers (Car 0102)
         language: system
