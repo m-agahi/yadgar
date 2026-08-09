@@ -1,9 +1,24 @@
 # Car H — tier + subsystem + rollups
 
 > Parent plan: docs/plans/task-table-refactor-2026-07-29.md (task 0047, §7 + §16)
-> Status: build-ready (spec extracted from audited master plan)
+> Status: shipped (Car H of 0047 spine train — code on car/H-tier-subsystem)
 > Depends on: G
-> Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
+> Lifecycle: ADR-0081/0082 — archived as the first commit of car/H-tier-subsystem.
+>
+> §10 decisions made at build time (now binding):
+>   Q1 — rollup regeneration trigger: ON-WRITE (fired from `adr_add` post-commit step).
+>     Rationale: keeps §8's "one rollup page" promise honest at read time; the
+>     extra wiki write is bounded (~195 ADRs, single-page writes per subsystem).
+>     Car K (nightly archive sweep) is unaffected — on-write does NOT consume
+>     its sweep-dispatch input. If a stale rollup is observed in future, the
+>     nightly sweep can be retro-fitted without code change in Car H.
+>   Q2 — subsystem vocabulary home: free-form `VARCHAR(128)` + on-write
+>     normalizer (`.lower().strip()`, empty → None). D28 satisfied (explicit,
+>     never inferred from title); the seed parses `## Subsystem` headers when
+>     present and assigns `unknown` otherwise. No new table, no FK, no
+>     runtime_config knob. The normalizer keeps `vacuum`/`Vacuum`/`db-vacuum`
+>     from silently drifting apart in the row-level filter; downstream rollup
+>     pages are still keyed by the author-supplied lowercase form.
 
 ## 1. Scope
 
