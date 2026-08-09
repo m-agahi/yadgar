@@ -1,9 +1,9 @@
 # Car F — ADR tools re-pointed (adr_list / adr_get / adr_add → ledger)
 
 > Parent plan: docs/plans/task-table-refactor-2026-07-29.md (task 0047, §7 + §16)
-> Status: build-ready (spec extracted from audited master plan)
+> Status: shipped in 0047 spine train (Car F integration commit on `car/F-adr-tools`)
 > Depends on: B, C
-> Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
+> Lifecycle: ADR-0081/0082 — archived as the first commit of the completing branch.
 
 ## 1. Scope
 
