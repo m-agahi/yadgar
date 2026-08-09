@@ -102,6 +102,14 @@ repos:
         pass_filenames: false
         files: ^yadgar/.*\.py$
 
+      - id: check-ledger-chokepoint
+        name: "Check ledger chokepoint (D20: every ledger table access goes through MariaStorageEngine)"
+        language: system
+        entry: python scripts/check_ledger_chokepoint.py
+        types: [python]
+        pass_filenames: false
+        files: ^yadgar/.*\.py$
+
       - id: check-secret-gate
         name: Check I26 secret-gate invariant (all write tools call gate_or_reject)
         language: system

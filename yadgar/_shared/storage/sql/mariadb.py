@@ -256,3 +256,511 @@ class MariaStorageEngine:
         async with self._engine.connect() as conn:
             result = await conn.execute(text(sql), {"key_value": key_value})
             return result.first() is not None
+
+    # ── ledger chokepoint (D20) ────────────────────────────────────────────
+    #
+    # Car A of 0047 spine train — every row access to the engine-#2 ledger
+    # (task / adr / agent_pattern / agent_discipline + 3 join tables) flows
+    # through these methods. ``scripts/check_ledger_chokepoint.py`` is the
+    # AST guard that enforces this rule on every commit.
+    #
+    # Per-entity tools over a generic record interface (D1). Return shapes
+    # are keyed on ``id`` (AUTO_INCREMENT PK, ADR-0197 / §14.1) — never on
+    # the retired ``number`` column.
+
+    # ── task ─────────────────────────────────────────────────────────────
+
+    @observe(tier="boundary", metric="backend.sql.task.create")
+    async def create_task_row(
+        self,
+        *,
+        project_id: str,
+        title: str,
+        status: str = "pending",
+        state: str | None = "open",
+        active_form: str | None = None,
+        plan_path: str | None = None,
+        body_slug: str | None = None,
+    ) -> dict:
+        """Insert one ``task`` row, return the inserted PK + inserted fields.
+
+        ``id`` is the AUTO_INCREMENT PK (ADR-0197) and is the row's
+        identifier — ``number`` is retired (§14.1). MySQL's
+        ``LAST_INSERT_ID()`` returns it without a follow-up SELECT.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "INSERT INTO task "
+            "(project_id, title, status, state, active_form, plan_path, body_slug) "
+            "VALUES (:project_id, :title, :status, :state, :active_form, "
+            ":plan_path, :body_slug)"
+        )
+        params = {
+            "project_id": project_id,
+            "title": title,
+            "status": status,
+            "state": state,
+            "active_form": active_form,
+            "plan_path": plan_path,
+            "body_slug": body_slug,
+        }
+        async with self._engine.begin() as conn:
+            result = await conn.execute(sql, params)
+            inserted_id = result.lastrowid
+        return {"id": inserted_id, **params}
+
+    @observe(tier="boundary", metric="backend.sql.task.list")
+    async def list_task_rows(
+        self,
+        *,
+        project_id: str,
+        status: str | None = None,
+    ) -> list[dict]:
+        """Project-scoped ``task`` read, optionally filtered by status.
+
+        Always filters on ``project_id`` — never returns rows from other
+        projects. Returns dicts keyed on ``id`` (AUTO_INCREMENT PK).
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        params: dict[str, Any] = {"project_id": project_id}
+        where_extra = ""
+        if status is not None:
+            where_extra = " AND status = :status"
+            params["status"] = status
+        sql = text(
+            "SELECT id, project_id, title, status, state, active_form, "
+            "plan_path, body_slug, created_at, updated_at "
+            "FROM task WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, params)
+            return [dict(row._mapping) for row in result]
+
+    @observe(tier="boundary", metric="backend.sql.task.list_all")
+    async def list_task_rows_all_projects(
+        self,
+        *,
+        status: str | None = None,
+    ) -> list[dict]:
+        """Cross-project ``task`` read — used by ops / dashboards, not users.
+
+        The ``task_list`` tool per project goes through ``list_task_rows``
+        (which scopes by ``project_id``); this method is the cross-project
+        variant for ops surfaces that legitimately span projects.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        params: dict[str, Any] = {}
+        where_extra = ""
+        if status is not None:
+            where_extra = " WHERE status = :status"
+            params["status"] = status
+        sql = text(
+            "SELECT id, project_id, title, status, state, active_form, "
+            "plan_path, body_slug, created_at, updated_at "
+            "FROM task" + where_extra + " ORDER BY id ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, params)
+            return [dict(row._mapping) for row in result]
+
+    @observe(tier="boundary", metric="backend.sql.task.get")
+    async def get_task_row(self, task_id: int) -> dict | None:
+        """Single-row ``task`` lookup by ``id``. ``None`` when absent."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT id, project_id, title, status, state, active_form, "
+            "plan_path, body_slug, created_at, updated_at "
+            "FROM task WHERE id = :id"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"id": task_id})
+            row = result.first()
+        return None if row is None else dict(row._mapping)
+
+    @observe(tier="boundary", metric="backend.sql.task.update")
+    async def update_task_row(self, task_id: int, **fields: Any) -> None:
+        """Patch the named columns on one ``task`` row.
+
+        ``**fields`` accepts the same column names ``create_task_row``
+        writes (minus ``id`` / ``created_at`` / ``updated_at`` — those are
+        owned by MySQL). An empty ``fields`` is a no-op, NOT an error —
+        the caller has nothing to update.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        if not fields:
+            return
+        # Whitelist the updatable columns — defence-in-depth against an
+        # ``update_task_row(task_id, id=999)`` smuggling a PK change.
+        allowed = {
+            "project_id",
+            "title",
+            "status",
+            "state",
+            "active_form",
+            "plan_path",
+            "body_slug",
+        }
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"unknown task columns: {sorted(unknown)}")
+        set_clause = ", ".join(f"`{col}` = :{col}" for col in fields)
+        params: dict[str, Any] = dict(fields)
+        params["id"] = task_id
+        sql = text(f"UPDATE task SET {set_clause} WHERE id = :id")  # noqa: S608 — column whitelist
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, params)
+
+    @observe(tier="boundary", metric="backend.sql.task.set_body_slug")
+    async def set_task_body_slug(self, task_id: int, body_slug: str) -> None:
+        """Stamp the wiki ``body_slug`` on one ``task`` row.
+
+        Car D writes the wiki page and then sets this slug so the next
+        read can locate the body without scanning all pages.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text("UPDATE task SET body_slug = :body_slug WHERE id = :id")
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"id": task_id, "body_slug": body_slug})
+
+    @observe(tier="boundary", metric="backend.sql.task.add_blocked_by")
+    async def add_task_blocked_by(self, task_id: int, blocked_by_id: int) -> None:
+        """Insert one ``task_blocked_by`` row — task_id is blocked by blocked_by_id."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "INSERT INTO task_blocked_by (task_id, blocked_by_id) VALUES (:task_id, :blocked_by_id)"
+        )
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"task_id": task_id, "blocked_by_id": blocked_by_id})
+
+    @observe(tier="boundary", metric="backend.sql.task.list_blocked_by")
+    async def list_task_blocked_by(self, task_id: int) -> list[int]:
+        """Return the list of task ids blocking ``task_id``, ordered ASC."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT blocked_by_id FROM task_blocked_by "
+            "WHERE task_id = :task_id ORDER BY blocked_by_id ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"task_id": task_id})
+            return [int(row[0]) for row in result]
+
+    # ── adr ──────────────────────────────────────────────────────────────
+
+    @observe(tier="boundary", metric="backend.sql.adr.create")
+    async def create_adr_row(
+        self,
+        *,
+        project_id: str,
+        title: str,
+        status: str = "open",
+        decided_on: str | None = None,
+        subsystem: str | None = None,
+        tier: str | None = None,
+        body_slug: str | None = None,
+    ) -> dict:
+        """Insert one ``adr`` row, return the inserted PK + inserted fields."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "INSERT INTO adr "
+            "(project_id, title, status, decided_on, subsystem, tier, body_slug) "
+            "VALUES (:project_id, :title, :status, :decided_on, :subsystem, "
+            ":tier, :body_slug)"
+        )
+        params = {
+            "project_id": project_id,
+            "title": title,
+            "status": status,
+            "decided_on": decided_on,
+            "subsystem": subsystem,
+            "tier": tier,
+            "body_slug": body_slug,
+        }
+        async with self._engine.begin() as conn:
+            result = await conn.execute(sql, params)
+            inserted_id = result.lastrowid
+        return {"id": inserted_id, **params}
+
+    @observe(tier="boundary", metric="backend.sql.adr.list")
+    async def list_adr_rows(
+        self,
+        *,
+        project_id: str,
+        status: str | None = None,
+    ) -> list[dict]:
+        """Project-scoped ``adr`` read, optionally filtered by status."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        params: dict[str, Any] = {"project_id": project_id}
+        where_extra = ""
+        if status is not None:
+            where_extra = " AND status = :status"
+            params["status"] = status
+        sql = text(
+            "SELECT id, project_id, title, status, decided_on, subsystem, "
+            "tier, body_slug, created_at, updated_at "
+            "FROM adr WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, params)
+            return [dict(row._mapping) for row in result]
+
+    @observe(tier="boundary", metric="backend.sql.adr.get")
+    async def get_adr_row(self, adr_id: int) -> dict | None:
+        """Single-row ``adr`` lookup by ``id``."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT id, project_id, title, status, decided_on, subsystem, "
+            "tier, body_slug, created_at, updated_at "
+            "FROM adr WHERE id = :id"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"id": adr_id})
+            row = result.first()
+        return None if row is None else dict(row._mapping)
+
+    @observe(tier="boundary", metric="backend.sql.adr.set_body_slug")
+    async def set_adr_body_slug(self, adr_id: int, body_slug: str) -> None:
+        """Stamp the wiki ``body_slug`` on one ``adr`` row."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text("UPDATE adr SET body_slug = :body_slug WHERE id = :id")
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"id": adr_id, "body_slug": body_slug})
+
+    @observe(tier="boundary", metric="backend.sql.adr.add_supersedes")
+    async def add_adr_supersedes(self, adr_id: int, supersedes_id: int) -> None:
+        """Insert one ``adr_supersedes`` row — ``adr_id`` supersedes ``supersedes_id``."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "INSERT INTO adr_supersedes (adr_id, supersedes_id) VALUES (:adr_id, :supersedes_id)"
+        )
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"adr_id": adr_id, "supersedes_id": supersedes_id})
+
+    # ── agent_pattern ────────────────────────────────────────────────────
+
+    @observe(tier="boundary", metric="backend.sql.agent_pattern.save")
+    async def save_agent_prompt(
+        self,
+        *,
+        name: str,
+        body_slug: str,
+        content_hash: str,
+        purpose: str | None = None,
+        status: str = "active",
+        baseline_hash: str | None = None,
+    ) -> dict:
+        """Upsert one ``agent_pattern`` row by ``name``.
+
+        PR #32 Fix 8 — a second save of the same ``name`` must UPDATE,
+        not violate the UNIQUE constraint. ``INSERT ... ON DUPLICATE KEY
+        UPDATE`` is the canonical MySQL upsert; the ``name`` column is
+        the conflict target via the ``uq_agent_pattern_name`` constraint.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "INSERT INTO agent_pattern "
+            "(name, body_slug, purpose, status, baseline_hash, content_hash) "
+            "VALUES (:name, :body_slug, :purpose, :status, "
+            ":baseline_hash, :content_hash) "
+            "ON DUPLICATE KEY UPDATE "
+            "body_slug = VALUES(body_slug), "
+            "purpose = VALUES(purpose), "
+            "status = VALUES(status), "
+            "baseline_hash = VALUES(baseline_hash), "
+            "content_hash = VALUES(content_hash)"
+        )
+        params = {
+            "name": name,
+            "body_slug": body_slug,
+            "purpose": purpose,
+            "status": status,
+            "baseline_hash": baseline_hash,
+            "content_hash": content_hash,
+        }
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, params)
+        return await self.get_agent_prompt_row(name) or {"name": name, **params}
+
+    @observe(tier="boundary", metric="backend.sql.agent_pattern.list")
+    async def list_agent_prompt_rows(self) -> list[dict]:
+        """List every ``agent_pattern`` row, ordered by name."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT id, name, body_slug, purpose, status, baseline_hash, "
+            "content_hash, uses, created_at, updated_at "
+            "FROM agent_pattern ORDER BY name ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql)
+            return [dict(row._mapping) for row in result]
+
+    @observe(tier="boundary", metric="backend.sql.agent_pattern.get")
+    async def get_agent_prompt_row(self, name: str) -> dict | None:
+        """Single ``agent_pattern`` lookup by ``name``."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT id, name, body_slug, purpose, status, baseline_hash, "
+            "content_hash, uses, created_at, updated_at "
+            "FROM agent_pattern WHERE name = :name"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"name": name})
+            row = result.first()
+        return None if row is None else dict(row._mapping)
+
+    @observe(tier="boundary", metric="backend.sql.agent_pattern.increment_uses")
+    async def increment_agent_prompt_uses(self, name: str) -> None:
+        """Atomically ``SET uses = uses + 1`` for one ``agent_pattern`` row.
+
+        D40 — the SQL is atomic at the storage layer, not read-modify-
+        write in Python. Two concurrent callers both reading ``uses=3``
+        and writing ``uses=4`` would lose a count; this method avoids
+        the race by issuing a single UPDATE.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text("UPDATE agent_pattern SET uses = uses + 1 WHERE name = :name")
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"name": name})
+
+    # ── agent_discipline ─────────────────────────────────────────────────
+
+    @observe(tier="boundary", metric="backend.sql.agent_discipline.save")
+    async def save_agent_discipline(
+        self,
+        *,
+        name: str,
+        body_slug: str,
+        content_hash: str,
+        baseline_hash: str | None = None,
+        meta: dict | None = None,
+    ) -> dict:
+        """Upsert one ``agent_discipline`` row by ``name`` (PR #32 Fix 8).
+
+        Optional presentation columns (``purpose``, ``always_applied``,
+        ``position``, ``status``) ride inside the ``meta`` dict rather
+        than as separate kwargs — the I30 cap is HARD=8 params and the
+        discipline row legitimately has more presentation knobs than
+        ``agent_pattern`` (which only carries the prompt). Consumers that
+        do not care about ordering or visibility may pass ``meta=None``
+        and the defaults match the schema's column defaults.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        meta = meta or {}
+        purpose = meta.get("purpose")
+        always_applied = bool(meta.get("always_applied", False))
+        position = int(meta.get("position", 0))
+        status = str(meta.get("status", "active"))
+
+        sql = text(
+            "INSERT INTO agent_discipline "
+            "(name, body_slug, purpose, always_applied, position, status, "
+            "baseline_hash, content_hash) "
+            "VALUES (:name, :body_slug, :purpose, :always_applied, "
+            ":position, :status, :baseline_hash, :content_hash) "
+            "ON DUPLICATE KEY UPDATE "
+            "body_slug = VALUES(body_slug), "
+            "purpose = VALUES(purpose), "
+            "always_applied = VALUES(always_applied), "
+            "position = VALUES(position), "
+            "status = VALUES(status), "
+            "baseline_hash = VALUES(baseline_hash), "
+            "content_hash = VALUES(content_hash)"
+        )
+        params = {
+            "name": name,
+            "body_slug": body_slug,
+            "purpose": purpose,
+            "always_applied": always_applied,
+            "position": position,
+            "status": status,
+            "baseline_hash": baseline_hash,
+            "content_hash": content_hash,
+        }
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, params)
+        return {"name": name, **params}
+
+    @observe(tier="boundary", metric="backend.sql.agent_discipline.list")
+    async def list_agent_discipline_rows(self) -> list[dict]:
+        """List every ``agent_discipline`` row, ordered by ``position`` then name."""
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT id, name, body_slug, purpose, always_applied, position, "
+            "status, baseline_hash, content_hash, created_at, updated_at "
+            "FROM agent_discipline ORDER BY position ASC, name ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql)
+            return [dict(row._mapping) for row in result]
+
+    # ── agent_pattern_composes ───────────────────────────────────────────
+
+    @observe(tier="boundary", metric="backend.sql.agent_pattern_composes.set")
+    async def set_pattern_composes(
+        self,
+        pattern_name: str,
+        composes: list[tuple[str, int]],
+    ) -> None:
+        """Replace the composition list for one ``agent_pattern``.
+
+        ``composes`` is ``[(discipline_name, position), ...]``. The
+        implementation deletes the existing rows for ``pattern_name`` and
+        reinserts; partial failure leaves the DB in an inconsistent state,
+        but the call is wrapped in a single transaction so the failure
+        mode is rollback, not half-write.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM agent_pattern_composes WHERE pattern_name = :pattern_name"),
+                {"pattern_name": pattern_name},
+            )
+            for discipline_name, position in composes:
+                await conn.execute(
+                    text(
+                        "INSERT INTO agent_pattern_composes "
+                        "(pattern_name, discipline_name, position) "
+                        "VALUES (:pattern_name, :discipline_name, :position)"
+                    ),
+                    {
+                        "pattern_name": pattern_name,
+                        "discipline_name": discipline_name,
+                        "position": position,
+                    },
+                )
+
+    # ── D17 — no-op scope filter hook ────────────────────────────────────
+
+    @staticmethod
+    def apply_scope_filter(query: Any, *, project_id: str | None) -> Any:
+        """D17 — tenancy scope filter. No-op today.
+
+        The ``owner_kind`` / ``owner_id`` / ``reach`` columns were retired
+        (§14.1); tenancy is enforced at the registry guard
+        (car A0's ``_ensure_project_exists``). The hook is the future
+        seam: when a multi-tenant query shape lands, this method becomes
+        a non-no-op and every read path gets filtered through it.
+
+        Static method today — no need for the engine handle until the
+        tenancy column is restored.
+        """
+        return query
