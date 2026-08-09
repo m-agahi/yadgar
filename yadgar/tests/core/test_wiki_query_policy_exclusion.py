@@ -1,4 +1,4 @@
-"""Task 0134 — wiki_query must honour recall_disposition, not bypass it.
+"""Task 0134 + Car C1 — wiki_query honours per-TYPE recall exclusion.
 
 The exclusion was applied only in the unified-recall provider; ``wiki_query``
 called ``WikiStore.query`` directly and never consulted ``get_policy``, so the
@@ -6,8 +6,10 @@ same excluded pages the fanout drops ranked freely through the search tool.
 ``wiki_read`` / ``wiki_list`` stay untouched — those are exact / enumerative
 lookups, not search.
 
-Same tag-opt-in rule as the provider: an excluded page survives only when it
-carries one of the requested tags.
+Car C1 (0047) narrows the tag-opt-in to the TYPE's declared ``opt_in_tag``
+(``WikiPolicy`` field) — the page's own tags are irrelevant. The TOC declares
+``opt_in_tag=None`` (unconditional exclusion); ``agent_pattern`` declares
+``"agent-prompt"``.
 """
 
 from __future__ import annotations
@@ -85,12 +87,32 @@ class TestWikiQueryHonoursExclusion:
         got = _slugs(max_results=20, tags=["agent-prompt"])
         assert "agent-prompt-toc-quokka" not in got
 
-    def test_opt_in_is_tag_intersection(self):
-        """Consent is per page: a requested tag the page carries unlocks it.
+    def test_opt_in_must_match_type_own_tag(self):
+        """Car C1: opt-in is the TYPE's declared opt_in_tag, not the page's tags.
 
-        All three fixture pages carry 'quokka', so all three are consented to
-        — the contrast case is the two tests above, where the requested tag
-        selects only some of them.
+        0134 unlocked both excluded pages on ``tags=["quokka"]`` because each
+        carried the ``quokka`` tag. C1 reverses that: the type's opt-in tag is
+        ``"agent-prompt"`` for ``agent_pattern`` and ``None`` (unconditional)
+        for ``agent_index`` — so a non-opt-in tag no longer unlocks them.
         """
         got = _slugs(max_results=20, tags=["quokka"])
-        assert got == {"plain-quokka-page", "agent-prompt-quokka", "agent-prompt-toc-quokka"}
+        assert got == {"plain-quokka-page"}
+
+    def test_type_opt_in_tag_unlocks(self):
+        """Car C1: ``agent_pattern`` reachable on ``tags=["agent-prompt"]`` (its
+        type's opt-in tag). The TOC (``agent_index``, opt_in_tag=None) stays
+        excluded even on its own tag or the library tag — no caller tag
+        unlocks it.
+        """
+        got = _slugs(max_results=20, tags=["agent-prompt"])
+        assert "agent-prompt-quokka" in got
+        assert "agent-prompt-toc-quokka" not in got
+
+    def test_toc_unconditional_via_wiki_query(self):
+        """Car C1: TOC dropped under bare recall, library opt-in, and own tag."""
+        toc_only = {"agent-prompt-toc-quokka"}
+        for tags in [None, ["agent-prompt"], ["agent-prompt-toc"]]:
+            got = _slugs(max_results=20, tags=tags)
+            assert "agent-prompt-toc-quokka" not in got, (
+                f"TOC surfaced under tags={tags!r}: {toc_only & got}"
+            )

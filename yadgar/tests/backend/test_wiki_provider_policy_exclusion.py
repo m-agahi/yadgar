@@ -1,14 +1,25 @@
-"""Task 0134 regression — policy recall-exclusion must be per PAGE, not per CALL.
+"""Task 0134 + Car C1 — policy recall-exclusion is per PAGE_TYPE, not per page tag.
 
-The defect: ``WikiProvider.candidates`` gated the whole exclusion on
-``if not self._tags`` — so passing ANY tag to ``recall()`` disabled the
+The original 0134 defect: ``WikiProvider.candidates`` gated the whole exclusion
+on ``if not self._tags`` — so passing ANY tag to ``recall()`` disabled the
 ``recall_disposition="exclude"`` filter for EVERY page in the result set, not
-just the ones the caller opted into. The documented
-``recall(tags=["agent-prompt"])`` lookup is an opt-in to agent-prompt pages; it
-is not an opt-in to every excluded page type that happens to rank.
+just the ones the caller opted into. 0134 narrowed it to a per-page tag
+intersection: an excluded page survived iff any requested tag was in
+``page.tags``.
 
-Correct rule (this file pins it): an excluded page survives only when it
-actually carries one of the requested tags.
+Car C1 narrows it one step further (§1.4 of the master plan): the unlock key is
+the page TYPE's declared ``opt_in_tag`` (a per-policy field), NOT the page's
+own tag set. ADR-0209 makes page_type the policy lever; the opt-in follows.
+
+Correct rule (this file pins it):
+- An excluded page survives iff ``policy.opt_in_tag`` is not None AND that tag
+  is in the caller's ``opt_in_tags``. The page's own tags are irrelevant — the
+  type owns the opt-in key.
+- A type with ``opt_in_tag=None`` is excluded unconditionally — no tag
+  unlocks it. ``agent_index`` (the TOC) is unconditional.
+- ``agent_pattern`` / ``agent_discipline`` / legacy ``agent_prompt`` declare
+  ``opt_in_tag="agent-prompt"`` — the documented ``recall(tags=["agent-prompt"])``
+  lookup reaches ONLY those types, never an unrelated excluded type.
 """
 
 from __future__ import annotations
@@ -67,6 +78,21 @@ class TestExclusionWithoutTags:
         ]
         assert _slugs(WikiProvider(wiki)) == ["plain-page"]
 
+    def test_toc_unconditional_exclusion(self):
+        """Car C1: agent_index declares opt_in_tag=None — no tag unlocks it.
+
+        Regression under bare recall (no tag), under ``agent-prompt`` (the
+        library opt-in tag), AND under the TOC's own tag (``agent-prompt-toc``).
+        The type owns the opt-in key, not the page's tags.
+        """
+        toc = _page("agent-prompt-toc", PAGE_TYPE_AGENT_INDEX, ["agent-prompt-toc"])
+        for tags in [None, ["agent-prompt"], ["agent-prompt-toc"]]:
+            wiki = MagicMock()
+            wiki.query.return_value = [toc, _page("plain-page", None, ["yadgar"])]
+            assert _slugs(WikiProvider(wiki, tags=tags) if tags else WikiProvider(wiki)) == [
+                "plain-page"
+            ]
+
 
 class TestExclusionWithTags:
     """The 0134 fix: the tag opt-in is per page, not a blanket kill-switch."""
@@ -107,18 +133,22 @@ class TestExclusionWithTags:
         ]
         assert _slugs(WikiProvider(wiki, tags=["yadgar"])) == ["plain-page"]
 
-    def test_opt_in_is_tag_intersection(self):
-        """Consent is per page: any requested tag the page carries unlocks it.
+    def test_opt_in_must_match_type_own_tag(self):
+        """Car C1: opt-in is the TYPE's declared opt_in_tag, not the page's tags.
 
-        Deliberately NOT "only a tag that names the excluded family" — that
-        would need a tag→page_type map, i.e. the string-matching ADR-0209
-        removes. The caller's own tag filter is the consent signal.
+        The 0134 rule unlocked an excluded page on any tag intersection — so an
+        ``agent_pattern`` page carrying ``["agent-prompt", "yadgar"]`` survived
+        ``recall(tags=["yadgar"])``. C1 reverses that: the page is DROPPED on
+        a non-opt-in tag and SURVIVES only on the type's own opt-in tag.
         """
         wiki = MagicMock()
         wiki.query.return_value = [
             _page("agent-prompt-fix-bug", PAGE_TYPE_AGENT_PATTERN, ["agent-prompt", "yadgar"]),
         ]
-        assert _slugs(WikiProvider(wiki, tags=["yadgar"])) == ["agent-prompt-fix-bug"]
+        # yadgar is NOT the type's opt_in_tag → page dropped (reverse of 0134).
+        assert _slugs(WikiProvider(wiki, tags=["yadgar"])) == []
+        # agent-prompt IS the type's opt_in_tag → page survives.
+        assert _slugs(WikiProvider(wiki, tags=["agent-prompt"])) == ["agent-prompt-fix-bug"]
 
     def test_included_page_never_gated_by_tags(self):
         """A non-excluded page passes regardless of tag intersection."""
@@ -126,11 +156,22 @@ class TestExclusionWithTags:
         wiki.query.return_value = [_page("plain-page", None, ["something-else"])]
         assert _slugs(WikiProvider(wiki, tags=["agent-prompt"])) == ["plain-page"]
 
-    def test_legacy_agent_prompt_type_still_excluded(self):
-        """Un-migrated rows (page_type='agent_prompt') keep their exclusion."""
+    def test_legacy_type_survives_own_opt_in_tag(self):
+        """Car C1: legacy ``agent_prompt`` type declares opt_in_tag="agent-prompt".
+
+        Pre-migration-028 rows (page_type='agent_prompt') now share the same
+        opt-in tag as the split library types, so the documented
+        ``recall(tags=["agent-prompt"])`` lookup reaches them. Bare recall still
+        drops them.
+        """
+        legacy = _page("agent-prompt-legacy", "agent_prompt", ["agent-prompt-toc"])
+        plain = _page("plain-page", None, [])
         wiki = MagicMock()
-        wiki.query.return_value = [
-            _page("agent-prompt-legacy", "agent_prompt", ["agent-prompt-toc"]),
-            _page("plain-page", None, []),
+        wiki.query.return_value = [legacy, plain]
+        # Bare recall → legacy still excluded; plain-page (include) survives.
+        assert _slugs(WikiProvider(wiki)) == ["plain-page"]
+        # Tagged with the type's opt_in_tag → legacy surfaces alongside plain.
+        assert _slugs(WikiProvider(wiki, tags=["agent-prompt"])) == [
+            "agent-prompt-legacy",
+            "plain-page",
         ]
-        assert _slugs(WikiProvider(wiki, tags=["agent-prompt"])) == ["plain-page"]

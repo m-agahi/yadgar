@@ -64,10 +64,10 @@ from yadgar._shared.wiki.wiki_meta import (
 class WikiPolicy:
     """Immutable routing policy for a wiki page_type.
 
-    Field order: gate_mode, recall_disposition, dir_scope, merge, storage_scope.
-    Positional construction is intentional — keep field order stable.
-    New fields MUST be appended with defaults so existing 4-arg positional
-    callers (tests) keep working without changes.
+    Field order: gate_mode, recall_disposition, dir_scope, merge, storage_scope,
+    opt_in_tag. Positional construction is intentional — keep field order
+    stable. New fields MUST be appended with defaults so existing 4–6-arg
+    positional callers (tests) keep working without changes.
     """
 
     gate_mode: str
@@ -92,6 +92,21 @@ class WikiPolicy:
     used by both agent_prompt_save and wiki_add's replay path.
     """
 
+    opt_in_tag: str | None = None
+    """Car C1 (0047): per-type opt-in key for the recall exclusion gate.
+
+    ``None`` — the type is excluded UNCONDITIONALLY: no tag the caller passes
+    unlocks it. ``agent_index`` (the TOC) uses this — it must never be
+    recall-visible (§1.4), and Car I later deletes the TOC page entirely.
+
+    A string value — the ONE tag that unlocks the type when present in the
+    caller's ``opt_in_tags``. The page's own ``tags`` field is NOT consulted by
+    the exclusion gate; only the TYPE's declared key (ADR-0209 — page_type is
+    the policy lever). ``agent_pattern``, ``agent_discipline``, and legacy
+    ``agent_prompt`` declare ``"agent-prompt"`` (the documented
+    ``recall(tags=["agent-prompt"])`` lookup).
+    """
+
 
 # ── Policy registry ──────────────────────────────────────────────────────────
 
@@ -110,15 +125,35 @@ _AGENT_LIBRARY_POLICY = WikiPolicy(
     dir_scope="strict",
     merge="allow",
     storage_scope="global",
+    opt_in_tag="agent-prompt",
 )
-"""Shared routing for every agent-prompt-library page type.
+"""Shared routing for the three agent-prompt-library page types
+(``agent_pattern``, ``agent_discipline``, legacy ``agent_prompt``).
 
 ADR-0209 splits the TYPE, not the routing: all library pages stay excluded from
 search fanout (they are dispatch scaffolding, not knowledge) and global-scoped
 (ADR-0159 — the library is a cross-project shared resource, and a caller-dir
 stamp made it invisible from every other project). One shared instance so the
 three entries below cannot drift apart silently.
+
+Car C1 (0047): ``opt_in_tag="agent-prompt"`` is the per-type opt-in key — the
+documented ``recall(tags=["agent-prompt"])`` lookup reaches these types. The
+TOC is SPLIT OFF into ``_AGENT_INDEX_POLICY`` below — it must never be
+recall-visible, so its opt_in_tag is None (unconditional exclusion).
 """
+
+# Car C1 (0047): split off from _AGENT_LIBRARY_POLICY so the TOC can declare
+# ``opt_in_tag=None`` (unconditional exclusion). The TOC carried the library
+# tag pre-C1 and surfaced on every ``recall(tags=["agent-prompt"])`` lookup —
+# §1.4 documents this as a defect (the tag-override defeats exclusion).
+_AGENT_INDEX_POLICY = WikiPolicy(
+    gate_mode="similarity",
+    recall_disposition="exclude",
+    dir_scope="strict",
+    merge="allow",
+    storage_scope="global",
+    opt_in_tag=None,
+)
 
 POLICY_BY_TYPE: dict[str, WikiPolicy] = {
     # Pre-ADR-0209 type. Rows on an install that has not run migration 028 still
@@ -128,9 +163,12 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
     PAGE_TYPE_AGENT_DISCIPLINE: _AGENT_LIBRARY_POLICY,
     # The TOC index. Registered HERE ONLY (no wiki_page_types.yaml entry) —
     # task 0134: a null page_type fell through to DEFAULT_POLICY include, which
-    # made the index recall-visible. See PAGE_TYPE_AGENT_INDEX's docstring for
-    # why it gets no lint schema.
-    PAGE_TYPE_AGENT_INDEX: _AGENT_LIBRARY_POLICY,
+    # made the index recall-visible. Car C1 (0047): split off the shared
+    # library policy so opt_in_tag=None makes it unconditional exclusion —
+    # closing the §1.4 leak where the TOC surfaced on every targeted prompt
+    # lookup. See PAGE_TYPE_AGENT_INDEX's docstring for why it gets no lint
+    # schema.
+    PAGE_TYPE_AGENT_INDEX: _AGENT_INDEX_POLICY,
 }
 """Explicit overrides keyed by page_type string.
 
@@ -166,25 +204,31 @@ def is_recall_visible(page: dict, opt_in_tags: Sequence[str] | None = None) -> b
     The single rule shared by the unified-recall wiki provider and
     ``wiki_query`` (task 0134 fixed both call sites diverging).
 
-    A page whose ``page_type`` resolves to ``recall_disposition="exclude"``
-    is dropped UNLESS the caller opted into it by tag — i.e. the page carries
-    at least one of *opt_in_tags*. The opt-in is deliberately PER PAGE: the
-    documented ``recall(tags=["agent-prompt"])`` lookup is consent to see
-    agent-prompt pages, not consent to see every excluded page that happens to
-    rank alongside them. (The pre-0134 code gated the whole filter on "were any
-    tags passed at all", so one unrelated tag disabled the exclusion wholesale
-    — and the ``agent-prompt-toc`` index, tagged ``agent-prompt-toc`` rather
-    than ``agent-prompt``, surfaced on every targeted prompt lookup.)
+    Car C1 (0047): the opt-in is PER TYPE — an excluded page survives only when
+    the caller's ``opt_in_tags`` include its page_type's declared
+    ``opt_in_tag`` (a ``WikiPolicy`` field). The page's own ``tags`` field is
+    NO LONGER read for the exclusion gate (page tags still matter upstream for
+    the SQL pre-filter / HNSW ranking path — unaffected by this car). A type
+    with ``opt_in_tag=None`` is excluded unconditionally — no tag unlocks it.
+    ``agent_index`` (the TOC) declares ``None``; ``agent_pattern``,
+    ``agent_discipline``, and legacy ``agent_prompt`` declare
+    ``"agent-prompt"``.
+
+    This narrows the 0134 rule (per-page tag intersection): task 0134 fixed the
+    blanket kill-switch, but any-tag intersection still let an excluded page
+    survive on an unrelated caller tag. C1 tightens it once more — the unlock
+    signal is the TYPE's declared key, not the page's own tags.
 
     Args:
-        page: A wiki page dict; reads ``page_type`` and ``tags``.
+        page: A wiki page dict; reads ``page_type`` only.
         opt_in_tags: Tags the caller explicitly asked for, if any.
 
     Returns:
         True when the page may be returned by a search path.
     """
-    if get_policy(page.get("page_type")).recall_disposition != "exclude":
+    policy = get_policy(page.get("page_type"))
+    if policy.recall_disposition != "exclude":
         return True
-    if not opt_in_tags:
+    if not opt_in_tags or policy.opt_in_tag is None:
         return False
-    return bool(set(page.get("tags") or []) & set(opt_in_tags))
+    return policy.opt_in_tag in set(opt_in_tags)
