@@ -337,6 +337,17 @@
   "added_by": "feat/improvement-train"
  },
  {
+  "path": "yadgar/core/server/tools/task.py",
+  "function": "task_write",
+  "lineno": 221,
+  "metrics": {
+   "params": 10
+  },
+  "rationale": "Car D (0047 spine train §7 row D): task_write mirrors the task-table column set (project_id, title, status, state, active_form, plan_path, body_slug, id, blocked_by, blocks — 10 params, ADR-0197/§14.1). FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement on the harness side. The D39 blocked_by/blocks list + D36 nullable state + D12 title cap + §16.10 completion-clears-state all ride this one signature by design — the four feature surfaces would otherwise scatter across four near-identical tools. Validation, payload assembly and the create/update fork are already extracted into _validate_write_inputs / _build_create_payload / _build_update_payload (see module docstring); what remains here is the entry-point shape and the create-vs-update dispatch.",
+  "added": "2026-08-09",
+  "added_by": "car/D-task-tools"
+ },
+ {
   "path": "yadgar/_shared/observability/metrics.py",
   "function": "<file>",
   "lineno": 1,

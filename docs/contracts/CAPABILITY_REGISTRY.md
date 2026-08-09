@@ -3278,6 +3278,19 @@ config knobs.
 - **explanation:** Architecture Decision Records are durable artefacts linking decisions to context and consequences. Car 2 makes them consultable (recall-native): wiki pages never decay, the default recall profile fuses the wiki arm, and `"adr"` is not in `wiki_exclude` so ADR pages surface in `recall`. `adr_add` provides the 10-field structured capture surface; `adr_get`/`adr_list` give deterministic direct-fetch and "show all open" without a branch footgun. ID assignment is sequential from the index (regex `^## ADR-(\d{4})` re.MULTILINE header scan for the migration's monolith parse). CANONICAL branch resolves the ADR-log asymmetry (feature-branch / non-git sessions previously read an empty or master-pinned log).
 
 
+### CAP-TASK-001 — SQL task ledger: task_write / task_list / task_get (Car D, 0047 spine train)
+
+- **status:** LIVE
+- **category:** mcp-tool
+- **settings:** —
+- **tools:** `task_write`, `task_list`, `task_get`
+- **migrations:** `002_ledger_tables` (Car A — creates `task` + `task_blocked_by`)
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/task.py`, `yadgar/backend/admin_exec/ledger.py`, `yadgar/_shared/storage/sql/mariadb.py`, `yadgar/tests/core/test_task_tools.py`
+- **wiring:** Car D of the 0047 spine train — three MCP tools that sit on top of the `task` ledger table (Car A) and the backend `yadgar.backend.admin_exec.ledger` op bodies (Car B read surface + Car D write surface). All three are `@_tool()`-registered in `yadgar/core/server/tools/task.py`: `task_write` is `@_tool(power=True)`, `task_list` and `task_get` are read-only. Per §15 / ADR-0078, the tools forward over HTTP to the backend PTC via `_forward_admin` (op-name = tool-name); they do NOT call `_get_storage()` directly (the PR #32 reference implementation violated §15 — fixed by Car D). Car D also adds the corresponding backend write ops `create_task_row` / `update_task_row` in `yadgar/backend/admin_exec/ledger.py` (Car B delivered only the read surface); they translate the dict payload into the typed call into `MariaStorageEngine`, then reconcile the `task_blocked_by` join edges (D39) via delete-then-insert on UPDATE.
+- **explanation:** Replaces the markdown `{project}-task-list` wiki page as the **source of truth** for task tracking (ADR-0133). After Car D, task reads/writes go through the ledger, not through page parsing; the wiki page becomes a derived mirror via `wiki_write_task_list` (the stop-hook checkpoint writer). Key invariants: (a) `task_write` create returns the AUTO_INCREMENT `id` — no `number` column / no allocation step (ADR-0197, §14.1); (b) `task_list` defaults to open-only `status IN (pending, in_progress)` (D37); (c) `task_write` clears `state` to NULL when `status` → `completed`/`archived` (§16.10, tool-layer enforcement); (d) `blocked_by`/`blocks` manage the `task_blocked_by` join edges (D39); (e) no `origin` parameter (§14.1 dropped); (f) title ≤ 200 chars (D12, reject-on-write); (g) payload keys use `id`, never `number` (§13.2 blocker 2). `project_id` arrives from the caller per ADR-0202 — passing a different value IS the cross-project override (§16.6); the tool never derives it internally. `body_slug` is stamped only when the caller supplies one — task bodies are optional, the description lives in `title`/`active_form`/`plan_path`. The `_format_task_id(id)` helper emits the `[<id>]` harness-render prefix (D11); the base32 display (D10) is applied at render time, not stored. `task_list` returns the rows list extracted from the backend's `{"rows": [...]}` envelope; `task_get` returns the row dict or `None`.
+
+
 ### CAP-WIKI-002 — Agent-prompt starter library seed (v5.85 S8)
 
 - **status:** LIVE

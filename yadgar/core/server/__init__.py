@@ -216,6 +216,9 @@ from yadgar.core.server.tools import (  # noqa: F401
     config_list,
     config_set,
     config_delete,
+    task_write,
+    task_list,
+    task_get,
 )
 
 # ── 7. Project helpers ──

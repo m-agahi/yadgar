@@ -18,6 +18,21 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
     get_task_row(payload) -> {"row": dict | None}
         payload: {"id": int}
 
+    create_task_row(payload) -> {"id": int, ...row}
+        payload: {"project_id": str, "title": str, "status"?: str,
+                  "state"?: str, "active_form"?: str, "plan_path"?: str,
+                  "body_slug"?: str}
+        Returns the inserted PK (LAST_INSERT_ID) plus the inserted params.
+
+    update_task_row(payload) -> {"id": int, ...patched}
+        payload: {"id": int, <column>: <value>, ...}
+        Only the named columns are UPDATEd; absent fields are left unchanged
+        (the storage layer's update_task_row enforces an empty-fields no-op).
+        ``state: None`` clears the column to NULL (§16.10 — completed/archived
+        transitions). ``blocked_by`` / ``blocks`` lists are reconciled against
+        the ``task_blocked_by`` join table (D39) — they are NOT columns on
+        ``task``; the admin op handles the join-edge sync side-channel.
+
     list_task_rows_all_projects(payload) -> {"rows": list[dict]}
         payload: {"status"?: list[str]}
 
@@ -103,6 +118,88 @@ async def list_task_rows_all_projects(payload: dict) -> dict:
         logger.warning("list_task_rows_all_projects error: %s", exc)
         return {"ok": False, "error": str(exc)}
     return {"rows": rows}
+
+
+# ── Car D: task write ops ─────────────────────────────────────────────────────
+# The MCP tool shells in yadgar.core.server.tools.task forward here over HTTP.
+# These wrappers translate the dict payload into the typed call into
+# ``MariaStorageEngine`` (engine #2). The optional ``blocked_by`` / ``blocks``
+# keys reconcile the ``task_blocked_by`` join table (D39) AFTER the row is
+# created/updated; the reconciliation is idempotent (delete-then-insert).
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.create_task_row")
+async def create_task_row(payload: dict) -> dict:
+    """INSERT one ``task`` row. payload keys (see module docstring)."""
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        result = await storage.create_task_row(
+            project_id=payload["project_id"],
+            title=payload["title"],
+            status=payload.get("status", "pending"),
+            state=payload.get("state", "open"),
+            active_form=payload.get("active_form"),
+            plan_path=payload.get("plan_path"),
+            body_slug=payload.get("body_slug"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("create_task_row error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    # D39: optionally reconcile ``task_blocked_by`` join edges on CREATE.
+    inserted_id = int(result.get("id", 0))
+    blocked_by = payload.get("blocked_by")
+    if blocked_by is not None and inserted_id:
+        try:
+            for blocker_id in blocked_by:
+                await storage.add_task_blocked_by(inserted_id, int(blocker_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("create_task_row blocked_by sync error: %s", exc)
+            # Row created; edge-sync failure is non-fatal — surface the id.
+    return result
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.update_task_row")
+async def update_task_row(payload: dict) -> dict:
+    """UPDATE one ``task`` row. payload: {id, <col>: <val>, ...}."""
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        task_id = int(payload["id"])
+        # Strip non-column keys before the typed UPDATE; ``blocked_by`` and
+        # ``blocks`` are join-edge reconcilers (D39), handled separately.
+        column_payload = {
+            k: v for k, v in payload.items() if k not in {"id", "blocked_by", "blocks"}
+        }
+        await storage.update_task_row(task_id, **column_payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("update_task_row error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    # D39: optionally reconcile ``task_blocked_by`` join edges on UPDATE.
+    blocked_by = payload.get("blocked_by")
+    if blocked_by is not None:
+        try:
+            # Read the existing set; delete the diff (removed); insert the diff (added).
+            existing = set(await storage.list_task_blocked_by(task_id))
+            desired = {int(x) for x in blocked_by}
+            from sqlalchemy import text as _sa_text  # noqa: PLC0415
+
+            async with storage._engine.begin() as conn:  # type: ignore[attr-defined]
+                for gone in existing - desired:
+                    await conn.execute(
+                        _sa_text(
+                            "DELETE FROM task_blocked_by "
+                            "WHERE task_id = :task_id AND blocked_by_id = :blocked_by_id"
+                        ),
+                        {"task_id": task_id, "blocked_by_id": gone},
+                    )
+            for new in desired - existing:
+                await storage.add_task_blocked_by(task_id, new)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("update_task_row blocked_by sync error: %s", exc)
+    return {"id": task_id, **column_payload}
 
 
 @observe(tier="boundary", metric="backend.admin.ledger.list_adr_rows")

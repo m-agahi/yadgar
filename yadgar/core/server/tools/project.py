@@ -141,7 +141,8 @@ def _render_project_brief(brief: dict) -> str:
         )
         lines.append(
             "*To track TODOs/tasks use the harness task list (TaskCreate)"
-            " — yadgar mirrors it via the stop-hook.*"
+            " and the yadgar `task_write` tool — the SQL ledger is the source"
+            " of truth, the wiki `{project}-task-list` page is a derived mirror.*"
         )
     if not init_present or not active_present:
         lines.append("")

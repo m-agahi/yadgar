@@ -139,6 +139,11 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "list_task_rows": ledger.list_task_rows,
     "get_task_row": ledger.get_task_row,
     "list_task_rows_all_projects": ledger.list_task_rows_all_projects,
+    # Car D: ledger WRITE ops (task) — create / update + task_blocked_by join-edge
+    # reconcile (D39). Mirror the READ ops' async shape; the core ``task_write``
+    # tool shells forward here over HTTP per §15 / ADR-0078.
+    "create_task_row": ledger.create_task_row,
+    "update_task_row": ledger.update_task_row,
     "list_adr_rows": ledger.list_adr_rows,
     "get_adr_row": ledger.get_adr_row,
     "list_agent_prompt_rows": ledger.list_agent_prompt_rows,
