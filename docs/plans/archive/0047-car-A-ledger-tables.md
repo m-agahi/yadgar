@@ -1,7 +1,7 @@
 # Car A — ledger tables + alembic chain + chokepoint guard
 
 > Parent plan: docs/plans/task-table-refactor-2026-07-29.md (task 0047, §7 + §16)
-> Status: build-ready (spec extracted from audited master plan)
+> Status: shipped (Car A of 0047 spine train — code on `car/A-ledger-tables`)
 > Depends on: A0
 > Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
 
