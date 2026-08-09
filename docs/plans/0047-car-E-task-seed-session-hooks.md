@@ -9,7 +9,7 @@
 
 Per §7 row E (verbatim): "task seed + SessionStart/stop-hook rewire + `http.py:923` matcher + D11 prefix instruction". This car does four things, all after Car D's task tools and `task` ledger table have merged:
 
-1. **Task seed** (D35a/D35b/D35c) — a one-shot admin op that reads the 6 `page_type='task_list'` wiki pages, parses each `## task:<id>` section, and inserts rows into the `task` ledger table per `project_id`. Idempotent; ships with an exact-equality verification gate (per-page `## task:<id>` section count must equal seeded rows per project). NOT a migration step.
+1. **Task seed** (D35a/D35b/D35c) — a one-shot admin op that reads all the `page_type='task_list'` wiki pages, parses each `## task:<id>` section, and inserts rows into the `task` ledger table per `project_id`. Idempotent; ships with an exact-equality verification gate (per-page `## task:<id>` section count must equal seeded rows per project). NOT a migration step. The inserted rows will have different id than the source. this is expected. we are abandoning the tracking of ids in favor of using built in row ids.
 2. **SessionStart rewire** — `_task_list_restore_nudge` (`yadgar/core/server/http.py:829`) stops parsing the `{project}-task-list` wiki page and instead reads open tasks from the `task` ledger (via `task_list` / `list_task_rows`, D37 open-only default). The hook script `session-start-context.py` itself is unchanged (it already just calls `/hooks/session-context`); the rewire is server-side in http.py.
 3. **`http.py:923` matcher** — the `_TASK_RE` regex (`^## task:(\d+)`, actually at `http.py:885` — see §9 drift) must change to accept Crockford base32 ids (D10) and an optional origin segment (D11). Forced by D10 regardless of the origin drop (§14.1).
 4. **D11 prefix instruction** — the restore-nudge template (`http.py:920-933`) already emits `[{tid}]` but never instructs the model to *preserve* that prefix in the `TaskCreate` subject. Add that instruction.
@@ -75,7 +75,7 @@ def seed_task_from_pages(*, directory: str, project_id: str, dry_run: bool = Fal
 ```
 - Source of truth: the `{project}-task-list` wiki page (D35b — pages, not an index). Parse `## task:<id>` sections with the updated `_TASK_RE` (or a local copy — the seed reads the page body, not the nudge path).
 - Fields per section (from stop_checkpoint_prompt.md:156-181 schema): `subject`, `status` (pending/in_progress/completed), `active_form`, `description`, `context`, `blockedBy`, `blocks`, `modified`.
-- Map to `create_task_row(project_id=, origin="yadgar", title=subject, active_form=, state=, plan_path=, body_slug=, directory=)`.
+- Map to `create_task_row(project_id=, title=subject, status=, state=, active_form=, plan_path=, body_slug=)` — the exact kwargs of Car A's signature (`0047-car-A-ledger-tables.md:72-74`). NOT `origin=` (Car D §D-note: "§14.1 dropped `origin` as a column… do NOT carry it forward"), NOT `directory=` (the `task` table keys on `project_id`; there is no `directory` column — Car A:183). `status=` is REQUIRED here, not optional: it defaults to `"pending"`, so omitting it silently flattens every `in_progress`/`completed` page section to pending.
 - `status` from the page section → `task.status` column (pending/in_progress/completed). `state` from the `[PLANNED]`/`[SPIKE]`/`[DECIDE]`/`[VERIFY]` subject prefix per §11.1/§16.10, defaulting to `open`.
 - D35c gate: per-page `## task:<id>` section count == seeded rows per project (line 556-557 of master plan).
 
@@ -83,8 +83,10 @@ def seed_task_from_pages(*, directory: str, project_id: str, dry_run: bool = Fal
 
 Replace the `wiki_write_task_list` calls (stop_checkpoint_prompt.md:122, :137) and the SCHEMA block (:156-181) with ledger-backed task tool calls:
 - Step 5a (reconcile own list via harness `TaskList`/`TaskUpdate`/`TaskCreate`) — unchanged.
-- Step 5b — replace `wiki_read("{project}-task-list", ...)` with `task_list(project_id="<derived>", directory="<directory>")` (D37 open-only default).
-- Step 5c — replace `wiki_write_task_list(project=..., content=..., directory=...)` with `task_write(project_id=..., title=..., active_form=..., state=..., directory=...)` per task.
+- Step 5b — replace `wiki_read("{project}-task-list", ...)` with `task_list(project_id="<session project_id>")` (D37 open-only default).
+- Step 5c — replace `wiki_write_task_list(project=..., content=..., directory=...)` with `task_write(project_id=..., title=..., status=..., state=..., active_form=...)` per task.
+
+> **`project_id` is a caller parameter, not a per-call derivation.** ADR-0202: it "is derived ONCE per session — by the startup hook, or from `.yadgar/project-id` found by walking up from cwd — and thereafter travels as an explicit caller parameter on each write, with an override for cross-project work." ADR-0202 explicitly REJECTS re-deriving per write ("pays the git-remote parse and its traps on every call for a value that cannot change mid-session"). No internal core/backend component derives it. Car D's §3 preamble (`0047-car-D-task-tools.md:43`) currently says the opposite — take `directory`, derive internally — and is the document that needs correcting, not this one.
 - Delete the page-format SCHEMA block (tasks now live in SQL, not a markdown page).
 
 ## 4. Build steps (TDD)

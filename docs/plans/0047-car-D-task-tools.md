@@ -40,14 +40,18 @@ Three tools, all in a NEW file `yadgar/core/server/tools/task.py` (does not exis
 
 ## 3. Functions / symbols
 
-All signatures follow the `adr_add` convention (`adr.py:142`): take `directory` (absolute project path), derive `project_id` internally via `yadgar/core/identity.py` (Car A0). The explicit cross-project `project=` override is Car M (§16.6) and is NOT added here. The PR #32 reference took `project_id` directly (`task.py:81` on the feature branch) — that shape is superseded by §16; this car uses `directory`.
+All signatures take `project_id` as an explicit caller parameter. **No tool derives it, and no internal core/backend component derives it.** ADR-0202 is binding here: project_id "is derived ONCE per session — by the startup hook, or from `.yadgar/project-id` found by walking up from cwd — and thereafter travels as an explicit caller parameter on each write, with an override for cross-project work." ADR-0202 explicitly REJECTS the alternative: "Re-deriving project_id per write — rejected: pays the git-remote parse and its traps on every call for a value that cannot change mid-session."
+
+This corrects an earlier draft of this car, which said the tools take `directory` and derive internally via `yadgar/core/identity.py`, citing §16 as superseding PR #32's `project_id` shape. That was a misreading: §16 says the registry check on write REJECTS an unknown `project_id` with a structured error, which only makes sense if the caller supplies it. Car A0's `derive_project_id()` exists to run ONCE at session start — it is not a per-call helper.
+
+The cross-project case needs no separate mechanism at the tool layer: passing a different `project_id` IS the override. Car M (§16.6) covers the surrounding plumbing, not a distinct `project=` kwarg here.
 
 ### 3.1 Add — `task_write` (`yadgar/core/server/tools/task.py`)
 
 ```python
 @_tool(power=True)
 def task_write(
-    directory: str,
+    project_id: str,                # session-resolved, caller-supplied (ADR-0202)
     title: str,
     *,
     id: int | None = None,          # None → create; int → update existing row
@@ -89,7 +93,7 @@ Notes:
 ```python
 @_tool()
 def task_list(
-    directory: str,
+    project_id: str,                # session-resolved, caller-supplied (ADR-0202)
     *,
     include_closed: bool = False,   # D37 — default open-only
     status: list[str] | None = None,  # explicit override; None → D37 default
@@ -105,7 +109,7 @@ def task_list(
     """
 ```
 
-- Derive `project_id` from `directory` via `identity.py` (Car A0).
+- `project_id` arrives from the caller (session-resolved). Validate it against the `project` registry — §16 makes that check LOAD-BEARING on write: an unknown `project_id` is REJECTED with a structured error, never auto-created, or a typo mints a phantom namespace.
 - Forward to backend `list_task_rows` (Car A `_LedgerMixin`, `ledger.py:286` on the feature branch).
 - Return shape: list of dicts keyed on `id` (NOT `number` — §13.2 blocker 2: the seed/archive callers read `r["number"]` but the ledger returns `{"id": ...}`). Car D's tool surface MUST use `id` consistently.
 
@@ -114,10 +118,10 @@ def task_list(
 ```python
 @_tool()
 def task_get(
-    directory: str,
+    project_id: str,                # session-resolved, caller-supplied (ADR-0202)
     id: int,                        # AUTO_INCREMENT PK — the semantic number
 ) -> dict:
-    """Fetch one task by (derived project_id, id)."""
+    """Fetch one task by (project_id, id)."""
 ```
 
 - Forward to backend `get_task_row` (`ledger.py:361` on the feature branch).
@@ -146,13 +150,13 @@ Mirrors the PR #32 reference (`task.py:43 _validate_title`, `:68 _validate_proje
 
 ## 4. Build steps (TDD)
 
-1. **RED** — `yadgar/tests/core/test_task_tools.py::test_task_write_creates_row_and_returns_id` — call `task_write(directory=..., title="...")` against a stubbed backend forward; assert it forwards a create op (no `id`), returns `{"ok": True, "id": <int>}`, and does NOT call `_get_storage()` directly (assert the storage accessor is never touched — this is the §15 invariant).
-2. **RED** — `test_task_write_update_clears_state_on_completion` — call `task_write(directory=..., id=231, status="completed", state="planned")`; assert the forwarded update op sets `state=NULL` alongside `status="completed"` (§16.10).
+1. **RED** — `yadgar/tests/core/test_task_tools.py::test_task_write_creates_row_and_returns_id` — call `task_write(project_id=..., title="...")` against a stubbed backend forward; assert it forwards a create op (no `id`), returns `{"ok": True, "id": <int>}`, and does NOT call `_get_storage()` directly (assert the storage accessor is never touched — this is the §15 invariant).
+2. **RED** — `test_task_write_update_clears_state_on_completion` — call `task_write(project_id=..., id=231, status="completed", state="planned")`; assert the forwarded update op sets `state=NULL` alongside `status="completed"` (§16.10).
 3. **RED** — `test_task_write_rejects_title_over_200_chars` — D12.
 4. **RED** — `test_task_write_rejects_non_string_project_id` — strict types.
-5. **RED** — `test_task_list_defaults_open_only` — `task_list(directory=...)` forwards with `status=["pending","in_progress"]` (D37); `include_closed=True` forwards with `status=None`.
+5. **RED** — `test_task_list_defaults_open_only` — `task_list(project_id=...)` forwards with `status=["pending","in_progress"]` (D37); `include_closed=True` forwards with `status=None`.
 6. **RED** — `test_task_list_explicit_status_overrides_default` — `status=["archived"]` forwards with exactly that, ignoring `include_closed`.
-7. **RED** — `test_task_get_forwards_by_id_not_number` — `task_get(directory=..., id=231)` forwards `id=231`; the forwarded payload key is `id`, never `number` (§13.2 blocker 2).
+7. **RED** — `test_task_get_forwards_by_id_not_number` — `task_get(project_id=..., id=231)` forwards `id=231`; the forwarded payload key is `id`, never `number` (§13.2 blocker 2).
 8. **RED** — `test_task_write_manages_blocked_by_edges` — `blocked_by=[5, 7]` forwards a join-edge sync op for `task_blocked_by` (D39).
 9. **RED** — `test_task_write_does_not_pass_origin` — assert the forwarded payload has NO `origin` key (§14.1 dropped it).
 10. **GREEN** — implement `task.py` with the three tools + helpers, forwarding over HTTP to the Car B backend. Wire into `tools/__init__.py:66` and `:158`, and `core/server/__init__.py:177`.
@@ -203,7 +207,7 @@ D ∥ F (ADR tools) ∥ I (agent_prompt tools) after B. **C gates D and F.**
 | D39 | `blocked_by[]` and `blocks[]` as the `task_blocked_by` join table (D30 retired scalar arrays → join tables, §14.1). |
 | §14.1 | `origin`, `number`, `directory`, `branch` columns DROPPED. `id` IS the number. |
 | §15 | Core PTC → backend PTC → DB. Core never touches the DB. Forward over HTTP. |
-| §16.6 | Cross-project `project=` override is Car M — not added here. Tools take `directory`, derive `project_id`. |
+| §16.6 | Tools take `project_id` as an explicit caller parameter (ADR-0202); passing a different value IS the cross-project override. Car M covers the surrounding plumbing, not a separate `project=` kwarg. |
 | §16.10 | `state` is NULL once `status` is `completed`/`archived`. CHECK-constraint question open (§14.3) — this car clears at the application layer. |
 | ADR-0133 | Harness task list = source of truth; yadgar `{project}-task-list` wiki = derived mirror via `wiki_write_task_list`. This car makes the ledger the source of truth; the wiki mirror becomes second-class. |
 | ADR-0197 | `id` IS the number; no allocation step. |
