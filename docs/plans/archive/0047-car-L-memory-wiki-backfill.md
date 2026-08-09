@@ -1,9 +1,9 @@
 # Car L — memory + wiki directory_context→project_id backfill + quarantine + ADR re-slug
 
 > Parent plan: docs/plans/task-table-refactor-2026-07-29.md (task 0047, §7 + §16)
-> Status: build-ready (spec extracted from audited master plan)
-> Depends on: A0
-> Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
+> Status: shipped (Car L of 0047 spine train — code on `car/L-memory-wiki-backfill`)
+> Depends on: A0, A
+> Lifecycle: ADR-0081/0082 — archived this doc as the first commit of the completing branch.
 
 ## 1. Scope
 
