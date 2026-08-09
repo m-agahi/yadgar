@@ -115,6 +115,14 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
             f"canonical writes are restricted to {sorted(CANONICAL_PAGE_TYPES)}"
         )
     payload["_internal"] = True
+    # Canonical writes are server-side sanctioned (adr_add + wiki_write_task_list
+    # are the SOLE writers of their page_types). Car J (0047 §7 D25/D26) marks
+    # ``adr`` as mutability='locked' (decisions are immutable, Car G supersede
+    # retype is the SOLE mutator of an existing row); adr_add's NEW insert path
+    # must therefore carry the server-side sanctioned token so the storage-layer
+    # gate (mutability_gate.enforce_mutability) does not reject the write.
+    # ``task_list`` is mutability='free' — the token is a no-op there.
+    payload["_sanctioned"] = True
     if wait:
         # RYW: enqueue then poll until the drainer commits. The sim gate is
         # bypassed via force=True in the payload OR the page_type's gate_mode

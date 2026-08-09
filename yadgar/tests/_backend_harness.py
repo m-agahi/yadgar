@@ -141,6 +141,8 @@ def patch_admin_bypass(monkeypatch: Any) -> None:
         "yadgar.core.server.tools.admin_invariants",
         "yadgar.core.server.tools.project",
         "yadgar.core.server.tools.dispatch_helper",
+        # Car F: ADR tools forward ledger reads/writes via _forward_admin.
+        "yadgar.core.server.tools.adr",
         # consolidation orchestrator binds _forward_admin (check_invariants tail)
         "yadgar.core.consolidation.orchestrator",
         # nightly step 5b's driver binds _forward_admin at module scope for the

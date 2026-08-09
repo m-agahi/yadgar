@@ -694,6 +694,11 @@ class WikiStore:
         confidence = o.confidence
         directory_context = o.directory_context
         page_type = o.page_type
+        # Car F (0047 §7): server-side sanctioned token threaded from the
+        # canonical write seam so mutability='locked' page_types (e.g. ``adr``)
+        # can be first-inserted. Set on the page dict so storage.insert_wiki_page
+        # pops it into its ``sanctioned`` kwarg for the gate.
+        sanctioned = bool(o.sanctioned)
 
         # Car B (#83): explicit caller-supplied slug bypasses title derivation.
         # Structural pages MUST land at a caller-computed slug so their crossrefs +
@@ -789,6 +794,10 @@ class WikiStore:
 
             page["page_type"] = page_type
             page["wiki_schema_version"] = WIKI_SCHEMA_VERSION
+        # Car F (0047 §7): thread the sanctioned token from the canonical write
+        # seam so storage.insert_wiki_page picks it up for the mutability gate.
+        if sanctioned:
+            page["_sanctioned"] = True
         page_id = self._storage.insert_wiki_page(page)
         page["id"] = page_id
         self._sync_crossrefs(slug, links)

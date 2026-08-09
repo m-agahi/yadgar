@@ -549,6 +549,21 @@ class MariaStorageEngine:
         async with self._engine.begin() as conn:
             await conn.execute(sql, {"adr_id": adr_id, "supersedes_id": supersedes_id})
 
+    @observe(tier="boundary", metric="backend.sql.adr.flip_status")
+    async def _flip_adr_status(self, adr_id: int, status: str) -> None:
+        """Flip one ``adr`` row's ``status`` column. Car F's supersede path.
+
+        Car G replaces this with the canonical ``adr`` → ``adr_superseded``
+        page-type retype (D23); F only flips the SQL ``status`` column so the
+        ``adr_list(status='superseded')`` filter surfaces the target immediately
+        after the supersede commit.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text("UPDATE adr SET status = :status WHERE id = :id")
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"id": adr_id, "status": status})
+
     # ── agent_pattern ────────────────────────────────────────────────────
 
     @observe(tier="boundary", metric="backend.sql.agent_pattern.save")

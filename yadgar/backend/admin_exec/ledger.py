@@ -404,3 +404,87 @@ async def get_agent_prompt_toc_updated_at(payload: dict) -> dict:  # noqa: ARG00
     if dt is None:
         return {"timestamp": None}
     return {"timestamp": dt.timestamp()}
+# ── Car F: ADR write ops ───────────────────────────────────────────────────────
+# Re-point of the ADR MCP tools (0047 §7 Car F): ``create_adr_row`` allocates
+# the new row (returns the AUTO_INCREMENT id — ADR-0197: id IS the ADR
+# number, no separate sequence table); ``set_adr_body_slug`` stamps the
+# wiki body page slug onto the row once the page write commits; and
+# ``add_adr_supersedes`` inserts the D23 supersede link between rows.
+# All three are async because asyncmy is async-only.
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.create_adr_row")
+async def create_adr_row(payload: dict) -> dict:
+    """Insert one ``adr`` ledger row. payload: {project_id, title, status,
+    decided_on?, subsystem?, tier?, body_slug?}.
+    Returns ``{"id": <int>, ...fields}`` on success; ``{"ok": False, "error": ...}``
+    on storage failure (carries ADR-0197's AUTO_INCREMENT id — the caller uses
+    ``row["id"]`` as the ADR number).
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        row = await storage.create_adr_row(
+            project_id=payload["project_id"],
+            title=payload["title"],
+            status=payload.get("status", "open"),
+            decided_on=payload.get("decided_on"),
+            subsystem=payload.get("subsystem"),
+            tier=payload.get("tier"),
+            body_slug=payload.get("body_slug"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("create_adr_row error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    return {"row": row}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.set_adr_body_slug")
+async def set_adr_body_slug(payload: dict) -> dict:
+    """Stamp the wiki ``body_slug`` on one ``adr`` row. payload: {id, body_slug}.
+
+    Called by ``adr_add`` after the per-ADR body page commits (D4 — body stays
+    in SurrealDB; only the slug pointer is stored on the SQL row).
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        await storage.set_adr_body_slug(int(payload["id"]), payload["body_slug"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("set_adr_body_slug error id=%s: %s", payload.get("id"), exc)
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.add_adr_supersedes")
+async def add_adr_supersedes(payload: dict) -> dict:
+    """Insert one ``adr_supersedes`` link. payload: {adr_id, supersedes_id}.
+
+    Car F: ``adr_add(supersedes="ADR-0007")`` parses ``supersedes_id`` from the
+    legacy ADR id string and forwards one row per target. The status flip on the
+    target row (``status='superseded'``) is performed by ``flip_adr_superseded``
+    below — both go in the same forward call sequence so a partial failure
+    surfaces cleanly to the caller.
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        await storage.add_adr_supersedes(int(payload["adr_id"]), int(payload["supersedes_id"]))
+        # Car F: flip the target row's status to 'superseded' (D23). Car G
+        # adds the canonical retype (``adr`` → ``adr_superseded``); F only flips
+        # the status column. The SQL engine exposes ``set_task_status`` etc. as
+        # a generic row update — Car F uses a direct UPDATE here to keep the
+        # scope tight.
+        await storage._flip_adr_status(int(payload["supersedes_id"]), "superseded")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "add_adr_supersedes error adr_id=%s supersedes_id=%s: %s",
+            payload.get("adr_id"),
+            payload.get("supersedes_id"),
+            exc,
+        )
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True}

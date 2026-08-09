@@ -1521,6 +1521,8 @@ def admin_backend_bypass(monkeypatch):
         "yadgar.core.server.tools.admin_invariants",
         "yadgar.core.server.tools.project",
         "yadgar.core.server.tools.dispatch_helper",
+        # Car F: ADR tools forward ledger reads/writes via _forward_admin.
+        "yadgar.core.server.tools.adr",
     ):
         _mod = sys.modules.get(_consumer)
         if _mod is not None and hasattr(_mod, "_forward_admin"):

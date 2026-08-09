@@ -161,6 +161,15 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "save_agent_discipline_row": ledger.save_agent_discipline_row,
     "increment_agent_pattern_uses": ledger.increment_agent_pattern_uses,
     "get_agent_prompt_toc_updated_at": ledger.get_agent_prompt_toc_updated_at,
+    # Car F: ADR WRITE ops over MariaStorageEngine — create_adr_row is the new
+    # ID source of truth (ADR-0197: AUTO_INCREMENT id IS the ADR number),
+    # set_adr_body_slug links the row to the wiki body page (D4 — body stays
+    # in SurrealDB, only the slug pointer moves to MariaDB), and
+    # add_adr_supersedes is the D23 supersede link + status flip. Async for
+    # the same reason as the read ops above.
+    "create_adr_row": ledger.create_adr_row,
+    "set_adr_body_slug": ledger.set_adr_body_slug,
+    "add_adr_supersedes": ledger.add_adr_supersedes,
     # Car B: runtime_config READ ops (SurrealDB sync path). Closes the in-process
     # _get_storage() read violation in core/server/tools/_runtime_config.py.
     "get_config_row": runtime_config.get_config_row,

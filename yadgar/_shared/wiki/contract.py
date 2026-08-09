@@ -56,3 +56,10 @@ class WikiAddOptions:
     #                legacy title-derived path always upserts by slug regardless.
     slug: str | None = None
     upsert: bool = True
+    # Car F (0047 §7): server-side sanctioned insert. _wiki_write_canonical sets
+    # ``_sanctioned=True`` on its payload so the storage-layer mutability gate
+    # (mutability_gate.enforce_mutability) does not reject first-time inserts of
+    # mutability='locked' page_types (e.g. ``adr``). The token is threaded via
+    # WikiAddOptions so it survives the canonical-write seam and reaches
+    # ``storage.insert_wiki_page`` as the gate's ``sanctioned`` kwarg.
+    sanctioned: bool = False

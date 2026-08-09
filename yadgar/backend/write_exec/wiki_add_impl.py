@@ -73,6 +73,10 @@ def run_wiki_add_replay(payload: dict) -> dict:
     upsert = payload.get("upsert", True)
 
     # replace_slug: overwrite a named existing page (gate already bypassed)
+    # Car F (0047 §7): server-side sanctioned token threads from _wiki_write_canonical
+    # so mutability='locked' page_types (e.g. ``adr``) can be first-inserted AND
+    # updated by the canonical write seam.
+    _sanctioned = bool(payload.get("_sanctioned", False))
     if replace_slug is not None:
         existing = _st._wiki._storage.get_wiki_page_by_slug(replace_slug)
         if existing is not None:
@@ -86,6 +90,7 @@ def run_wiki_add_replay(payload: dict) -> dict:
                     confidence=confidence,
                     directory_context=directory_context,
                     page_type=page_type,
+                    sanctioned=_sanctioned,
                 ),
             )
             result.pop("embedding", None)
@@ -118,6 +123,7 @@ def run_wiki_add_replay(payload: dict) -> dict:
                 page_type=page_type,
                 slug=explicit_slug,  # Car B (#83): store at caller slug, no title fallback
                 upsert=upsert,
+                sanctioned=_sanctioned,
             ),
         )
     # Car C (#83): upsert=False collision → surface synchronously.
