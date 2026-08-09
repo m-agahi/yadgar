@@ -1,7 +1,7 @@
 # Car J — mutability policy field + per-page override + wiki_set_mutability
 
 > Parent plan: docs/plans/task-table-refactor-2026-07-29.md (task 0047, §7 + §16)
-> Status: build-ready (spec extracted from audited master plan)
+> Status: shipped (Car J of 0047 spine train — code on `car/J-mutability-policy`)
 > Depends on: A
 > Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
 
