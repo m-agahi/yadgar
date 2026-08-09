@@ -30,6 +30,8 @@ import os
 import re
 import subprocess
 
+from yadgar._shared.observability.observe import observe
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +48,7 @@ logger = logging.getLogger(__name__)
 # table reproduces the chain without touching the real gitconfig.
 
 
+@observe(tier="stage", metric="core.identity._insteadof_rules")
 @functools.lru_cache(maxsize=64)
 def _insteadof_rules() -> dict[str, str]:
     """Return the parsed insteadOf table from the live git config.
@@ -60,11 +63,16 @@ def _insteadof_rules() -> dict[str, str]:
             stderr=subprocess.DEVNULL,
             timeout=2,
         ).decode()
-    except subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError:
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):  # fmt: skip — I33 obs-coverage parser rejects the PEP 758 bare form
         return {}
     return _insteadof_rules_from_lines(out)
 
 
+@observe(tier="stage", metric="core.identity._insteadof_rules_from_lines")
 def _insteadof_rules_from_lines(raw: str) -> dict[str, str]:
     """Parse a ``git config --get-regexp '^url\\..*\\.insteadof$'`` dump.
 
@@ -93,6 +101,7 @@ def _insteadof_rules_from_lines(raw: str) -> dict[str, str]:
     return rules
 
 
+@observe(tier="stage", metric="core.identity._parse_insteadof_map")
 def _parse_insteadof_map(rules: dict[str, str], url: str) -> str:
     """Apply *rules* to *url* until a fixed point.
 
@@ -130,6 +139,7 @@ _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
 _SSH_SCP_RE = re.compile(r"^(?:[^/@:]+@)?[^@/:]+:")
 
 
+@observe(tier="stage", metric="core.identity._normalise_remote")
 def _normalise_remote(url: str) -> str:
     """Reduce a git remote URL to its ``owner/repo`` (or ``group/sub/repo``) form.
 
@@ -169,6 +179,7 @@ def _normalise_remote(url: str) -> str:
 # ── .yadgar/project-id upward walk (§16.1) ─────────────────────────────────
 
 
+@observe(tier="stage", metric="core.identity._walk_project_id_file")
 def _walk_project_id_file(start: str) -> str | None:
     """Walk UP from *start* looking for ``.yadgar/project-id``.
 
@@ -187,6 +198,7 @@ def _walk_project_id_file(start: str) -> str | None:
 # ── local fallback (§16.2) ─────────────────────────────────────────────────
 
 
+@observe(tier="stage", metric="core.identity._local_fallback")
 def _local_fallback(cwd: str) -> str:
     """Return the ``local/<basename>`` key for a non-git directory."""
     base = os.path.basename(cwd.rstrip(os.sep)) or cwd.rstrip(os.sep) or "."
@@ -203,6 +215,7 @@ from yadgar._shared.server_helpers.server_helpers import (  # noqa: E402
 )
 
 
+@observe(tier="stage", metric="core.identity._origin_remote")
 def _origin_remote(git_root: str) -> str:
     """Read ``remote.origin.url`` from *git_root*, or return empty.
 
@@ -217,10 +230,15 @@ def _origin_remote(git_root: str) -> str:
             timeout=2,
         )
         return out.decode().strip()
-    except subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError:
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):  # fmt: skip — I33 obs-coverage parser rejects the PEP 758 bare form
         return ""
 
 
+@observe(tier="hot", metric="core.identity.derive_project_id")
 def derive_project_id(cwd: str | None = None) -> tuple[str, str]:
     """Resolve the project_id for the given directory (default: ``os.getcwd()``).
 

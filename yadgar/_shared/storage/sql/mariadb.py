@@ -214,3 +214,45 @@ class MariaStorageEngine:
     async def dispose(self) -> None:
         """Release pooled connections. Safe when nothing ever connected."""
         await self._engine.dispose()
+
+    @observe(tier="stage")
+    async def row_exists(
+        self,
+        table: str,
+        key_column: str,
+        key_value: str,
+        *,
+        limit: int = 1,
+    ) -> bool:
+        """Return True when ``table.key_column = key_value`` has at least one row.
+
+        Car A0 of 0047 spine train — the ``project`` registry guard. Pure
+        read-only existence check; never writes. The key column is a
+        single TEXT/VARCHAR primary key (the ``project.key`` schema); a
+        LIMIT 1 query is the cheapest way to confirm presence.
+
+        Validation: ``table`` and ``key_column`` are checked as bare
+        SQL identifiers and backtick-quoted (defence-in-depth, see
+        ``count_rows`` for the pattern); ``key_value`` is bound as a
+        parameter, never interpolated.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        if not _IDENTIFIER_RE.fullmatch(table):
+            raise ValueError(f"not a bare SQL identifier: {table!r}")
+        if not _IDENTIFIER_RE.fullmatch(key_column):
+            raise ValueError(f"not a bare SQL identifier: {key_column!r}")
+        # ``limit`` is an int literal we control — same defence pattern.
+        if not isinstance(limit, int) or limit < 1:
+            raise ValueError(f"limit must be a positive int: {limit!r}")
+        quoted_table = f"`{table}`"
+        quoted_key = f"`{key_column}`"
+        # LIMIT cannot be a parameter on every MySQL/MariaDB driver — bind
+        # only ``key_value`` and inject the validated int into the SQL.
+        sql = (
+            f"SELECT 1 FROM {quoted_table} "  # noqa: S608 — identifiers validated above
+            f"WHERE {quoted_key} = :key_value LIMIT {limit}"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(text(sql), {"key_value": key_value})
+            return result.first() is not None
