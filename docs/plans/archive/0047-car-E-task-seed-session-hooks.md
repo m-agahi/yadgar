@@ -1,9 +1,14 @@
 # Car E — task seed + SessionStart/stop-hook rewire + http.py matcher + D11 prefix
 
 > Parent plan: docs/plans/task-table-refactor-2026-07-29.md (task 0047, §7 + §16)
-> Status: build-ready (spec extracted from audited master plan)
+> Status: **SHIPPED (build-ready → archived)** — partial scope per ADR-0081/0082.
+> Car D has not yet merged at branch time, so the rewire keeps a graceful
+> fallback to the legacy wiki-page path. The ledger path activates when
+> Car D's `task.py` (`task_list`, `task_write`) and `create_task_row` /
+> `list_task_rows` are importable. See "Graceful fallback" in §3.1.
 > Depends on: D (task tools — `task_write`/`task_list`/`task_get` + `_LedgerMixin.create_task_row`/`list_task_rows`)
-> Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
+> Lifecycle: ADR-0081/0082 — archived as the first commit of the completing branch.
+> Shipped: 2026-08-09.
 
 ## 1. Scope
 
