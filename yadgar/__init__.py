@@ -18,4 +18,4 @@ except PackageNotFoundError:
 # __version__ = yadgar core (pip package version, set via importlib.metadata above).
 # BACKEND_VERSION = independent backend image track (docker.io/openfantasy/yadgar-backend).
 # Bumping either requires updating CHANGELOG + nix module sync (nix tracks both manually via release notes).
-BACKEND_VERSION = "5.72.5"  # Car D (0047 §7 row D) — task tools MCP + ledger write ops.
+BACKEND_VERSION = "5.72.5"  # Car G (0047 §7 row G) — ADR seed + retype mutator; Car K nightly sweep.
