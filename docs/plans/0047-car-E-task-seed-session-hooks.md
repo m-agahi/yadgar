@@ -83,8 +83,10 @@ def seed_task_from_pages(*, directory: str, project_id: str, dry_run: bool = Fal
 
 Replace the `wiki_write_task_list` calls (stop_checkpoint_prompt.md:122, :137) and the SCHEMA block (:156-181) with ledger-backed task tool calls:
 - Step 5a (reconcile own list via harness `TaskList`/`TaskUpdate`/`TaskCreate`) — unchanged.
-- Step 5b — replace `wiki_read("{project}-task-list", ...)` with `task_list(directory="<directory>")` (D37 open-only default). NO `project_id=` — Car D's signature (`0047-car-D-task-tools.md:91-98`) takes `directory` and *derives* `project_id` from it via `identity.py` (Car A0); `project_id` is not a parameter of the tool surface.
-- Step 5c — replace `wiki_write_task_list(project=..., content=..., directory=...)` with `task_write(directory=..., title=..., status=..., state=..., active_form=...)` per task. Same rule: `directory` in, `project_id` derived (`0047-car-D-task-tools.md:49-61`).
+- Step 5b — replace `wiki_read("{project}-task-list", ...)` with `task_list(project_id="<session project_id>")` (D37 open-only default).
+- Step 5c — replace `wiki_write_task_list(project=..., content=..., directory=...)` with `task_write(project_id=..., title=..., status=..., state=..., active_form=...)` per task.
+
+> **`project_id` is a caller parameter, not a per-call derivation.** ADR-0202: it "is derived ONCE per session — by the startup hook, or from `.yadgar/project-id` found by walking up from cwd — and thereafter travels as an explicit caller parameter on each write, with an override for cross-project work." ADR-0202 explicitly REJECTS re-deriving per write ("pays the git-remote parse and its traps on every call for a value that cannot change mid-session"). No internal core/backend component derives it. Car D's §3 preamble (`0047-car-D-task-tools.md:43`) currently says the opposite — take `directory`, derive internally — and is the document that needs correcting, not this one.
 - Delete the page-format SCHEMA block (tasks now live in SQL, not a markdown page).
 
 ## 4. Build steps (TDD)
