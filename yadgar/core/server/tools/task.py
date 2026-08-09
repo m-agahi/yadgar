@@ -54,6 +54,14 @@ from yadgar._shared.observability.observe import observe
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 
+# Car M (0047 §7, §16.6): cross-project ``project=`` override on the task MCP
+# tools. Resolves the effective project_id (override → session → directory →
+# "global") and threads it through to the ledger-backed write/read paths.
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    resolve_effective_project,
+)
+
 # ── Constants ───────────────────────────────────────────────────────────────
 
 # D37: default open-only ``status`` filter.
@@ -61,6 +69,21 @@ _OPEN_STATUSES: tuple[str, ...] = ("pending", "in_progress")
 
 # §16.10: when ``status`` flips to one of these, ``state`` MUST be cleared to NULL.
 _COMPLETED_LIKE_STATUSES: frozenset[str] = frozenset({"completed", "archived"})
+
+# Car M (0047 §7, §16.6): the ``project=`` override surface emits two
+# exception classes — the typed ``InvalidProjectOverrideError`` (override shape
+# is malformed) and the generic ``ValueError`` raised by
+# ``_validate_project_id`` (override resolved to a non-string / empty). We
+# catch them together via a module-level tuple alias because ruff format with
+# ``target-version=py314`` rewrites ``except (X, Y):`` to the deprecated
+# single-class-as-tuple form ``except X, Y:`` — a form that the pre-commit
+# Python 3.13 environment rejects as ``multiple exception types must be
+# parenthesized``. The named tuple keeps the parens-stable, ruff-stable,
+# py3.13-stable form.
+_PROJECT_OVERRIDE_EXC: tuple[type[BaseException], ...] = (
+    InvalidProjectOverrideError,
+    ValueError,
+)
 
 # D12: hard cap on title length.
 _TITLE_MAX_CHARS: int = 200
@@ -244,6 +267,7 @@ def task_write(
     body_slug: str | None = None,
     blocked_by: list[int] | None = None,
     blocks: list[int] | None = None,
+    project: str | None = None,
 ) -> dict:
     """Create or update a task row.
 
@@ -252,6 +276,17 @@ def task_write(
     Returns the generated id. Update (``id`` given): UPDATE the row;
     ``status`` / ``state`` / ``active_form`` / ``plan_path`` / ``body_slug``
     fields are partial-update (None = leave unchanged).
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override is the
+    cross-project address. When supplied, the validated project_id REPLACES
+    the ``project_id`` arg for the lifetime of this call. Precedence:
+    ``project`` (override) > ``session_project`` > ``project_id`` arg >
+    directory-derived (Car A0) > ``"global"``. The override is the namespace
+    stamp on the ledger row. The deep registry check is backend-side
+    (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
+    type-level guard. Passing BOTH ``project`` and ``project_id`` is
+    allowed but ``project`` wins — a caller that supplies a stale
+    ``project_id`` from another project still gets the override.
 
     D12: ``title`` <= 200 chars, reject-on-write.
     D36: ``state`` is NULLABLE; cleared (set to NULL) when ``status``
@@ -272,6 +307,26 @@ def task_write(
         )
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
+
+    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
+    # explicit ``project_id`` arg (precedence: project > project_id arg).
+    # The override is the namespace stamp on the ledger row. The deep
+    # registry check is backend-side (`_ensure_project_exists_sync`, §15 /
+    # ADR-0078); core enforces the type-level guard.
+    if project is not None:
+        try:
+            project_id = resolve_effective_project(
+                project=project,
+                directory=None,  # task tools do not derive from directory
+                session_project=None,  # Car E SessionStart hook — not yet wired here
+            )
+            # Re-validate the resolved override against the strict-typed
+            # validator (mirrors the project_id arg path). Car D's validator
+            # enforces non-string / empty — same guards apply to the
+            # override.
+            project_id = _validate_project_id(project_id)
+        except (InvalidProjectOverrideError, ValueError) as exc:
+            return {"ok": False, "error": f"task_write: {exc}"}
 
     try:
         if is_update:
@@ -334,8 +389,15 @@ def task_list(
     status: list[str] | None = None,
     limit: int = 100,
     offset: int = 0,
+    project: str | None = None,
 ) -> list[dict]:
     """List tasks for the given ``project_id``.
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override REPLACES the
+    ``project_id`` arg for this call. Precedence: ``project`` (override) >
+    ``session_project`` > ``project_id`` arg > ``"global"``. The override
+    is the namespace stamp on the ledger list — the row lookup is
+    namespaced to that project_id.
 
     D37: default to ``status IN (pending, in_progress)``. ``include_closed=True``
     returns all rows (completed/archived). An explicit ``status`` list
@@ -355,6 +417,20 @@ def task_list(
         _validate_project_id(project_id)
     except ValueError:
         return []  # type errors are surfaced via empty list — never raise
+
+    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
+    # explicit ``project_id`` arg (precedence: project > project_id arg).
+    # The override is the namespace stamp on the ledger list.
+    if project is not None:
+        try:
+            project_id = resolve_effective_project(
+                project=project,
+                directory=None,  # task tools do not derive from directory
+                session_project=None,  # Car E SessionStart hook — not yet wired here
+            )
+            project_id = _validate_project_id(project_id)
+        except _PROJECT_OVERRIDE_EXC:
+            return []  # read tool — never raise, fail-quiet to empty list
 
     payload: dict = {
         "project_id": project_id,
@@ -379,8 +455,14 @@ def task_list(
 def task_get(
     project_id: str,
     id: int,
+    *,
+    project: str | None = None,
 ) -> dict | None:
     """Fetch one task by ``(project_id, id)``.
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override REPLACES the
+    ``project_id`` arg for this call. Precedence: ``project`` (override) >
+    ``session_project`` > ``project_id`` arg > ``"global"``.
 
     Returns the row dict (id-keyed, §13.2 blocker 2) or ``None`` if absent.
     The forwarded payload keys on ``id``, NEVER ``number`` (§14.1).
@@ -389,6 +471,20 @@ def task_get(
         _validate_project_id(project_id)
     except ValueError:
         return None
+
+    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
+    # explicit ``project_id`` arg (precedence: project > project_id arg).
+    # The override is the namespace stamp on the ledger row.
+    if project is not None:
+        try:
+            project_id = resolve_effective_project(
+                project=project,
+                directory=None,  # task tools do not derive from directory
+                session_project=None,  # Car E SessionStart hook — not yet wired here
+            )
+            project_id = _validate_project_id(project_id)
+        except _PROJECT_OVERRIDE_EXC:
+            return None  # read tool — never raise, fail-quiet to None
 
     if not isinstance(id, int) or id <= 0:
         return None

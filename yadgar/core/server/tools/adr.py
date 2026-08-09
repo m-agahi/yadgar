@@ -51,9 +51,13 @@ from yadgar.core.forward import _forward_admin
 from yadgar.core.identity import derive_project_id
 from yadgar.core.server._app import _tool
 
-# Car F stops CALLING the index helpers from adr_add but
-# keeps the slug-helper import (legacy body-fetch fallback).
-from yadgar.core.server.tools.adr_index import adr_page_slug
+# Car M (0047 §7, §16.6): cross-project ``project=`` override on the ADR MCP
+# tools. Resolves the effective project_id (override → session → directory →
+# "global") and threads it through to the ledger-backed write/read paths.
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    resolve_effective_project,
+)
 from yadgar.core.server.tools.adr_render import (
     _REQUIRED_FIELDS,
     _VALID_STATUSES,
@@ -186,6 +190,8 @@ def adr_add(
     consequences: str,
     revisit_trigger: str,
     supersedes: str,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Create a new Architecture Decision Record (ADR).
 
@@ -194,6 +200,19 @@ def adr_add(
     by ``body_slug``. Supersede targets are linked via ``adr_supersedes`` with
     the target row's status flipped to ``superseded`` (D23, status-flip only;
     the page-type retype is Car G).
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override lets a caller
+    write an ADR into another project's namespace without leaving the current
+    working tree. Precedence: ``project`` (override) > ``session_project`` >
+    ``directory``-derived (Car A0 ``derive_project_id``) > ``"global"``. The
+    validated project_id is forwarded to the backend ledger write
+    (``create_adr_row(project_id=...)``) so the row stamps the override
+    namespace; the body page's slug follows the same project_id (D32 ③
+    scheme — ``{project_id}_adr-NNNN``). When BOTH ``project`` and
+    ``directory`` are supplied, ``project`` wins and ``directory`` is logged-
+    and-ignored (§9 [VERIFY]). The deep registry check is backend-side
+    (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
+    type-level guard.
 
     Args:
         directory: Absolute path to the project root.
@@ -233,6 +252,24 @@ def adr_add(
     if isinstance(ctx, dict):
         return ctx
     resolved, project_id = ctx
+
+# Car M (0047 §7, §16.6): the optional ``project=`` override beats the
+    # directory-derived ``project_id`` (precedence: project > session >
+    # directory). The override is the namespace stamp on the ledger row
+    # AND on the body-page slug. The deep registry check is backend-side
+    # (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
+    # type-level guard. ``directory`` stays as the wiki body's
+    # directory_context (the directory is the file-system hint; the
+    # project_id is the namespace).
+    if project is not None:
+        try:
+            project_id = resolve_effective_project(
+                project=project,
+                directory=resolved,
+                session_project=None,  # Car E SessionStart hook — not yet wired here
+            )
+        except InvalidProjectOverrideError as exc:
+            return {"ok": False, "error": f"adr_add: {exc}"}
 
     # ── Car G: the per-project ``_adr_log_lock`` is GONE. The ledger
     # ``create_adr_row`` AUTO_INCREMENT serialises ID allocation backend-side
@@ -388,7 +425,7 @@ def _link_adr_supersede_targets(adr_id_int: int, supersedes: str) -> None:
 
 @observe(tier="hot", metric="tools.adr.adr_get")
 @_tool(power=True)
-def adr_get(directory: str, adr_id: str) -> dict:
+def adr_get(directory: str, adr_id: str, *, project: str | None = None) -> dict:
     """Read a single ADR's body page + ledger row (merged per D5).
 
     Car F: the body page fetch is UNCHANGED (D4 — wiki body stays in SurrealDB).
@@ -400,6 +437,15 @@ def adr_get(directory: str, adr_id: str) -> dict:
     Car F adds ``baseline_hash`` / ``content_hash`` per ADR-0209 §14.3
     (row-side — changes only on seed/adopt; row+page content_hash is the
     desync signal).
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override lets a caller
+    read another project's ADR. Precedence: ``project`` (override) >
+    ``session_project`` > ``directory``-derived (Car A0) > ``"global"``.
+    When supplied, the validated project_id is forwarded to the backend
+    ledger read (``get_adr_row(project_id=...)``) so the row lookup is
+    namespaced to the override. When BOTH ``project`` and ``directory`` are
+    supplied, ``project`` wins and ``directory`` is logged-and-ignored
+    (§9 [VERIFY]).
 
     Args:
         directory: Absolute path to the project root.
@@ -424,8 +470,23 @@ def adr_get(directory: str, adr_id: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"error": f"cannot derive project_id: {exc}"}
 
+    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
+    # directory-derived ``project_id`` (precedence: project > session >
+    # directory). The override is the namespace stamp on the ledger row.
+    # The deep registry check is backend-side (`_ensure_project_exists_sync`,
+    # §15 / ADR-0078); core enforces the type-level guard.
+    if project is not None:
+        try:
+            project_id = resolve_effective_project(
+                project=project,
+                directory=resolved,
+                session_project=None,  # Car E SessionStart hook — not yet wired here
+            )
+        except InvalidProjectOverrideError as exc:
+            return {"error": f"adr_get: {exc}"}
+
     body = _fetch_adr_body_page(resolved, project_id, normalized, adr_id_int)
-    row_result = _fetch_adr_ledger_row(adr_id, adr_id_int)
+    row_result = _fetch_adr_ledger_row(adr_id, adr_id_int, project_id=project_id)
     return _build_adr_get_response(body, row_result)
 
 
@@ -448,11 +509,27 @@ def _fetch_adr_body_page(
 
 
 @observe(tier="stage", metric="tools.adr._fetch_adr_ledger_row")
-def _fetch_adr_ledger_row(adr_id: str, adr_id_int: int) -> dict[str, Any] | None:
+def _fetch_adr_ledger_row(
+    adr_id: str,
+    adr_id_int: int,
+    *,
+    project_id: str | None = None,
+) -> dict[str, Any] | None:
     """Ledger row fetch — returns the row envelope dict (or None on forward
-    failure). Extracted from ``adr_get`` for I13 cyclomatic."""
+    failure). Extracted from ``adr_get`` for I13 cyclomatic.
+
+    Car M (0047 §7, §16.6): when ``project_id`` is supplied (the caller
+    provided ``project=`` and the override won), it is forwarded to the
+    backend ``get_adr_row`` op so the row lookup is namespaced to that
+    project_id. The deep registry check is backend-side
+    (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
+    type-level guard.
+    """
+    payload: dict[str, Any] = {"id": adr_id_int}
+    if project_id is not None:
+        payload["project_id"] = project_id
     try:
-        return _forward_admin("get_adr_row", {"id": adr_id_int})
+        return _forward_admin("get_adr_row", payload)
     except Exception as exc:  # noqa: BLE001 — merge is best-effort
         import logging  # noqa: PLC0415
 
@@ -526,7 +603,14 @@ def _reflect_row_status_in_tags(merged: dict[str, Any], row: dict) -> dict[str, 
 
 @observe(tier="hot", metric="tools.adr.adr_list")
 @_tool(power=True)
-def adr_list(directory: str, status: str | None = None, limit: int = 50, offset: int = 0) -> dict:
+def adr_list(
+    directory: str,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    *,
+    project: str | None = None,
+) -> dict:
     """List ADRs from the ledger; optional status filter + pagination.
 
     Car F: re-pointed from ``wiki_read(index_slug)`` + ``parse_index_rows`` to
@@ -534,6 +618,14 @@ def adr_list(directory: str, status: str | None = None, limit: int = 50, offset:
     UNCHANGED: ``{"adrs": [7-key rows], "count": N}`` plus optional
     ``total`` / ``truncated: True`` / ``next_offset`` when the page is
     truncated.
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override lets a caller
+    list another project's ADRs. Precedence: ``project`` (override) >
+    ``session_project`` > ``directory``-derived (Car A0) > ``"global"``. When
+    supplied, the validated project_id is forwarded to the backend
+    ``list_adr_rows`` op so the list is namespaced to the override. When
+    BOTH ``project`` and ``directory`` are supplied, ``project`` wins and
+    ``directory`` is logged-and-ignored (§9 [VERIFY]).
 
     Args:
         directory: Absolute path to the project root.
@@ -557,6 +649,19 @@ def adr_list(directory: str, status: str | None = None, limit: int = 50, offset:
         project_id, _remote_url = derive_project_id(cwd=resolved)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"cannot derive project_id: {exc}"}
+
+    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
+    # directory-derived ``project_id`` (precedence: project > session >
+    # directory). The override is the namespace stamp on the ledger list.
+    if project is not None:
+        try:
+            project_id = resolve_effective_project(
+                project=project,
+                directory=resolved,
+                session_project=None,  # Car E SessionStart hook — not yet wired here
+            )
+        except InvalidProjectOverrideError as exc:
+            return {"error": f"adr_list: {exc}"}
 
     try:
         result = _forward_admin(

@@ -364,9 +364,9 @@
     "function": "task_write",
     "lineno": 221,
     "metrics": {
-      "params": 10
+      "params": 11
     },
-    "rationale": "Car D (0047 spine train \u00a77 row D): task_write mirrors the task-table column set (project_id, title, status, state, active_form, plan_path, body_slug, id, blocked_by, blocks \u2014 10 params, ADR-0197/\u00a714.1). FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement on the harness side. The D39 blocked_by/blocks list + D36 nullable state + D12 title cap + \u00a716.10 completion-clears-state all ride this one signature by design \u2014 the four feature surfaces would otherwise scatter across four near-identical tools. Validation, payload assembly and the create/update fork are already extracted into _validate_write_inputs / _build_create_payload / _build_update_payload (see module docstring); what remains here is the entry-point shape and the create-vs-update dispatch.",
+    "rationale": "Car D (0047 spine train \u00a77 row D): task_write mirrors the task-table column set (project_id, title, status, state, active_form, plan_path, body_slug, id, blocked_by, blocks \u2014 10 params, ADR-0197/\u00a714.1). FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement on the harness side. The D39 blocked_by/blocks list + D36 nullable state + D12 title cap + \u00a716.10 completion-clears-state all ride this one signature by design \u2014 the four feature surfaces would otherwise scatter across four near-identical tools. Validation, payload assembly and the create/update dispatch are already extracted into _validate_write_inputs / _build_create_payload / _build_update_payload (see module docstring); what remains here is the entry-point shape and the create-vs-update dispatch. Car M (0047 spine train, 2026-08-09): params 10 -> 11 for the cross-project project= override (keyword-only param). Cyclomatic and fn_loc unchanged (the override resolution is two inline `try/except` blocks + one helper call).",
     "added": "2026-08-09",
     "added_by": "car/D-task-tools"
   },
