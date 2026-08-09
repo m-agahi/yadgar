@@ -1,7 +1,7 @@
 # Car A0 — identity derivation + project registry
 
 > Parent plan: docs/plans/task-table-refactor-2026-07-29.md (task 0047, §7 + §16)
-> Status: build-ready (spec extracted from audited master plan)
+> Status: shipped (Car A0 of 0047 spine train — code on `car/A0-identity-registry`)
 > Depends on: — (root of the project-identity sub-chain)
 > Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
 
