@@ -1,9 +1,9 @@
 # Car B — backend ops + cache (backend PTC, ledger/config read ops, /health reachability)
 
 > Parent plan: docs/plans/task-table-refactor-2026-07-29.md (task 0047, §7 + §15 + §16)
-> Status: build-ready (spec extracted from audited master plan)
+> Status: shipped (in train `feat/spine-0047-train`, car B)
 > Depends on: A (Car A ships `_LedgerMixin` + `runtime_config` MariaDB table + the Alembic chain; Car B wraps the read methods Car A exposes and builds the cache that serves them)
-> Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
+> Lifecycle: ADR-0081/0082 — archived on `car/B-backend-ops-cache` as the first commit of the completing branch.
 
 ## 1. Scope
 
