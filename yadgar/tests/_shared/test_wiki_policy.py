@@ -210,3 +210,70 @@ class TestAgentPageTypeSplit:
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPES
 
         assert PAGE_TYPES[page_type] == ["Purpose", "Prompt"]
+
+
+# ── F. Car C2 — downweight disposition (D22) ──────────────────────────────────
+
+
+class TestDownweightDisposition:
+    """Car C2 (0047 §7 3b): third recall_disposition value "downweight".
+
+    A ``task_list`` page stays recall-visible (``is_recall_visible`` returns
+    True — exclusion still drops only ``"exclude"``) but its ranking score is
+    multiplied by ``RECALL_DOWNWEIGHT_FACTOR`` (< 1.0) at the scoring stage
+    so it sinks below ``"include"`` pages of comparable relevance.
+
+    The helper ``downweight_multiplier(page, factor)`` is the single source of
+    truth for the penalty — called from both fusion (unified recall) and
+    ``wiki_query`` (the legacy search tool).
+    """
+
+    def test_task_list_resolves_to_downweight(self):
+        """``task_list`` page type resolves to ``recall_disposition="downweight"``."""
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
+
+        assert get_policy(PAGE_TYPE_TASK_LIST).recall_disposition == "downweight"
+
+    def test_task_list_differs_from_default(self):
+        """``task_list`` policy must differ from DEFAULT (single source assertion)."""
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
+
+        assert get_policy(PAGE_TYPE_TASK_LIST) != DEFAULT_POLICY
+
+    def test_downweight_multiplier_returns_factor_for_task_list(self):
+        """A downweight-disposition page returns *factor* from the helper."""
+        from yadgar._shared.wiki.policy import downweight_multiplier
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
+
+        assert downweight_multiplier({"page_type": PAGE_TYPE_TASK_LIST}, 0.5) == 0.5
+
+    def test_downweight_multiplier_returns_one_for_include(self):
+        """An include-disposition page returns 1.0 from the helper."""
+        from yadgar._shared.wiki.policy import downweight_multiplier
+
+        assert downweight_multiplier({"page_type": None}, 0.5) == 1.0
+
+    def test_downweight_multiplier_returns_one_for_exclude(self):
+        """An exclude-disposition page returns 1.0 from the helper.
+
+        The penalty is for the SCORING stage; exclusion happens earlier
+        (``is_recall_visible``) — an excluded page never reaches the scorer,
+        so its multiplier is irrelevant. Returning 1.0 keeps the helper
+        composable: it can be applied unconditionally without leaking
+        penalty to excluded pages that happen to slip through.
+        """
+        from yadgar._shared.wiki.policy import downweight_multiplier
+
+        assert downweight_multiplier({"page_type": PAGE_TYPE_AGENT_PATTERN}, 0.5) == 1.0
+
+    def test_is_recall_visible_passes_downweight(self):
+        """A downweight page survives the visibility filter (it is NOT excluded).
+
+        Downweight is a RANKING penalty, not an exclusion — the page must
+        remain visible to the search paths so the penalty can reorder it
+        below include-disposition pages.
+        """
+        from yadgar._shared.wiki.policy import is_recall_visible
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
+
+        assert is_recall_visible({"page_type": PAGE_TYPE_TASK_LIST}) is True

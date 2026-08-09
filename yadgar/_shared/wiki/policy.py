@@ -34,7 +34,17 @@ recall_disposition
                         in by tag — see ``is_recall_visible``. Always reachable
                         by exact key: ``wiki_read`` / ``wiki_get`` /
                         ``wiki_list`` never apply the filter.
-    ``"downweight"`` — reserved for future tuning (treat as include for now).
+    ``"downweight"`` — pages appear in normal fanout recall BUT their ranking
+                        score is multiplied by ``RECALL_DOWNWEIGHT_FACTOR``
+                        (a value in (0, 1) — default 0.5) at the scoring
+                        stage. A downweighted page is still recall-visible
+                        (``is_recall_visible`` returns True — exclusion still
+                        drops only ``"exclude"``) but sinks below
+                        ``"include"`` pages of comparable relevance. Used for
+                        ``task_list`` pages (D22: task → downweight); the
+                        penalty is applied via ``downweight_multiplier`` at
+                        both the unified-recall fusion stage and the legacy
+                        ``wiki_query`` search stage.
 
 dir_scope
     ``"strict"``     — gate and retrieval scoped to ``directory_context``.
@@ -57,6 +67,7 @@ from yadgar._shared.wiki.wiki_meta import (
     PAGE_TYPE_AGENT_INDEX,
     PAGE_TYPE_AGENT_PATTERN,
     PAGE_TYPE_AGENT_PROMPT_LEGACY,
+    PAGE_TYPE_TASK_LIST,
 )
 
 
@@ -169,6 +180,19 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
     # lookup. See PAGE_TYPE_AGENT_INDEX's docstring for why it gets no lint
     # schema.
     PAGE_TYPE_AGENT_INDEX: _AGENT_INDEX_POLICY,
+    # Car C2 (0047 §7 3b): task_list → downweight (D22). The task list stays
+    # recall-visible (the user may legitimately ask "what tasks are open?")
+    # but sinks below knowledge pages of comparable relevance. gate_mode /
+    # dir_scope / merge / storage_scope match DEFAULT — only the disposition
+    # differs. The penalty is applied via `downweight_multiplier` at the
+    # scoring stage (fusion + wiki_query), NOT at the visibility filter.
+    PAGE_TYPE_TASK_LIST: WikiPolicy(
+        gate_mode="similarity",
+        recall_disposition="downweight",
+        dir_scope="strict",
+        merge="allow",
+        storage_scope="project",
+    ),
 }
 """Explicit overrides keyed by page_type string.
 
@@ -232,3 +256,33 @@ def is_recall_visible(page: dict, opt_in_tags: Sequence[str] | None = None) -> b
     if not opt_in_tags or policy.opt_in_tag is None:
         return False
     return policy.opt_in_tag in set(opt_in_tags)
+
+
+@observe(tier="hot")
+def downweight_multiplier(page: dict, factor: float) -> float:
+    """Return the ranking-score multiplier for *page*.
+
+    Car C2 (0047 §7 3b): a downweighted page passes ``is_recall_visible``
+    (visibility is unchanged — exclusion still drops only ``"exclude"``) but
+    its ranking score is multiplied by *factor* so it sinks below
+    ``"include"`` pages of comparable relevance. Returns *factor* (a value
+    in (0, 1)) when the page's ``page_type`` resolves to
+    ``recall_disposition="downweight"``; ``1.0`` otherwise.
+
+    Single source of truth for the penalty — called from
+    ``yadgar.backend.retrieval.providers.fusion`` (unified recall) and
+    ``yadgar.core.server.tools.wiki.wiki_query`` (the legacy search tool).
+    The *factor* is passed in (not read from settings inside the helper) so
+    the helper is testable without a Settings instance and stays in
+    ``_shared`` (no config import — ``_shared`` policy stays config-agnostic).
+
+    An excluded page (``recall_disposition="exclude"``) returns ``1.0``
+    here on purpose — exclusion is enforced earlier in the pipeline
+    (``is_recall_visible`` drops ``exclude`` rows before scoring) so a
+    non-1.0 return value can never leak penalty to an excluded row. The
+    helper is composable: callers can apply it unconditionally without
+    second-guessing the disposition.
+    """
+    if get_policy(page.get("page_type")).recall_disposition == "downweight":
+        return float(factor)
+    return 1.0

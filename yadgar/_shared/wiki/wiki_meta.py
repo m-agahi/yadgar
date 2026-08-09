@@ -56,6 +56,17 @@ PAGE_TYPE_AGENT_INDEX = "agent_index"
 #: migration 028 — they must keep resolving to the same routing policy.
 PAGE_TYPE_AGENT_PROMPT_LEGACY = "agent_prompt"
 
+#: Task list pages. Car C2 (0047 §7 3b): the ``task → downweight`` mapping
+#: from D22 — the live task list stays recall-visible (you might genuinely ask
+#: "what tasks are open?") but its ranking score is multiplied by
+#: ``RECALL_DOWNWEIGHT_FACTOR`` (< 1.0) so it sinks below knowledge pages of
+#: comparable relevance. ``is_recall_visible`` still returns True for this
+#: type; the penalty is applied at the scoring stage, not the visibility
+#: filter. Car D (task tools) + Car E (task seed) move tasks to SQL and
+#: delete the task-list markdown page — surviving ``task_list`` pages
+#: (e.g. re-created post-spine) inherit the downweight for free.
+PAGE_TYPE_TASK_LIST = "task_list"
+
 
 @observe(tier="stage")
 def _load_page_type_schemas() -> dict:
