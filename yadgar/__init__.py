@@ -18,4 +18,8 @@ except PackageNotFoundError:
 # __version__ = yadgar core (pip package version, set via importlib.metadata above).
 # BACKEND_VERSION = independent backend image track (docker.io/openfantasy/yadgar-backend).
 # Bumping either requires updating CHANGELOG + nix module sync (nix tracks both manually via release notes).
-BACKEND_VERSION = "5.72.5"  # Car G (0047 §7 row G) — ADR seed + retype mutator; Car K nightly sweep.
+<<<<<<< HEAD
+BACKEND_VERSION = "5.72.6"  # Car H (0047 §7 D27/D28/D29) — tier/subsystem filters + rollup regen + tier/subsystem seed.
+=======
+BACKEND_VERSION = "5.72.6"  # Car H (0047 §7 D27/D28/D29) — tier/subsystem filters + rollup regen + tier/subsystem seed.
+>>>>>>> 1732af87 (chore(version): bump backend 5.72.5 -> 5.72.6 (car H — tier/subsystem/rollups))
