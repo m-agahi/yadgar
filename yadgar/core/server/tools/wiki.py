@@ -599,6 +599,27 @@ def wiki_query(
             r for r in results if is_directory_eligible(r.get("directory_context"), _dir_stripped)
         ]
 
+        # Car C2 (0047 §7 3b): downweight penalty — a ``task_list`` page (D22
+        # `task → downweight`) sinks below include-disposition pages of
+        # comparable relevance without being filtered out. The legacy
+        # ``wiki_query`` path has no fusion / CE — ``_retrieval_score`` IS
+        # the ranking key. Apply the multiplier IN PLACE and re-sort BEFORE
+        # the cache so the reordering takes effect on this call AND on any
+        # cache hit (the cached copy holds the post-penalty scores; the
+        # penalty is deterministic per ``page_type`` so this is correct).
+        # Guarded on factor < 1.0 to skip the re-sort cost when the
+        # operator has disabled the penalty.
+        from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
+        from yadgar._shared.wiki.policy import downweight_multiplier  # noqa: PLC0415
+
+        _dw_factor = float(_get_settings().RECALL_DOWNWEIGHT_FACTOR)
+        if _dw_factor < 1.0:
+            for r in results:
+                r["_retrieval_score"] = float(
+                    r.get("_retrieval_score", 0.0)
+                ) * downweight_multiplier(r, _dw_factor)
+            results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
+
         results = results[:max_results]
 
         for r in results:
