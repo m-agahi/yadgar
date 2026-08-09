@@ -58,6 +58,7 @@ from yadgar.core.server.tools._project_param import (
     InvalidProjectOverrideError,
     resolve_effective_project,
 )
+from yadgar.core.server.tools.adr_index import adr_page_slug
 from yadgar.core.server.tools.adr_render import (
     _REQUIRED_FIELDS,
     _VALID_STATUSES,
@@ -192,6 +193,8 @@ def adr_add(
     supersedes: str,
     *,
     project: str | None = None,
+    tier: str | None = None,
+    subsystem: str | None = None,
 ) -> dict:
     """Create a new Architecture Decision Record (ADR).
 
@@ -214,6 +217,11 @@ def adr_add(
     (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
     type-level guard.
 
+    Car H: accepts ``tier`` (D27 enum: ``binding|historical``) and
+    ``subsystem`` (D28 explicit; §10 Q2 normalizer → lowercase + trim, empty
+    → None). On success the per-subsystem rollup page is regenerated via
+    ``_regenerate_subsystem_rollup`` (§10 Q1 on-write trigger, D29).
+
     Args:
         directory: Absolute path to the project root.
         title: Short human-readable title (e.g. "Use SurrealDB for storage").
@@ -226,6 +234,10 @@ def adr_add(
         consequences: Known / expected consequences.
         revisit_trigger: Condition that would trigger revisiting this decision.
         supersedes: "none" or a comma-separated list of superseded ADR IDs (e.g. "ADR-0002").
+        tier: D27 tier — ``"binding"`` (default if None; inferred from status
+            when None) or ``"historical"``.
+        subsystem: D28 explicit subsystem value. Normalized to lowercase + trim
+            (§10 Q2); empty after normalize → None (no rollup regen fires).
 
     Returns:
         {"adr_id": "ADR-NNNN", "slug": "<project_id>_adr-NNNN"} on success.
@@ -271,12 +283,17 @@ def adr_add(
         except InvalidProjectOverrideError as exc:
             return {"ok": False, "error": f"adr_add: {exc}"}
 
+    # ── Car H: §10 Q2 subsystem normalizer (lowercase + trim; empty → None).
+    subsystem_normalized = _normalize_subsystem(subsystem)
+
     # ── Car G: the per-project ``_adr_log_lock`` is GONE. The ledger
     # ``create_adr_row`` AUTO_INCREMENT serialises ID allocation backend-side
     # (ADR-0197), so the lock no longer guards a sequence; the body-page write
     # (wait=True) + ledger row + set_adr_body_slug path is linearised by the
     # backend INSERT itself.
-    step1 = _allocate_adr_ledger_row(project_id, title, status, date)
+    step1 = _allocate_adr_ledger_row(
+        project_id, title, status, date, tier=tier, subsystem=subsystem_normalized
+    )
     if isinstance(step1, dict):
         return step1
     adr_id_int, adr_id = step1
@@ -310,7 +327,57 @@ def adr_add(
     # Step 4: supersede-link rows + flip target status (D23 status flip).
     _link_adr_supersede_targets(adr_id_int, supersedes)
 
+    # Step 5: §10 Q1 on-write rollup regen — only when subsystem is set
+    # (a rollup keyed on ``None`` is meaningless; the page-by-subsystem
+    # taxonomy collapses when subsystem is absent).
+    if subsystem_normalized is not None:
+        _trigger_subsystem_rollup_regen(project_id=project_id, subsystem=subsystem_normalized)
+
     return {"adr_id": adr_id, "slug": page_slug}
+
+
+# ── Car H helpers (extracted for I13 fn_loc + testability) ──────────────────
+
+
+@observe(exempt="trivial string normalisation; no I/O, no error branch worth spanning")
+def _normalize_subsystem(value: str | None) -> str | None:
+    """§10 Q2 subsystem normalizer: lowercase + trim; empty → None.
+
+    The seed reads `subsystem` back from rows already-stamped by this same
+    rule; round-trips are stable. A future migration to a controlled
+    vocabulary would replace this function.
+    """
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized or None
+
+
+@observe(tier="stage", metric="tools.adr._trigger_subsystem_rollup_regen")
+def _trigger_subsystem_rollup_regen(*, project_id: str, subsystem: str) -> None:
+    """§10 Q1 on-write trigger — fire the per-subsystem rollup regen.
+
+    Lazy import: ``_regenerate_subsystem_rollup`` lives in the backend
+    ``admin_exec.rollup`` module (core ↔ backend layering rule forbids a
+    direct import — the import is deferred inside the call so the module
+    loads only when the trigger fires). The seam is the same canonical
+    admin-op forward path the rest of ``adr_add`` uses (``_forward_admin``)
+    so the call carries no extra latency on the hot path.
+    """
+    try:
+        _forward_admin(
+            "run_rollup_regen",
+            {"project_id": project_id, "subsystem": subsystem},
+        )
+    except Exception as exc:  # noqa: BLE001
+        import logging  # noqa: PLC0415
+
+        logging.getLogger(__name__).warning(
+            "adr_add rollup regen failed: project_id=%s subsystem=%s err=%s",
+            project_id,
+            subsystem,
+            exc,
+        )
 
 
 @observe(tier="stage", metric="tools.adr._allocate_adr_ledger_row")
@@ -319,10 +386,19 @@ def _allocate_adr_ledger_row(
     title: str,
     status: str,
     date: str,
+    *,
+    tier: str | None = None,
+    subsystem: str | None = None,
 ) -> dict | tuple[int, str]:
     """Step 1 of ``adr_add``: forward ``create_adr_row`` to the backend ledger
     (ADR-0197 — id IS the ADR number). Returns ``(adr_id_int, adr_id)`` on
-    success or an error dict. Extracted from ``adr_add`` (I13 fn_loc)."""
+    success or an error dict.
+
+    Car H: threads ``tier`` (D27) and ``subsystem`` (D28, §10 Q2-normalized
+    in the caller) onto the row at INSERT time — both columns are inert on
+    rows created before Car H landed, so the seed op (``seed_adr_tier_subsystem``)
+    backfills them in place afterward.
+    """
     try:
         result = _forward_admin(
             "create_adr_row",
@@ -331,6 +407,8 @@ def _allocate_adr_ledger_row(
                 "title": title,
                 "status": status,
                 "decided_on": date,
+                "tier": tier,
+                "subsystem": subsystem,
             },
         )
     except Exception as exc:  # noqa: BLE001
@@ -610,8 +688,10 @@ def adr_list(
     offset: int = 0,
     *,
     project: str | None = None,
+    tier: str | None = "binding",
+    subsystem: str | None = None,
 ) -> dict:
-    """List ADRs from the ledger; optional status filter + pagination.
+    """List ADRs from the ledger; optional status/tier filter + pagination.
 
     Car F: re-pointed from ``wiki_read(index_slug)`` + ``parse_index_rows`` to
     ``list_adr_rows`` over the core PTC → backend HTTP path. Return shape is
@@ -627,9 +707,15 @@ def adr_list(
     BOTH ``project`` and ``directory`` are supplied, ``project`` wins and
     ``directory`` is logged-and-ignored (§9 [VERIFY]).
 
+    Car H: defaults ``tier`` to ``"binding"`` (D27 — superseded/rejected/deprecated
+    ADRs are tagged ``historical`` and excluded by default). Pass ``tier=None``
+    to receive rows of any tier.
+
     Args:
         directory: Absolute path to the project root.
         status: Optional filter (open/accepted/superseded/rejected/deprecated).
+        tier: Optional filter — ``"binding"`` (default, D27) or ``"historical"``.
+            ``None`` returns rows of any tier.
         limit: Max ADRs returned per page (default 50). <= 0 means no limit.
         offset: 0-based index of the first ADR returned (default 0). Page forward
             with the `next_offset` value the response carries when truncated.
@@ -666,7 +752,12 @@ def adr_list(
     try:
         result = _forward_admin(
             "list_adr_rows",
-            {"project_id": project_id, "status": status},
+            {
+                "project_id": project_id,
+                "status": status,
+                "tier": tier,
+                "subsystem": subsystem,
+            },
         )
     except Exception as exc:  # noqa: BLE001
         import logging  # noqa: PLC0415
@@ -722,6 +813,8 @@ __all__ = [
     "_parse_supersedes",
     # adr.py-local
     "_FATAL_WRITE_REASONS",
+    "_normalize_subsystem",
     "_row_to_adr_list_entry",
+    "_trigger_subsystem_rollup_regen",
     "_write_ok",
 ]

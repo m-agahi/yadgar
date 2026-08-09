@@ -37,7 +37,7 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
         payload: {"status"?: list[str]}
 
     list_adr_rows(payload) -> {"rows": list[dict]}
-        payload: {"project_id": str, "status"?: str}
+        payload: {"project_id": str, "status"?: str, "tier"?: str, "subsystem"?: str}
 
     get_adr_row(payload) -> {"row": dict | None}
         payload: {"id": int}
@@ -204,7 +204,16 @@ async def update_task_row(payload: dict) -> dict:
 
 @observe(tier="boundary", metric="backend.admin.ledger.list_adr_rows")
 async def list_adr_rows(payload: dict) -> dict:
-    """Project-scoped ``adr`` read. payload: {project_id, status?}."""
+    """Project-scoped ``adr`` read.
+
+    payload: {project_id, status?, tier?, subsystem?}.
+
+    Car H (0047 §7 D27/D28): forwards ``tier`` (D27 enum:
+    ``"binding"`` | ``"historical"``; ``None`` = no filter) and
+    ``subsystem`` (D28, author-supplied, on-write-normalized
+    lowercase+trim) to ``MariaStorageEngine.list_adr_rows``. Both compose
+    with the existing ``status`` filter and each other.
+    """
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
@@ -212,6 +221,8 @@ async def list_adr_rows(payload: dict) -> dict:
         rows = await storage.list_adr_rows(
             project_id=payload["project_id"],
             status=payload.get("status"),
+            tier=payload.get("tier"),
+            subsystem=payload.get("subsystem"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_adr_rows error: %s", exc)

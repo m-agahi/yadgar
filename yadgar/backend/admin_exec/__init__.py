@@ -43,8 +43,10 @@ from yadgar.backend.admin_exec import (
     reslug,
     restoration,
     restore_sql,
+    rollup,
     runtime_config,
     seed,
+    seed_adr_tier_subsystem,
     staleness,
     wiki,
 )
@@ -191,12 +193,22 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # (D23 — the sole sanctioned writer for the lifecycle transition).
     "seed_adr_rows": adr_seed.seed_adr_rows,
     "retype_page_type": adr_seed.retype_page_type,
+<<<<<<< HEAD
     # Car K (0047 §7 row K): nightly archive sweep — cross-engine write that
     # flips MariaDB ledger rows to status='archived' and retypes SurrealDB
     # body pages to per-type archived variants. Per-page mutability_override
     # in ('locked','derived') is the operator opt-out. Idempotent;
     # circuit-breaker caps the candidate count.
     "run_nightly_archive_sweep": nightly_sweep.run_nightly_archive_sweep,
+    # Car H (0047 §7 D29): per-subsystem ADR rollup pages (D29). The
+    # ``_regenerate_subsystem_rollup`` is the internal write helper invoked
+    # from core ``adr_add``'s post-commit step (§10 Q1 on-write trigger);
+    # ``run_rollup_regen`` is the admin-op catch-up entry point that
+    # iterates a project's distinct subsystems and regenerates each. The
+    # one-shot ``seed_adr_tier_subsystem`` (D35a) backfills ``tier`` +
+    # ``subsystem`` columns on existing rows.
+    "run_rollup_regen": rollup.run_rollup_regen,
+    "seed_adr_tier_subsystem": seed_adr_tier_subsystem.seed_adr_tier_subsystem,
 }
 
 

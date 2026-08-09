@@ -496,15 +496,34 @@ class MariaStorageEngine:
         *,
         project_id: str,
         status: str | None = None,
+        tier: str | None = None,
+        subsystem: str | None = None,
     ) -> list[dict]:
-        """Project-scoped ``adr`` read, optionally filtered by status."""
+        """Project-scoped ``adr`` read, optionally filtered by status/tier/subsystem.
+
+        Car H (0047 §7 D27/D28): ``tier`` and ``subsystem`` filters compose
+        with the existing ``status`` filter. ``tier`` is ``"binding"`` |
+        ``"historical"`` (D27 enum); ``subsystem`` is the author-supplied,
+        on-write-normalized (lowercase+trim) value (D28 + §10 Q2). Both
+        filters translate to additional ``AND col = :col`` clauses against
+        indexed columns when present; ``None`` (or absent) leaves the WHERE
+        open. The migration-002 ``ix_adr_project_id`` index keeps the base
+        scan cheap; tier/subsystem filters are non-indexed table scans today
+        (~195 rows; not worth a per-column index yet).
+        """
         from sqlalchemy import text  # noqa: PLC0415
 
         params: dict[str, Any] = {"project_id": project_id}
         where_extra = ""
         if status is not None:
-            where_extra = " AND status = :status"
+            where_extra += " AND status = :status"
             params["status"] = status
+        if tier is not None:
+            where_extra += " AND tier = :tier"
+            params["tier"] = tier
+        if subsystem is not None:
+            where_extra += " AND subsystem = :subsystem"
+            params["subsystem"] = subsystem
         sql = text(
             "SELECT id, project_id, title, status, decided_on, subsystem, "
             "tier, body_slug, created_at, updated_at "

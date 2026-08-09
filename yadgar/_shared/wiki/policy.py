@@ -256,6 +256,25 @@ _ADR_POLICY = WikiPolicy(
     mutability=MUTABILITY_LOCKED,
 )
 
+# Car H (0047 §7 D29): ``wiki_rollup`` policy. Per-subsystem rollup pages are
+# DERIVED + LOCKED-from-recall (``recall_disposition="exclude"``); the gate is
+# identity (slug IS the identity — re-writes are updates, not duplicates), the
+# mutability is derived (regenerated, not hand-edited). The single
+# ``opt_in_tag="rollup"`` key lets a recall caller target a rollup page
+# explicitly when it wants the §8 "what governs X?" answer without scanning
+# 194 ADRs. Car K's nightly sweep (NOT Car H's on-write trigger; §10 Q1) is
+# the SOLE regenerator if a future migration changes policy; today the
+# on-write trigger in ``adr_add`` is the regenerator.
+_WIKI_ROLLUP_POLICY = WikiPolicy(
+    gate_mode="identity",
+    recall_disposition="exclude",
+    dir_scope="strict",
+    merge="allow",
+    storage_scope="project",
+    opt_in_tag="rollup",
+    mutability=MUTABILITY_DERIVED,
+)
+
 POLICY_BY_TYPE: dict[str, WikiPolicy] = {
     # Pre-ADR-0209 type. Rows on an install that has not run migration 028 still
     # carry it, so the entry must stay until that migration is universal.
@@ -295,6 +314,10 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
     # unnecessary because adr's gate_mode is identity. See adr_render.py
     # for the deleted ``force=True`` line.
     "adr": _ADR_POLICY,
+    # Car H (0047 §7 D29): per-subsystem rollup pages — derived from ADR rows,
+    # excluded from recall unless explicitly opt-in via ``opt_in_tag="rollup"``,
+    # and mutated only by the sanctioned regen writer.
+    "wiki_rollup": _WIKI_ROLLUP_POLICY,
 }
 """Explicit overrides keyed by page_type string.
 

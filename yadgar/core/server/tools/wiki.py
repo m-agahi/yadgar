@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # supplies page_type/tags, so it is spoofable. The real boundary is that the
 # canonical path is reachable only via server-side sanctioned callers (never a
 # model arg). Registered as an I32 capability-registry constant.
-CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr", "adr_superseded"})
+CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr", "adr_superseded", "wiki_rollup"})
 # Car G (0047 §7 D23): ``adr_superseded`` joins the allowlist so the retype
 # mutator (``admin_exec.adr_seed.retype_page_type``) can re-write the wiki
 # page's page_type as part of the sanctioned lifecycle transition
@@ -42,6 +42,12 @@ CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr", "adr_superseded"})
 # ``locked`` mutability blocks agent/tool edits but NOT sanctioned server-side
 # transitions (D26) — otherwise the supersede retype would deadlock against
 # its own guard.
+# Car H (0047 §7 D29): ``wiki_rollup`` joins the allowlist so the per-subsystem
+# rollup regen (admin_exec.rollup._regenerate_subsystem_rollup) can write the
+# derived page via the sanctioned canonical write path. ``derived`` mutability
+# (wiki/policy.py MUTABILITY_BY_TYPE["wiki_rollup"]="derived") blocks ALL
+# agent/tool writes; the regen writer passes _sanctioned=True at the storage
+# chokepoint so its lifecycle is the SOLE mutator.
 
 
 def _missing_directory_error() -> dict:

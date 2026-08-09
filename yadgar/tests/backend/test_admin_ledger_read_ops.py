@@ -178,7 +178,12 @@ class TestLedgerAsyncOps:
             "list_adr_rows", {"project_id": "m-agahi/yadgar"}
         )
         assert result == {"rows": rows}
-        sql_storage.list_adr_rows.assert_awaited_once_with(project_id="m-agahi/yadgar", status=None)
+        # Car H (0047 §7 D27/D28): ``list_adr_rows`` forwards the optional
+        # ``tier`` and ``subsystem`` filters; both default to ``None`` when
+        # absent from the payload (no WHERE-clause narrowing).
+        sql_storage.list_adr_rows.assert_awaited_once_with(
+            project_id="m-agahi/yadgar", status=None, tier=None, subsystem=None
+        )
 
     async def test_get_adr_row_returns_row_or_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         sql_storage = _make_fake_sql_storage(adr_row={"id": 22, "title": "a22"})
