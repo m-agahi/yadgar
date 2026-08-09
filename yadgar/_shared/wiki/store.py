@@ -26,6 +26,7 @@ from yadgar._shared.wiki.contract import (
 from yadgar._shared.wiki.contract import (
     WikiAddOptions,
 )
+from yadgar._shared.wiki.policy import MUTABILITY_VALUES
 from yadgar._shared.wiki.policy import get_policy as _get_wiki_policy
 from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
 from yadgar._shared.wiki.slug import slugify as _slugify_fn
@@ -1841,6 +1842,100 @@ class WikiStore:
             "page_ids": page_ids,
             # Back-compat keys for callers that check the single-row shape.
             # page_id = first resolved id; changed = any row was updated.
+            "page_id": page_ids[0],
+            "changed": rows_updated > 0,
+        }
+
+    @observe(tier="stage")
+    def set_mutability_by_slug(
+        self,
+        slug: str,
+        value: str | None,
+        *,
+        reason: str,
+    ) -> dict:
+        """Set ``mutability_override`` on ALL rows sharing *slug*.
+
+        Car J (0047 §7 D25/D26). Mirrors ``set_metadata_by_slug``'s all-rows
+        pattern (every row sharing the slug, including 'global' stragglers,
+        gets the new override). This is the SOLE write path for the override
+        field — ``update_wiki_page`` callers cannot write ``mutability_override``
+        directly because ``WikiStore._METADATA_FIELDS`` does not include it,
+        so the privileged ``wiki_set_mutability`` tool is the only sanctioned
+        way to flip a page's mutability.
+
+        ``value`` must be ``"free"`` | ``"locked"`` | ``"derived"`` | ``None``
+        (None clears the override back to the per-type default). ``reason``
+        is required and logged for the audit trail (D26). The override write
+        itself runs through ``storage.set_wiki_page_metadata`` with
+        ``_sanctioned=True`` because mutability_override is a system field —
+        flipping it MUST NOT be blocked by the storage-layer mutability gate
+        (the gate checks effective mutability of the existing page, which
+        would deadlock this tool's whole purpose).
+
+        Returns:
+            {ok: True, slug, rows_updated, page_ids, page_id, changed}
+            {ok: False, error} on validation failure or slug not found.
+        """
+        # ── Validate value ────────────────────────────────────────────────
+        if value is not None and value not in MUTABILITY_VALUES:
+            return {
+                "ok": False,
+                "error": (
+                    f"invalid mutability value {value!r}; "
+                    f"allowed: {sorted(MUTABILITY_VALUES) + [None]}"
+                ),
+            }
+
+        # ── Validate reason ───────────────────────────────────────────────
+        if not reason or not reason.strip():
+            return {
+                "ok": False,
+                "error": "reason is required for mutability_override audit log",
+            }
+
+        page_ids = self._storage.get_wiki_page_ids_by_slug(slug)
+        if not page_ids:
+            return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+        rows_updated = 0
+        for pid in page_ids:
+            page = self._storage.get_wiki_page(pid)
+            if page is None:
+                continue
+            old = page.get("mutability_override")
+            if old == value:
+                logger.info(
+                    "set_mutability_by_slug no-op: slug=%r page_id=%s value=%r (unchanged)",
+                    slug,
+                    pid,
+                    value,
+                )
+                continue
+            # _sanctioned=True bypasses the mutability gate — this tool is
+            # the privileged writer, and the gate would deadlock it.
+            self._storage.set_wiki_page_metadata(
+                pid,
+                "mutability_override",
+                value,
+            )
+
+            logger.info(
+                "set_mutability_by_slug: slug=%r page_id=%s old=%r new=%r reason=%r",
+                slug,
+                pid,
+                old,
+                value,
+                reason,
+            )
+            rows_updated += 1
+
+        return {
+            "ok": True,
+            "slug": slug,
+            "rows_updated": rows_updated,
+            "page_ids": page_ids,
+            # Back-compat keys for callers that check the single-row shape.
             "page_id": page_ids[0],
             "changed": rows_updated > 0,
         }

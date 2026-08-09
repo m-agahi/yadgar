@@ -1128,6 +1128,49 @@ def wiki_set_metadata(
     return _forward_admin("wiki_set_metadata", {"slug": slug, "field": field, "value": value})
 
 
+@_tool(power=True)
+def wiki_set_mutability(
+    slug: str,
+    value: str | None,
+    reason: str,
+    directory: str | None = None,  # noqa: ARG001 — kept for API back-compat
+) -> dict:
+    """Set ``mutability_override`` on ALL rows sharing *slug* (Car J).
+
+    Power-gated, logged, SOLE escape hatch for changing a page's mutability.
+    Mirrors ``wiki_set_metadata``'s all-rows pattern — every row sharing the
+    slug (including 'global' stragglers) gets the new override.
+
+    Validation:
+    - ``value`` must be ``"free"`` | ``"locked"`` | ``"derived"`` | ``None``.
+      ``None`` clears the override back to the per-type default.
+    - ``reason`` is REQUIRED — non-empty, logged for audit (D26).
+
+    Bypasses the storage-layer mutability gate (this tool is the privileged
+    writer; the gate would deadlock its own purpose). Sanctioned server-side
+    lifecycle transitions (Car G supersede retype, Car K nightly sweep) use a
+    separate ``_sanctioned=True`` path on ``storage.update_wiki_page`` — they
+    do NOT call this tool.
+
+    Args:
+        slug: Wiki page slug.
+        value: New mutability value, or None to clear the override.
+        reason: Required audit reason (logged per row).
+        directory: Kept for API back-compat (unused — all-rows path).
+
+    Returns: ``{ok, slug, rows_updated, page_ids}`` or ``{ok: False, error}``.
+    """
+    if not reason or not reason.strip():
+        return {
+            "ok": False,
+            "error": "reason is required for mutability_override audit log",
+        }
+    return _forward_admin(
+        "wiki_set_mutability",
+        {"slug": slug, "value": value, "reason": reason},
+    )
+
+
 # ── v5.61.0: Layer 1 — Anchor-text primitives ────────────────────────────────
 
 

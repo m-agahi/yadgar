@@ -192,6 +192,35 @@ def wiki_set_metadata(payload: dict) -> dict:
     return _st._wiki.set_metadata_by_slug(payload["slug"], payload["field"], payload["value"])
 
 
+@observe(tier="boundary", metric="backend.admin.wiki_set_mutability")
+def wiki_set_mutability(payload: dict) -> dict:
+    """Set ``mutability_override`` on ALL rows sharing a slug. Storage-write half.
+
+    Car J (0047 §7 D25/D26). The privileged write path for the per-page
+    mutability override — mirrors ``wiki_set_metadata``'s all-rows shape and
+    delegates to ``WikiStore.set_mutability_by_slug`` (sole writer).
+
+    payload: {"slug": str, "value": str | None, "reason": str}
+    Returns {ok, slug, rows_updated, page_ids} or {ok: False, error}.
+
+    Validation (reason required, value ∈ {free, locked, derived, None}) is
+    enforced at both layers — core shell + backend handler — so a forged
+    payload that bypassed the MCP gate still fails before the storage write.
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    reason = payload.get("reason", "")
+    if not reason or not reason.strip():
+        return {
+            "ok": False,
+            "error": "reason is required for mutability_override audit log",
+        }
+    return _st._wiki.set_mutability_by_slug(
+        payload["slug"],
+        payload.get("value"),
+        reason=reason,
+    )
+
+
 @observe(tier="boundary", metric="backend.admin.wiki_replace_text")
 def wiki_replace_text(payload: dict) -> dict:
     """Replace old_text with new_text in a wiki page. Storage-write half.

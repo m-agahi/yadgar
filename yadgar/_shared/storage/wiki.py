@@ -8,7 +8,7 @@ _WikiMixin provides:
   - upsert_project_init / upsert_active_work
   - insert_wiki_page_version / get_max_version_for_page
   - list_wiki_page_versions / get_wiki_page_version
-  - _compute_change_summary
+  - compute_change_summary (in wiki_change_summary.py)
 
 v5.41.1 audit: all version-write paths reviewed for try/except masking.
   - insert_wiki_page: compound BEGIN/COMMIT txn (no masking).
@@ -18,82 +18,21 @@ v5.41.1 audit: all version-write paths reviewed for try/except masking.
   - insert_wiki_page_version: kept for migration seeder; not called by write paths.
   - replace_wiki_crossrefs: separate txn scope (crossref consistency, not version).
   No other version-write try/except patterns found.
+
+Car J (0047 §7 D25/D26): insert/update/delete carry ``_sanctioned=False``.
+True bypasses the mutability gate for server-side lifecycle transitions
+(Car G supersede retype, Car K nightly sweep). Default rejects locked/derived
+writes with PermissionError.
 """
 
-import difflib
 import logging
-import re as _re
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage.mutability_gate import enforce_mutability
+from yadgar._shared.storage.wiki_change_summary import compute_change_summary
 
 _log = logging.getLogger(__name__)
-
-
-# ── Change-summary helpers ─────────────────────────────────────────────────────
-
-
-_HEADING_RE = _re.compile(r"^##+ (.+)")
-
-
-@observe(tier="hot")
-def _diff_context_line(diff_line: str) -> str:
-    """Strip unified-diff prefix (+/-/@/ ) to get the raw text for heading detection."""
-    if diff_line.startswith("@"):
-        return diff_line.lstrip("+-@ ")
-    return diff_line[1:] if diff_line else ""
-
-
-@observe(tier="hot")
-def _find_nearby_heading(diff: list[str], i: int, touched: list[str]) -> None:
-    """Look back up to 5 diff lines for a ## heading; append to touched if found."""
-    for j in range(max(0, i - 5), i):
-        m = _HEADING_RE.match(_diff_context_line(diff[j]))
-        if m:
-            heading = m.group(1).strip()
-            if heading not in touched:
-                touched.append(heading)
-            return
-
-
-@observe(tier="hot")
-def _compute_change_summary(old_content: str, new_content: str) -> str:
-    """Generate a concise diff summary for a wiki page version.
-
-    Format: "+N -M lines | sections: 'Foo', 'Bar' | size: X → Y bytes"
-    Capped at 300 chars. No LLM — pure difflib (I9: no LLM on write path).
-
-    Section detection: markdown ## / ### headings at column 0 that appear
-    within 5 lines above changed (added/removed) content.
-    """
-    old_lines = old_content.splitlines(keepends=True)
-    new_lines = new_content.splitlines(keepends=True)
-    diff = list(difflib.unified_diff(old_lines, new_lines, lineterm=""))
-
-    added = 0
-    removed = 0
-    touched_sections: list[str] = []
-
-    for i, line in enumerate(diff):
-        if line.startswith("+") and not line.startswith("+++"):
-            added += 1
-            _find_nearby_heading(diff, i, touched_sections)
-        elif line.startswith("-") and not line.startswith("---"):
-            removed += 1
-
-    size_old = len(old_content.encode())
-    size_new = len(new_content.encode())
-
-    parts = [f"+{added} -{removed} lines"]
-    if touched_sections:
-        section_str = ", ".join(f"'{s}'" for s in touched_sections[:5])
-        parts.append(f"sections: {section_str}")
-    parts.append(f"size: {size_old} → {size_new} bytes")
-
-    summary = " | ".join(parts)
-    if len(summary) > 300:
-        summary = summary[:299] + "…"
-    return summary
 
 
 class _WikiMixin:
@@ -139,12 +78,27 @@ class _WikiMixin:
         v5.41.1: wiki_page CREATE and wiki_page_version CREATE are wrapped in a
         single BEGIN/COMMIT transaction. Either both succeed or both roll back —
         no orphan wiki_page rows without a version, and no orphan version rows.
+
+        Car J: gate enforced below. Locked/derived pages reject insert; pass
+        ``_sanctioned=True`` for server-side lifecycle transitions (Car G).
         """
+        # Symmetry with update/delete — `_sanctioned` is opt-in for callers
+        # that seed derived rollups (Car K nightly sweep) or write the
+        # mutability_override back during a sanctioned migration. Read via
+        # get+delete-from-copy so we don't mutate the caller's dict.
+        page_copy = dict(page) if isinstance(page, dict) else page
+        _sanctioned = bool(page_copy.pop("_sanctioned", False))
+        # The mutability gate consults the page_type (no override yet on
+        # first insert — row hasn't been written). We synthesise the page
+        # dict the gate reads.
+        gate_page: dict = {"page_type": page_copy.get("page_type")}
+        enforce_mutability(gate_page, op="insert_wiki_page", sanctioned=_sanctioned)
+
         now = self._now_iso()
         pid = self._next_id("wiki_page")
         # Reserve version row ID outside the txn (counter bump is non-transactional).
         vid = self._next_id("wiki_page_version")
-        embedding = page.get("embedding")
+        embedding = page_copy.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if isinstance(embedding, bytes) else embedding
 
         page_set = (
@@ -156,24 +110,24 @@ class _WikiMixin:
         )
         params: dict = {
             "pid": pid,
-            "title": page.get("title", ""),
-            "slug": page["slug"],
-            "content": page.get("content", ""),
-            "category": page.get("category"),
-            "tags": page.get("tags", []),
-            "links": page.get("links", []),
-            "confidence": page.get("confidence", 1.0),
+            "title": page_copy.get("title", ""),
+            "slug": page_copy["slug"],
+            "content": page_copy.get("content", ""),
+            "category": page_copy.get("category"),
+            "tags": page_copy.get("tags", []),
+            "links": page_copy.get("links", []),
+            "confidence": page_copy.get("confidence", 1.0),
             "embedding": emb_floats,
-            "source_memory_ids": page.get("source_memory_ids", []),
-            "created_at": page.get("created_at", now),
-            "updated_at": page.get("updated_at", now),
+            "source_memory_ids": page_copy.get("source_memory_ids", []),
+            "created_at": page_copy.get("created_at", now),
+            "updated_at": page_copy.get("updated_at", now),
             "vid": vid,
-            "ver_title": page.get("title", ""),
-            "ver_content": page.get("content", ""),
-            "ver_category": page.get("category"),
-            "ver_tags": page.get("tags", []),
-            "ver_confidence": page.get("confidence"),
-            "ver_source_memory_ids": page.get("source_memory_ids", []),
+            "ver_title": page_copy.get("title", ""),
+            "ver_content": page_copy.get("content", ""),
+            "ver_category": page_copy.get("category"),
+            "ver_tags": page_copy.get("tags", []),
+            "ver_confidence": page_copy.get("confidence"),
+            "ver_source_memory_ids": page_copy.get("source_memory_ids", []),
             "ver_branch": branch,
             "ver_now": now,
         }
@@ -182,16 +136,16 @@ class _WikiMixin:
             params["branch"] = branch
         # v5.42.5: directory_context — NOT NULL per migration 016 schema constraint.
         # Value comes from page dict (preferred) or falls back to "global".
-        directory_context = page.get("directory_context") or "global"
+        directory_context = page_copy.get("directory_context") or "global"
         page_set += ", directory_context = $directory_context"
         params["directory_context"] = directory_context
         # v5.53.2: page_type + wiki_schema_version — optional (option<string> /
         # option<int>). Only included in SET clause when non-None so SurrealDB
         # stores NONE (absent) rather than explicit null for untyped pages.
-        if page.get("page_type") is not None:
+        if page_copy.get("page_type") is not None:
             page_set += ", page_type = $page_type, wiki_schema_version = $wiki_schema_version"
-            params["page_type"] = page["page_type"]
-            params["wiki_schema_version"] = page.get("wiki_schema_version", 1)
+            params["page_type"] = page_copy["page_type"]
+            params["wiki_schema_version"] = page_copy.get("wiki_schema_version", 1)
 
         # Single compound transaction: wiki_page + wiki_page_version version=1.
         # I1: no LLM/embed inside txn — pure DB writes only.
@@ -212,7 +166,12 @@ class _WikiMixin:
         return pid
 
     @trace_span()
-    def update_wiki_page(self, page_id: int, updates: dict) -> bool:
+    def update_wiki_page(
+        self,
+        page_id: int,
+        updates: dict,
+        _sanctioned: bool = False,
+    ) -> bool:
         """Update fields on an existing wiki page. Return True if found.
 
         v5.41.1: wiki_page UPDATE and wiki_page_version INSERT are wrapped in a
@@ -224,6 +183,12 @@ class _WikiMixin:
         outside the transaction. In embedded single-writer mode this is safe.
         In server mode a race window exists between read and txn open, but that
         is a pre-existing constraint scoped out per plan §Non-goals.
+
+        Car J: gate enforced HERE — single chokepoint for all write paths
+        (``WikiStore._apply_text_edit``/``append_section``/``restore_version``,
+        ``WikiStore.add`` upsert, ``admin_exec.wiki_update`` that bypasses
+        ``WikiStore`` entirely). Override wins over per-type default.
+        ``_sanctioned=True`` for Car G supersede retype, Car K sweep.
         """
         if not updates:
             return False
@@ -232,6 +197,11 @@ class _WikiMixin:
         old_page: dict | None = self.get_wiki_page(int(page_id))
         if old_page is None:
             return False
+
+        # Car J: enforce mutability BEFORE the txn — locked/derived pages
+        # reject the write with PermissionError. Sanctioned transitions
+        # (Car G supersede retype, Car K nightly sweep) pass _sanctioned=True.
+        enforce_mutability(old_page, op="update_wiki_page", sanctioned=_sanctioned)
 
         # Handle embedding conversion if present.
         if "embedding" in updates and isinstance(updates["embedding"], bytes):
@@ -246,7 +216,7 @@ class _WikiMixin:
         merged.update(updates)
         old_content = old_page.get("content", "")
         new_content = updates.get("content", old_page.get("content", ""))
-        change_summary = _compute_change_summary(old_content, new_content)
+        change_summary = compute_change_summary(old_content, new_content)
 
         # Reserve version row ID + number outside the txn (counters are non-txn).
         vid = self._next_id("wiki_page_version")
@@ -331,7 +301,7 @@ class _WikiMixin:
         merged[field] = value
 
         new_content = merged.get("content", "")
-        change_summary = _compute_change_summary(old_page.get("content", ""), new_content)
+        change_summary = compute_change_summary(old_page.get("content", ""), new_content)
 
         params: dict = {
             "pid": int(page_id),
@@ -351,6 +321,14 @@ class _WikiMixin:
         page_set_clause = f"{field} = $upd_val, updated_at = $upd_now"
         params["upd_val"] = value
         params["upd_now"] = now
+        # ``option<T>`` fields (e.g. ``mutability_override`` added by migration
+        # 030) need ``= NONE`` to clear, not ``= $upd_val`` — a Python ``None``
+        # param serialises to explicit null, which an ``option<T>`` typed
+        # column rejects (schema expects ``none`` for absent). Non-nullable
+        # fields (the historical case) keep the parameterised form.
+        if value is None:
+            page_set_clause = f"{field} = NONE, updated_at = $upd_now"
+            params.pop("upd_val", None)
 
         self._q(
             "BEGIN TRANSACTION;\n"
@@ -447,14 +425,32 @@ class _WikiMixin:
         return self._row_to_dict(rows[0]) if rows else None
 
     @trace_span()
-    def delete_wiki_page(self, page_id: int) -> bool:
-        """Delete a wiki page by ID. Return True if deleted."""
+    def delete_wiki_page(self, page_id: int, _sanctioned: bool = False) -> bool:
+        """Delete a wiki page by ID. Return True if deleted.
+
+        Car J: symmetric with update_wiki_page — locked/derived reject delete.
+        ``_sanctioned=True`` for Car K sweep on derived rollups.
+        """
         pid = int(page_id)
-        # Fetch slug before deleting so we can clean crossrefs keyed by slug
-        rows = self._q(f"SELECT id, slug FROM wiki_page:{pid}")
+        # Fetch slug + page_type before deleting so we can enforce mutability
+        # AND clean crossrefs keyed by slug in one read.
+        rows = self._q(f"SELECT id, slug, page_type, mutability_override FROM wiki_page:{pid}")
         if not rows:
             return False
-        slug = rows[0].get("slug", "")
+        row = rows[0]
+        slug = row.get("slug", "")
+        # Car J: enforce mutability. Derive the row dict the gate reads from
+        # the SELECT — same shape ``get_wiki_page`` would return.
+        enforce_mutability(
+            {
+                "id": pid,
+                "slug": slug,
+                "page_type": row.get("page_type"),
+                "mutability_override": row.get("mutability_override"),
+            },
+            op="delete_wiki_page",
+            sanctioned=_sanctioned,
+        )
         # Clean ALL crossrefs referencing this page's slug (both outgoing and
         # incoming).  wiki.delete() already calls replace_wiki_crossrefs(slug, [])
         # for outgoing rows, but the INCOMING rows (to_slug = slug) are never

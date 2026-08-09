@@ -1676,7 +1676,7 @@ config knobs.
 - **status:** LIVE
 - **category:** storage
 - **settings:** —
-- **tools:** `wiki_delete`, `wiki_autolink`, `wiki_update`, `wiki_restore`, `wiki_append_section`, `wiki_set_metadata`, `wiki_replace_text`, `wiki_delete_text`, `wiki_insert_after`, `wiki_insert_before`, `wiki_replace_at`, `wiki_delete_at`, `wiki_insert_at`, `wiki_replace_markdown_block`, `agent_prompt_save`
+- **tools:** `wiki_delete`, `wiki_autolink`, `wiki_update`, `wiki_restore`, `wiki_append_section`, `wiki_set_metadata`, `wiki_set_mutability`, `wiki_replace_text`, `wiki_delete_text`, `wiki_insert_after`, `wiki_insert_before`, `wiki_replace_at`, `wiki_delete_at`, `wiki_insert_at`, `wiki_replace_markdown_block`, `agent_prompt_save`
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/core/server/tools/wiki.py`, `yadgar/core/server/tools/admin_other.py::wiki_update`, `yadgar/core/server/tools/agent_prompts.py::agent_prompt_save`, `yadgar/backend/admin_exec/wiki.py`
@@ -1715,6 +1715,17 @@ config knobs.
 - **refs:** `yadgar/_shared/storage/migrations.py::_migration_027_runtime_config_table`, `yadgar/_shared/storage/runtime_config.py`, `yadgar/backend/admin_exec/runtime_config.py`
 - **wiring:** Applied once at server-mode startup after ADR-0163 (Car G1). Creates the `runtime_config` SCHEMALESS table with a non-unique index on `(key, directory)`. Backs the DB-backed, directory-scoped, typed runtime config store via `_RuntimeConfigMixin` (`set_config_row` / `get_config_row` / `list_config_rows` / `delete_config_row`). Write ops forward through the backend `runtime_config_set` / `runtime_config_delete` admin ops; reads stay core via `_get_storage()` (mirrors the memory_block pattern — no read admin op).
 - **explanation:** Car G1 of the runtime config store replaces code_graph's env-only `CODE_GRAPH_ENABLED` flag + `.code-graph-disable` repo file with a proper DB row. A row is `{key, directory(None=global), value(JSON — bool/int/str/list/dict), created_at, updated_at}`; per-dir overrides global (resolution is Car G2's getter). Uniqueness on `(key, directory)` is enforced application-side (like `memory_block`), so the index is deliberately non-UNIQUE (a UNIQUE index over a nullable `directory` is avoided). Values round-trip typed via JSON encode-on-write / decode-on-read. Cache/resolver (G2), MCP tools + HTTP route + host client (G3), and the code_graph migration (G4) build on this storage layer.
+
+### CAP-STOR-050 — Migration 030: mutability_override column on wiki_page (Car J, 0047 spine, D25/D26)
+- **status:** LIVE
+- **category:** storage
+- **settings:** —
+- **tools:** `wiki_set_mutability`
+- **migrations:** `030`
+- **bc:** —
+- **refs:** `yadgar/_shared/storage/migrations.py::_migration_030_wiki_mutability_override`, `yadgar/_shared/wiki/policy.py::MUTABILITY_BY_TYPE`, `yadgar/_shared/storage/wiki.py::_enforce_mutability`, `yadgar/_shared/wiki/store.py::set_mutability_by_slug`, `yadgar/core/server/tools/wiki.py::wiki_set_mutability`, `yadgar/backend/admin_exec/wiki.py::wiki_set_mutability`
+- **wiring:** Migration 030 runs once at server-mode startup, adding `DEFINE FIELD IF NOT EXISTS mutability_override ON TABLE wiki_page TYPE option<string>;` (idempotent; no backfill — pre-migration rows resolve NONE→per-type default). The storage chokepoint (`_enforce_mutability` in `_shared/storage/wiki.py`) reads `mutability_override` ∪ `MUTABILITY_BY_TYPE` and rejects non-sanctioned writes when the effective mutability is `locked` or `derived`. Per-type defaults (D26): `adr`/`adr_superseded` → `locked`, `task`/`agent_prompt*` → `free`, `wiki_rollup` → `derived`. The `wiki_set_mutability(slug, value, reason)` MCP tool (power-gated) is the sole sanctioned override path — it writes `mutability_override` via `WikiStore.set_mutability_by_slug` (all-rows pattern). A `_sanctioned=True` kwarg on `update_wiki_page`/`delete_wiki_page` lets the Car G supersede retype + Car K nightly sweep bypass the gate without deadlocking the lifecycle.
+- **explanation:** D25 closes the well-intentioned-repair vector (rewriting a derived rollup, stripping an ADR's superseded tag) and the dangling-pointer vector (deleting a locked page mutability). Per-page `mutability_override` is the privilege-escalation surface that prevents the gate from being a permanent wall — the security model is "locked by default, override with reason logged". The `_sanctioned` seam is the lifecycle escape hatch (a locked ADR can still be SUPERSEDED by the retype op, can still be subject to a nightly archive sweep); without it the guard deadlocks its own lifecycle.
 
 ### CAP-STOR-049 — Migration 029: retire branch scoping — null the data, drop the column (ADR-0215, Car 9)
 - **status:** LIVE

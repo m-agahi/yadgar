@@ -171,7 +171,13 @@ class TestMigration029Registration:
         assert entry["fn"] is _migration_029_drop_branch_column
 
     def test_migration_029_is_at_the_tail(self):
-        assert _MIGRATIONS[-1]["version"] == "029_drop_branch_column"
+        # Car J appended migration 030 (mutability_override) after 029, so 029
+        # is no longer at the absolute tail. The assertion below stays correct
+        # as long as 029 is the most recent migration registered BEFORE the
+        # next car adds one — but to avoid coupling 029's test to that
+        # invariant, we only check 029 is in the list (and 030 is the tail).
+        assert "029_drop_branch_column" in [m["version"] for m in _MIGRATIONS]
+        assert _MIGRATIONS[-1]["version"] != "029_drop_branch_column"
 
     def test_029_registered_after_004_and_015(self):
         versions = [m["version"] for m in _MIGRATIONS]

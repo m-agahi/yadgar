@@ -1387,6 +1387,36 @@ def _migration_029_drop_branch_column(storage) -> None:
     _log.info("migration_029: dropped branch field definition on memory + wiki_page (ADR-0215)")
 
 
+def _migration_030_wiki_mutability_override(storage) -> None:
+    """Add nullable ``mutability_override`` column to wiki_page (Car J, 0047 §7 D25).
+
+    D25 closes the well-intentioned-repair vector (rewriting a derived
+    rollup, stripping an ADR's superseded tag) and the dangling-pointer
+    vector (deleting a locked page). D26 sets the per-type defaults:
+    ``adr``/``adr_superseded`` → locked, ``task``/``agent_prompt*`` → free,
+    ``wiki_rollup`` → derived. Per-page ``mutability_override`` wins over
+    the per-type default; the storage chokepoint (``_WikiMixin.update_wiki_page``
+    + insert/delete for symmetry) enforces the resolved value and exposes
+    a ``_sanctioned=True`` seam for server-side lifecycle transitions (Car G
+    supersede retype, Car K nightly sweep).
+
+    Schema:
+    - ``mutability_override TYPE option<string>`` — nullable; absent (NONE) →
+      fall back to per-type default. Set to one of ``"free"``, ``"locked"``,
+      ``"derived"`` to override.
+    - No backfill: pre-migration rows have NONE → default (adr→locked,
+      task/agent→free, else→free). The plan §9 confirms this is intentional.
+
+    DEFINE FIELD IF NOT EXISTS is idempotent — safe to call twice. The table
+    is SCHEMALESS but the field definition makes the type contract visible
+    to readers (downgrade-style migrations would need REMOVE FIELD here).
+    """
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS mutability_override ON TABLE wiki_page TYPE option<string>;"
+    )
+    _log.info("migration_030: added mutability_override field on wiki_page (Car J)")
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -1491,6 +1521,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "029_drop_branch_column",
         "fn": _migration_029_drop_branch_column,
+    },
+    {
+        "version": "030_wiki_mutability_override",
+        "fn": _migration_030_wiki_mutability_override,
     },
 ]
 
