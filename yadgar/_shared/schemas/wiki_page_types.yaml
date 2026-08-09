@@ -29,6 +29,14 @@ page_types:
     # Car 0: Architecture Decision Record page type. Lets wiki_lint format-check
     # ADR pages and makes the CANONICAL_PAGE_TYPES allowlist assertion unambiguous.
     required: [Context, Decision, Consequences]
+  adr_superseded:
+    # Car G (0047 §7 D23): the ``adr`` page is RETYPED to ``adr_superseded``
+    # when a successor ADR supersedes it. Lint shape mirrors ``adr`` (the
+    # required sections never change — only the page_type field flips). The
+    # retype is the SOLE sanctioned writer (D26: locked mutability blocks
+    # agent/tool edits but not server-side lifecycle transitions); wiki_lint
+    # format-checks the result.
+    required: [Context, Decision, Consequences]
   agent_prompt:
     # PRE-ADR-0209 type. Split into agent_pattern + agent_discipline below;
     # migration 028 re-types the live corpus. Retained so pages on an install

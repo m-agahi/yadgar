@@ -404,6 +404,8 @@ async def get_agent_prompt_toc_updated_at(payload: dict) -> dict:  # noqa: ARG00
     if dt is None:
         return {"timestamp": None}
     return {"timestamp": dt.timestamp()}
+
+
 # ── Car F: ADR write ops ───────────────────────────────────────────────────────
 # Re-point of the ADR MCP tools (0047 §7 Car F): ``create_adr_row`` allocates
 # the new row (returns the AUTO_INCREMENT id — ADR-0197: id IS the ADR
@@ -488,3 +490,31 @@ async def add_adr_supersedes(payload: dict) -> dict:
         )
         return {"ok": False, "error": str(exc)}
     return {"ok": True}
+
+
+# ── Car G: max_adr_updated_at (replaces wiki-index timestamp signal) ─────────
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.max_adr_updated_at")
+async def max_adr_updated_at(payload: dict) -> dict:
+    """Return ``MAX(adr.updated_at)`` for *project_id* as a unix timestamp float.
+
+    payload: ``{"project_id": str}``. Car G (0047 §7): the
+    ``project_brief._get_adr_log_updated_at`` signal re-points off the
+    deleted ``<project>-adr-index`` wiki page onto the SQL ledger. The
+    raw datetime is coerced to a float for symmetry with the legacy wiki
+    page-timestamp surface (so the ADR-due nudge downstream code is
+    unchanged). Returns ``{"updated_at": None}`` when the table has no
+    rows for the project — same nullability the old wiki-page signal had.
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        dt = await storage.max_adr_updated_at(project_id=str(payload["project_id"]))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("max_adr_updated_at error: %s", exc)
+        return {"ok": False, "error": str(exc), "updated_at": None}
+    if dt is None:
+        return {"updated_at": None}
+    return {"updated_at": dt.timestamp()}

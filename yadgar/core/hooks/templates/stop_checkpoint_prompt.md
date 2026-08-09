@@ -21,14 +21,19 @@ and a checkpoint built on a remembered pointer instead of the live bytes is the
 exact failure this protocol exists to prevent. On-disk paths → the Read tool;
 wiki slugs → wiki_read; the tagged agent-prompt library → recall.
 
-1. ADR CAPTURE (always run; the Yadgar wiki is the source of truth — no file,
-   works for non-git projects too).
-   Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
+1. ADR CAPTURE (always run; the Yadgar ADR ledger is the source of truth —
+   no file, works for non-git projects too).
    - Read existing ADRs FIRST — actually CALL it now and dedup against the
-     RETURNED content, not your memory of it: wiki_read("{project}-adr-log",
-     directory="{directory}"). If the page is
-     absent the log is empty — no prior ADRs to dedup against. Do NOT create the
-     log manually; adr_add handles creation automatically.
+     RETURNED content, not your memory of it: adr_list(directory="{directory}",
+     status="open"). If the list is empty there are no open ADRs to dedup
+     against. Do NOT create the log manually; adr_add handles creation
+     automatically.
+   <!-- Car G (0047 §7): step 1's read-first-dedup now reaches the SQL ADR
+        ledger via adr_list(directory=...) above. Pre-G the instruction
+        pointed at a wiki page whose slug followed the deleted-monolith
+        shape; that read path is gone. adr_list reads the ledger, NOT a
+        wiki page. Historical note only — do not re-introduce the legacy
+        wiki_read call. -->
    - Scan THIS session for durable decisions since the last checkpoint.
      KEEP (precision over recall): a clear durable decision — architecture, a
      tool/config choice, an approach committed-to, a scope cut; a conclusion we

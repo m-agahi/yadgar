@@ -26,7 +26,14 @@ logger = logging.getLogger(__name__)
 # supplies page_type/tags, so it is spoofable. The real boundary is that the
 # canonical path is reachable only via server-side sanctioned callers (never a
 # model arg). Registered as an I32 capability-registry constant.
-CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr"})
+CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr", "adr_superseded"})
+# Car G (0047 §7 D23): ``adr_superseded`` joins the allowlist so the retype
+# mutator (``admin_exec.adr_seed.retype_page_type``) can re-write the wiki
+# page's page_type as part of the sanctioned lifecycle transition
+# (``adr`` → ``adr_superseded``, atomic with the row-side status flip).
+# ``locked`` mutability blocks agent/tool edits but NOT sanctioned server-side
+# transitions (D26) — otherwise the supersede retype would deadlock against
+# its own guard.
 
 
 def _missing_directory_error() -> dict:

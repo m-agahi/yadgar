@@ -44,7 +44,6 @@ Module layout (car/adr-split, unchanged):
 from __future__ import annotations
 
 import re
-import threading
 from typing import Any
 
 from yadgar._shared.observability.observe import observe
@@ -52,25 +51,9 @@ from yadgar.core.forward import _forward_admin
 from yadgar.core.identity import derive_project_id
 from yadgar.core.server._app import _tool
 
-# Sub-module imports — Car F stops CALLING the index helpers from adr_add but
-# keeps the imports so the backward-compat re-exports below keep resolving.
-from yadgar.core.server.tools.adr_index import (
-    _ADR_HEADER_RE,
-    _ADR_PAGE_SLUG_RE,
-    _INDEX_HEADER,
-    _INDEX_ROW_RE,
-    _build_index_content,
-    _committed_page_max_id,
-    _index_max_id,
-    _next_adr_id,
-    _next_adr_id_from_index,
-    _render_index_row,
-    adr_index_slug,
-    adr_log_slug,
-    adr_page_slug,
-    parse_adr_ids,
-    parse_index_rows,
-)
+# Car F stops CALLING the index helpers from adr_add but
+# keeps the slug-helper import (legacy body-fetch fallback).
+from yadgar.core.server.tools.adr_index import adr_page_slug
 from yadgar.core.server.tools.adr_render import (
     _REQUIRED_FIELDS,
     _VALID_STATUSES,
@@ -86,26 +69,6 @@ from yadgar.core.server.tools.wiki import (
     _wiki_write_canonical,
     wiki_read,
 )
-
-# ── Per-project ADR write lock ─────────────────────────────────────────────────
-# Car F keeps the per-project write lock as a defence-in-depth measure. The
-# legacy rationale (duplicate-ID race under concurrent adr_add) is largely
-# moot post-re-point because the ledger AUTO_INCREMENT serialises ID
-# allocation backend-side, but the lock still orders the body-page write
-# (wait=True) + ledger row + set_adr_body_slug + supersede-link sequence
-# per project so a caller never observes a partial commit.
-_ADR_LOG_LOCKS: dict[str, threading.Lock] = {}
-_ADR_LOG_LOCKS_GUARD = threading.Lock()
-
-
-@observe(exempt="trivial dict-lookup; no I/O, no external call, no error branch worth spanning")
-def _adr_log_lock(resolved: str) -> threading.Lock:
-    """Return the per-project threading.Lock for the ADR write sequence."""
-    with _ADR_LOG_LOCKS_GUARD:
-        if resolved not in _ADR_LOG_LOCKS:
-            _ADR_LOG_LOCKS[resolved] = threading.Lock()
-        return _ADR_LOG_LOCKS[resolved]
-
 
 # A wait=True canonical write that is still QUEUED after wait_timeout WILL commit
 # on the next drain — it is NOT a failure. Only these terminal reasons are fatal.
@@ -271,43 +234,46 @@ def adr_add(
         return ctx
     resolved, project_id = ctx
 
-    # ── Per-project lock (orders body write → ledger row → slug link) ─────────
-    with _adr_log_lock(resolved):
-        step1 = _allocate_adr_ledger_row(project_id, title, status, date)
-        if isinstance(step1, dict):
-            return step1
-        adr_id_int, adr_id = step1
+    # ── Car G: the per-project ``_adr_log_lock`` is GONE. The ledger
+    # ``create_adr_row`` AUTO_INCREMENT serialises ID allocation backend-side
+    # (ADR-0197), so the lock no longer guards a sequence; the body-page write
+    # (wait=True) + ledger row + set_adr_body_slug path is linearised by the
+    # backend INSERT itself.
+    step1 = _allocate_adr_ledger_row(project_id, title, status, date)
+    if isinstance(step1, dict):
+        return step1
+    adr_id_int, adr_id = step1
 
-        step2 = _write_adr_body_page(
-            resolved=resolved,
-            project_id=project_id,
-            adr_id=adr_id,
-            adr_id_int=adr_id_int,
-            fields={
-                "title": title,
-                "status": status,
-                "date": date,
-                "context": context,
-                "decision": decision,
-                "rationale": rationale,
-                "alternatives": alternatives,
-                "consequences": consequences,
-                "revisit_trigger": revisit_trigger,
-                "supersedes": supersedes,
-            },
-        )
-        if isinstance(step2, dict):
-            return step2
-        page_slug = step2
+    step2 = _write_adr_body_page(
+        resolved=resolved,
+        project_id=project_id,
+        adr_id=adr_id,
+        adr_id_int=adr_id_int,
+        fields={
+            "title": title,
+            "status": status,
+            "date": date,
+            "context": context,
+            "decision": decision,
+            "rationale": rationale,
+            "alternatives": alternatives,
+            "consequences": consequences,
+            "revisit_trigger": revisit_trigger,
+            "supersedes": supersedes,
+        },
+    )
+    if isinstance(step2, dict):
+        return step2
+    page_slug = step2
 
-        step3 = _link_adr_body_slug(adr_id_int, adr_id, page_slug)
-        if isinstance(step3, dict):
-            return step3
+    step3 = _link_adr_body_slug(adr_id_int, adr_id, page_slug)
+    if isinstance(step3, dict):
+        return step3
 
-        # Step 4: supersede-link rows + flip target status (D23 status flip).
-        _link_adr_supersede_targets(adr_id_int, supersedes)
+    # Step 4: supersede-link rows + flip target status (D23 status flip).
+    _link_adr_supersede_targets(adr_id_int, supersedes)
 
-        return {"adr_id": adr_id, "slug": page_slug}
+    return {"adr_id": adr_id, "slug": page_slug}
 
 
 @observe(tier="stage", metric="tools.adr._allocate_adr_ledger_row")
@@ -628,32 +594,19 @@ def adr_list(directory: str, status: str | None = None, limit: int = 50, offset:
     return out
 
 
-# ── Backward-compatible re-exports ────────────────────────────────────────────
-# Car F keeps the legacy symbol surface re-exported so any external caller or
-# test that imports these names from the module path keeps resolving. Car G
-# deletes the definitions AND the re-exports.
+# ── Public re-exports ───────────────────────────────────────────────────────
+# Car G (0047 §7): the parser/serializer/index-render machinery is DELETED
+# from ``adr_index.py``; the per-project lock + its globals are DELETED
+# here. Only the slug-helper re-export survives (legacy body-fetch fallback
+# in ``_fetch_adr_body_page`` — see ``adr_index.py`` module docstring).
 __all__ = [
     # MCP tools
     "adr_add",
     "adr_get",
     "adr_list",
-    # adr_index public surface (dormant — Car G deletes the definitions)
-    "_ADR_HEADER_RE",
-    "_ADR_PAGE_SLUG_RE",
-    "_INDEX_HEADER",
-    "_INDEX_ROW_RE",
-    "_build_index_content",
-    "_committed_page_max_id",
-    "_index_max_id",
-    "_next_adr_id",
-    "_next_adr_id_from_index",
-    "_render_index_row",
-    "adr_index_slug",
-    "adr_log_slug",
+    # adr_index public surface — Car G keeps ONLY the slug helper
     "adr_page_slug",
-    "parse_adr_ids",
-    "parse_index_rows",
-    # adr_render public surface (dormant — Car G deletes the definitions)
+    # adr_render public surface (helpers used by ``adr_add``)
     "_REQUIRED_FIELDS",
     "_VALID_STATUSES",
     "_adr_tags",
@@ -663,10 +616,7 @@ __all__ = [
     "_flip_superseded_target",
     "_parse_supersedes",
     # adr.py-local
-    "_ADR_LOG_LOCKS",
-    "_ADR_LOG_LOCKS_GUARD",
     "_FATAL_WRITE_REASONS",
-    "_adr_log_lock",
     "_row_to_adr_list_entry",
     "_write_ok",
 ]

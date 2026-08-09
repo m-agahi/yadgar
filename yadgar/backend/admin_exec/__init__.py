@@ -28,6 +28,7 @@ from typing import TypeIs
 
 from yadgar._shared.observability.observe import observe
 from yadgar.backend.admin_exec import (
+    adr_seed,
     audit,
     backup_sql,
     blocks,
@@ -170,6 +171,9 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "create_adr_row": ledger.create_adr_row,
     "set_adr_body_slug": ledger.set_adr_body_slug,
     "add_adr_supersedes": ledger.add_adr_supersedes,
+    # Car G (0047 §7): the ``_get_adr_log_updated_at`` signal re-points off
+    # the deleted ``<project>-adr-index`` wiki page onto the SQL ledger.
+    "max_adr_updated_at": ledger.max_adr_updated_at,
     # Car B: runtime_config READ ops (SurrealDB sync path). Closes the in-process
     # _get_storage() read violation in core/server/tools/_runtime_config.py.
     "get_config_row": runtime_config.get_config_row,
@@ -178,6 +182,14 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # ``yadgar-adr-NNNN`` to ``{project_id}_adr-NNNN`` + updates crossrefs
     # + inline body links + adr.body_slug. Idempotent; dry-run by default.
     "reslug": reslug.reslug_adr_pages,
+    # Car G (0047 §7 D23/D35a): ADR seed (pages→ledger) + retype mutator.
+    # ``seed_adr_rows`` lifts the ~223 existing ADRs from per-ADR wiki PAGES
+    # into the ``adr`` ledger table (D35a — one-shot, idempotent on
+    # body_slug). ``retype_page_type`` flips ``wiki_page.page_type``
+    # ``adr`` → ``adr_superseded`` atomic with the row-side status flip
+    # (D23 — the sole sanctioned writer for the lifecycle transition).
+    "seed_adr_rows": adr_seed.seed_adr_rows,
+    "retype_page_type": adr_seed.retype_page_type,
 }
 
 

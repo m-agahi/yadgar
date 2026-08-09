@@ -579,51 +579,67 @@ class TestLiveConsumerContracts:
     """
 
     def test_post_migration_adr_add_does_not_call_index_render(self, tmp_path):
-        """``adr_add`` must no longer call the legacy index render helpers
-        (Car F stops calling them; Car G removes them)."""
+        """``adr_add`` must no longer call the legacy index render helpers.
+
+        Car F's pin: ``_assemble_index_rows`` and ``_build_index_content`` are
+        imported but unused in the re-pointed ``adr_add``.
+
+        Car G's pin: ``_build_index_content`` is deleted (Car G §4.7 — the
+        wiki-index-render machinery is gone, not just unused). ``_assemble_index_rows``
+        survives — Car G §4.6 RE-POINTS it onto the SQL ledger in ``adr_render.py``
+        (NOT deleted). This test's pre/post pin flips to match: ``_build_index_content``
+        MUST NOT exist anywhere; ``_assemble_index_rows`` MUST be unused by ``adr_add``.
+        """
         from yadgar.core.server.tools import adr as adr_mod
 
+        # Car G §4.7: the wiki-index render machinery is deleted.
+        assert not hasattr(adr_mod, "_build_index_content"), (
+            "_build_index_content must NOT exist post-Car-G (deleted by "
+            "Car G §4.7 — the wiki-index-render machinery is gone, not just "
+            "unused). If this trips, the Car G deletion was reverted without "
+            "updating the Car F contract."
+        )
+
+        # Car F: _assemble_index_rows survives but adr_add must not call it.
         with patch.object(adr_mod, "_assemble_index_rows") as mocked_assemble:
-            with patch.object(adr_mod, "_build_index_content") as mocked_build:
-                project_dir = str(tmp_path / "noleg")
-                __import__("os").makedirs(project_dir, exist_ok=True)
+            project_dir = str(tmp_path / "noleg")
+            __import__("os").makedirs(project_dir, exist_ok=True)
 
-                def _capture_forward(op: str, payload: dict, **kwargs) -> dict:
-                    if op == "create_adr_row":
-                        return {
-                            "row": {
-                                "id": 1,
-                                "project_id": payload["project_id"],
-                                "title": payload["title"],
-                                "status": payload["status"],
-                                "decided_on": payload.get("decided_on"),
-                                "subsystem": None,
-                                "tier": None,
-                                "body_slug": None,
-                            }
+            def _capture_forward(op: str, payload: dict, **kwargs) -> dict:
+                if op == "create_adr_row":
+                    return {
+                        "row": {
+                            "id": 1,
+                            "project_id": payload["project_id"],
+                            "title": payload["title"],
+                            "status": payload["status"],
+                            "decided_on": payload.get("decided_on"),
+                            "subsystem": None,
+                            "tier": None,
+                            "body_slug": None,
                         }
-                    return {"ok": True}
+                    }
+                return {"ok": True}
 
-                with (
-                    patch(
-                        "yadgar.core.server.tools.adr._resolve_project_root",
-                        return_value=project_dir,
-                    ),
-                    patch(
-                        "yadgar.core.server.tools.adr._forward_admin",
-                        side_effect=_capture_forward,
-                    ),
-                    patch(
-                        "yadgar.core.server.tools.adr._wiki_write_canonical",
-                        return_value={"stored": True, "committed": True},
-                    ),
-                ):
-                    adr_mod.adr_add(**dict(_VALID_ADR_PARAMS, directory=project_dir))
+            with (
+                patch(
+                    "yadgar.core.server.tools.adr._resolve_project_root",
+                    return_value=project_dir,
+                ),
+                patch(
+                    "yadgar.core.server.tools.adr._forward_admin",
+                    side_effect=_capture_forward,
+                ),
+                patch(
+                    "yadgar.core.server.tools.adr._wiki_write_canonical",
+                    return_value={"stored": True, "committed": True},
+                ),
+            ):
+                adr_mod.adr_add(**dict(_VALID_ADR_PARAMS, directory=project_dir))
 
         assert not mocked_assemble.called, (
-            f"_assemble_index_rows must NOT be called post-re-point: "
+            f"_assemble_index_rows must NOT be called by adr_add post-re-point "
+            f"(Car F stops calling; Car G §4.6 re-points the function but "
+            f"the caller in adr_add goes dormant): "
             f"{mocked_assemble.call_args_list}"
-        )
-        assert not mocked_build.called, (
-            f"_build_index_content must NOT be called post-re-point: {mocked_build.call_args_list}"
         )

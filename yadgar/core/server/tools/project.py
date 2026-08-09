@@ -1287,37 +1287,86 @@ def _apply_rejection_signal(resolved: str, actions: list) -> int:
 
 @observe(tier="stage", metric="tools.project._get_adr_log_updated_at")
 def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
-    """Return the ADR index wiki page updated_at as a unix timestamp float.
+    """Return the ADR ledger's most-recent ``updated_at`` for this project.
 
-    Car 2 (ADR-consultable): re-pointed to the CANONICAL `<project>-adr-index`
-    (the monolith `<project>-adr-log` is deleted in migration; the ADR-due nudge
-    keyed on a deleted slug would never fire). Same raw-query pattern as before —
-    no NEW core DB read introduced, only the queried slug changed.
-    Returns None when the page is not found or the timestamp is unparseable.
+    Car G (0047 §7): re-pointed off the deleted ``<project>-adr-index`` wiki
+    page onto the ``adr`` SQL ledger (D35a — the seed lifted the per-ADR
+    PAGES into rows). The storage engine exposes ``max_adr_updated_at`` for
+    this purpose; ``storage`` is passed in so the call does not import the
+    engine directly. Returns ``None`` when the table has no rows for the
+    project, or the timestamp is unparseable.
     """
     import os as _os  # noqa: PLC0415
 
     project_name = _os.path.basename(resolved)
-    slug = f"{project_name}-adr-index"
     try:
-        rows = storage._q(
-            "SELECT updated_at FROM wiki_page WHERE slug = $slug LIMIT 1",
-            {"slug": slug},
+        # Derive project_id the same way ``adr_add`` / ``adr_list`` do
+        # (Car A0 derive-and-cache) so the ADR-due nudge keys on the same
+        # project the MCP tools do. Failure to derive falls back to the
+        # basename so the nudge never silently stops firing on an
+        # un-classified directory.
+        from yadgar.core.identity import derive_project_id  # noqa: PLC0415
+
+        try:
+            project_id, _remote = derive_project_id(cwd=resolved)
+        except Exception:  # noqa: BLE001
+            project_id = project_name
+
+        max_dt = storage.max_adr_updated_at(project_id=project_id)
+    except AttributeError:
+        # The storage engine surface is partial — fall back to the live
+        # forward path (preserves the legacy test stubs).
+        max_dt = _get_adr_log_updated_at_via_forward(resolved)
+    except Exception:  # noqa: BLE001
+        return None
+    if max_dt is None:
+        return None
+    if isinstance(max_dt, (int, float)):
+        return float(max_dt)
+    try:
+        dt = (
+            max_dt
+            if isinstance(max_dt, datetime)
+            else datetime.fromisoformat(str(max_dt).rstrip("Z").replace("Z", "+00:00"))
         )
-        if not rows:
-            return None
-        ts_raw = rows[0].get("updated_at")
-        if ts_raw is None:
-            return None
-        if isinstance(ts_raw, (int, float)):
-            return float(ts_raw)
-        # ISO string
-        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
-        dt = datetime.fromisoformat(ts_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return dt.timestamp()
-    except Exception:
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@observe(tier="stage", metric="tools.project._get_adr_log_updated_at_fwd")
+def _get_adr_log_updated_at_via_forward(resolved: str) -> datetime | None:
+    """Forward path for ``_get_adr_log_updated_at`` — covers the test seam.
+
+    Production callers reach ``storage.max_adr_updated_at`` directly. When
+    the storage surface is a stub (unit-test path) the ``AttributeError``
+    fallback above routes through here, which talks to the backend over
+    the canonical PTC chain.
+    """
+    import os as _os  # noqa: PLC0415
+
+    from yadgar.core.identity import derive_project_id  # noqa: PLC0415
+
+    project_name = _os.path.basename(resolved)
+    try:
+        project_id, _remote = derive_project_id(cwd=resolved)
+    except Exception:  # noqa: BLE001
+        project_id = project_name
+
+    try:
+        result = _forward_admin("max_adr_updated_at", {"project_id": project_id})
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(result, dict):
+        return None
+    raw = result.get("updated_at") or result.get("timestamp")
+    if raw is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).rstrip("Z").replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -1788,33 +1837,45 @@ def _build_recent_writes(storage, resolved: str, limit: int = 10) -> list[dict]:
 def _build_adr_log(resolved: str) -> dict:
     """Build the adr_log field for restore mode.
 
-    Car 2 (ADR-consultable): re-pointed to the CANONICAL `<project>-adr-index`.
-    The write-only `<project>-adr-log` monolith is deleted in migration — a read
-    still pinned to it would resolve a deleted slug and silently return empty.
-    The canonical index resolves on directory_context alone, so it reads from any
-    caller and in non-git dirs. (ADR-0215 removed the branch axis this paragraph
-    used to describe.)
+    Car G (0047 §7): re-pointed off the deleted ``<project>-adr-index`` wiki
+    page onto the SQL ledger (``list_adr_rows`` ordered by id DESC, take 3).
+    The pre-G shape — ``wiki_read + parse_index_rows`` — would resolve a
+    dead slug now that the index page carries the ``superseded-by-ledger``
+    tag (D35d, rollback path for one release cycle) and its content has
+    been replaced by a one-line pointer.
 
-    Returns a cheap metadata-only dict: index slug + up to 3 most-recent IDs.
-
-    Lazy import avoids the adr.py ↔ project.py circular dependency at load time
-    (adr imports project helpers at module level; both are loaded by call time).
+    Returns a cheap metadata-only dict: ``slug`` (the
+    ``superseded-by-ledger``-tagged index page — preserved for the
+    one-cycle rollback per D35d) + up to 3 most-recent ADR ids drawn from
+    the ledger. ``slug`` is intentionally kept stable so external callers
+    that pin the string continue to work.
     """
-    from yadgar.core.server.tools.adr import adr_index_slug, parse_index_rows  # noqa: PLC0415
-    from yadgar.core.server.tools.wiki import wiki_read  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
 
-    slug = adr_index_slug(resolved)
+    project_name = _os.path.basename(resolved)
+    # D35d: the index page slug is preserved for one release cycle. After
+    # the rollback window the seed op marks the page
+    # ``superseded-by-ledger`` (D35d — kept-and-ignored, NOT deleted).
+    slug = f"{project_name}-adr-index"
+    latest_ids: list[str] = []
     try:
-        page = wiki_read(slug, directory=resolved)
-        if "error" in page or not page.get("content"):
-            latest_ids: list[str] = []
-        else:
-            rows = parse_index_rows(page["content"])
-            latest_ids = [
-                r["adr_id"]
-                for r in sorted(rows, key=lambda r: int(r["adr_id"].split("-")[1]), reverse=True)
-            ][:3]
-    except Exception:
+        from yadgar.core.identity import derive_project_id  # noqa: PLC0415
+
+        try:
+            project_id, _remote = derive_project_id(cwd=resolved)
+        except Exception:  # noqa: BLE001
+            project_id = project_name
+
+        result = _forward_admin("list_adr_rows", {"project_id": project_id})
+        rows_raw = result.get("rows") if isinstance(result, dict) else []
+        rows = rows_raw if isinstance(rows_raw, list) else []
+        ordered = sorted(
+            (r for r in rows if isinstance(r, dict)),
+            key=lambda r: int(r.get("id", 0) or 0),
+            reverse=True,
+        )
+        latest_ids = [f"ADR-{int(r['id']):04d}" for r in ordered[:3]]
+    except Exception:  # noqa: BLE001 — degraded mode returns empty latest_ids
         latest_ids = []
     return {"slug": slug, "latest_ids": latest_ids}
 

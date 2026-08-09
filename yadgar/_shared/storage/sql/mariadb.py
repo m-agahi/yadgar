@@ -564,6 +564,34 @@ class MariaStorageEngine:
         async with self._engine.begin() as conn:
             await conn.execute(sql, {"id": adr_id, "status": status})
 
+    @observe(tier="boundary", metric="backend.sql.adr.max_updated_at")
+    async def max_adr_updated_at(self, *, project_id: str) -> datetime.datetime | None:
+        """Return ``MAX(adr.updated_at)`` scoped to *project_id*.
+
+        Car G (0047 §7): the ADR-due nudge signal (Car 2's
+        ``project_brief._get_adr_log_updated_at``) re-points off the deleted
+        ``<project>-adr-index`` wiki page onto the SQL ledger. The Car-I
+        ``agent_pattern`` equivalent (``max_agent_pattern_updated_at``)
+        scopes globally; ADR rows are project-scoped, so we accept
+        ``project_id`` and the index ``ix_adr_project_id`` keeps the lookup
+        cheap. Returns ``None`` when no rows exist for the project.
+        """
+        from datetime import datetime  # noqa: PLC0415
+
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text("SELECT MAX(updated_at) AS ts FROM adr WHERE project_id = :project_id")
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(sql, {"project_id": project_id})).first()
+        if row is None:
+            return None
+        ts = row._mapping.get("ts")
+        if ts is None:
+            return None
+        if not isinstance(ts, datetime):
+            ts = datetime.fromisoformat(str(ts))
+        return ts
+
     # ── agent_pattern ────────────────────────────────────────────────────
 
     @observe(tier="boundary", metric="backend.sql.agent_pattern.save")
