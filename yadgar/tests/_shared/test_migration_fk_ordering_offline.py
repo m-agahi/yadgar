@@ -27,6 +27,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 # Reached by path, not by import: ``yadgar._shared.storage.sql.migrate``
 # imports alembic at module scope, which is precisely what this half refuses to
 # depend on.
@@ -111,6 +113,51 @@ def _inline_fk_targets(call: ast.Call, constants: dict[str, str]) -> list[str | 
     return targets
 
 
+def _revision_ids(tree: ast.Module) -> tuple[str | None, str | None]:
+    """``(revision, down_revision)`` from a revision module's top level.
+
+    Both the annotated form the chain uses today (``revision: str = "004_…"``)
+    and a bare ``revision = "005_…"`` are read: alembic accepts either, and a
+    reader that saw only one would report a valid revision as declaring none.
+    """
+    revision: str | None = None
+    down: str | None = None
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets, value = [node.target.id], node.value
+        elif isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            value = node.value
+        else:
+            continue
+        if value is None:
+            continue
+        if "revision" in targets:
+            revision = _literal_str(value, {})
+        if "down_revision" in targets:
+            down = _literal_str(value, {})
+    return revision, down
+
+
+def _children_by_parent(by_revision: dict[str, tuple[Path, str | None]]) -> dict[str | None, str]:
+    """``down_revision -> revision``, refusing to collapse a fork.
+
+    Built with an explicit collision check rather than a dict comprehension: a
+    comprehension keyed on ``down_revision`` silently drops one of two siblings
+    (last write wins), which is exactly what a fork IS — so the structure that
+    detects forks must not be the structure that hides them.
+    """
+    children: dict[str | None, str] = {}
+    for revision, (_, down) in sorted(by_revision.items()):
+        assert down not in children, (
+            f"two revisions both declare down_revision={down!r} — "
+            f"{children[down]} and {revision}. The chain is FORKED and "
+            "`alembic upgrade head` fails ambiguously."
+        )
+        children[down] = revision
+    return children
+
+
 def _revision_chain() -> list[Path]:
     """Revision files ordered by ``down_revision``, root first.
 
@@ -119,22 +166,11 @@ def _revision_chain() -> list[Path]:
     """
     by_revision: dict[str, tuple[Path, str | None]] = {}
     for path in _VERSIONS_DIR.glob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        revision: str | None = None
-        down: str | None = None
-        for node in tree.body:
-            if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
-                continue
-            if node.value is None:
-                continue
-            if node.target.id == "revision":
-                revision = _literal_str(node.value, {})
-            elif node.target.id == "down_revision":
-                down = _literal_str(node.value, {})
+        revision, down = _revision_ids(ast.parse(path.read_text(encoding="utf-8")))
         assert revision, f"{path.name} declares no revision id"
         by_revision[revision] = (path, down)
 
-    children = {down: rev for rev, (_, down) in by_revision.items()}
+    children = _children_by_parent(by_revision)
     ordered: list[Path] = []
     cursor: str | None = None  # the root's down_revision is None
     while cursor in children:
@@ -224,6 +260,39 @@ def test_the_fk_reader_reports_an_unreadable_referent_as_none():
     call = _parse_expr('op.create_table("t", sa.ForeignKeyConstraint(["c"], [some_name()]))')
     assert isinstance(call, ast.Call)
     assert _inline_fk_targets(call, {}) == [None]
+
+
+def test_the_chain_walk_reads_both_assignment_forms():
+    """``revision: str = "x"`` and ``revision = "x"`` are both alembic-valid."""
+    annotated = ast.parse('revision: str = "005_x"\ndown_revision: str | None = "004_y"\n')
+    assert _revision_ids(annotated) == ("005_x", "004_y")
+    bare = ast.parse('revision = "005_x"\ndown_revision = "004_y"\n')
+    assert _revision_ids(bare) == ("005_x", "004_y")
+    rootish = ast.parse('revision: str = "0001_a"\ndown_revision: str | None = None\n')
+    assert _revision_ids(rootish) == ("0001_a", None)
+
+
+def test_the_chain_walk_refuses_a_fork():
+    """A fork must be NAMED, not absorbed by a last-write-wins dict.
+
+    The walk's own length check would notice a fork too, but only as "reached N
+    of M revisions" — which reads identically to a broken down_revision link.
+    """
+    forked = {
+        "002_a": (Path("002_a.py"), "0001_root"),
+        "002_b": (Path("002_b.py"), "0001_root"),
+        "0001_root": (Path("0001_root.py"), None),
+    }
+    with pytest.raises(AssertionError, match="FORKED"):
+        _children_by_parent(forked)
+
+
+def test_the_chain_walk_accepts_a_linear_chain():
+    linear = {
+        "0001_root": (Path("0001_root.py"), None),
+        "002_next": (Path("002_next.py"), "0001_root"),
+    }
+    assert _children_by_parent(linear) == {None: "0001_root", "0001_root": "002_next"}
 
 
 def test_the_source_parser_reads_the_chain_it_claims_to_check():

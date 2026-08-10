@@ -466,8 +466,8 @@ async def lifespan(app: FastAPI):
     # (or fail-loud logged) before the app reports ready.
     await asyncio.to_thread(_start_queue_drainer)
 
-    # engine #2 (car D): schema to alembic head. HERE because _start_queue_drainer
-    # is what composed _st._sql_storage. Non-fatal; see _migrate_engine_two.
+    # engine #2 (car D): alembic head. HERE because _start_queue_drainer composed
+    # _st._sql_storage. FATAL — a try/except here restores the swallow (0047 C1).
     await _migrate_engine_two()
 
     # viz-render-perf (Car A): warm the graph-layout cache on boot when empty so a

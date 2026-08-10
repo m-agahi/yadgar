@@ -207,6 +207,34 @@ async def test_engine_two_absent_is_still_not_an_error(monkeypatch):
     assert await _migrate_engine_two() is None
 
 
+def test_the_lifespan_does_not_swallow_the_migration_failure():
+    """Re-raising is decorative if the CALLER catches it.
+
+    ``_migrate_engine_two`` propagating only stops boot while nothing wraps the
+    await. Handlers are cheap to add and this one would be invisible — the
+    daemon would go back to running BROKEN with every test in this file still
+    green. So the absence of a surrounding ``try`` is pinned structurally: walk
+    every ``Try`` node in ``lifespan``'s body and assert none of them contains
+    the call.
+    """
+    source = inspect.getsource(lifespan)
+    tree = ast.parse(source.lstrip())
+    guarded = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(inner, ast.Name) and inner.id == "_migrate_engine_two"
+            for inner in ast.walk(node)
+        )
+    ]
+    assert not guarded, (
+        "lifespan wraps _migrate_engine_two in a try/except — a failed migration "
+        "would be swallowed at the call site and boot would continue onto a "
+        "schema-less database, which is what making it fatal was for"
+    )
+
+
 async def test_dispose_releases_the_pool():
     fake = _FakeSqlStorage()
     _st._sql_storage = fake
