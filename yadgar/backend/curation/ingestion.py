@@ -33,6 +33,9 @@ class NewMemorySpec:
     surprise: float = 0.0
     importance: float = 0.5
     valence: float = 0.0
+    # C4b (0047 PR#40 §5): enqueue-time project_id; reaches ``insert_memory``
+    # as ``_resolve_project_id_for_write``'s ``caller_value``.
+    project_id: str | None = None
 
 
 @trace_span()
@@ -156,6 +159,9 @@ def insert_new_memory(
             "is_stale": False,
             "file_hash": s.file_hash,
             "embedding_model": s.embedding_model,
+            # C4b (0047 PR#40 §5): stamped independently of ``context`` —
+            # ownership and reach are different facts (§1.4).
+            "project_id": s.project_id,
         },
         embeddings_engine=embeddings_engine,
         settings=settings,

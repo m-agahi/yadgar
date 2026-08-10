@@ -32,6 +32,7 @@ from yadgar.core.forward import _forward_restore
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool, mcp_server
 from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
     accept_project_param,
     resolve_effective_project,
 )
@@ -264,13 +265,15 @@ def _validate_anchor_inputs(
 
 
 @_tool(always_load=True)
-def anchor(
+def anchor(  # noqa: PLR0913 — MCP tool signature; ``project`` is keyword-only
     content: str,
     context: str,
     reason: str = "",
     tier: str | None = None,
     valid_until: str | None = None,
     ttl_days: int | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Mark critical context as compaction-resistant.
 
@@ -287,6 +290,14 @@ def anchor(
     valid_until: ISO-8601 UTC explicit expiry. Mutually exclusive with ttl_days.
     ttl_days: shorthand valid_until = now() + ttl_days. Mutually exclusive with valid_until.
 
+    project: C4b (0047 PR#40 §5) — the OPTIONAL cross-project override, same
+      contract as ``memorize``/``wiki_add``. ``anchor`` had no such parameter
+      before this car: C3 measured its 42-tool surface over the ``@_tool``
+      functions taking ``directory``, and ``anchor`` names that argument
+      ``context``. The RESOLVED project_id is stamped on the enqueued payload
+      on EVERY call; ``project=`` changes which project is named, never
+      whether one is.
+
     """
     # secret-gate: skip — gate_or_reject() is called inside _validate_anchor_inputs()
     _tier, _computed_valid_until, _err = _validate_anchor_inputs(
@@ -300,12 +311,27 @@ def anchor(
     # ADR-0215: the branch half of the pair is discarded — nothing reads it now.
     context = normalize_write_context(context)
 
+    # C4b (0047 PR#40 §5): resolve the effective project_id BEFORE the enqueue
+    # so the wire payload carries it. This tool call is the only participant
+    # that can see the session; the drainer runs in a container with no git
+    # binary and no host project mounts (ADR-0227 §1.1). A malformed override
+    # surfaces as the tool's error envelope so the MCP boundary never raises.
+    try:
+        _effective_project_id = resolve_effective_project(
+            project=project,
+            directory=context,
+            session_project=None,  # Car E SessionStart hook — not yet wired here
+        )
+    except InvalidProjectOverrideError as exc:
+        return {"queued": False, "stored": False, "ok": False, "reason": f"anchor: {exc}"}
+
     # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
     _enqueue_payload: dict = {
         "content": content,
         "context": context,
         "reason": reason,
         "tier": _tier,
+        "project_id": _effective_project_id,
     }
     if _computed_valid_until is not None:
         _enqueue_payload["valid_until"] = _computed_valid_until

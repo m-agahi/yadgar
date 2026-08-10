@@ -38,6 +38,7 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     tier: str | None = None,
     valid_until: str | None = None,
     reason: str = "",
+    project_id: str | None = None,
 ) -> dict:
     """Run the full memorize pipeline synchronously (drain-replay).
 
@@ -48,6 +49,13 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     the drainer side can re-check the require-reason invariant without re-calling
     the MCP shell. Defaults to "" for backwards compatibility with payloads that
     don't carry it (non-semantic_immortal tiers never set it).
+
+    ``project_id`` (C4b, 0047 PR#40 §5) is the enqueue-time stamp resolved by
+    the core ``memorize`` tool. It is carried onto ``MemorizeContext`` and
+    reaches ``insert_memory`` as its ``caller_value`` through BOTH store
+    branches — the curator path and the direct-insert fallback. This process
+    cannot derive one (no git binary, no host project mounts; ADR-0227), so a
+    ``None`` here means a legacy payload, not a licence to guess.
     """
     settings = get_settings()
 
@@ -61,6 +69,7 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
         valid_until=valid_until,
         ttl_days=None,  # valid_until already computed before enqueue
         reason=reason,
+        project_id=project_id,
     )
 
     result = phase_validate(ctx, settings)

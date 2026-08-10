@@ -363,8 +363,17 @@ class TestMemorizeProjectParam:
         assert result.get("stored") is True
         assert captured["payload"]["project_id"] == "quinyx/aws2slack"
 
-    def test_memorize_no_project_omits_project_id_from_payload(self) -> None:
-        """When ``project=None``, the wire payload stays project-id-free."""
+    def test_memorize_no_project_still_stamps_the_resolved_project_id(self) -> None:
+        """C4b (0047 PR#40 §5) INVERTS this assertion.
+
+        Car M's contract was "``project=None`` → the wire payload stays
+        project-id-free", which left the DEFAULT path — nearly every call to
+        the highest-volume write path in the system — arriving at the drainer
+        unattributed, to be re-derived inside a container with no git binary
+        and no host project mounts (ADR-0227 §1.1). The stamp is now
+        unconditional; ``project=`` chooses WHICH project is named, not
+        WHETHER one is. Same inversion C3 applied to ``wiki_add``.
+        """
         from yadgar.core.server.tools.memorize import memorize
 
         captured: dict = {}
@@ -383,6 +392,12 @@ class TestMemorizeProjectParam:
                     {"enqueue": staticmethod(fake_enqueue)},
                 )(),
             ),
+            patch(
+                "yadgar.core.server.tools.memorize.resolve_effective_project",
+                side_effect=lambda project, directory, session_project: (  # noqa: ARG005
+                    project or "session/derived"
+                ),
+            ),
         ):
             memorize(
                 content="car m test memory",
@@ -390,7 +405,7 @@ class TestMemorizeProjectParam:
                 tags=[],
             )
 
-        assert "project_id" not in captured["payload"]
+        assert captured["payload"]["project_id"] == "session/derived"
 
     def test_memorize_invalid_project_returns_error_envelope(self) -> None:
         """Type-level guard: non-string ``project`` returns the tool's error

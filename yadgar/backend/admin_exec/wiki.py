@@ -345,9 +345,20 @@ def wiki_replace_markdown_block(payload: dict) -> dict:
 def agent_prompt_save(payload: dict) -> dict:
     """Upsert an agent-prompt page (body-only; ledger row is the core wrapper's job).
 
-    payload: {slug, title, full_content, tags, pattern, purpose, directory}
+    payload: {slug, title, full_content, tags, pattern, purpose, directory,
+              project_id}
     Content already secret-gated + directory-validated + wrapped core-side.
     Returns {saved: True, version, slug, page_id}.
+
+    C4b (0047 PR#40 §5) — ``project_id``. This is the ONE op in this module
+    that MINTS a row; every other op here is ``page_id``-keyed and edits a row
+    whose project_id was stamped by whoever inserted it. Before this car the
+    value was absent on both write arms, so ``insert_wiki_page`` fell through
+    to the container-side classifier — the derivation ADR-0227 deletes. The
+    caller (the core ``agent_prompt_save`` / ``_save_discipline_page``
+    wrappers) resolves it in the process that can see the session and puts it
+    on the payload; this op only forwards it. Both arms are stamped: the
+    ``WikiStore.add`` path and the ``_st._wiki is None`` fallback.
 
     Car I: this op writes ONLY the wiki body page. The companion
     ``agent_pattern`` ledger row is written by ``save_agent_pattern_row``
@@ -372,6 +383,8 @@ def agent_prompt_save(payload: dict) -> dict:
     # from a slug prefix here would rebuild exactly the string-matching the
     # split removes. Default only covers a payload from a pre-split core.
     page_type = payload.get("page_type") or PAGE_TYPE_AGENT_PROMPT_LEGACY
+    # C4b: forwarded, never recomputed — see the docstring.
+    project_id = payload.get("project_id")
 
     wiki = _st._wiki
     if wiki is not None:
@@ -385,6 +398,7 @@ def agent_prompt_save(payload: dict) -> dict:
                 confidence="high",
                 directory_context=effective_dir,
                 page_type=page_type,
+                project_id=project_id,
             ),
         )
         page_id = result.get("id")
@@ -422,6 +436,7 @@ def agent_prompt_save(payload: dict) -> dict:
                     "directory_context": effective_dir,
                     "page_type": page_type,
                     "wiki_schema_version": 1,
+                    "project_id": project_id,
                 }
             )
             version = 1

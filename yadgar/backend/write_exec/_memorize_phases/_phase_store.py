@@ -85,6 +85,13 @@ def _store_via_curator(ctx: MemorizeContext, storage, embeddings, fhash: str | N
             file_hash=fhash,
             embedding_model=embeddings.get_model_name(),
             contextual_prefix=ctx.contextual_prefix,
+            # C4b (0047 PR#40 §5): the curator branch is the PRODUCTION branch
+            # — ``phase_store`` prefers it whenever a curator and an embedding
+            # are both present. Stamping only ``_direct_insert`` below would
+            # leave the live path re-deriving inside a container that cannot
+            # (ADR-0227 §1.1). The merge arm needs nothing: it UPDATEs a row
+            # whose project_id was stamped by whoever inserted it.
+            project_id=ctx.project_id,
         ),
     )
     memory_id = result["memory_id"]
@@ -140,6 +147,10 @@ def _direct_insert(ctx: MemorizeContext, storage, embeddings, fhash: str | None)
             "provenance_agent": ctx.provenance_agent_resolved,
             "tier": ctx.tier,
             "valid_until": ctx.computed_valid_until,
+            # C4b (0047 PR#40 §5): the enqueue-time stamp reaches
+            # ``insert_memory`` as ``_resolve_project_id_for_write``'s
+            # ``caller_value``, so a stamped write never touches the classifier.
+            "project_id": ctx.project_id,
         },
         embeddings_engine=embeddings,
         settings=get_settings(),

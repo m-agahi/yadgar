@@ -120,7 +120,7 @@ class CheckpointRestore:
         }
 
     @observe(tier="boundary")
-    def anchor_memory(
+    def anchor_memory(  # noqa: PLR0913 — mirrors the anchor MCP payload
         self,
         content: str,
         context: str,
@@ -129,6 +129,7 @@ class CheckpointRestore:
         branch: str | None = None,
         tier: str | None = None,
         valid_until: str | None = None,
+        project_id: str | None = None,
     ) -> int:
         """Store a memory with maximum protection — survives compaction restoration.
 
@@ -137,6 +138,20 @@ class CheckpointRestore:
 
         tier: v5.8.0 — anchor tier string ("semantic_immortal"|"conditional"|"ephemeral").
         valid_until: v5.8.0 — ISO-8601 UTC expiry string; None = no expiry.
+        project_id: C4b (0047 PR#40 §5) — the enqueue-time stamp threaded from
+            the core ``anchor`` tool via ``run_anchor_replay`` (its only
+            non-test caller). Reaches ``insert_memory`` as
+            ``_resolve_project_id_for_write``'s ``caller_value``, so a stamped
+            anchor never touches the classifier this container cannot run
+            (ADR-0227 §1.1). Stamped independently of ``context``: ownership
+            and reach are different facts (§1.4).
+
+        NOTE — the ``checkpoint`` table is deliberately NOT part of this. It
+        has no ``project_id`` column (see ``insert_checkpoint`` in
+        ``_shared/storage/ops.py``: the CREATE statement sets none), so
+        ``create_checkpoint`` / ``create_micro_checkpoint`` /
+        ``pre_compact_drain`` have nothing to stamp. Adding the column is
+        C11's per-table work, not this car's.
         """
         embedding = self._embeddings.encode(content)
         memory_payload: dict = {
@@ -148,6 +163,7 @@ class CheckpointRestore:
             "is_stale": False,
             "file_hash": None,
             "embedding_model": self._embeddings.get_model_name(),
+            "project_id": project_id,
         }
         if tier is not None:
             memory_payload["tier"] = tier

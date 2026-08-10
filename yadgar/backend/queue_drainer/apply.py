@@ -81,6 +81,16 @@ class _ApplyMixin:
                 tier=p.get("tier"),
                 valid_until=p.get("valid_until"),
                 reason=p.get("reason", ""),  # R3: semantic_immortal tier requires reason
+                # C4b (0047 PR#40 §5): FORWARD the enqueue-time stamp; never
+                # recompute. ``memorize`` is the highest-volume write path in
+                # the system, and until this car it reached the write path
+                # unstamped on every call that omitted ``project=`` — leaving
+                # the storage chokepoint to derive an identity inside a
+                # container that provably cannot (ADR-0227 §1.1). No default is
+                # substituted for a payload that arrives unstamped: the key
+                # stays None, the chokepoint sees ``caller_value=None``, and C5
+                # turns that into a raise.
+                project_id=p.get("project_id"),
                 # ttl_days not needed: valid_until already computed before enqueue
             )
             return
@@ -93,6 +103,9 @@ class _ApplyMixin:
                 reason=p.get("reason", ""),
                 tier=p.get("tier"),
                 valid_until=p.get("valid_until"),
+                # C4b (0047 PR#40 §5): same forward-don't-derive contract as
+                # ``memorize`` above — an anchor is a memory row like any other.
+                project_id=p.get("project_id"),
                 # ttl_days not needed: valid_until already computed before enqueue
             )
             return

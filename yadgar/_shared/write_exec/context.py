@@ -24,6 +24,15 @@ class MemorizeContext:
     ttl_days: int | None
     reason: str
 
+    # C4b (0047 PR#40 §5): the enqueue-time project_id, resolved by the core
+    # ``memorize`` tool — the only participant that can see the session — and
+    # carried through the drainer replay to ``insert_memory``'s
+    # ``caller_value``. Stamped INDEPENDENTLY of ``context``: a memory whose
+    # directory is collapsed for reach still keeps its real owner (§1.4,
+    # ownership ≠ reach; same treatment C3 gave ``WikiAddOptions``). ``None``
+    # only for a legacy payload enqueued before this car; C5 makes that raise.
+    project_id: str | None = None
+
     # --- Derived (set during phases) ---
     computed_valid_until: str | None = None
     embedding: list[float] | None = None

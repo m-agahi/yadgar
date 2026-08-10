@@ -42,7 +42,11 @@ from yadgar._shared.wiki.wiki_meta import (
 )
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._project_param import accept_project_param
+from yadgar.core.server.tools._project_param import (
+    GLOBAL_FALLBACK,
+    accept_project_param,
+    resolve_effective_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +128,7 @@ def agent_prompt_save(
     purpose: str | None = None,
     storage=None,
     *,
-    project: str | None = None,  # noqa: ARG001 — kept for API back-compat (seed_agent_prompts passes it);
+    project: str | None = None,
     # R3 Car 3c: the DB write forwards to backend /admin, which uses its own storage.
 ) -> dict:
     """Save (upsert) an agent-prompt for the given task pattern.
@@ -144,9 +148,6 @@ def agent_prompt_save(
     Returns:
         {"saved": True, "version": N, "slug": "...", "page_id": ...}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
     # v5.42.5: directory required — reject at MCP boundary (same contract as wiki_add)
     _effective_dir = (directory or "").strip() or None
     if not _effective_dir:
@@ -191,6 +192,19 @@ def agent_prompt_save(
             "pattern": pattern,
             "purpose": _purpose,
             "directory": _effective_dir,
+            # C4b (0047 PR#40 §5): the enqueue-time identity, resolved HERE —
+            # the process that can see the session — because the backend op
+            # that mints the row runs in a container with no git binary and no
+            # host project mounts (ADR-0227 §1.1). Unconditional and resolved
+            # EXACTLY as ``wiki_add`` resolves it, fallback included: an
+            # asymmetric "skip the stamp when the resolver falls back" rule
+            # would leave agent-prompt pages unattributed while an identical
+            # ``wiki_add`` succeeds. C5 flips both when it deletes the tier.
+            "project_id": resolve_effective_project(
+                project=project,
+                directory=_effective_dir,
+                session_project=None,
+            ),
             # ADR-0209: the CALLER decides the family — the backend op keys
             # everything else off the payload slug, and re-deriving the type
             # from a slug prefix backend-side would rebuild the string-matching
@@ -359,6 +373,7 @@ def _save_discipline_page(
     name: str,
     purpose: str,
     content: str,
+    project_id: str | None = None,
 ) -> dict:
     """Save (upsert) a discipline page under slug agent-discipline-<name>.
 
@@ -374,6 +389,14 @@ def _save_discipline_page(
     ``agent_discipline`` ledger row (page-first ordering per §9). The ledger
     row keys on the slug (``agent-discipline-<name>``), same as the wiki
     body page. ``check_page_row_desync`` is the detection arm for the gap.
+
+    C4b (0047 PR#40 §5): this is the SECOND ``agent_prompt_save`` forward site
+    — C3's precedent on ``WikiAddOptions`` was explicitly "BOTH construction
+    sites", and a stamp on only one of them leaves half the agent-prompt
+    corpus unattributed. ``project_id`` is resolved by the caller: the
+    ``discipline_save`` MCP tool has a session, the seeder does not and takes
+    the ``GLOBAL_FALLBACK`` default that matches this page's declared
+    ``directory="global"`` reach.
     """
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -396,6 +419,11 @@ def _save_discipline_page(
             "pattern": slug,
             "purpose": purpose,
             "directory": "global",
+            # C4b: unconditional. ``GLOBAL_FALLBACK`` when the caller named no
+            # project — the same value ``resolve_effective_project`` returns
+            # for an unresolvable tree, and still a live scope value in C4's
+            # DLQ gate (``"global"`` is deliberately NOT a sentinel there).
+            "project_id": project_id or GLOBAL_FALLBACK,
             "page_type": PAGE_TYPE_AGENT_DISCIPLINE,
         },
     )
@@ -437,6 +465,8 @@ def discipline_save(
     content: str,
     purpose: str | None = None,
     confirm_removal: bool = False,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Save (upsert) a discipline page under agent-discipline-<name>.
 
@@ -512,7 +542,22 @@ def discipline_save(
         _purpose = _extract_purpose(existing["content"]) or f"Agent discipline: {name}."
     else:
         _purpose = f"Agent discipline: {name}."
-    return _save_discipline_page(name, _purpose, new_body)
+    # C4b (0047 PR#40 §5): this tool HAS a session, so it names the owner.
+    # ``directory=None`` on purpose — a discipline page declares
+    # ``directory="global"`` reach, and passing that string as a directory
+    # would send the resolver's derivation tier off to derive an identity from
+    # a non-path. Absent an override the resolver returns ``GLOBAL_FALLBACK``,
+    # which is what this page carried implicitly before the stamp existed.
+    return _save_discipline_page(
+        name,
+        _purpose,
+        new_body,
+        project_id=resolve_effective_project(
+            project=project,
+            directory=None,
+            session_project=None,
+        ),
+    )
 
 
 @observe(tier="stage", metric="tools.agent_prompts._seed_discipline_pages")

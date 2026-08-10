@@ -21,10 +21,10 @@ from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
 
 # Car M (0047 §7, §16.6): cross-project ``project=`` override. Resolves the
-# effective project_id (override → session → directory → "global"). On a
-# write the resolved value is stamped on the enqueued payload so the
-# backend drainer (Car A0's project-aware write path) routes by project_id
-# rather than inferring it from the directory.
+# effective project_id (override → session → directory → "global").
+# C4b (0047 PR#40 §5): the resolved value is stamped on EVERY enqueued
+# payload, not only when the caller supplied ``project=`` — see ``_enqueue``
+# for why the conditional form left the default path broken.
 from yadgar.core.server.tools._project_param import (
     InvalidProjectOverrideError,
     resolve_effective_project,
@@ -59,17 +59,18 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
     descriptive strings will make memories unfindable by project.
 
     Car M (0047 §7, §16.6): the OPTIONAL ``project=`` parameter is the
-    cross-project override. When supplied, the validated project_id is
-    stamped on the enqueued payload (``payload["project_id"]``) so the
-    backend drainer (Car A0) routes the write to that project_id's namespace
-    rather than the directory-derived one. Precedence: ``project`` (override)
-    > ``session_project`` (Car E) > ``directory``-derived (Car A0) >
+    cross-project override. Precedence: ``project`` (override) >
+    ``session_project`` (Car E) > ``directory``-derived (Car A0) >
     ``"global"`` fallback. When BOTH ``project`` and ``context`` are
     supplied, ``project`` wins (``context`` stays in the payload as the
     canonical directory_context — the project_id is the stamp, the path is
     the directory hint). The non-string / empty guards fire at the type
     level; the deep registry check lives at the backend write path
     (`_ensure_project_exists_sync`, §15 / ADR-0078).
+
+    C4b (0047 PR#40 §5): the RESOLVED project_id — override or not — is
+    stamped on the enqueued payload (``payload["project_id"]``) on every
+    call. ``project=`` changes WHICH project is named, never WHETHER one is.
 
     Persistence options:
     - is_protected=True: memory is exempt from heat decay and will never be aged out.
@@ -147,7 +148,7 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
     except InvalidProjectOverrideError as exc:
         return {"stored": False, "ok": False, "error": f"memorize: {exc}"}
 
-    return _enqueue(ctx, wait=wait, project_id=effective_project_id if project else None)
+    return _enqueue(ctx, wait=wait, project_id=effective_project_id)
 
 
 @observe(tier="stage")
@@ -157,11 +158,16 @@ def _enqueue(ctx: MemorizeContext, wait: bool = False, *, project_id: str | None
     wait=True routes through _memorize_wait_path for read-your-writes (mirrors
     wiki_add). wait=False returns the async {stored, queued, queue_id} shape.
 
-    Car M (0047 §7, §16.6): when ``project_id`` is supplied (the caller
-    provided ``project=`` and the override won), it is stamped on the wire
-    payload so the drainer stamps it on the row. The drainer-side write path
-    (Car A0 ``_ensure_project_exists_sync``) REJECTS unknown project_ids
-    fail-loud at INSERT time — core stays out of the DB (§15).
+    C4b (0047 PR#40 §5): ``project_id`` is stamped on the wire payload
+    UNCONDITIONALLY. Car M stamped it only when the caller passed
+    ``project=``, which left the DEFAULT path — i.e. nearly every call to the
+    highest-volume write path in the system — arriving at the drainer
+    unattributed, to be re-derived inside a container with no git binary and
+    no host project mounts (§1.1 / ADR-0227). The MCP tool call is the only
+    participant that can see the session, so it is the only honest place to
+    resolve. The deep registry check stays backend-side (Car A0
+    ``_ensure_project_exists_sync``, §15 / ADR-0078), which REJECTS unknown
+    project_ids fail-loud at INSERT time — core stays out of the DB.
     """
     payload: dict = {
         "content": ctx.content,

@@ -436,5 +436,27 @@
   "rationale": "C3 (0047 PR#40 remediation §5.C3) adds `project` to all 42 scoped MCP tools; checkpoint was the only one already sitting exactly ON the params_hard=8 cap, so it lands at 9. The parameter is not optional-by-taste: the AST surface test pins every @_tool function taking `directory` to also take `project`, and checkpoint is one of them. Deliberately NOT bundled into an options dataclass (the memorize/wiki_add I13 remedy) because C5 REMOVES `directory` from this same signature, returning it to 8 without a refactor — bundling now would be churn in both directions across one PR. Delete this entry in C5.",
   "added": "2026-08-10",
   "added_by": "car-c3-project-param"
+ },
+ {
+  "path": "yadgar/backend/write_exec/memorize_impl.py",
+  "function": "run_memorize_replay",
+  "lineno": 32,
+  "metrics": {
+   "params": 9
+  },
+  "rationale": "C4b (0047 PR#40 §5): params 8 -> 9 for the enqueue-time project_id. This function deliberately MIRRORS the memorize MCP signature (it is the drain-replay half of the same call) and already carried # noqa: PLR0913 for that reason; every one of its parameters is a field of the queue payload, so the count tracks the payload's width, not branching (cyclomatic and nesting are unchanged). Bundling the nine into a dataclass is the obvious reduction and is explicitly NOT taken here: the one-to-one correspondence with the payload keys is what makes a missing field visible at the call site in apply.py, and C5 is about to make a missing project_id fail loud there. The bundling refactor belongs with C5, which changes that contract anyway. Same deferral shape as Car M's wiki_add entry above.",
+  "added": "2026-08-11",
+  "added_by": "car-c4b-memorize-stamp"
+ },
+ {
+  "path": "yadgar/backend/restoration/checkpoint_restore.py",
+  "function": "anchor_memory",
+  "lineno": 123,
+  "metrics": {
+   "params": 9
+  },
+  "rationale": "C4b (0047 PR#40 §5): params 8 -> 9 for the enqueue-time project_id. anchor_memory mirrors the anchor queue payload the same way run_memorize_replay mirrors memorize's, and its ONLY non-test caller is run_anchor_replay, which forwards the payload field-for-field — the count is payload width, not logic (cyclomatic and nesting unchanged). The cheaper-looking reduction, dropping the vestigial `branch` parameter left over from ADR-0215's removal of branch scoping, is deliberately not taken in this car: deleting pre-existing dead surface is out of scope for an additive stamping change, and doing it here would mix a behavioural cleanup into the one commit that must be trivially auditable before C5 makes absence fatal. Revisit with C5 or with the ADR-0215 sweep.",
+  "added": "2026-08-11",
+  "added_by": "car-c4b-memorize-stamp"
  }
 ]
