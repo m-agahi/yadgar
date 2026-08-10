@@ -40,7 +40,14 @@ class _FakeResult:
 
 
 class _FakeSqlEngine:
-    """Minimal ``MariaStorageEngine`` stand-in — tables + one scalar count."""
+    """Minimal ``MariaStorageEngine`` stand-in — tables + one scalar count.
+
+    Car I: ``list_agent_prompt_rows`` / ``list_agent_discipline_rows`` carry the
+    ledger rows the desync check compares against the wiki body. Default empty
+    so a fake constructed without row seed data produces STATUS_OK (no rows ==
+    nothing to compare). Tests that want a violation pass ``pattern_rows=`` /
+    ``discipline_rows=``.
+    """
 
     def __init__(
         self,
@@ -49,11 +56,15 @@ class _FakeSqlEngine:
         config_rows: int = 0,
         revision: str | None = "0001_config",
         raises: Exception | None = None,
+        pattern_rows: list[dict] | None = None,
+        discipline_rows: list[dict] | None = None,
     ) -> None:
         self._tables = tables if tables is not None else ["alembic_version", "config"]
         self._config_rows = config_rows
         self.revision = revision
         self._raises = raises
+        self._pattern_rows = pattern_rows or []
+        self._discipline_rows = discipline_rows or []
         self.engine = object()  # the AsyncEngine handle migrate.* would receive
 
     async def list_tables(self) -> list[str]:
@@ -66,24 +77,45 @@ class _FakeSqlEngine:
             raise self._raises
         return self._config_rows if table == "config" else 0
 
+    async def list_agent_prompt_rows(self) -> list[dict]:
+        if self._raises is not None:
+            raise self._raises
+        return list(self._pattern_rows)
+
+    async def list_agent_discipline_rows(self) -> list[dict]:
+        if self._raises is not None:
+            raise self._raises
+        return list(self._discipline_rows)
+
 
 class _FakeSurrealStorage:
-    """Only ``_q`` and ``_db_url`` are used, and only for ``schema_version``."""
+    """Only ``_q``, ``_db_url`` and (Car I) ``get_wiki_page_by_slug`` are used."""
 
     def __init__(
         self,
         versions: list[str] | None = None,
         raises: Exception | None = None,
         db_url: str | None = "http://surreal:8000",
+        *,
+        wiki_pages: dict[str, dict] | None = None,
     ) -> None:
         self._versions = versions
         self._raises = raises
         self._db_url = db_url
+        # Default: empty — every body slug is missing → desync arm
+        # reports ``wiki_page_missing`` for every row, which is the
+        # violation shape Car I tests pin.
+        self._wiki_pages = wiki_pages or {}
 
     def _q(self, _surql: str, _params: dict | None = None) -> list:
         if self._raises is not None:
             raise self._raises
         return [{"version": v} for v in (self._versions or [])]
+
+    def get_wiki_page_by_slug(self, slug: str) -> dict | None:
+        if self._raises is not None:
+            raise self._raises
+        return self._wiki_pages.get(slug)
 
 
 def _all_code_versions() -> list[str]:
@@ -385,7 +417,9 @@ def test_page_row_desync_is_unavailable_while_the_spine_is_unshipped(
     check = _run(_FakeSurrealStorage(_all_code_versions()))["checks"][ce.CHECK_PAGE_ROW_DESYNC]
     assert check["status"] == ce.STATUS_UNAVAILABLE
     assert check["reason"] == ce.REASON_SPINE_NOT_SHIPPED
-    assert check["detail"]["absent_tables"] == sorted([tbl for tbl, _ in ce._HASH_MIRRORED_TABLES])
+    assert check["detail"]["absent_tables"] == sorted(
+        tbl for tbl, _slug, _method in ce._HASH_MIRRORED_TABLES
+    )
 
 
 def test_page_row_desync_trips_itself_once_the_spine_lands(
@@ -396,22 +430,33 @@ def test_page_row_desync_trips_itself_once_the_spine_lands(
     Otherwise the spine train ships the ledger tables and this arm keeps
     reporting a comfortable 'unavailable' over data it should be comparing —
     the vacuous pass, one layer up.
-    """
-    import yadgar.backend.admin_exec.invariants_cross_engine as ce_module
 
-    monkeypatch.setattr(
-        ce_module,
-        "_get_storage",
-        lambda: _FakeSurrealStorage(_all_code_versions()),
-    )
+    Car J (0047): the fake storage reaches ``check_page_row_desync`` via
+    ``ctx["storage"]`` (the same handle ``run_cross_engine_checks`` was already
+    threading into ctx); the previous local-import indirection onto the global
+    ``_get_storage`` from ``yadgar._shared.runtime.lifecycle`` was not
+    patchable through the module and stranded the arm on AttributeError when
+    the spine tables landed.
+
+    The trip is seeded with one ``agent_pattern`` row whose ``body_slug`` does
+    not resolve in the fake wiki, so ``_compare_page_row`` reports
+    ``wiki_page_missing`` → STATUS_VIOLATION with ``present_tables`` covering
+    the spine-shipped tables.
+    """
+    pattern_rows = [
+        {"name": "stub-pattern", "body_slug": "agent-prompt-stub-pattern", "content_hash": ""},
+    ]
     _install(
         monkeypatch,
-        sql_engine=_FakeSqlEngine(tables=["alembic_version", "config", "adr", "agent_pattern"]),
+        sql_engine=_FakeSqlEngine(
+            tables=["alembic_version", "config", "adr", "agent_pattern"],
+            pattern_rows=pattern_rows,
+        ),
     )
     result = _run(_FakeSurrealStorage(_all_code_versions()))
     check = result["checks"][ce.CHECK_PAGE_ROW_DESYNC]
     assert check["status"] == ce.STATUS_VIOLATION
-    assert sorted(check["detail"]["present_tables"]) == ["adr", "agent_pattern"]
+    assert sorted(check["detail"]["present_tables"]) == ["agent_pattern"]
     assert result["status"] == ce.STATUS_VIOLATION
 
 

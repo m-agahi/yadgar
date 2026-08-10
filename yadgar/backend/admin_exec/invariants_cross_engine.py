@@ -392,9 +392,10 @@ async def check_config_row_baseline(engine: Any, engine_head: dict) -> dict:
 # keyed) lives next to a ledger row (name keyed). The probe below reads both
 # sides and reports a violation when the hash disagrees. ADR-0198 names the
 # spine ledger tables; only those with a corresponding wiki body participate.
-_HASH_MIRRORED_TABLES = (
-    ("agent_pattern", "agent-prompt-"),
-    ("agent_discipline", "agent-discipline-"),
+_HASH_MIRRORED_TABLES: tuple[tuple[str, str, str], ...] = (
+    # (sql_table_name, wiki_slug_prefix, engine_method_name)
+    ("agent_pattern", "agent-prompt-", "list_agent_prompt_rows"),
+    ("agent_discipline", "agent-discipline-", "list_agent_discipline_rows"),
 )
 
 
@@ -446,7 +447,56 @@ def _compare_page_row(*, tbl: str, slug_prefix: str, row: dict, storage: Any) ->
 
 
 @observe(tier="stage", metric="backend.invariants.cross_engine.page_row_desync")
-async def check_page_row_desync(engine: Any) -> dict:
+def _resolve_storage(storage: Any) -> Any:
+    """Resolve the storage handle for the page-row-desync check.
+
+    Car J (0047): the module's local import of ``_get_storage`` from
+    ``yadgar._shared.runtime.lifecycle`` is not patchable through the module
+    (local import = unbound symbol on the module). When the orchestrator at
+    ``run_cross_engine_checks`` already has a storage handle in ctx, threading
+    it through the registry entry avoids the unpatchable seam. The
+    live-process path keeps working because the default is None — the runtime
+    production code never passed storage through; pytest passes a fake.
+    """
+    if storage is not None:
+        return storage
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+
+    return _get_storage()
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.compare_table")
+async def _compare_table(
+    *,
+    tbl: str,
+    slug_prefix: str,
+    list_method: str,
+    engine: Any,
+    storage: Any,
+) -> dict | None:
+    """Walk one ledger table's rows and compare each against the wiki body.
+
+    Returns one of:
+      - ``{"violations": [...], "compared": [...]}`` — list complete.
+      - ``{"unavailable": {"table": tbl, "error": str(exc)}}`` — the list
+        call failed; the orchestrator decides how to surface the error.
+    """
+    rows = await getattr(engine, list_method)()
+    violations: list[dict] = []
+    compared: list[dict] = []
+    for row in rows:
+        entry = _compare_page_row(tbl=tbl, slug_prefix=slug_prefix, row=row, storage=storage)
+        if entry is None:
+            continue
+        if entry.get("reason") == "matched":
+            compared.append({"table": tbl, "name": entry["name"], "body_slug": entry["body_slug"]})
+        else:
+            violations.append(entry)
+    return {"violations": violations, "compared": compared}
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.page_row_desync")
+async def check_page_row_desync(engine: Any, storage: Any = None) -> dict:
     """ADR-0209's mirrored ``content_hash`` — LIVE for 0047 Car I.
 
     Compares the wiki body page's bytes (sha256 of the content column) against
@@ -479,12 +529,12 @@ async def check_page_row_desync(engine: Any) -> dict:
             "detail": {"error": str(exc)},
         }
 
-    if not any(tbl in tables for tbl, _slug_prefix in _HASH_MIRRORED_TABLES):
+    if not any(tbl in tables for tbl, _slug_prefix, _method in _HASH_MIRRORED_TABLES):
         return {
             "status": STATUS_UNAVAILABLE,
             "reason": REASON_SPINE_NOT_SHIPPED,
             "detail": {
-                "absent_tables": [tbl for tbl, _ in _HASH_MIRRORED_TABLES],
+                "absent_tables": sorted(tbl for tbl, _slug, _method in _HASH_MIRRORED_TABLES),
                 "message": (
                     "ADR-0209's content_hash mirror tables are absent; spine train "
                     "table create (0047 Car A / Car I) hasn't shipped."
@@ -492,37 +542,32 @@ async def check_page_row_desync(engine: Any) -> dict:
             },
         }
 
-    # Live comparison per row. Car I: read every pattern/discipline row,
-    # fetch the corresponding wiki body, sha256 the wiki content, compare.
-    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
-
-    storage = _get_storage()
+    storage = _resolve_storage(storage)
     violations: list[dict] = []
     compared: list[dict] = []
-    for tbl, slug_prefix, list_method in (
-        ("agent_pattern", "agent-prompt-", "list_agent_prompt_rows"),
-        ("agent_discipline", "agent-discipline-", "list_agent_discipline_rows"),
-    ):
+    present_tables: list[str] = []
+    for tbl, slug_prefix, list_method in _HASH_MIRRORED_TABLES:
         if tbl not in tables:
             continue
+        present_tables.append(tbl)
         try:
-            rows = await getattr(engine, list_method)()
+            outcome = await _compare_table(
+                tbl=tbl,
+                slug_prefix=slug_prefix,
+                list_method=list_method,
+                engine=engine,
+                storage=storage,
+            )
         except Exception as exc:  # noqa: BLE001
             return {
                 "status": STATUS_UNAVAILABLE,
                 "reason": REASON_QUERY_FAILED,
                 "detail": {"table": tbl, "error": str(exc)},
             }
-        for row in rows:
-            entry = _compare_page_row(tbl=tbl, slug_prefix=slug_prefix, row=row, storage=storage)
-            if entry is None:
-                continue
-            if entry.get("reason") == "matched":
-                compared.append(
-                    {"table": tbl, "name": entry["name"], "body_slug": entry["body_slug"]}
-                )
-            else:
-                violations.append(entry)
+        if outcome is None:
+            continue
+        violations.extend(outcome["violations"])
+        compared.extend(outcome["compared"])
 
     if violations:
         return {
@@ -531,11 +576,19 @@ async def check_page_row_desync(engine: Any) -> dict:
                 f"{len(violations)} page/row desync violation(s) across "
                 f"{sorted({v['table'] for v in violations})} — see detail"
             ),
-            "detail": {"violations": violations, "compared": len(compared)},
+            "detail": {
+                "violations": violations,
+                "compared": len(compared),
+                "present_tables": present_tables,
+            },
         }
     return {
         "status": STATUS_OK,
-        "detail": {"compared": len(compared), "tables": [t for t, _ in _HASH_MIRRORED_TABLES]},
+        "detail": {
+            "compared": len(compared),
+            "tables": [t for t, _slug, _method in _HASH_MIRRORED_TABLES],
+            "present_tables": present_tables,
+        },
     }
 
 
@@ -574,7 +627,7 @@ _CHECK_REGISTRY: tuple[tuple[str, Callable[[dict], dict | Awaitable[dict]]], ...
             ctx["results"].get(CHECK_ENGINE_TWO_SCHEMA_HEAD, _NEVER_REPORTED),
         ),
     ),
-    (CHECK_PAGE_ROW_DESYNC, lambda ctx: check_page_row_desync(ctx["engine"])),
+    (CHECK_PAGE_ROW_DESYNC, lambda ctx: check_page_row_desync(ctx["engine"], ctx["storage"])),
 )
 
 
