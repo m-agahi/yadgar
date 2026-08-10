@@ -351,11 +351,12 @@
   {
     "path": "yadgar/core/server/tools/adr.py",
     "function": "adr_add",
-    "lineno": 104,
+    "lineno": 182,
     "metrics": {
-      "params": 11
+      "params": 14,
+      "fn_loc": 155
     },
-    "rationale": "PERMANENT. Same ADR-schema constraint as _build_adr_body: 10 mandatory content fields + directory = 11 total. FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement. The 11-field ADR structure is a conscious design choice (matches Nygard ADR format) and must be preserved as a flat tool signature.",
+    "rationale": "PERMANENT. Same ADR-schema constraint as _build_adr_body: 10 mandatory content fields + directory = 11 total. FastMCP derives the JSON Schema from function parameters directly; a **kwargs variant loses schema enforcement. The 11-field ADR structure is a conscious design choice (matches Nygard ADR format) and must be preserved as a flat tool signature. Car M (0047 spine train, 2026-08-09): params 11 -> 12 for the cross-project project= override (keyword-only param). Car H (0047 spine train, 2026-08-09): params 12 -> 14 for tier + subsystem fields (D27 tier enum + D28 subsystem explicit), and fn_loc 11 fields moved the function body past the 150 HARD cap to 155; the per-row stamp + tier/subsystem rollup trigger live below the entry point in extracted helpers (_trigger_subsystem_rollup_regen) so the entry point remains the single flat FastMCP-visible surface.",
     "added": "2026-06-25",
     "added_by": "feat/improvement-train"
   },

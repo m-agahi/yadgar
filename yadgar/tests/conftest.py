@@ -1436,6 +1436,7 @@ def recall_backend_bypass(monkeypatch):
         tags,
         mode=None,
         profile=None,
+        **kwargs,
     ):
         """Direct _fanout_recall call — bypasses HTTP, same _st engines."""
         if mode is not None and mode != "landscape":

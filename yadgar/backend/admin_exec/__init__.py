@@ -185,7 +185,7 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # ``yadgar-adr-NNNN`` to ``{project_id}_adr-NNNN`` + updates crossrefs
     # + inline body links + adr.body_slug. Idempotent; dry-run by default.
     "reslug": reslug.reslug_adr_pages,
-# Car G (0047 §7 D23/D35a): ADR seed (pages→ledger) + retype mutator.
+    # Car G (0047 §7 D23/D35a): ADR seed (pages→ledger) + retype mutator.
     # ``seed_adr_rows`` lifts the ~223 existing ADRs from per-ADR wiki PAGES
     # into the ``adr`` ledger table (D35a — one-shot, idempotent on
     # body_slug). ``retype_page_type`` flips ``wiki_page.page_type``
@@ -193,7 +193,6 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # (D23 — the sole sanctioned writer for the lifecycle transition).
     "seed_adr_rows": adr_seed.seed_adr_rows,
     "retype_page_type": adr_seed.retype_page_type,
-<<<<<<< HEAD
     # Car K (0047 §7 row K): nightly archive sweep — cross-engine write that
     # flips MariaDB ledger rows to status='archived' and retypes SurrealDB
     # body pages to per-type archived variants. Per-page mutability_override

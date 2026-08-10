@@ -138,7 +138,13 @@ def _resolve_project_for_recall(
         raise ValueError(f"recall: {exc}") from exc
 
     _dir_stripped = (directory or "").strip().rstrip("/") if directory else ""
-    if not _dir_stripped and not effective_project_id:
+    # BC-B3: a usable directory OR an explicit project override MUST be supplied.
+    # Car M made resolve_effective_project() fall back to "global" when neither is
+    # given, but the recall() call-site contract is unchanged — the caller is
+    # responsible for naming the project, even if the resolved id ends up being
+    # "global" downstream. Empty directory AND empty project is a programming
+    # error that the previous guard already rejected; this preserves that.
+    if not _dir_stripped and not project:
         raise ValueError(
             "recall: directory is required (caller must supply project dir; "
             "container cannot detect it via os.getcwd())"
