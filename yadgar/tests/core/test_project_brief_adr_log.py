@@ -52,27 +52,26 @@ def test_restore_adr_log_latest_ids_empty_when_absent():
 
 
 def test_restore_adr_log_latest_ids_when_present(tmp_path):
-    """Car 2: seed the canonical INDEX with 3 ADR rows; latest_ids descending."""
-    from yadgar.core.server.tools.adr import _build_index_content
+    """Car 2 + Car G re-point: list_adr_rows returns 3 rows; latest_ids descending.
 
-    index_content = _build_index_content(
-        "test",
-        [
-            {
-                "adr_id": f"ADR-000{i}",
-                "status": "accepted",
-                "date": "2026-01-01",
-                "title": f"Decision {i}",
-                "supersedes": "none",
-                "superseded_by": "-",
-                "slug": f"test-adr-000{i}",
-            }
-            for i in (1, 2, 3)
-        ],
-    )
+    Car G (0047 §7) replaced the wiki ``<project>-adr-index`` page with the SQL
+    ledger. The contract is unchanged (newest 3 ids, numerics-as-ADR-NNNN) but
+    the seam is now ``_forward_admin('list_adr_rows', ...)`` instead of
+    ``wiki_read`` + ``parse_index_rows``. Seeding rows out of order so the
+    tests would fail if the sort step were dropped.
+    """
+    rows = [
+        {"id": 2, "status": "accepted", "title": "Decision 2"},
+        {"id": 1, "status": "accepted", "title": "Decision 1"},
+        {"id": 3, "status": "accepted", "title": "Decision 3"},
+    ]
+
+    def fake_list_adr_rows(action, params, **kwargs):
+        return {"ok": True, "rows": rows}
+
     with patch(
-        "yadgar.core.server.tools.wiki.wiki_read",
-        return_value={"content": index_content, "slug": "test-adr-index"},
+        "yadgar.core.server.tools.project._forward_admin",
+        side_effect=fake_list_adr_rows,
     ):
         result = server.project_brief(str(tmp_path), mode="restore")
 
@@ -83,27 +82,20 @@ def test_restore_adr_log_latest_ids_when_present(tmp_path):
 
 
 def test_restore_adr_log_latest_ids_capped_at_three(tmp_path):
-    """Car 2: index with 5 ADR rows; latest_ids capped at 3, newest first (ADR-0005)."""
-    from yadgar.core.server.tools.adr import _build_index_content
+    """Car 2 + Car G re-point: 5 ledger rows; latest_ids capped at 3, newest first.
 
-    index_content = _build_index_content(
-        "test",
-        [
-            {
-                "adr_id": f"ADR-000{i}",
-                "status": "open",
-                "date": "2026-01-01",
-                "title": f"Decision {i}",
-                "supersedes": "none",
-                "superseded_by": "-",
-                "slug": f"test-adr-000{i}",
-            }
-            for i in (1, 2, 3, 4, 5)
-        ],
-    )
+    Car G (0047 §7) re-pointed the restore seam from the wiki-index page to
+    the SQL ``list_adr_rows`` forward. The cap-at-3 contract is preserved;
+    only the data source moved. Seed 5 rows so the slice step is observable.
+    """
+    rows = [{"id": i, "status": "open", "title": f"Decision {i}"} for i in (1, 2, 3, 4, 5)]
+
+    def fake_list_adr_rows(action, params, **kwargs):
+        return {"ok": True, "rows": rows}
+
     with patch(
-        "yadgar.core.server.tools.wiki.wiki_read",
-        return_value={"content": index_content, "slug": "test-adr-index"},
+        "yadgar.core.server.tools.project._forward_admin",
+        side_effect=fake_list_adr_rows,
     ):
         result = server.project_brief(str(tmp_path), mode="restore")
 
