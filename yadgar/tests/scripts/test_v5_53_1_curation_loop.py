@@ -441,12 +441,15 @@ class TestWriteBackNudgeInStopHook:
         assert "stop_checkpoint_prompt.md" in reason, (
             f"reason must point to the protocol template, got: {reason[:400]}"
         )
-        # ADR capture is the primary write-back: it names the canonical ADR-log
-        # page, the capture verb, and the append mechanism.
+        # ADR capture is the primary write-back: the step name + the capture verb.
+        # Car G (0047 §7): the ADR log moved from the wiki page (-adr-log slug)
+        # to the SQL ledger (adr_list(directory=...)); the protocol re-points the
+        # read-first-dedup to adr_list instead of wiki_read("-adr-log").
         assert "ADR CAPTURE" in _PROTOCOL_TEMPLATE, "Protocol must drive ADR capture"
-        assert "-adr-log" in _PROTOCOL_TEMPLATE and "adr_add" in _PROTOCOL_TEMPLATE, (
-            "Protocol must reference the ADR-log page + adr_add tool"
+        assert "adr_list(" in _PROTOCOL_TEMPLATE, (
+            "Protocol must use adr_list for read-first-dedup (Car G re-pointed from wiki page)"
         )
+        assert "adr_add" in _PROTOCOL_TEMPLATE, "Protocol must reference adr_add tool"
         # The removed stale-regen path must NOT have crept back in.
         assert "wiki_refresh_stale" not in _PROTOCOL_TEMPLATE, (
             "wiki_refresh_stale was deliberately removed by the #121 ADR redesign"

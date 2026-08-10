@@ -261,16 +261,80 @@ def test_session_context_non_compact_still_renders_catalog(tmp_path, monkeypatch
 _NUDGE_MARKER = "restore your task list"
 
 
+# Car E (0047 spine train §16) refs:
+#   - the task-list source of truth moved from the wiki page
+#     '{project}-task-list' (page_type='task_list') to the SQL `task` ledger.
+#   - the session-context nudge generator now reads from
+#     `yadgar.core.server.tools.task.task_list(project_id=..., status=[...])`
+#     (the Car D admin op surface), not from wiki pages.
+#   - legacy wiki-page parsing is a fallback only when the Car D tools are
+#     not importable; primary path is the ledger.
+#
+# The seed below installs BOTH surfaces so the test exercises the post-Car-E
+# PRIMARY path. The wiki page is kept as a marker-only side effect so any
+# remaining legacy-wiki test plumbing still finds the slug where it expects
+# it.
+
+
+def _parse_task_sections(content: str) -> list[dict]:
+    """Parse a legacy `{project}-task-list` markdown body into ledger rows.
+
+    Only open tasks (pending / in_progress) are returned — the nudge reads
+    exactly those. The markdown schema is documented in the protocol template
+    (Car E: the schema was retired, but the seed reproduces it verbatim so
+    the fixture stays decoupled from any Car-D schema changes).
+    """
+    import re
+
+    rows: list[dict] = []
+    # Match `## task:<id>` headline (with optional `origin/` prefix, D11),
+    # followed by `- key: value` bullets until the next `## ` or EOF.
+    _section_re = re.compile(
+        r"^##\s+task:(?:(\S+?)/)?(\S+)\s*\n((?:(?!\n## ).)*)", re.DOTALL | re.MULTILINE
+    )
+    _field_re = re.compile(r"-\s+(\w+):\s*(.*)")
+    next_id = 1
+    for m in _section_re.finditer(content):
+        body = m.group(3)
+        # First non-empty line of the body is the first bullet; pad the row
+        # with sensible defaults so the nudge can render even when the page
+        # omits one.
+        fields = {"id": next_id, "title": "", "status": "pending"}
+        for line in body.splitlines():
+            fm = _field_re.match(line.strip())
+            if not fm:
+                continue
+            key, value = fm.group(1).strip(), fm.group(2).strip()
+            if key == "subject":
+                fields["title"] = value
+            elif key == "status":
+                fields["status"] = value
+        next_id += 1
+        if fields["status"] in ("pending", "in_progress"):
+            rows.append(fields)
+    return rows
+
+
 def _seed_task_list_page(
     directory: str,
     branch: str | None,
     content: str | None = None,
+    monkeypatch: pytest.MonkeyPatch | None = None,
 ) -> None:
-    """Seed a <project>-task-list wiki page the way Edit 1 (the stop-hook step)
-    writes it: page_type='task_list', scoped to `directory`, branch=`branch`.
+    """Seed the post-Car-E task-list surface so the nudge generator sees rows.
+
+    Car E (0047 §16): the source of truth is the SQL `task` ledger. The
+    test seeds the ledger by monkeypatching
+    `yadgar.core.server.tools.task.task_list` to return a fixture list of
+    parsed rows for the project's project_id. The wiki page is also written
+    (legacy marker) so any remaining legacy-wiki test plumbing still resolves
+    the slug.
 
     `content` overrides the default 1-open-task body. Pass None (default) to
     get the original single-pending-task seed used by existing callers.
+    `monkeypatch` is required for the ledger stub; legacy callers that pass
+    only the legacy kwargs can omit it (the legacy wiki page is written
+    unconditionally, but the ledger stub is skipped).
     """
     from pathlib import Path
 
@@ -284,6 +348,9 @@ def _seed_task_list_page(
             f"## Meta\n- project: {project}\n- open: 1 · completed: 0\n\n"
             "## task:0001\n- subject: seed\n- status: pending\n"
         )
+
+    # 1. Legacy wiki marker (NOT the source of truth on the primary path but
+    # kept so any legacy-wiki test can still resolve the slug).
     storage.insert_wiki_page(
         {
             "slug": f"{project}-task-list",
@@ -297,20 +364,37 @@ def _seed_task_list_page(
         branch=branch,
     )
 
+    # 2. Ledger stub — the PRIMARY path the nudge now reads. We install a
+    # canned `task_list(project_id, status=...)` callable that returns the
+    # parsed markdown rows. The http.py handler uses `asyncio.to_thread` so
+    # a plain sync callable is fine.
+    if monkeypatch is not None:
+        _rows = _parse_task_sections(content)
+
+        def _fake_task_list(project_id: str, status=None):
+            return [r for r in _rows if r.get("status", "pending") in (status or [])]
+
+        try:
+            from yadgar.core.server.tools import task as _task_tools
+
+            monkeypatch.setattr(_task_tools, "task_list", _fake_task_list)
+        except ImportError:
+            pass  # legacy-without-Car-D: the http.py handler falls back to wiki-parsing
+
 
 def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
-    """Startup session-context CONTAINS the restore-nudge when the page exists.
+    """Startup session-context CONTAINS the restore-nudge when the ledger has rows.
 
-    The stop-hook step writes the task-list page through the sanctioned canonical
-    writer, so it resolves on directory_context alone and is reachable from any
-    caller. Seed it that way and assert the nudge fires.
+    Car E (0047 §16): the source of truth is the SQL `task` ledger. The seed
+    writes a `{project}-task-list` legacy wiki marker AND stubs the ledger
+    `task_list(project_id=..., status=...)` reader to return one open row.
     """
     token = "tl-present"
     from yadgar.core import server as _server
 
-    # Seed with branch=None (canonical) so §25 step-2 (dir + branch IS NULL)
-    # resolves for any caller branch — the robust read path.
-    _seed_task_list_page(str(tmp_path), branch=None)
+    # Seed both surfaces so the post-Car-E PRIMARY path (ledger) drives the
+    # nudge; the wiki marker is the legacy fallback that should also resolve.
+    _seed_task_list_page(str(tmp_path), branch=None, monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -322,17 +406,32 @@ def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert _NUDGE_MARKER in body["text"], (
-        f"nudge must be present when the task-list page exists; got: {body['text']!r}"
+        f"nudge must be present when the ledger has rows; got: {body['text']!r}"
     )
-    # The nudge must name the slug + the restore mechanism.
-    assert f"{tmp_path.name}-task-list" in body["text"]
+    # The nudge (post-Car-E) names the project_id + the restore mechanism.
+    # project_id = basename(directory); the legacy wiki slug is gone from the
+    # PRIMARY path — assert on project_id, not the wiki slug.
+    assert tmp_path.name in body["text"], (
+        f"project_id ({tmp_path.name}) must appear in the nudge; "
+        f"the legacy wiki slug is no longer the source of truth"
+    )
     assert "TaskCreate" in body["text"]
 
 
 def test_task_list_nudge_absent_when_page_missing(tmp_path, monkeypatch):
-    """No page seeded → nudge ABSENT (the key R2 existence-check assertion)."""
+    """No rows seeded → nudge ABSENT (the key R2 existence-check assertion)."""
     token = "tl-absent"
     from yadgar.core import server as _server
+
+    # Monkeypatch the ledger reader so a CI ghost row from another test cannot
+    # accidentally trip this assertion (task_list is module-level cached after
+    # first import).
+    try:
+        from yadgar.core.server.tools import task as _task_tools
+
+        monkeypatch.setattr(_task_tools, "task_list", lambda project_id, status=None: [])
+    except ImportError:
+        pass
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -344,16 +443,16 @@ def test_task_list_nudge_absent_when_page_missing(tmp_path, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert _NUDGE_MARKER not in body["text"], (
-        f"nudge must be absent when no task-list page exists; got: {body['text']!r}"
+        f"nudge must be absent when no ledger rows exist; got: {body['text']!r}"
     )
 
 
 def test_task_list_nudge_absent_on_compact(tmp_path, monkeypatch):
-    """source=compact early-returns → nudge ABSENT even if the page exists."""
+    """source=compact early-returns → nudge ABSENT even if the ledger has rows."""
     token = "tl-compact"
     from yadgar.core import server as _server
 
-    _seed_task_list_page(str(tmp_path), branch=None)
+    _seed_task_list_page(str(tmp_path), branch=None, monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -371,11 +470,12 @@ def test_task_list_nudge_absent_on_compact(tmp_path, monkeypatch):
 
 def test_task_list_nudge_absent_from_subagent_start(tmp_path, monkeypatch):
     """Isolation lock: the nudge NEVER appears in the subagent-start endpoint
-    output, even when the page exists. hook_subagent_start is a distinct handler
-    reached by SubagentStart only — it must not surface the main-thread nudge."""
+    output, even when the ledger has rows. hook_subagent_start is a distinct
+    handler reached by SubagentStart only — must not surface the main-thread
+    nudge."""
     token = "tl-subagent"
 
-    _seed_task_list_page(str(tmp_path), branch=None)
+    _seed_task_list_page(str(tmp_path), branch=None, monkeypatch=monkeypatch)
 
     client = _make_client(token, monkeypatch)
     resp = client.post(
@@ -391,14 +491,14 @@ def test_task_list_nudge_absent_from_subagent_start(tmp_path, monkeypatch):
     )
 
 
-def test_task_list_nudge_absent_from_dispatch_prelude(tmp_path):
+def test_task_list_nudge_absent_from_dispatch_prelude(tmp_path, monkeypatch):
     """Isolation lock: agent_dispatch_prelude output never carries the nudge.
 
     The prelude assembles recall + wiki_query context (dispatch_helper); it does
-    NOT call hook_session_context / project_brief. Even with a seeded page, the
-    prelude must not surface the main-thread nudge string.
+    NOT call hook_session_context / project_brief. Even with seeded ledger rows,
+    the prelude must not surface the main-thread nudge string.
     """
-    _seed_task_list_page(str(tmp_path), branch=None)
+    _seed_task_list_page(str(tmp_path), branch=None, monkeypatch=monkeypatch)
 
     from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
@@ -416,32 +516,36 @@ def test_task_list_nudge_absent_from_dispatch_prelude(tmp_path):
 
 def test_task_list_nudge_fail_open_on_existence_check_error(tmp_path, monkeypatch):
     """Fail-open: if the existence check raises, the endpoint still returns the
-    rest of the render (no 500, catalog preserved)."""
+    rest of the render (no 500, catalog preserved).
+
+    Car E (0047 §16): the existence check is the ledger ``task_list`` call
+    (not the legacy wiki-page reader). The fail-open arm catches the raise
+    in ``_task_list_restore_nudge`` and returns "" so the nudge is omitted
+    while the catalog render still ships.
+    """
     token = "tl-failopen"
-    from yadgar._shared.runtime import lifecycle as _lifecycle
     from yadgar.core import server as _server
 
-    _seed_task_list_page(str(tmp_path), branch=None)
+    # Monkeypatch task_list to raise on every call — this is the post-Car-E
+    # existence check. The handler must catch the raise and omit the nudge.
+    def _raise(*_a, **_k):
+        raise RuntimeError("ledger read down")
 
-    real_storage = _lifecycle._get_storage()
+    try:
+        from yadgar.core.server.tools import task as _task_tools
 
-    class _Boom:
-        def __getattr__(self, name):
-            if name == "get_wiki_page_by_slug_directory":
-
-                def _raise(*_a, **_k):
-                    raise RuntimeError("existence check down")
-
-                return _raise
-            return getattr(real_storage, name)
+        monkeypatch.setattr(_task_tools, "task_list", _raise)
+    except ImportError:
+        # Without Car D tools, the legacy wiki path runs; not the subject of
+        # this test.
+        pytest.skip("Car D `task` tools not importable — legacy path tested elsewhere")
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
-        with patch.object(_lifecycle, "_get_storage", return_value=_Boom()):
-            client = _make_client(token, monkeypatch)
-            resp = client.get(
-                f"/hooks/session-context?directory={tmp_path}&source=startup",
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert resp.status_code == 200
     body = resp.json()
@@ -507,7 +611,7 @@ def _seed_many_open_tasks(directory: str, n: int) -> str:
 def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
     """Render CONTAINS subjects + count for pending/in_progress tasks (v5.142.0).
 
-    The nudge must inline a compact open-task summary — not just note page
+    The nudge must inline a compact open-task summary — not just note row
     existence — mirroring how the checkpoint hint inlines task + timestamp.
     """
     token = "tl-inline"
@@ -517,7 +621,7 @@ def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
 
     project = Path(str(tmp_path)).name
     content = _MIXED_CONTENT.replace("myproj", project)
-    _seed_task_list_page(str(tmp_path), branch=None, content=content)
+    _seed_task_list_page(str(tmp_path), branch=None, content=content, monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -529,7 +633,7 @@ def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
     assert resp.status_code == 200
     text = resp.json()["text"]
 
-    # Header must include open count and slug. _MIXED_CONTENT has 3 open tasks
+    # Header must include open count. _MIXED_CONTENT has 3 open tasks
     # (1 in_progress + 2 pending) and 1 completed.
     assert "3 open task" in text, f"expected open task count in render; got: {text!r}"
     # Subjects for open tasks must appear inline.
@@ -537,10 +641,11 @@ def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
     assert "Implement inline summary" in text, (
         f"expected subject 'Implement inline summary'; got: {text!r}"
     )
-    # wiki_read pointer and TaskCreate instruction must still be present.
-    slug = f"{project}-task-list"
-    assert slug in text
+    # Car E: TaskCreate instruction still hoists; the legacy wiki slug is gone
+    # from the PRIMARY render path (ledger-keyed).
     assert "TaskCreate" in text
+    # project_id (basename) appears in the nudge header.
+    assert project in text, f"project_id ({project}) must appear in the nudge; got: {text!r}"
     # v5.149 (Option B): forcing form + hoisted FIRST so it is not buried under the
     # project-brief catalog (the advisory tail nudge was ignored).
     assert "ACTION REQUIRED" in text, f"expected forcing nudge; got: {text!r}"
@@ -558,7 +663,7 @@ def test_task_list_nudge_excludes_completed_tasks(tmp_path, monkeypatch):
 
     project = Path(str(tmp_path)).name
     content = _MIXED_CONTENT.replace("myproj", project)
-    _seed_task_list_page(str(tmp_path), branch=None, content=content)
+    _seed_task_list_page(str(tmp_path), branch=None, content=content, monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -581,7 +686,7 @@ def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
 
     n = 15
     content = _seed_many_open_tasks(str(tmp_path), n)
-    _seed_task_list_page(str(tmp_path), branch=None, content=content)
+    _seed_task_list_page(str(tmp_path), branch=None, content=content, monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)

@@ -203,16 +203,29 @@ def test_local_fallback_handles_trailing_separator(tmp_path):
 
 
 def test_derive_project_id_returns_owner_repo_for_this_repo(monkeypatch):
-    """The live origin remote in this checkout is ``github-personal:m-agahi/yadgar.git``;
+    """The live origin remote in this checkout carries the owner/repo
+    ``m-agahi/yadgar``; after insteadOf resolution + normalisation (scheme+host
+    stripped, ``.git`` suffix dropped) the project_id collapses to
+    ``m-agahi/yadgar``.
 
-    after insteadOf resolution it stays the same; after normalisation the
-    host is dropped and ``.git`` stripped → ``m-agahi/yadgar``.
+    The exact ``remote_url`` string is intentionally NOT asserted here — it
+    tracks the live remote format (SSH alias ``git@github-personal:`` /
+    HTTPS-with-token / etc.) and the format depends on how the checkout was
+    provisioned. The contract under test is the *normalised* project_id, not
+    the diagnostic remote-url echo. See `test_derive_project_id_returns_owner_repo_for_ssh_remote`
+    (in the SSH-fixture file) and `test_derive_project_id_returns_owner_repo_for_https_remote`
+    for the two canonical formats pinned independently.
     """
     cwd = os.getcwd()
     project_id, remote_url = identity.derive_project_id(cwd=cwd)
 
     assert project_id == "m-agahi/yadgar"
-    assert remote_url == "git@github-personal:m-agahi/yadgar.git"
+    # remote_url must be a non-empty string that ends with the repo path so the
+    # provenance echo never silently disappears.
+    assert remote_url, f"remote_url must be non-empty for a git checkout, got {remote_url!r}"
+    assert "m-agahi/yadgar" in remote_url, (
+        f"remote_url must carry the owner/repo path, got {remote_url!r}"
+    )
 
 
 def test_derive_project_id_uses_project_id_file_override(tmp_path, monkeypatch):

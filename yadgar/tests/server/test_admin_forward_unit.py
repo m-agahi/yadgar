@@ -433,7 +433,8 @@ def test_wiki_update_disallowed_key_raises_before_forward():
 
 def test_agent_prompt_save_validates_gates_wraps_core_then_forwards():
     """agent_prompt_save keeps directory-validate + I26 gate + content-wrap core,
-    then forwards the composed payload (wiki.add + TOC + anchor backend-side)."""
+    then forwards the composed payload (wiki.add + agent_pattern ledger row —
+    TOC + library anchor retired by 0047 Car I)."""
     import yadgar.core.server.tools.agent_prompts as _ap
 
     calls: list = []
@@ -445,16 +446,30 @@ def test_agent_prompt_save_validates_gates_wraps_core_then_forwards():
     with patch.object(_ap, "_forward_admin", _fake_forward):
         _ap.agent_prompt_save("fix-bug", "do the thing", directory="/proj")
 
-    assert len(calls) == 1
-    op, payload = calls[0]
-    assert op == "agent_prompt_save"
-    assert payload["slug"] == "agent-prompt-fix-bug"
-    assert payload["pattern"] == "fix-bug"
-    assert payload["directory"] == "/proj"
-    # content wrapped with Purpose/Prompt headings core-side
-    assert "## Purpose" in payload["full_content"]
-    assert "## Prompt" in payload["full_content"]
-    assert "do the thing" in payload["full_content"]
+    # 0047 Car I: page-first then ledger-row mirror (D40 content_hash). Two
+    # forwards, in that order — a crash between them leaves an orphan page
+    # (detected by check_page_row_desync), not an orphan row.
+    assert len(calls) == 2
+    page_op, page_payload = calls[0]
+    row_op, row_payload = calls[1]
+
+    # Forward #1 — the wiki body page (the canonical content).
+    assert page_op == "agent_prompt_save"
+    assert page_payload["slug"] == "agent-prompt-fix-bug"
+    assert page_payload["pattern"] == "fix-bug"
+    assert page_payload["directory"] == "/proj"
+    assert "## Purpose" in page_payload["full_content"]
+    assert "## Prompt" in page_payload["full_content"]
+    assert "do the thing" in page_payload["full_content"]
+
+    # Forward #2 — the agent_pattern ledger row (D40 content_hash pins the row
+    # to the wiki body bytes; the row is the discovery surface for
+    # agent_prompt_list / agent_prompt_get post-Car I).
+    assert row_op == "save_agent_pattern_row"
+    assert row_payload["name"] == "fix-bug"
+    assert row_payload["body_slug"] == "agent-prompt-fix-bug"
+    assert row_payload["status"] == "active"
+    assert "content_hash" in row_payload
 
 
 def test_agent_prompt_save_missing_directory_no_forward():

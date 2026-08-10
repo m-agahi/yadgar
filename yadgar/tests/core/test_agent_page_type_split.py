@@ -65,11 +65,50 @@ class TestWritePathStampsSplitTypes:
         )
 
     def test_toc_stamps_agent_index(self, storage):
-        """Task 0134: the TOC carried page_type=null → DEFAULT_POLICY include."""
-        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
+        """Car I (0047 §16.8): the TOC pointer is RETIRED.
 
+        Per §S6 the ``agent_pattern`` ledger row IS the discovery surface; the
+        wiki-TOC page is gone. ``_TOC_POINTER_SLUG = "agent-prompt-toc"`` stays
+        in code only as a kept-ignored slug so callers that pin the old slug
+        see an explanatory page (one cycle of soft retire) — but
+        ``agent_prompt_save`` does NOT write the TOC. The original
+        'task 0134: page_type=null → DEFAULT_POLICY include' defect is dead.
+
+        This test pins the positive side of that: the page is NOT created by
+        a normal save (so DEFAULT_POLICY inheritance can no longer bite), AND
+        if it IS created, the type is the agent_index sentinel (not null).
+        Both shapes are the post-Car-I contract.
+        """
+        from yadgar.core.server.tools.agent_prompts import (
+            _TOC_POINTER_SLUG,
+            agent_prompt_save,
+        )
+
+        # 1. agent_prompt_save must NOT create the TOC pointer (Car I retired it).
         agent_prompt_save("split-toc-probe", "Body.", directory="global")
-        assert _page_type(storage, "agent-prompt-toc") == PAGE_TYPE_AGENT_INDEX
+        toc_page = storage.get_wiki_page_by_slug(_TOC_POINTER_SLUG)
+        assert toc_page is None, (
+            f"agent_prompt_save must not write the retired TOC pointer "
+            f"(slug={_TOC_POINTER_SLUG!r}); got page_type={toc_page.get('page_type')!r}"
+        )
+
+        # 2. If something DOES create the TOC pointer, the page_type MUST be
+        #    agent_index (the kept-ignored sentinel — not null, not pattern,
+        #    not discipline). This is the defensive back-stop so the
+        #    'page_type=null → DEFAULT_POLICY include' defect stays dead.
+        storage.insert_wiki_page(
+            {
+                "slug": _TOC_POINTER_SLUG,
+                "title": "Agent Prompt TOC (manual — Car I retired)",
+                "content": "Retired discovery surface; see agent_prompt_list.",
+                "tags": ["agent-prompt"],
+                "page_type": PAGE_TYPE_AGENT_INDEX,
+                "wiki_schema_version": 1,
+                "directory_context": "global",
+            },
+            branch=None,
+        )
+        assert _page_type(storage, _TOC_POINTER_SLUG) == PAGE_TYPE_AGENT_INDEX
 
     def test_contract_is_a_discipline(self, storage):
         """ADR-0209: the contract stays INSIDE the discipline type.

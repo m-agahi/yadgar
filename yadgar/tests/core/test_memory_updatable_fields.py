@@ -93,6 +93,14 @@ KNOWN_MEMORY_FIELDS: frozenset[str] = frozenset(
         "created_at",
         # ── Structural (DB-managed) ────────────────────────────────────────
         "id",
+        # ── Project identity (Car L, 0047 §16.9 / migration 031) ──────────
+        # project_id is the canonical owner/repo key; legacy_directory is the
+        # pre-Car-M raw directory string retained on every memory row for
+        # back-classification of rows migration 031 could not confidently
+        # resolve. Both are updatable so a row quarantined as 'unresolved'
+        # can be re-classified by an explicit overwrite.
+        "project_id",
+        "legacy_directory",
     }
 )
 
