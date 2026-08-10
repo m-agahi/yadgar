@@ -35,10 +35,16 @@ falls back to unset.
 
 ORDER — load-bearing for the alembic chain
 ------------------------------------------
-``agent_pattern_model`` is created FIRST so its FK references both
-``agent_pattern`` (Car A's 002) and ``client`` (this revision) cleanly.
-``client`` has no FKs and is created SECOND; the order is reversed in
-downgrade so each table drops before the one it depends on.
+An INLINE ``REFERENCES`` can only name a table that already exists: InnoDB
+rejects the CREATE with errno 150 otherwise, and ``alembic upgrade head``
+then dies at backend boot. So the FK onto ``client`` — created by THIS
+revision — is added by a separate ``op.create_foreign_key`` after both
+tables exist, exactly the shape ``003_project_registry`` uses for its two
+FKs onto ``project``. The FK onto ``agent_pattern`` stays inline because
+Car A's ``002`` created that table three revisions earlier.
+
+Downgrade drops ``agent_pattern_model`` first: the constraint lives on the
+child table and dies with it, leaving ``client`` unreferenced.
 """
 
 from __future__ import annotations
@@ -56,6 +62,7 @@ depends_on: str | Sequence[str] | None = None
 
 AGENT_PATTERN_MODEL_TABLE = "agent_pattern_model"
 CLIENT_TABLE = "client"
+FK_MODEL_CLIENT = "fk_agent_pattern_model_client"
 
 # Same MySQL table options as Car A's ledger (InnoDB + utf8mb4 + the spine's
 # collate). Single source of truth mirrors 002_ledger_tables._MYSQL so the
@@ -88,9 +95,12 @@ def _created_updated() -> tuple[sa.Column, sa.Column]:
 def upgrade() -> None:
     """Create ``agent_pattern_model`` + ``client`` (schema only, zero rows).
 
-    Order: ``agent_pattern_model`` FIRST (it has FKs into both parent
-    tables), then ``client`` (no FKs). Downgrade reverses the order so a
-    drop never trips over a live FK reference.
+    Order is load-bearing:
+      1. CREATE TABLE agent_pattern_model — its inline FK names only
+         ``agent_pattern``, which Car A's ``002`` already created.
+      2. CREATE TABLE client — no FKs of its own.
+      3. CREATE FK on agent_pattern_model.client — inline here would be a
+         forward reference and InnoDB rejects it with errno 150.
     """
     created_at, updated_at = _created_updated()
 
@@ -104,12 +114,6 @@ def upgrade() -> None:
             ["pattern_name"],
             ["agent_pattern.name"],
             name="fk_agent_pattern_model_pattern",
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["client"],
-            [f"{CLIENT_TABLE}.name"],
-            name="fk_agent_pattern_model_client",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("pattern_name", "client"),
@@ -126,6 +130,15 @@ def upgrade() -> None:
         created_at,
         sa.PrimaryKeyConstraint("name"),
         **_MYSQL,
+    )
+
+    op.create_foreign_key(
+        FK_MODEL_CLIENT,
+        AGENT_PATTERN_MODEL_TABLE,
+        CLIENT_TABLE,
+        ["client"],
+        ["name"],
+        ondelete="CASCADE",
     )
 
 

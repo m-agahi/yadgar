@@ -116,12 +116,19 @@ def test_004_agent_pattern_model_fks_cascade(upgrade_sql):
         body,
         re.IGNORECASE,
     ), "agent_pattern_model.pattern_name FK must ON DELETE CASCADE"
+    # The client FK is added by ALTER TABLE, not inline: `client` is created by
+    # THIS revision, so an inline REFERENCES would be a forward reference and
+    # InnoDB rejects it (errno 150). Searched over the whole chain rather than
+    # the CREATE TABLE body for that reason — and the ORDER of the two
+    # statements is what
+    # test_every_inline_fk_references_an_already_created_table owns.
     assert re.search(
-        r"FOREIGN KEY\s*\(\s*`?client`?\s*\)\s+REFERENCES\s+`?client`?\s*\(\s*`?name`?\s*\)"
+        r"ALTER TABLE\s+`?agent_pattern_model`?\s+ADD CONSTRAINT\s+`?fk_agent_pattern_model_client`?"
+        r"\s+FOREIGN KEY\s*\(\s*`?client`?\s*\)\s+REFERENCES\s+`?client`?\s*\(\s*`?name`?\s*\)"
         r"\s+ON DELETE CASCADE",
-        body,
+        upgrade_sql,
         re.IGNORECASE,
-    ), "agent_pattern_model.client FK must ON DELETE CASCADE"
+    ), "agent_pattern_model.client FK must be added by ALTER TABLE and ON DELETE CASCADE"
 
 
 def test_004_client_name_is_pk(upgrade_sql):
