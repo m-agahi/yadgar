@@ -7,6 +7,17 @@ repos:
       - id: mixed-line-ending
       - id: check-added-large-files
         args: [--maxkb=2048]
+      # PARSE GATES (0047 C1). scripts/check_versions.py reads
+      # docker-compose.yml as TEXT and regexes it, so a file PyYAML cannot
+      # parse at all still exits 0 — and that is exactly what happened: an
+      # `image:` key landed at column 0 inside `services: -> backend:` and every
+      # version gate stayed green over a compose file no runtime could load.
+      # That is not a bug in check_versions.py; it is a missing hook, and
+      # converting that script to a full YAML parse adds no coverage once these
+      # two exist. Same argument for JSON — server.json took the same column-0
+      # damage in the same PR.
+      - id: check-yaml
+      - id: check-json
 
   - repo: local
     hooks:
