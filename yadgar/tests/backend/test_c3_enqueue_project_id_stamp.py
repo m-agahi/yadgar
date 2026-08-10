@@ -196,3 +196,48 @@ class TestCoreWikiAddStampsUnconditionally:
             directory="/home/max/git/yadgar", project="quinyx/aws2slack"
         )
         assert payload["project_id"] == "quinyx/aws2slack"
+
+
+class TestWriteChokepointPrefersTheCallerValue:
+    """``_resolve_project_id_for_write`` — C3's mandatory-caller_value contract.
+
+    The derivation tier and the ``"unresolved"`` tier are marked C5: DELETE.
+    Until then they must be OBSERVABLE, so a surviving unconverted caller
+    shows up in the logs before C5 turns it into a raise.
+    """
+
+    def test_caller_value_short_circuits_the_classifier(self) -> None:
+        from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
+
+        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_classifier):
+            out = _resolve_project_id_for_write(
+                caller_value="a/b",
+                directory_context="/home/max/git/yadgar",
+            )
+        assert out == "a/b"
+
+    def test_derivation_fallback_logs_a_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
+
+        with (
+            caplog.at_level("WARNING", logger="yadgar._shared.storage._project_id_writer"),
+            patch(
+                "yadgar.core.identity.derive_project_id",
+                return_value=("local/yadgar", ""),
+            ),
+        ):
+            out = _resolve_project_id_for_write(
+                caller_value=None,
+                directory_context="/home/max/git/yadgar",
+            )
+        assert out == "local/yadgar"
+        assert any("derivation fallback" in r.getMessage() for r in caplog.records)
+
+    def test_sentinel_directory_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
+        """``global``/empty is a legitimate C3-era answer, not an unconverted caller."""
+        from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
+
+        with caplog.at_level("WARNING", logger="yadgar._shared.storage._project_id_writer"):
+            out = _resolve_project_id_for_write(caller_value=None, directory_context="global")
+        assert out == "global"
+        assert not caplog.records
