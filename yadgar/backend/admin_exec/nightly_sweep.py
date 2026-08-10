@@ -265,6 +265,7 @@ async def run_nightly_archive_sweep(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@observe(exempt="trivial dict-builder for early-return / circuit-breaker abort stats; no I/O")
 def _empty_stats(
     retention_days: int,
     *,
@@ -288,6 +289,10 @@ def _empty_stats(
     return stats
 
 
+@observe(
+    exempt="single dispatch + dedupe pass; the wrapping run_nightly_archive_sweep "
+    "carries the boundary metric for the whole sweep"
+)
 async def _resolve_projects(sql: Any, target_project: str | None) -> list[str]:
     """Return the project list to sweep: [target] or the dedup'd full set.
 
@@ -302,6 +307,10 @@ async def _resolve_projects(sql: Any, target_project: str | None) -> list[str]:
     return projects
 
 
+@observe(
+    exempt="per-project for-loop dispatch; each leaf already carries its own "
+    "@observe span so the boundary sample would be a redundant aggregate"
+)
 async def _sweep_tasks_and_adrs(
     sql: Any,
     surreal: Any,
@@ -323,6 +332,11 @@ async def _sweep_tasks_and_adrs(
     return archived_tasks, archived_adrs, skipped_immutable
 
 
+@observe(
+    exempt="per-row inner loop already inside the project dispatcher; the per-row "
+    "retype + flip calls each carry their own @observe on _retype_body_page + "
+    "sql.update_task_row, so a wrapper span here would be a redundant counter"
+)
 async def _sweep_project_tasks(
     sql: Any,
     surreal: Any,
@@ -348,6 +362,11 @@ async def _sweep_project_tasks(
     return archived, skipped
 
 
+@observe(
+    exempt="per-row inner loop already inside the project dispatcher; the per-row "
+    "retype + flip calls each carry their own @observe on _retype_body_page + "
+    "sql._flip_adr_status, so a wrapper span here would be a redundant counter"
+)
 async def _sweep_project_adrs(
     sql: Any,
     surreal: Any,
