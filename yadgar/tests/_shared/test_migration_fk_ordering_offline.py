@@ -175,6 +175,57 @@ def _created_tables_and_inline_fks() -> list[tuple[str, list[str | None]]]:
     return blocks
 
 
+# The resolver is asserted on synthetic source as well as on the live chain.
+# Mutation-tested during C1: disabling the f-string branch left every
+# chain-level test GREEN, because C0's fix moved 004's ``f"{CLIENT_TABLE}.name"``
+# into op.create_foreign_key and the corpus now contains no f-string referent at
+# all. A branch no input exercises is a branch that rots silently, and the next
+# revision to write one would be read as "no FK here".
+
+
+def _parse_expr(source: str) -> ast.expr:
+    body = ast.parse(source).body[0]
+    assert isinstance(body, ast.Expr)
+    return body.value
+
+
+def test_the_resolver_reads_a_plain_literal():
+    assert _literal_str(_parse_expr('"client.name"'), {}) == "client.name"
+
+
+def test_the_resolver_reads_a_module_constant():
+    assert _literal_str(_parse_expr("CLIENT_TABLE"), {"CLIENT_TABLE": "client"}) == "client"
+
+
+def test_the_resolver_reads_an_f_string_built_from_a_constant():
+    """``004`` wrote its referent this way before C0 moved it to an ALTER."""
+    resolved = _literal_str(_parse_expr('f"{CLIENT_TABLE}.name"'), {"CLIENT_TABLE": "client"})
+    assert resolved == "client.name"
+
+
+def test_the_resolver_refuses_what_it_cannot_read():
+    """A computed name resolves to None — which callers must treat as a failure."""
+    assert _literal_str(_parse_expr('"".join(parts)'), {}) is None
+    assert _literal_str(_parse_expr("UNKNOWN_CONSTANT"), {}) is None
+
+
+def test_the_fk_reader_resolves_an_f_string_referent():
+    """End-to-end over a synthetic create_table, not just the resolver."""
+    call = _parse_expr(
+        'op.create_table(TBL, sa.ForeignKeyConstraint(["client"], [f"{CLIENT_TABLE}.name"]))'
+    )
+    assert isinstance(call, ast.Call)
+    assert _inline_fk_targets(call, {"TBL": "agent_pattern_model", "CLIENT_TABLE": "client"}) == [
+        "client"
+    ]
+
+
+def test_the_fk_reader_reports_an_unreadable_referent_as_none():
+    call = _parse_expr('op.create_table("t", sa.ForeignKeyConstraint(["c"], [some_name()]))')
+    assert isinstance(call, ast.Call)
+    assert _inline_fk_targets(call, {}) == [None]
+
+
 def test_the_source_parser_reads_the_chain_it_claims_to_check():
     """Coverage assertion — a parser that sees nothing passes vacuously.
 
