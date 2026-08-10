@@ -265,7 +265,7 @@ def adr_add(
         return ctx
     resolved, project_id = ctx
 
-# Car M (0047 §7, §16.6): the optional ``project=`` override beats the
+    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
     # directory-derived ``project_id`` (precedence: project > session >
     # directory). The override is the namespace stamp on the ledger row
     # AND on the body-page slug. The deep registry check is backend-side
