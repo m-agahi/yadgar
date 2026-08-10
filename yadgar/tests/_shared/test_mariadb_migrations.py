@@ -341,16 +341,13 @@ def test_no_separate_number_column(upgrade_sql):
         )
 
 
-def _create_table_body(sql: str, table: str) -> str:
-    """Return the body of the ``CREATE TABLE <table>(...)`` block.
+def _balanced_body(sql: str, open_idx: int) -> str | None:
+    """Return the text between ``sql[open_idx]`` (a ``(``) and its partner.
 
     Non-greedy regexes truncate on the first inner ``)`` (column type
-    expressions contain them — ``VARCHAR(255)``). A balanced-paren walk
-    from the opening paren after the table name gives the exact body.
+    expressions contain them — ``VARCHAR(255)``). A balanced-paren walk that
+    skips quoted spans gives the exact body. ``None`` means unbalanced.
     """
-    open_match = re.search(rf"CREATE TABLE\s+{table}\s*\(", sql, re.IGNORECASE)
-    assert open_match, f"no CREATE TABLE {table} in the rendered chain"
-    open_idx = open_match.end() - 1  # the '('
     depth = 0
     quote: str | None = None
     i = open_idx
@@ -371,7 +368,139 @@ def _create_table_body(sql: str, table: str) -> str:
             if depth == 0:
                 return sql[open_idx + 1 : i]
         i += 1
-    raise AssertionError(f"unbalanced parens in CREATE TABLE {table}")
+    return None
+
+
+def _create_table_body(sql: str, table: str) -> str:
+    """Return the body of the ``CREATE TABLE <table>(...)`` block."""
+    open_match = re.search(rf"CREATE TABLE\s+{table}\s*\(", sql, re.IGNORECASE)
+    assert open_match, f"no CREATE TABLE {table} in the rendered chain"
+    body = _balanced_body(sql, open_match.end() - 1)  # end()-1 is the '('
+    assert body is not None, f"unbalanced parens in CREATE TABLE {table}"
+    return body
+
+
+# ── the chain-wide FK-ordering invariant ─────────────────────────────────
+#
+# NOT a 004-specific regression test. ``test_004_agent_pattern_model_fks_cascade``
+# above regex-asserts the ``REFERENCES client(name) ON DELETE CASCADE`` TEXT and
+# PASSES on the migration that InnoDB rejects with errno 150, because only the
+# ORDER is wrong — the proof that a regex-on-render gate is insufficient. This
+# invariant is positional and applies to every revision, present and future.
+#
+# An FK added by a later ``ALTER TABLE`` is exempt by construction: the scan only
+# looks INSIDE ``CREATE TABLE`` bodies, so ``003_project_registry``'s
+# create-table-then-``op.create_foreign_key`` shape — the prescribed fix — never
+# reaches the check. That shape is legal precisely because the ALTER runs after
+# both tables exist.
+
+_CREATE_TABLE_RE = re.compile(r"CREATE TABLE\s+`?(\w+)`?\s*\(", re.IGNORECASE)
+_REFERENCES_RE = re.compile(r"\bREFERENCES\s+`?(\w+)`?", re.IGNORECASE)
+
+
+def _create_table_blocks(sql: str) -> list[tuple[str, str]]:
+    """``(table_name, body)`` for every ``CREATE TABLE``, in emission order.
+
+    Names are lowercased and stripped of backticks: the render quotes only
+    reserved words (``REFERENCES project (`key`)``), so both forms occur.
+    """
+    blocks: list[tuple[str, str]] = []
+    for match in _CREATE_TABLE_RE.finditer(sql):
+        body = _balanced_body(sql, match.end() - 1)
+        assert body is not None, f"unbalanced parens in CREATE TABLE {match.group(1)}"
+        blocks.append((match.group(1).lower(), body))
+    return blocks
+
+
+def inline_fk_ordering_violations(sql: str) -> list[tuple[str, str]]:
+    """``(child, parent)`` for every inline FK whose parent is not yet created.
+
+    A self-reference is not a violation — InnoDB accepts an FK onto the table
+    being created, since the table exists by the time the constraint is applied.
+    """
+    created: set[str] = set()
+    violations: list[tuple[str, str]] = []
+    for table, body in _create_table_blocks(sql):
+        for ref in _REFERENCES_RE.finditer(body):
+            parent = ref.group(1).lower()
+            if parent != table and parent not in created:
+                violations.append((table, parent))
+        created.add(table)
+    return violations
+
+
+def test_every_inline_fk_references_an_already_created_table(upgrade_sql):
+    """InnoDB errno 150: an inline FK onto a table the chain creates LATER.
+
+    ``alembic upgrade head`` dies at backend boot on such a chain, and — until
+    car C1 of the PR #40 remediation made it fatal — that death was swallowed,
+    so the daemon continued onto a schema-less database.
+    """
+    violations = inline_fk_ordering_violations(upgrade_sql)
+    assert not violations, (
+        "inline FK references a table created LATER in the chain "
+        "(InnoDB errno 150) — create the parent first, or add the FK with "
+        "op.create_foreign_key after both tables exist (the 003 shape): "
+        + ", ".join(f"{child} → {parent}" for child, parent in violations)
+    )
+
+
+# The invariant's own parser is asserted on synthetic DDL: the live chain
+# exercises neither backtick-quoted table names nor a self-reference, so those
+# branches would otherwise ship untested — and a parser that silently matches
+# nothing is the vacuous pass this gate exists to prevent.
+
+
+def test_the_invariant_catches_a_forward_inline_fk():
+    sql = (
+        "CREATE TABLE child (\n  parent_id INTEGER,\n"
+        "  CONSTRAINT fk FOREIGN KEY(parent_id) REFERENCES parent (id)\n);\n"
+        "CREATE TABLE parent (\n  id INTEGER NOT NULL,\n  PRIMARY KEY (id)\n);\n"
+    )
+    assert inline_fk_ordering_violations(sql) == [("child", "parent")]
+
+
+def test_the_invariant_accepts_the_same_two_tables_in_the_right_order():
+    sql = (
+        "CREATE TABLE parent (\n  id INTEGER NOT NULL,\n  PRIMARY KEY (id)\n);\n"
+        "CREATE TABLE child (\n  parent_id INTEGER,\n"
+        "  CONSTRAINT fk FOREIGN KEY(parent_id) REFERENCES parent (id)\n);\n"
+    )
+    assert inline_fk_ordering_violations(sql) == []
+
+
+def test_the_invariant_reads_backtick_quoted_table_names():
+    sql = (
+        "CREATE TABLE `child` (\n  parent_id INTEGER,\n"
+        "  CONSTRAINT fk FOREIGN KEY(parent_id) REFERENCES `parent` (`key`)\n);\n"
+        "CREATE TABLE `parent` (\n  `key` VARCHAR(255) NOT NULL\n);\n"
+    )
+    assert inline_fk_ordering_violations(sql) == [("child", "parent")]
+
+
+def test_a_self_reference_is_not_a_violation():
+    """InnoDB accepts an FK onto the table being created."""
+    sql = (
+        "CREATE TABLE node (\n  id INTEGER NOT NULL,\n  parent_id INTEGER,\n"
+        "  PRIMARY KEY (id),\n"
+        "  CONSTRAINT fk FOREIGN KEY(parent_id) REFERENCES node (id)\n);\n"
+    )
+    assert inline_fk_ordering_violations(sql) == []
+
+
+def test_an_alter_table_fk_is_exempt():
+    """The 003 shape — the prescribed fix — must not be flagged.
+
+    ``ALTER TABLE`` runs after the CREATE it follows, so an FK added there is
+    ordered correctly even when the parent's CREATE comes later in the file
+    than the child's.
+    """
+    sql = (
+        "CREATE TABLE child (\n  parent_id INTEGER\n);\n"
+        "CREATE TABLE parent (\n  id INTEGER NOT NULL,\n  PRIMARY KEY (id)\n);\n"
+        "ALTER TABLE child ADD CONSTRAINT fk FOREIGN KEY(parent_id) REFERENCES parent (id);\n"
+    )
+    assert inline_fk_ordering_violations(sql) == []
 
 
 # ── reversibility ────────────────────────────────────────────────────────
