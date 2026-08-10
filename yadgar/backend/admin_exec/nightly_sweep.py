@@ -58,6 +58,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import observe_project_id_skip
 
 logger = logging.getLogger("yadgar.backend.admin_exec.nightly_sweep")
 
@@ -173,15 +174,27 @@ def _retype_body_page(surreal: Any, page: dict[str, Any], new_page_type: str) ->
 
 
 @observe(tier="hot", span=False)
-def _dedupe_projects(task_rows: list[dict[str, Any]]) -> list[str]:
-    """Return the sorted, distinct project_id values from a list of task rows.
+def _dedupe_projects(task_rows: list[dict[str, Any]]) -> tuple[list[str], int]:
+    """Return ``(sorted distinct project_ids, skipped_row_count)``.
 
     Used to derive the per-project sweep set when ``project_id`` is not
     supplied (full pass). ADR sweeps share this list (both tables carry
     ``project_id`` per Car A) — there is no
     ``list_adr_rows_all_projects`` helper in the engine, by design.
+
+    C4 (0047 PR#40 §5): this already iterated per project rather than
+    deriving one, so the sweep needed no re-keying. What it did NOT do was
+    account for the rows it dropped — a row with a NULL ``project_id`` fell
+    out of the ``if`` silently, so a corpus in which every task row lost its
+    identity would sweep nothing and report success. Skipped rows are now
+    counted and surfaced on ``yadgar_project_id_skipped_total``. They are
+    still skipped, never bucketed: ADR-0227 forbids attributing them to a
+    project nobody named.
     """
-    return sorted({str(r["project_id"]) for r in task_rows if r.get("project_id")})
+    skipped = sum(1 for r in task_rows if not r.get("project_id"))
+    if skipped:
+        observe_project_id_skip("nightly_sweep", skipped)
+    return sorted({str(r["project_id"]) for r in task_rows if r.get("project_id")}), skipped
 
 
 # ── Public op ────────────────────────────────────────────────────────────────
@@ -303,7 +316,9 @@ async def _resolve_projects(sql: Any, target_project: str | None) -> list[str]:
     if target_project is not None:
         return [target_project]
     all_task_rows: list[dict[str, Any]] = await sql.list_task_rows_all_projects()
-    projects: list[str] = _dedupe_projects(all_task_rows)
+    # C4: the skipped count is emitted as a metric inside _dedupe_projects;
+    # the sweep set itself never includes an unnamed project.
+    projects, _skipped_no_project = _dedupe_projects(all_task_rows)
     return projects
 
 
@@ -427,7 +442,7 @@ async def _count_candidates(
         project_ids = [target_project]
     else:
         all_tasks = await sql.list_task_rows_all_projects()
-        project_ids = _dedupe_projects(all_tasks)
+        project_ids, _ = _dedupe_projects(all_tasks)
 
     for project_id in project_ids:
         tasks = await sql.list_task_rows(project_id=project_id, status="completed")

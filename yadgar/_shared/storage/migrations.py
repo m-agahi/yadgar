@@ -1478,168 +1478,39 @@ def _classify_directory_for_migration(directory_context: str) -> tuple[str, str 
     return project_id, None
 
 
-def _m031_apply_row(
-    storage,
-    table: str,
-    num_id,
-    project_id: str,
-    legacy_directory: str | None,
-    raw_id,
-    *,
-    buckets: dict[str, int],
-) -> bool:
-    """Apply project_id to one row, falling back to 'unresolved' on failure. Returns True on success."""
-    set_clause = "project_id = $project_id"
-    params: dict = {"id": num_id, "project_id": project_id}
-    if legacy_directory is not None:
-        set_clause += ", legacy_directory = $legacy_directory"
-        params["legacy_directory"] = legacy_directory
-    try:
-        storage._q(
-            f"UPDATE type::record('{table}', $id) SET {set_clause}",
-            params,
-        )
-        buckets[project_id] = buckets.get(project_id, 0) + 1
-        return True
-    except Exception as _e:
-        _log.warning(
-            "migration_031: backfill failed for %s id=%s (%s) — defaulting to 'unresolved'",
-            table,
-            raw_id,
-            _e,
-        )
-        return _m031_apply_unresolved(
-            storage, table, num_id, legacy_directory, raw_id, buckets=buckets
-        )
-
-
-def _m031_apply_unresolved(
-    storage,
-    table: str,
-    num_id,
-    legacy_directory: str | None,
-    raw_id,
-    *,
-    buckets: dict[str, int],
-) -> bool:
-    """Fallback: stamp project_id='unresolved' on a row. Returns True on success."""
-    try:
-        storage._q(
-            f"UPDATE type::record('{table}', $id) SET "
-            f"project_id = 'unresolved', legacy_directory = $legacy",
-            {"id": num_id, "legacy": legacy_directory},
-        )
-        buckets["unresolved"] = buckets.get("unresolved", 0) + 1
-        return True
-    except Exception as _e2:
-        _log.error(
-            "migration_031: fallback backfill also failed for %s id=%s: %s",
-            table,
-            raw_id,
-            _e2,
-        )
-        return False
-
-
-def _m031_backfill_table(
-    storage,
-    table: str,
-    *,
-    quarantine_paths: list[str],
-) -> int:
-    """Backfill project_id on every row of *table* (Car L, 0047 §16.8).
-
-    Phases mirror migration 018's memory table backfill (Python-side filter
-    catches field-absent rows that ``IS NONE`` does not match). Returns the
-    number of rows that were updated (0 on a fully-migrated DB).
-
-    *quarantine_paths* — when a row's directory_context is in this set, the
-    row is stamped with ``project_id='unresolved'`` AND its
-    ``directory_context`` is preserved verbatim in ``legacy_directory``.
-    Migration 031 builds this set lazily via the lazy ``_paths`` import;
-    today it is empty (the migration runs one-shot offline; operator-flagged
-    quarantines live in a follow-up admin op tracked separately).
-    """
-    all_rows = storage._q(f"SELECT id, directory_context FROM {table}")
-    rows_to_fix = [r for r in all_rows if not r.get("project_id")]
-    updated = 0
-    buckets: dict[str, int] = {}
-
-    for row in rows_to_fix:
-        raw_id = row.get("id")
-        try:
-            num_id = storage._extract_id(raw_id)
-        except Exception:
-            _log.warning("migration_031: could not parse %s id %r — skipping", table, raw_id)
-            continue
-        directory_context = row.get("directory_context")
-        if directory_context is None:
-            continue
-
-        if directory_context in quarantine_paths:
-            project_id = "unresolved"
-            legacy_directory = directory_context
-        else:
-            project_id, legacy_directory = _classify_directory_for_migration(directory_context)
-            if legacy_directory is None:
-                # legacy_directory may be set by the operator later (admin op
-                # path); the migration's offline backfill does NOT set it.
-                legacy_directory = None
-
-        if _m031_apply_row(
-            storage,
-            table,
-            num_id,
-            project_id,
-            legacy_directory,
-            raw_id,
-            buckets=buckets,
-        ):
-            updated += 1
-
-    _log.info(
-        "migration_031: backfilled %d %s rows — buckets: %s",
-        updated,
-        table,
-        buckets,
-    )
-    return updated
-
-
 def _migration_031_project_id_backfill(storage) -> None:
-    """Add project_id + legacy_directory to wiki_page + memory; backfill from directory_context.
+    """Declare project_id + legacy_directory on wiki_page + memory. **No backfill.**
 
-    Car L (0047 §7 D32 ①, §16.8 + §16.9). One-shot offline backfill. Three
-    classification cases per row (§3):
+    Car L introduced this migration with an in-migration corpus backfill that
+    classified every distinct ``directory_context`` through
+    ``yadgar.core.identity.derive_project_id``.
 
-      - git repo with remote → ``derive_project_id`` returns ``owner/repo``
-      - path exists, no remote → ``local/<basename>``
-      - path no longer exists OR classifier fails → ``project_id='unresolved'``
-        with the original path preserved in ``legacy_directory``
+    **C4 (0047 PR#40 §5) removed the backfill (Phases D and E).** ADR-0227:
+    "Migration 031's in-migration backfill cannot stand, since the migration
+    runs inside the container that may not derive; the backfill moves to an
+    operator-invoked path with the host-resolved value." Neither image
+    installs git and neither mounts a host project directory, so the
+    classifier could not have produced a correct answer in production — it
+    would have stamped ``local/<basename>`` on every row, silently and
+    always, which is a well-formed key that passes every type check and is
+    indistinguishable at read time from a correct one.
 
-    Sentinels (``'global'``, ``''``) → ``project_id='global'`` (unchanged
-    semantics). The migration does NOT drop ``directory_context`` — that
-    field is the read key until Car M flips the readers onto project_id;
-    a later migration drops it after Car M is confirmed green.
+    **The migration now derives NOTHING.** It declares the two columns and
+    their indexes and stops. Pre-existing rows keep whatever value they have
+    (including none) until the operator runs the C6 backfill op with a
+    host-resolved project_id.
 
-    Schema:
-      - ``project_id TYPE option<string>`` (nullable during the transition
-        window — NOT NULL deferred to a later migration once quarantine
-        rows are reviewed).
-      - ``legacy_directory TYPE option<string>`` (set only on quarantine
-        rows; NULL on every classified row).
+    C6: the operator-invoked backfill lands as an admin op that takes the
+    project_id as an explicit parameter. Until it does, rows written before
+    Car L simply carry no project_id — which readers treat as unscoped rather
+    than as a phantom project.
 
-    Idempotent: ``DEFINE FIELD IF NOT EXISTS`` is safe to re-call, and the
-    backfill step filters on ``project_id IS NONE`` so a second run is a
-    no-op once every row has a value.
+    Schema (unchanged):
+      - ``project_id TYPE option<string>`` — nullable through the transition.
+      - ``legacy_directory TYPE option<string>`` — set only by the C6 op on
+        rows whose directory no longer resolves.
 
-    The lazy ``yadgar.core.identity.derive_project_id`` import resolves
-    cleanly: migrations run AFTER ``_init_schema`` (line 1725 below) and
-    AFTER the engine composition root has loaded core — both confirmed
-    by reading the boot order in ``lifecycle.init_engines``. If the import
-    ever fails (e.g. running in an isolated test fixture), the catch in
-    ``_classify_directory_for_migration`` returns ``'unresolved'`` so the
-    boot completes; the operator can re-classify via a follow-up admin op.
+    Idempotent: every statement is ``IF NOT EXISTS``, so a re-run is a no-op.
     """
     # Phase A: define wiki_page.project_id (option<string>)
     storage._q("DEFINE FIELD IF NOT EXISTS project_id ON TABLE wiki_page TYPE option<string>;")
@@ -1651,11 +1522,8 @@ def _migration_031_project_id_backfill(storage) -> None:
     storage._q("DEFINE FIELD IF NOT EXISTS project_id ON TABLE memory TYPE option<string>;")
     storage._q("DEFINE FIELD IF NOT EXISTS legacy_directory ON TABLE memory TYPE option<string>;")
 
-    # Phase D: backfill wiki_page
-    wiki_updated = _m031_backfill_table(storage, "wiki_page", quarantine_paths=[])
-
-    # Phase E: backfill memory
-    mem_updated = _m031_backfill_table(storage, "memory", quarantine_paths=[])
+    # Phases D and E (the per-row backfill) are DELETED — see the docstring.
+    # C6 owns the operator-invoked replacement.
 
     # Phase F: indexes (DEFINE INDEX IF NOT EXISTS — safe to re-call)
     storage._q(
@@ -1666,10 +1534,9 @@ def _migration_031_project_id_backfill(storage) -> None:
     )
 
     _log.info(
-        "migration_031: project_id + legacy_directory fields on wiki_page + memory; "
-        "backfilled %d wiki_page rows, %d memory rows (Car L)",
-        wiki_updated,
-        mem_updated,
+        "migration_031: declared project_id + legacy_directory on wiki_page + memory "
+        "(C4: no in-migration backfill — the container cannot derive an identity; "
+        "the operator backfill op is C6)"
     )
 
 

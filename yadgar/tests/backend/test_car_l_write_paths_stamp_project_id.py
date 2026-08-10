@@ -12,10 +12,14 @@ Two LIVE write paths stamp ``project_id`` alongside ``directory_context``:
    ``run_wiki_add_replay``; the same trapdoor applies if it doesn't
    also stamp ``project_id``.
 
-Both call ``derive_project_id(directory)`` and store the result. The
-tests patch the derive seam to a deterministic in-process classifier
-(mirroring how the migration test mocks the classifier) so the
-behavior is fully under test, not under git/subprocess.
+**C4 (0047 PR#40 §5) inverted how the value ARRIVES, not whether it is
+stamped.** Car L had both paths call ``derive_project_id(directory)``
+inside the backend container — which has no git binary and no host project
+mounts, so the call could only ever manufacture ``local/<basename>``
+(ADR-0227 §1.1). Both now receive an explicit value from the caller that
+can see the session, and the assertions below pin that: the classifier is
+patched to EXPLODE, so any surviving derivation fails the test loudly
+instead of quietly returning a plausible-looking key.
 """
 
 from __future__ import annotations
@@ -37,8 +41,9 @@ class _FakeStorage:
         return len(self.inserts)
 
 
-def _patched_classifier(directory: str) -> tuple[str, str]:
-    return ("m-agahi/yadgar" if directory == "/home/max/git/yadgar" else "local/standalone", "")
+def _exploding_classifier(*_a: Any, **_kw: Any) -> tuple[str, str]:
+    """C4: reaching the container-side classifier is the bug these tests catch."""
+    raise AssertionError("a Car L write path reached the identity mint")
 
 
 class TestCleanupTryStoreActionSummaryStampsProjectId:
@@ -61,11 +66,12 @@ class TestCleanupTryStoreActionSummaryStampsProjectId:
         obj = self._build_cleanup(storage)
         with patch(
             "yadgar.core.identity.derive_project_id",
-            side_effect=_patched_classifier,
+            side_effect=_exploding_classifier,
         ):
             result = obj._try_store_action_summary(
                 content="summary content",
                 directory="/home/max/git/yadgar",
+                project_id="m-agahi/yadgar",
                 group_ids=[1, 2, 3],
             )
         assert result == 1
@@ -75,19 +81,24 @@ class TestCleanupTryStoreActionSummaryStampsProjectId:
         assert memory["project_id"] == "m-agahi/yadgar"
 
     def test_action_summary_project_id_for_non_git_dir(self) -> None:
+        """A non-git tree gets the caller's value too — nothing is derived here."""
         storage = _FakeStorage()
         obj = self._build_cleanup(storage)
         with patch(
             "yadgar.core.identity.derive_project_id",
-            side_effect=_patched_classifier,
+            side_effect=_exploding_classifier,
         ):
             obj._try_store_action_summary(
                 content="summary",
                 directory="/home/user/projects/standalone",
+                project_id="m-agahi/standalone",
                 group_ids=[4],
             )
         memory = storage.inserts[0]
-        assert memory["project_id"] == "local/standalone"
+        # C4: the caller's value, verbatim. Never ``local/<basename>`` — that
+        # is the container-derived fallback ADR-0227 deletes.
+        assert memory["project_id"] == "m-agahi/standalone"
+        assert not memory["project_id"].startswith("local/")
 
 
 class TestApplyWikiAddReplaysStampsProjectId:
@@ -97,7 +108,8 @@ class TestApplyWikiAddReplaysStampsProjectId:
     exposes ``_apply_inner``). We instantiate it bare via ``__new__`` so
     no other mixin init runs. The Car L test contract is that the
     payload dict that flows to ``run_wiki_add_replay`` has
-    ``project_id`` set alongside ``directory_context``.
+    ``project_id`` set alongside ``directory_context`` — C4: forwarded from
+    the enqueue-time stamp, never recomputed here.
     """
 
     def test_wiki_add_branch_stamps_project_id(self) -> None:
@@ -118,13 +130,17 @@ class TestApplyWikiAddReplaysStampsProjectId:
         ):
             with patch(
                 "yadgar.core.identity.derive_project_id",
-                side_effect=_patched_classifier,
+                side_effect=_exploding_classifier,
             ):
                 apply_obj._apply_inner(  # type: ignore[attr-defined]
                     {
                         "op": "wiki_add",
                         "payload": {
                             "directory_context": "/home/max/git/yadgar",
+                            # C4: stamped at enqueue time by the core tool (C3).
+                            # A payload without it is DLQ'd by
+                            # ``_validate_project_id`` before it ever reaches here.
+                            "project_id": "m-agahi/yadgar",
                             "slug": "x",
                             "content": "y",
                         },

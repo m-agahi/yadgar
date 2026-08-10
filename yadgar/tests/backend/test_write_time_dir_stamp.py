@@ -114,11 +114,13 @@ def test_derive_stamps_originating_dir_not_system():
         {
             "content": "worked on yadgar_module_foo.py today",
             "directory_context": "/home/max/git/yadgar",
+            "project_id": "m-agahi/yadgar",
             "tags": ["episodic"],
         },
         {
             "content": "also touched yadgar_module_bar.py",
             "directory_context": "/home/max/git/yadgar",
+            "project_id": "m-agahi/yadgar",
             "tags": ["episodic"],
         },
     ]
@@ -138,7 +140,16 @@ def test_derive_stamps_originating_dir_not_system():
 
 
 def test_derive_stamps_global_for_cross_project_pair():
-    """When entity names appear in memories from different projects, stamp 'global'."""
+    """Entity names spanning two DIRECTORIES of one project → directory_context 'global'.
+
+    C4 (0047 PR#40 §5) narrowed the fixture from two projects to two checkouts
+    of one. The subject is unchanged — ``dominant_directory``'s ">=2 distinct
+    real dirs -> global" rule for ``directory_context``, which C4 does not
+    touch. What C4 changed is the IDENTITY half: a pair spanning two distinct
+    ``project_id`` values is now skipped outright rather than collapsed onto a
+    sentinel, and that case is asserted in
+    ``test_c4_sessionless_writers.TestMemifyDeriveSkipsUnnameablePairs``.
+    """
     entity_dicts = [
         {"id": 1, "name": "shared_util.py"},
         {"id": 2, "name": "another_util.py"},
@@ -146,13 +157,15 @@ def test_derive_stamps_global_for_cross_project_pair():
     rels = [_make_rel(10, 1, 2, weight=15.0)]
     source_mems = [
         {
-            "content": "shared_util.py used in project A",
+            "content": "shared_util.py used in checkout A",
             "directory_context": "/home/max/git/yadgar",
+            "project_id": "m-agahi/yadgar",
             "tags": ["episodic"],
         },
         {
-            "content": "another_util.py lives in project B",
-            "directory_context": "/home/max/aws-work",
+            "content": "another_util.py lives in checkout B",
+            "directory_context": "/home/max/git/yadgar-worktree",
+            "project_id": "m-agahi/yadgar",
             "tags": ["episodic"],
         },
     ]
@@ -166,8 +179,17 @@ def test_derive_stamps_global_for_cross_project_pair():
     assert params["directory_context"] == "global"
 
 
-def test_derive_stamps_global_when_no_source_memories_match():
-    """When no source memories mention either entity, fall back to 'global' not 'system'."""
+def test_derive_skips_when_no_source_memories_match():
+    """No source memory mentions either entity → the pair is SKIPPED.
+
+    CONTRACT FLIP, C4 (0047 PR#40 §5). This used to assert the derived fact
+    was written with ``directory_context='global'``. A pair no source memory
+    mentions cannot be attributed to any project, and under ADR-0227 an
+    unattributable write is skipped and counted, never stamped with a
+    sentinel that manufactures a plausible-looking namespace. The
+    ``directory_context`` rule itself is unchanged — this pair simply never
+    reaches it.
+    """
     entity_dicts = [
         {"id": 1, "name": "UnknownEntityXYZ"},
         {"id": 2, "name": "UnknownEntityABC"},
@@ -177,6 +199,7 @@ def test_derive_stamps_global_when_no_source_memories_match():
         {
             "content": "something completely unrelated",
             "directory_context": "/home/max/git/yadgar",
+            "project_id": "m-agahi/yadgar",
             "tags": ["episodic"],
         },
     ]
@@ -184,11 +207,8 @@ def test_derive_stamps_global_when_no_source_memories_match():
     embeddings = _make_embeddings_derive()
     stats = {"derived": 0}
     _memify_derive(storage, embeddings, stats)
-    assert stats["derived"] == 1
-    batch = storage.batch_writes.call_args[0][0]
-    _sql, params = batch[0]
-    assert params["directory_context"] == "global"
-    assert params["directory_context"] != "system"
+    assert stats["derived"] == 0, "an unattributable pair must not count as derived"
+    storage.batch_writes.assert_not_called()
 
 
 def test_derive_excludes_derived_mems_from_dir_vote():
@@ -220,11 +240,13 @@ def test_derive_excludes_derived_mems_from_dir_vote():
         {
             "content": "fresh_entity_A.py is mentioned in a derived memory",
             "directory_context": "system",
+            "project_id": "m-agahi/other",
             "tags": ["derived", "auto-generated"],
         },
         {
             "content": "a real user memory mentioning fresh_entity_B.py",
             "directory_context": "/home/max/git/yadgar",
+            "project_id": "m-agahi/yadgar",
             "tags": ["episodic"],
         },
     ]
@@ -265,15 +287,32 @@ def _make_cls_engine(insert_id=1, similar_mems=None):
     # abstract_to_schema lives on DualStoreCLS, not _PromotionMixin.
     # Return a non-degenerate schema so the promotion guard passes.
     engine.abstract_to_schema.return_value = "Recurring pattern: auth flow observed across sessions"
+    # C4 (0047 PR#40 §5): the near-duplicate check moved out of _promote_pattern
+    # into _near_duplicate_semantic_exists (the I30 cap needed one branch back).
+    # A bare MagicMock returns a TRUTHY mock for it, which would short-circuit
+    # every promotion — pin it False so these directory-stamp tests still reach
+    # the insert. Behaviour under test is unchanged; only the seam moved.
+    engine._near_duplicate_semantic_exists.return_value = False
     return engine
 
 
-def _make_cluster_mem(mid: int, content: str, directory: str) -> dict:
+def _make_cluster_mem(
+    mid: int, content: str, directory: str, project_id: str = "m-agahi/yadgar"
+) -> dict:
+    """Build a cluster member.
+
+    C4 (0047 PR#40 §5): ``project_id`` defaults to a single real project so
+    these ``directory_context`` tests keep exercising ``dominant_directory``.
+    The identity half — a cluster spanning two projects is skipped, not
+    collapsed — is asserted in
+    ``test_c4_sessionless_writers.TestClsPromotionSkipsUnnameableClusters``.
+    """
     return {
         "id": mid,
         "content": content,
         "embedding": b"\x00" * 4,
         "directory_context": directory,
+        "project_id": project_id,
     }
 
 
@@ -310,17 +349,17 @@ def test_promote_stamps_originating_dir_not_system():
 
 
 def test_promote_stamps_global_for_cross_dir_cluster():
-    """Cluster with members from multiple directories → 'global'."""
+    """Cluster with members from multiple directories of one project → 'global'."""
     from yadgar.backend.cls_store.promotion import _PromotionMixin
 
     engine = _make_cls_engine(insert_id=102)
     cluster_mems = [
-        _make_cluster_mem(1, "aws thing", "/home/max/aws-work"),
+        _make_cluster_mem(1, "worktree thing", "/home/max/git/yadgar-wt"),
         _make_cluster_mem(2, "yadgar thing", "/home/max/git/yadgar"),
     ]
     pattern = {
         "memories": cluster_mems,
-        "directories": ["/home/max/aws-work", "/home/max/git/yadgar"],
+        "directories": ["/home/max/git/yadgar-wt", "/home/max/git/yadgar"],
         "pattern_summary": "mixed pattern",
         "occurrence_count": 2,
         "session_count": 2,
@@ -419,8 +458,18 @@ def test_dream_insight_stamps_global_not_system():
     embeddings = _make_dream_embeddings()
     engine = _make_dream_engine(storage, embeddings)
 
-    mem_a = {"id": 1, "content": "React component lifecycle hooks", "embedding": b"\x00" * 4}
-    mem_b = {"id": 2, "content": "Vue.js lifecycle methods", "embedding": b"\x00" * 4}
+    mem_a = {
+        "id": 1,
+        "content": "React component lifecycle hooks",
+        "embedding": b"\x00" * 4,
+        "project_id": "m-agahi/yadgar",
+    }
+    mem_b = {
+        "id": 2,
+        "content": "Vue.js lifecycle methods",
+        "embedding": b"\x00" * 4,
+        "project_id": "m-agahi/yadgar",
+    }
 
     _DreamMixin._create_dream_insight(engine, mem_a, mem_b)
 
@@ -442,8 +491,18 @@ def test_dream_insight_content_mentions_both_mems():
     embeddings = _make_dream_embeddings()
     engine = _make_dream_engine(storage, embeddings)
 
-    mem_a = {"id": 3, "content": "Django ORM query optimization", "embedding": b"\x00" * 4}
-    mem_b = {"id": 4, "content": "SQL index strategies for large tables", "embedding": b"\x00" * 4}
+    mem_a = {
+        "id": 3,
+        "content": "Django ORM query optimization",
+        "embedding": b"\x00" * 4,
+        "project_id": "m-agahi/yadgar",
+    }
+    mem_b = {
+        "id": 4,
+        "content": "SQL index strategies for large tables",
+        "embedding": b"\x00" * 4,
+        "project_id": "m-agahi/yadgar",
+    }
 
     _DreamMixin._create_dream_insight(engine, mem_a, mem_b)
 
@@ -466,12 +525,14 @@ def test_dream_insight_global_regardless_of_mem_dirs():
         "content": "auth module refactor",
         "embedding": b"\x00" * 4,
         "directory_context": "/home/max/git/yadgar",
+        "project_id": "m-agahi/yadgar",
     }
     mem_b = {
         "id": 6,
         "content": "permission check refactor",
         "embedding": b"\x00" * 4,
         "directory_context": "/home/max/git/yadgar",
+        "project_id": "m-agahi/yadgar",
     }
 
     _DreamMixin._create_dream_insight(engine, mem_a, mem_b)

@@ -145,7 +145,69 @@ class _DLQMixin:
                 )
                 _inc_relaxed("directory")
 
-        return None
+        # 5. C4 (0047 PR#40 §5): the enqueue-time project_id stamp is required.
+        return self._validate_project_id(p)
+
+    #: project_id values treated as ABSENT rather than as an identity.
+    #:
+    #: ``"unresolved"`` is here because it has exactly one producer — the
+    #: classifier-failure arm of ``_resolve_project_id_for_write`` — so it can
+    #: only ever mean "a derivation was attempted and failed".
+    #:
+    #: **``"global"`` is deliberately NOT here.** It is still a LIVE, documented
+    #: scope value: ``wiki_add(directory="global")`` is a supported call and
+    #: ``resolve_effective_project`` answers it (and every unresolvable tree)
+    #: with ``GLOBAL_FALLBACK``. Rejecting it in C4 would DLQ every legitimate
+    #: global-scoped page write a full car before C5 deletes the tier that
+    #: produces it and C7 splits reach from ownership. **C5: add ``"global"``
+    #: here** in the same edit that deletes ``GLOBAL_FALLBACK`` and
+    #: ``_project_id_writer``'s tier-2 branch — until then this gate is
+    #: fail-loud about the case that is unambiguously a defect and silent about
+    #: the one that is still a supported scope.
+    _SENTINEL_PROJECT_IDS: frozenset[str] = frozenset({"", "unresolved"})
+
+    @observe(tier="stage", metric="drainer.dlq.validate_project_id")
+    def _validate_project_id(self, payload: dict) -> str | None:
+        """Return a rejection reason when the enqueue-time project_id is missing.
+
+        C4 (0047 PR#40 §5). The drainer runs inside the backend container,
+        which has no git binary and no host project mounts, so it cannot mint
+        an identity and must not invent one. C3 made the core tool stamp
+        ``payload["project_id"]`` at enqueue time — in the one process that
+        can see the session — so by the time a job reaches here the value is
+        either present or the job is unattributable.
+
+        The declared failure path is the **DLQ**, reusing the v5.42.0
+        taxonomy (``failure_reason="missing_project_id"``) rather than
+        inventing a path or falling back to a default. DLQ, not skip-and-count:
+        unlike a nightly-cycle row, a queued write is the user's own content
+        and is recoverable — it sits in the DLQ with an actionable hint and can
+        be requeued once the caller passes ``project=``.
+
+        The ``_internal=True`` carve-out does NOT apply. ``_internal`` is a
+        server-only token set by ``_wiki_write_canonical``, whose two callers
+        (``adr_add``, ``wiki_write_task_list``) run in the process that HAS a
+        session — they have no more excuse for an unnamed project than any
+        other tool. Exempting them would leave the canonical page types as the
+        one hole through which sentinels keep entering the corpus.
+        """
+        raw = payload.get("project_id")
+        if isinstance(raw, str) and raw.strip() not in self._SENTINEL_PROJECT_IDS:
+            return None
+        return f"missing_project_id: wiki_add payload lacks a usable project_id (got {raw!r})."
+
+    def _build_missing_project_id_metadata(self, record: dict, op_type: str) -> dict:
+        """Build failure_metadata for missing_project_id DLQ entries (C4)."""
+        return {
+            "field": "project_id",
+            "payload_op_type": op_type,
+            "hint": (
+                'Re-issue the call with project="owner/repo" so the enqueue '
+                "stamps an identity, then requeue. The drainer cannot resolve "
+                "one: it runs in a container with no git and no project mounts "
+                "(ADR-0227)."
+            ),
+        }
 
     @observe(tier="stage", metric="drainer.dlq.validate_directory_context")
     def _validate_directory_context(self, record: dict) -> str | None:

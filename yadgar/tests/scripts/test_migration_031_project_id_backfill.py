@@ -207,107 +207,96 @@ class TestMigration031SchemaStatements:
         assert len(index_stmts) >= 2  # one for wiki_page, one for memory
 
 
-class TestMigration031BackfillPostconditions:
-    """Backfill stamps the right project_id per case (Car L §3)."""
+class TestMigration031DerivesNothing:
+    """C4 (0047 PR#40 §5): 031 declares columns and stops. **No backfill.**
 
-    def _run(self, wiki_rows: list[dict], mem_rows: list[dict]) -> tuple[_FakeStorage, list[dict]]:
+    CONTRACT FLIP. These tests replace ``TestMigration031BackfillPostconditions``
+    + ``TestMigration031Idempotency``, which asserted the per-row classification
+    Car L shipped: ``owner/repo`` for a git remote, ``local/<basename>`` for a
+    path with none, ``'unresolved'`` + ``legacy_directory`` for a path that no
+    longer exists. Every one of those outcomes came from
+    ``derive_project_id`` running INSIDE the container — which installs no git
+    and mounts no host project directory, so in production the classifier could
+    only ever return ``local/<basename>``, silently and always, on every row of
+    the corpus (ADR-0227). The old tests passed because the classifier was
+    mocked; the mock was the only reason the behaviour looked correct.
+
+    ADR-0227: "Migration 031's in-migration backfill cannot stand […] the
+    backfill moves to an operator-invoked path with the host-resolved value."
+    C6 owns that op. What 031 must still do — and what these tests pin — is
+    declare the columns and their indexes, and touch no row.
+    """
+
+    def _run(self, wiki_rows: list[dict], mem_rows: list[dict]) -> _FakeStorage:
         storage = _FakeStorage(wiki_rows=wiki_rows, mem_rows=mem_rows)
-        with patch(
-            "yadgar._shared.storage.migrations._classify_directory_for_migration",
-            side_effect=_patched_classifier,
-        ):
-            _migration_031_project_id_backfill(storage)
-        return storage, storage.get_wiki()
+        _migration_031_project_id_backfill(storage)
+        return storage
 
-    def test_git_repo_with_remote_derives_owner_repo(self) -> None:
-        storage, rows = self._run(
+    def test_no_row_is_updated(self) -> None:
+        storage = self._run(
+            wiki_rows=[{"id": 1, "slug": "doc-a", "directory_context": "/home/max/git/yadgar"}],
+            mem_rows=[{"id": 10, "directory_context": "/tmp/old-deleted-proj"}],
+        )
+        updates = [
+            sql for kind, sql in storage.statements if kind == "q" and "UPDATE" in sql.upper()
+        ]
+        assert updates == [], f"031 still writes rows: {updates}"
+
+    def test_rows_keep_their_pre_migration_state(self) -> None:
+        storage = self._run(
             wiki_rows=[{"id": 1, "slug": "doc-a", "directory_context": "/home/max/git/yadgar"}],
             mem_rows=[],
         )
-        target = next(r for r in rows if r["id"] == 1)
-        assert target["project_id"] == "m-agahi/yadgar"
-        assert "legacy_directory" not in target or target["legacy_directory"] is None
+        row = storage.get_wiki()[0]
+        assert "project_id" not in row, "031 stamped a project_id it cannot derive"
+        assert "legacy_directory" not in row
 
-    def test_path_no_remote_maps_to_local_basename(self) -> None:
-        storage, rows = self._run(
-            wiki_rows=[
-                {"id": 2, "slug": "doc-b", "directory_context": "/home/user/projects/standalone"}
-            ],
-            mem_rows=[],
-        )
-        target = next(r for r in rows if r["id"] == 2)
-        assert target["project_id"] == "local/standalone"
-
-    def test_path_gone_maps_to_unresolved_with_legacy(self) -> None:
-        storage, rows = self._run(
-            wiki_rows=[
-                {
-                    "id": 3,
-                    "slug": "doc-c",
-                    "directory_context": "/tmp/old-deleted-proj",
-                }
-            ],
-            mem_rows=[],
-        )
-        target = next(r for r in rows if r["id"] == 3)
-        assert target["project_id"] == "unresolved"
-        assert target["legacy_directory"] == "/tmp/old-deleted-proj"
-
-    def test_global_sentinel_stays_global(self) -> None:
-        storage, rows = self._run(
+    def test_sentinel_rows_are_not_stamped_global(self) -> None:
+        """The ``'global'`` stamp was a mint too — §1.4 deletes that sentinel."""
+        storage = self._run(
             wiki_rows=[
                 {"id": 4, "slug": "doc-d", "directory_context": "global"},
                 {"id": 5, "slug": "doc-e", "directory_context": ""},
             ],
             mem_rows=[],
         )
-        for r in rows:
-            assert r["project_id"] == "global"
+        for row in storage.get_wiki():
+            assert row.get("project_id") is None
 
-    def test_memory_rows_backfilled_too(self) -> None:
-        storage = _FakeStorage(
-            wiki_rows=[],
-            mem_rows=[
-                {"id": 10, "directory_context": "/home/max/git/yadgar"},
-                {"id": 11, "directory_context": "/tmp/old-deleted-proj"},
-            ],
-        )
+    def test_the_classifier_is_never_called(self) -> None:
+        """Not merely unused — unreachable. The seam itself explodes if touched."""
+
+        def _explode(_d: str) -> tuple[str, str | None]:
+            raise AssertionError("migration 031 reached the identity classifier")
+
         with patch(
             "yadgar._shared.storage.migrations._classify_directory_for_migration",
-            side_effect=_patched_classifier,
+            side_effect=_explode,
         ):
-            _migration_031_project_id_backfill(storage)
-        rows = storage.get_mem()
-        target10 = next(r for r in rows if r["id"] == 10)
-        target11 = next(r for r in rows if r["id"] == 11)
-        assert target10["project_id"] == "m-agahi/yadgar"
-        assert target11["project_id"] == "unresolved"
-        assert target11["legacy_directory"] == "/tmp/old-deleted-proj"
+            self._run(
+                wiki_rows=[{"id": 1, "directory_context": "/home/max/git/yadgar"}],
+                mem_rows=[{"id": 2, "directory_context": "/tmp/gone"}],
+            )
 
-
-class TestMigration031Idempotency:
-    """Re-running is a full no-op once every row already has project_id."""
-
-    def test_second_run_classifies_nothing_new(self) -> None:
-        storage = _FakeStorage(
-            wiki_rows=[
-                {
-                    "id": 1,
-                    "slug": "doc-a",
-                    "directory_context": "/home/max/git/yadgar",
-                    "project_id": "m-agahi/yadgar",
-                },
-            ],
+    def test_no_row_read_is_issued_either(self) -> None:
+        """A migration that derives nothing has no reason to scan the corpus."""
+        storage = self._run(
+            wiki_rows=[{"id": 1, "directory_context": "/home/max/git/yadgar"}],
             mem_rows=[],
         )
-        with patch(
-            "yadgar._shared.storage.migrations._classify_directory_for_migration",
-            side_effect=_patched_classifier,
-        ):
-            _migration_031_project_id_backfill(storage)
-            _migration_031_project_id_backfill(storage)
+        selects = [
+            sql for kind, sql in storage.statements if kind == "q" and "SELECT" in sql.upper()
+        ]
+        assert selects == [], f"031 still scans rows for a backfill it no longer does: {selects}"
 
-        # After two runs, the row's project_id is still correct (the
-        # classifier is the only mutator; it was a no-op the second time).
-        rows = storage.get_wiki()
-        assert rows[0]["project_id"] == "m-agahi/yadgar"
+    def test_second_run_is_a_no_op(self) -> None:
+        storage = _FakeStorage(
+            wiki_rows=[{"id": 1, "slug": "doc-a", "directory_context": "/home/max/git/yadgar"}],
+            mem_rows=[],
+        )
+        _migration_031_project_id_backfill(storage)
+        first = list(storage.statements)
+        _migration_031_project_id_backfill(storage)
+        second = storage.statements[len(first) :]
+        assert [sql for _k, sql in second] == [sql for _k, sql in first]
+        assert storage.get_wiki()[0].get("project_id") is None

@@ -6,6 +6,10 @@ import random
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage._project_id_writer import (
+    observe_project_id_skip,
+    resolve_project_id_from_rows,
+)
 
 
 class _DreamMixin:
@@ -139,7 +143,23 @@ class _DreamMixin:
 
     @trace_span()
     def _create_dream_insight(self, mem_a: dict, mem_b: dict) -> None:
-        """Generate a synthetic dream insight memory."""
+        """Generate a synthetic dream insight memory.
+
+        C4 (0047 PR#40 §5) — **a third sentinel producer, unlisted in the
+        plan's C4 table.** ``directory.py``'s docstring names this module as a
+        ``dominant_directory`` caller, but it never called it: it hardcoded
+        ``directory_context="global"``, which then reaches
+        ``_resolve_project_id_for_write`` tier 2 and mints ``project_id =
+        "global"`` on every dream insight. Same defect class as
+        ``promotion.py`` and ``strengthen.py``, same fix: the pair's own rows
+        name the project, and a pair that spans two (or names none) is skipped
+        and counted rather than attributed to a namespace nobody chose.
+        """
+        insight_project = resolve_project_id_from_rows([mem_a, mem_b])
+        if insight_project is None:
+            observe_project_id_skip("dream_insight")
+            return
+
         summary_a = mem_a["content"][:100].strip()
         summary_b = mem_b["content"][:100].strip()
         content = f"Dream connection: {summary_a} may relate to {summary_b}"
@@ -150,7 +170,9 @@ class _DreamMixin:
                 "content": content,
                 "embedding": embedding,
                 "tags": ["dream", "auto-generated"],
+                # C7: still the legacy read key; the identity is project_id.
                 "directory_context": "global",
+                "project_id": insight_project,
                 "heat": 0.5,
                 "is_stale": False,
                 "embedding_model": self._embeddings.get_model_name(),

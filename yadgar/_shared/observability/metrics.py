@@ -20,6 +20,7 @@ Collectors:
 - yadgar_archive_retention_skipped_total{reason} Counter — rows skipped by retention purge (protected|anchor|recent)
 - yadgar_hook_recall_timeout_total{handler} Counter — hook recall() calls exceeding HOOK_RECALL_TIMEOUT_S latency budget
 - yadgar_cold_purge_candidates              Gauge   — cold immortal user-memory retention candidates (visibility gate #29)
+- yadgar_project_id_skipped_total{writer}   Counter — sessionless writes skipped for want of a nameable project_id
 """
 
 from __future__ import annotations
@@ -829,6 +830,22 @@ yadgar_cold_purge_candidates = Gauge(
 yadgar_archive_purged_total = Counter(
     "yadgar_archive_purged_total",
     "Total memory_archive rows deleted by nightly retention purge",
+    registry=_registry,
+)
+
+# ── C4 (0047 PR#40 §5) — sessionless writers that could not name a project ───
+# Skip-and-count is the declared failure path for every derived-memory writer
+# with no session to inherit from: the write is dropped rather than collapsed
+# onto a sentinel, and the drop is loud HERE instead of fatal to the cycle.
+# writer labels: action_log_group | cls_promotion | memify_derive |
+#                dream_insight | nightly_sweep
+
+yadgar_project_id_skipped_total = Counter(
+    "yadgar_project_id_skipped_total",
+    "Writes skipped by a sessionless writer because no single project_id could be "
+    "named from its inputs (writer = action_log_group | cls_promotion | memify_derive "
+    "| dream_insight | nightly_sweep)",
+    ["writer"],
     registry=_registry,
 )
 

@@ -310,12 +310,33 @@ def test_memify_strengthen(curator, storage):
 
 
 def test_memify_derive(curator, storage):
-    """High-weight entity pairs generate derived fact memories."""
+    """High-weight entity pairs generate derived fact memories.
+
+    C4 (0047 PR#40 §5): the fixture now seeds a SOURCE MEMORY mentioning both
+    entity names and carrying a ``project_id``. The derive pass attributes each
+    derived fact to the single project its sources name, and a pair whose
+    sources name none is skipped and counted rather than stamped with a
+    sentinel (ADR-0227). Without a source memory this pair is unattributable,
+    so the old fixture was exercising exactly the skip path — which
+    ``test_derive_skips_when_no_source_memories_match`` now asserts directly.
+    """
     storage._now_iso()
 
     # Create two entities
     eid1 = storage.insert_entity({"name": "module.py", "type": "file"})
     eid2 = storage.insert_entity({"name": "utils.py", "type": "file"})
+
+    storage.insert_memory(
+        {
+            "content": "refactored module.py alongside utils.py this afternoon",
+            "embedding": _make_embedding(seed=77),
+            "tags": ["episodic"],
+            "directory_context": "/test",
+            "project_id": "m-agahi/yadgar",
+            "heat": 0.7,
+            "is_stale": False,
+        }
+    )
 
     # Create a high-weight co_occurrence relationship (weight > 10)
     storage.insert_relationship(
@@ -434,9 +455,24 @@ def test_memify_reweight_cold_decay(curator, storage):
 
 
 def test_memify_derive_idempotent(curator, storage):
-    """Derived facts are not duplicated on repeated runs."""
+    """Derived facts are not duplicated on repeated runs.
+
+    C4: seeds an attributable source memory — see ``test_memify_derive``.
+    """
     eid1 = storage.insert_entity({"name": "a.py", "type": "file"})
     eid2 = storage.insert_entity({"name": "b.py", "type": "file"})
+
+    storage.insert_memory(
+        {
+            "content": "touched a.py and b.py in the same change",
+            "embedding": _make_embedding(seed=78),
+            "tags": ["episodic"],
+            "directory_context": "/test",
+            "project_id": "m-agahi/yadgar",
+            "heat": 0.7,
+            "is_stale": False,
+        }
+    )
 
     storage.insert_relationship(
         {

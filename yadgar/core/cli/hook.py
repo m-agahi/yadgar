@@ -130,15 +130,31 @@ def hook_post_tool_capture() -> None:
     else:
         summary = str(tool_input)[:200]
 
-    _http_post(
-        "/hooks/auto-capture",
-        {
-            "tool_name": tool_name,
-            "summary": summary,
-            "directory": cwd,
-            "session_id": session_id,
-        },
-    )
+    # C4 (0047 PR#40 §5): stamp the identity HERE. This hook runner is
+    # host-side (the same carve-out ``_emit_project_id`` uses), and the
+    # daemon it POSTs to is not — the container has no git binary and no
+    # project mounts, so a project_id resolved on the far side of this call
+    # could only be manufactured (ADR-0227 §1.1).
+    #
+    # Fail-OPEN, unlike ``yadgar capture``: a PostToolUse hook that exits
+    # non-zero interferes with the user's session, and the row's declared
+    # failure path already exists downstream — an action_log row with no
+    # project_id is skipped and counted by the consolidation summariser
+    # rather than attributed to a guess.
+    _payload: dict = {
+        "tool_name": tool_name,
+        "summary": summary,
+        "directory": cwd,
+        "session_id": session_id,
+    }
+    try:
+        from yadgar.core.hooks._identity_mint import mint_project_id  # noqa: PLC0415
+
+        _payload["project_id"] = mint_project_id(cwd)
+    except Exception:  # noqa: BLE001 — never brick a tool call over identity
+        pass
+
+    _http_post("/hooks/auto-capture", _payload)
 
 
 def _emit_project_id(cwd: str) -> str | None:

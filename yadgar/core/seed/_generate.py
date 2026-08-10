@@ -304,6 +304,7 @@ def _draft_project_init(scan_data: dict) -> str:
 def seed_project(
     directory: str,
     dry_run: bool = False,
+    project_id: str | None = None,
 ) -> dict:
     """Scan a project and store foundational memories.
 
@@ -316,6 +317,10 @@ def seed_project(
     Args:
         directory: Project root directory to scan.
         dry_run: If True, scan and generate but don't store.
+        project_id: C4 (0047 PR#40 §5) — the session/CLI-resolved identity,
+            forwarded to ``seed_store`` so the backend stamps it rather than
+            deriving one. The backend cannot derive (ADR-0227): it has no git
+            binary and no host project mounts.
 
     Returns:
         Dict with scan stats and memories created/replaced.
@@ -352,6 +357,7 @@ def seed_project(
             for m in memories
         ],
         "init_content": init_content,
+        "project_id": project_id,
     }
 
     from yadgar.core.forward import _forward_admin  # noqa: PLC0415

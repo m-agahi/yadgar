@@ -362,6 +362,9 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         if reject_reason.startswith("missing_directory"):
             # v5.42.5: directory_context missing → DLQ with missing_directory
             return "missing_directory", self._build_missing_directory_metadata(data, op_type)
+        if reject_reason.startswith("missing_project_id"):
+            # C4 (0047 PR#40 §5): no enqueue-time identity → DLQ, never a default.
+            return "missing_project_id", self._build_missing_project_id_metadata(data, op_type)
         # Car C (#83): slug_exists — upsert=False collision, keep the slug in metadata.
         if reject_reason == "slug_exists":
             p = data.get("payload", {})

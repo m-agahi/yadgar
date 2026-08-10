@@ -29,8 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 @observe(tier="stage", metric="backend.admin.seed_store_one")
-def _store_one(storage, embeddings, thermo, mem: dict) -> int:
-    """Embed + score + insert one seed memory. Returns the new memory id."""
+def _store_one(storage, embeddings, thermo, mem: dict, project_id: str | None = None) -> int:
+    """Embed + score + insert one seed memory. Returns the new memory id.
+
+    C4 (0047 PR#40 §5): ``project_id`` arrives from the host-side caller
+    (``core/seed/_generate.seed_project``) and is stamped verbatim. Nothing
+    is derived here — this runs in the backend container, where a derivation
+    can only manufacture ``local/<basename>`` (ADR-0227 §1.1).
+    """
     content = mem["content"]
     context = mem["context"]
     tags = mem["tags"]
@@ -50,6 +56,7 @@ def _store_one(storage, embeddings, thermo, mem: dict) -> int:
             "embedding": embedding,
             "tags": tags,
             "directory_context": context,
+            "project_id": project_id,
             "heat": initial_heat,
             "is_stale": False,
             "file_hash": None,
@@ -109,12 +116,14 @@ def seed_store(payload: dict) -> dict:
         "root": str,                    # resolved project root (scan_data["root"])
         "memories": [{"content", "context", "tags", "base_heat"}, ...],
         "init_content": str,            # drafted _project_init markdown ("" = skip)
+        "project_id": str | None,       # C4: host-resolved identity, stamped as-is
     }
     Returns {"created": int, "replaced": int}.
     """
     root = payload["root"]
     memories = payload.get("memories") or []
     init_content = payload.get("init_content") or ""
+    project_id = payload.get("project_id") or None
 
     storage = _get_storage()
     embeddings = _get_embeddings()
@@ -124,7 +133,7 @@ def seed_store(payload: dict) -> dict:
     # insert — a crash mid-insert must not leave the DB with no seed memories.
     new_memory_ids: list[int] = []
     for mem in memories:
-        new_memory_ids.append(_store_one(storage, embeddings, thermo, mem))
+        new_memory_ids.append(_store_one(storage, embeddings, thermo, mem, project_id))
         logger.info("Seed memory [created]: %s", mem["content"][:80])
 
     replaced = _delete_existing_seed_memories(storage, root, exclude_ids=new_memory_ids)

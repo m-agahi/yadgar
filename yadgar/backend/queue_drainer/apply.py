@@ -124,28 +124,19 @@ class _ApplyMixin:
             p = self._fill_wiki_add_defaults(dict(p))
             # directory_context falls back to the enqueue-time directory
             p["directory_context"] = p.get("directory_context") or p.get("directory")
-            # Car L (0047 §16.9): stamp project_id alongside directory_context so
-            # the backfill migration is a one-way trapdoor. The classifier is
-            # routed through the project_id write chokepoint in
-            # yadgar._shared.storage._project_id_writer (the same seam the
-            # migration uses) — backend can import _shared, so this is the
-            # canonical entry point and the only place we call the classifier
-            # from a backend write path.
+            # C4 (0047 PR#40 §5): the enqueue-time stamp is FORWARDED, not
+            # recomputed. Car L called the write chokepoint here with
+            # ``caller_value=p.get("project_id")``, which meant an unstamped
+            # payload fell through to the container-side classifier — the one
+            # thing this container provably cannot do (no git binary, no host
+            # project mounts; ADR-0227 §1.1). C3 made every core caller stamp
+            # the value at enqueue time, and ``_validate_project_id`` now DLQs
+            # any job that arrives without one, so reaching a derivation from
+            # this line is no longer a fallback but a bug.
             #
-            # C3 (0047 PR#40 §5.C3): the enqueue-time stamp now READS through
-            # here as ``caller_value`` and short-circuits the classifier — the
-            # core tool resolved it in the process that can see the session.
-            # The derivation fallback below survives only for payloads enqueued
-            # before this car; C5 deletes it (this container cannot derive).
-            from yadgar._shared.storage._project_id_writer import (  # noqa: PLC0415
-                _resolve_project_id_for_write,
-            )
-
-            p["project_id"] = _resolve_project_id_for_write(
-                caller_value=p.get("project_id"),
-                directory_context=p["directory_context"],
-            )
-
+            # No default is substituted for a payload that somehow arrives
+            # unstamped: the key is left absent, the storage chokepoint sees
+            # ``caller_value=None``, and C5 turns that into a raise.
             run_wiki_add_replay(p)
             return
         logger.debug("Unknown queue op %r — skipping", op)

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from yadgar._shared.observability.observe import observe
@@ -38,6 +39,69 @@ logger = logging.getLogger(__name__)
 
 #: String target — PEP-562 lazy forward to dodge the _shared->core static edge.
 _CORE_IDENTITY_TARGET = "yadgar.core.identity"
+
+#: Values that name NO project. ``'global'`` and ``'unresolved'`` are the two
+#: manufactured identities ADR-0227 deletes; ``'system'`` is the pre-v5.64
+#: mis-stamp sink. A source row carrying one of these cannot tell a derived
+#: write which project it belongs to, so it does not get a vote.
+_NON_IDENTIFYING_PROJECT_IDS: frozenset[str] = frozenset({"", "global", "unresolved", "system"})
+
+
+@observe(tier="hot", span=False)
+def resolve_project_id_from_rows(rows: Iterable[dict]) -> str | None:
+    """Return the single ``project_id`` shared by *rows*, or ``None``.
+
+    C4 (0047 PR#40 §5) — the sessionless-writer counterpart to
+    ``dominant_directory``. Same voting shape, opposite failure mode: where
+    ``dominant_directory`` collapses "0 or ≥2 distinct" to the literal
+    ``"global"``, this returns ``None`` so the caller can take its declared
+    skip-and-count path. ADR-0227: an identity is never inferred and never
+    substituted, and a derived memory spanning two projects belongs to
+    neither.
+
+    This is NOT a derivation. Each row's ``project_id`` was stamped by the
+    session that wrote it; reading it back is inheritance, which is exactly
+    what "travels as an explicit caller parameter" (ADR-0202) means for a
+    write whose inputs are other rows.
+
+    Args:
+        rows: source rows (memory dicts) that the derived write is built from.
+
+    Returns:
+        The one distinct identifying ``project_id``, or ``None`` when the
+        inputs name zero projects or more than one.
+    """
+    real: set[str] = set()
+    for row in rows:
+        candidate = row.get("project_id")
+        if isinstance(candidate, str) and candidate not in _NON_IDENTIFYING_PROJECT_IDS:
+            real.add(candidate)
+    if len(real) == 1:
+        return next(iter(real))
+    return None
+
+
+@observe(tier="hot", span=False)
+def observe_project_id_skip(writer: str, count: int = 1) -> None:
+    """Count *count* writes skipped by *writer* for want of a nameable project.
+
+    Skip-and-count is the fail-loud form for the nightly cycle: loud in
+    metrics, non-fatal to the cycle. ADR-0227 predicts ``cleanup.py``'s
+    ``"unknown"`` bucket becoming "an unhandled raise inside the nightly
+    cycle" — it must not, because a sweep that dies on one bad row is worse
+    than one that reports it.
+
+    Never raises: a metrics backend that is absent or misconfigured must not
+    turn a skipped row into a failed cycle.
+    """
+    try:
+        from yadgar._shared.observability.metrics import (  # noqa: PLC0415
+            yadgar_project_id_skipped_total,
+        )
+
+        yadgar_project_id_skipped_total.labels(writer=writer).inc(count)
+    except Exception:
+        logger.debug("project_id skip metric unavailable (non-fatal)", exc_info=True)
 
 
 @observe(tier="hot", span=False)

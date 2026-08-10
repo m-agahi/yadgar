@@ -773,6 +773,12 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
             "summary": sanitize_log_field(body.get("summary", ""), max_len=500),
             "directory": _dir_key,
             "session_id": session_id,
+            # C4 (0047 PR#40 §5): carried from the host-side hook runner
+            # (core/cli/hook.py). This process is the daemon container and
+            # cannot mint one (ADR-0227) — an absent value stays absent, and
+            # the consolidation summariser skips-and-counts the row rather
+            # than bucketing it under a guess.
+            "project_id": sanitize_log_field(str(body.get("project_id", "")), max_len=200),
         }
 
         # §9 Q2: Protect _action_batch under asyncio.Lock to prevent data races.
@@ -793,6 +799,12 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         combined_tools = ",".join(a["tool_name"] for a in to_flush)
         combined_summary = " | ".join(a["summary"] for a in to_flush if a["summary"])
         directory = to_flush[-1]["directory"]
+        # C4: the batch is one row, so it needs ONE identity. Take it only when
+        # every action in the batch agrees; a batch that spans two projects (or
+        # names none) is written unattributed and skipped downstream, never
+        # collapsed onto whichever action happened to be last.
+        _batch_projects = {a.get("project_id") for a in to_flush if a.get("project_id")}
+        batch_project_id = _batch_projects.pop() if len(_batch_projects) == 1 else ""
         from datetime import UTC
 
         ts = datetime.now(UTC).isoformat()
@@ -810,6 +822,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
                 "summary": combined_summary[:500],
                 "directory": directory,
                 "session_id": session_id,
+                "project_id": batch_project_id,
                 "timestamp": ts,
             },
         )
@@ -1683,6 +1696,16 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
             try:
                 # T2 Car E1 (ADR-0078): team-inbox rows ride the file-queue seam
                 # (backend drainer replays via run_action_log_replay).
+                #
+                # C4 (0047 PR#40 §5): deliberately NO ``project_id`` stamp. The
+                # ``project_id`` in scope here is ``match.group(1)`` — a segment
+                # of the team-inbox FILE PATH, not an identity key (the same
+                # name-collision trap C3 hit with ``wiki_write_task_list.project``,
+                # which is a slug component). Reusing it would mint a namespace
+                # from a directory name, which is precisely what ADR-0227 deletes.
+                # These rows arrive unattributed and are skipped-and-counted by
+                # the consolidation summariser until the team-inbox writer
+                # carries a real session identity.
                 from yadgar.core.lifecycle import _get_file_queue  # noqa: PLC0415
 
                 await _asyncio.to_thread(

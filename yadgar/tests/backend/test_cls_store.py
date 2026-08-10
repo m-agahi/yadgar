@@ -458,6 +458,13 @@ class TestConsolidationCycle:
                 "id": 1,
                 "content": "safe content here",
                 "directory_context": "/proj",
+                # C4 (0047 PR#40 §5): a promotion whose cluster names no single
+                # project_id is skipped and counted rather than collapsed onto
+                # the "global" sentinel. This test's subject is the secret gate,
+                # so the cluster is given a nameable project to keep it on the
+                # promote path; the skip itself is asserted in
+                # test_c4_sessionless_writers.TestClsPromotionSkipsUnnameableClusters.
+                "project_id": "m-agahi/yadgar",
                 "embedding": vec,
             },
         ]

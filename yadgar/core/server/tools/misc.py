@@ -31,7 +31,10 @@ from yadgar.core.forward import _forward_restore
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool, mcp_server
-from yadgar.core.server.tools._project_param import accept_project_param
+from yadgar.core.server.tools._project_param import (
+    accept_project_param,
+    resolve_effective_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -555,15 +558,23 @@ def seed_project(directory: str, dry_run: bool = False, *, project: str | None =
     directory: Project root directory to scan (absolute path).
     dry_run: If True, scan and show what would be stored without actually storing.
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
+    # C4 (0047 PR#40 §5): seed_project WRITES rows, so its ``project`` is
+    # threaded for real rather than merely validated — the backend's
+    # ``seed_store`` op stamps the value instead of deriving one it cannot
+    # derive (ADR-0227). ``accept_project_param`` still runs first so a
+    # malformed override raises at the MCP boundary.
     accept_project_param(project, directory)
     from yadgar.core.seed import seed_project as _seed
 
     resolved = str(Path(directory).resolve())
+    _effective_project_id = resolve_effective_project(
+        project=project,
+        directory=resolved,
+        session_project=None,
+    )
     # T2 Car E1: the store phase forwards to the backend seed_store /admin op —
     # no core engine handles needed (scan + generate run host-side inside _seed).
-    result = _seed(directory=resolved, dry_run=dry_run)
+    result = _seed(directory=resolved, dry_run=dry_run, project_id=_effective_project_id)
     # §4: Register this directory as a known project root for file-hash whitelist.
     if not dry_run:
         _st._project_roots.add(resolved)

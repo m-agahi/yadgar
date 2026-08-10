@@ -401,16 +401,22 @@ def cmd_seed(args):
         print(json.dumps(result))
         return
 
+    from yadgar.core.cli._shared import resolve_cli_project
     from yadgar.core.seed import seed_project
 
     directory = str(Path(args.directory).resolve())
-    print(f"Seeding project: {directory}", file=sys.stderr)
+    # C4 (0047 PR#40 §5): the CLI runs host-side, so it resolves the identity
+    # here (--project wins, else the C2 mint) and hands it to the backend.
+    # Unresolvable → non-zero exit, never a guessed namespace.
+    project_id = resolve_cli_project(getattr(args, "project", None), directory)
+    print(f"Seeding project: {directory} (project_id={project_id})", file=sys.stderr)
 
     # T2 Car E1: the store phase forwards to the backend seed_store /admin op;
     # db_path no longer applies (the backend owns the DB).
     result = seed_project(
         directory=directory,
         dry_run=args.dry_run,
+        project_id=project_id,
     )
 
     if args.dry_run:
@@ -434,7 +440,10 @@ def cmd_seed(args):
 
 
 def register(subparsers):
+    from yadgar.core.cli._shared import add_project_argument
+
     p = subparsers.add_parser("seed", help="Bootstrap memory for an existing project")
+    add_project_argument(p)
     p.add_argument("directory", nargs="?", help="Project directory to scan and seed")
     p.add_argument(
         "--anchors",

@@ -440,6 +440,10 @@ def _write_adr_body_page(
     page_payload = _canonical_adr_payload(
         page_slug, page_content, "decision", _adr_tags(adr_id, fields["status"]), resolved
     )
+    # C4 (0047 PR#40 §5): stamp the project_id the caller ALREADY resolved for
+    # the ledger row, so the body page and its row agree across the two engines
+    # and ``_wiki_write_canonical`` does not re-derive a value we hold.
+    page_payload["project_id"] = project_id
     page_result = _wiki_write_canonical(page_payload, wait=True)
     if not _write_ok(page_result):
         return {

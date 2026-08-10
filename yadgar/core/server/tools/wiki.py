@@ -137,6 +137,26 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
             f"canonical writes are restricted to {sorted(CANONICAL_PAGE_TYPES)}"
         )
     payload["_internal"] = True
+    # C4 (0047 PR#40 §5): the canonical writers stamp an identity like every
+    # other enqueue. Both callers (``adr_add``, ``wiki_write_task_list``) take a
+    # required ``directory`` and run in the process that can see the session, so
+    # they have no more excuse for an unnamed project than ``wiki_add`` does —
+    # and the drainer's ``_validate_project_id`` DLQs an unstamped payload, so
+    # leaving ``_internal`` as a hole would have taken the two canonical page
+    # types out of service.
+    #
+    # This resolves EXACTLY as ``_wiki_add_impl`` does, fallback included. The
+    # asymmetric alternative — skip the stamp when the resolver returns
+    # ``GLOBAL_FALLBACK``, so the write DLQs — was rejected: it would DLQ a
+    # canonical page while an ordinary ``wiki_add`` with the identical
+    # resolution outcome succeeds. One rule, uniformly applied; C5 flips both
+    # at once when the fallback tier is deleted.
+    if not payload.get("project_id"):
+        payload["project_id"] = resolve_effective_project(
+            project=None,
+            directory=payload.get("directory_context"),
+            session_project=None,
+        )
     # Canonical writes are server-side sanctioned (adr_add + wiki_write_task_list
     # are the SOLE writers of their page_types). Car J (0047 §7 D25/D26) marks
     # ``adr`` as mutability='locked' (decisions are immutable, Car G supersede
