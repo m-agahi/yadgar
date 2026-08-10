@@ -314,11 +314,17 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         # §26 Option Z — wiki_add validation before apply
         if op_type == "wiki_add":
             reject_reason = self._validate_wiki_add(data)
-            if reject_reason:
-                self._reject_permanent_to_dlq(
-                    path, fname, attempt, op_type, reject_reason, data, now
-                )
-                return 0
+        else:
+            # C5 (0047 PR#40 §5) — C4b handoff #1. Until now ``_validate_project_id``
+            # was reachable ONLY through ``_validate_wiki_add``, so ``memorize``,
+            # ``anchor`` and ``action_log`` jobs passed the gate unvalidated: C4b
+            # made those paths STAMP an identity at enqueue, but nothing checked
+            # that they had. Widening the gate is the fail-loud half of that work,
+            # which is why it waited for this car.
+            reject_reason = self._validate_project_id(data.get("payload", {}), op_type)
+        if reject_reason:
+            self._reject_permanent_to_dlq(path, fname, attempt, op_type, reject_reason, data, now)
+            return 0
 
         return self._apply_pending(fname, path, data, op_type, now)
 

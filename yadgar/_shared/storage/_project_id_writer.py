@@ -1,44 +1,33 @@
 """Car L (0047 §16.9) — project_id stamping chokepoint for live write paths.
 
 Both ``_WikiMixin`` and ``_MemoryMixin`` carry hot-path INSERT methods
-that must stamp ``project_id`` alongside ``directory_context``. The
-classifier seam is the same in both — a lazy ``yadgar.core.identity.derive_project_id``
-call that falls back to ``'unresolved'`` on any import-time or runtime
-failure so the write never blocks on a path-resolution error.
+that must stamp ``project_id`` alongside ``directory_context``. This module is
+the one seam both go through, so the failure-mode contract is stated once.
+
+**C5 made that contract "the caller's value, or a raise" — there is no other
+branch left.** What used to be here: a ``'global'`` return for a sentinel
+``directory_context``, a lazy ``yadgar.core.identity.derive_project_id``
+classifier reached through ``importlib``, and an ``'unresolved'`` catch around
+it. All three are deleted (ADR-0227). The lazy-import layer note that justified
+the ``importlib`` string target went with the import it justified: nothing here
+reaches ``yadgar.core`` any more, so contract 1 of the import-linter config is
+satisfied structurally rather than by indirection.
 
 Why a shared module: the helper is a hot-path utility (called once per
 write). Importing it from a dedicated module keeps the per-file LOC
-budget stable for both mixins (both are already at the I13 soft cap) and
-centers the failure-mode contract in one place.
-
-Sentinels (``'global'``, ``''``) → ``'global'`` (unchanged semantics).
-The caller-provided ``project_id`` (when present) wins over the
-classifier — this is how the live write paths stamp the same value
-the migration would have stamped.
-
-LAYER NOTE: this module lives in ``yadgar._shared`` and therefore
-cannot statically import ``yadgar.core.identity`` (forbidden by
-contract 1 of the import-linter config). The classifier call below
-is dispatched via ``importlib.import_module`` on a string target —
-the established PEP-562 lazy-forward pattern in
-``yadgar._shared.retrieval`` (Car 0 #167 precedent). Static
-analysis sees only the string; the runtime edge resolves at first
-call when the composition root has finished bootstrapping.
+budget stable for both mixins (both are already at the I13 soft cap).
 """
 
 from __future__ import annotations
 
-import importlib
 import logging
 from collections.abc import Iterable
 from typing import Any
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 
 logger = logging.getLogger(__name__)
-
-#: String target — PEP-562 lazy forward to dodge the _shared->core static edge.
-_CORE_IDENTITY_TARGET = "yadgar.core.identity"
 
 #: Values that name NO project. ``'global'`` and ``'unresolved'`` are the two
 #: manufactured identities ADR-0227 deletes; ``'system'`` is the pre-v5.64
@@ -110,70 +99,47 @@ def _resolve_project_id_for_write(
     caller_value: Any,
     directory_context: str | None,
 ) -> str:
-    """Resolve ``project_id`` for a live write to ``wiki_page`` or ``memory``.
+    """Return ``caller_value``, or raise. There is no second branch.
 
-    Car L (0047 §16.9); amended by C3 (0047 PR#40 §5.C3).
+    Car L (0047 §16.9); amended by C3, finished by C5 (0047 PR#40 §5).
 
-    ``caller_value`` is MANDATORY — keyword-required, and every caller is
-    expected to pass a real, session-minted project_id. It is the ONLY
-    honest input: this function runs inside the backend/core containers,
-    which have no git binary and no host project mounts, so nothing here
-    can derive an identity (§1.1 / ADR-0227). Passing ``None`` is a
-    caller defect that C5 turns into a raise.
+    ``caller_value`` is the ONLY honest input: this function runs inside the
+    backend/core containers, which have no git binary and no host project
+    mounts, so nothing here can derive an identity (§1.1 / ADR-0227). A falsy
+    ``caller_value`` is a caller defect, and C5 is where it stops being logged
+    and starts being fatal.
 
-    Order of preference:
+    ``directory_context`` is no longer a resolution source. It is accepted only
+    so the raise can name the write that failed — a filesystem path is a useful
+    thing to see in an error and a catastrophic thing to derive an identity
+    from, which is the whole distinction this car draws.
 
-    1. ``caller_value`` — truthy → return it. THE path after C3: the core
-       tool resolves in the process that can see the session and stamps the
-       value onto the queue payload / page dict, so the drainer and the
-       storage mixins carry it rather than compute one.
-    2. Sentinel ``directory_context`` (``'global'``, ``''``, ``None``)
-       → ``'global'``.
-    3. **C5: DELETE** — lazy ``derive_project_id`` (via string-target
-       importlib, see module docstring). Reachable only from a legacy
-       payload enqueued before C3 or a caller that has not been converted.
-    4. **C5: DELETE** — classifier failure → ``'unresolved'``.
+    Deleted here, listed so the next reader does not reinvent one:
 
-    Tiers 3 and 4 log a WARNING naming the offending ``directory_context``,
-    so a surviving caller is observable before C5 makes it fatal. C3's
-    plan text called for ``warnings.warn``; measured, that is not
-    survivable in this repo — ``filterwarnings = ["error"]`` in
-    ``pyproject.toml`` turns it into a hard failure, and it reddened **167
-    tests in ``yadgar/tests/_shared`` alone**. That is C5's semantics
-    landing in C3, whose whole constraint is that nothing fails loud yet,
-    and broadening the warnings filter to survive it would weaken a
-    repo-wide gate for one car. A log line is the additive form.
+    * ``if not directory_context or directory_context == "global": return
+      "global"`` — the single line that MINTED the sentinel §1.4 forbids, and
+      the one a ``GLOBAL_FALLBACK`` / ``"unresolved"`` / ``local/`` grep would
+      not have caught.
+    * the lazy ``derive_project_id`` classifier reached via ``importlib``.
+    * the ``except → 'unresolved'`` catch around it.
 
-    Pure: no I/O outside the lazy import + the underlying subprocess.
+    Pure: no I/O at all now.
 
     EXPORTED NAME has no leading underscore so the wiki/memory mixins
     import it from this module. The fn itself is intentionally not
     re-exported from ``__init__.py`` — it's a chokepoint helper, not a
     public API.
+
+    Raises:
+        UnresolvedProjectError: ``caller_value`` is falsy.
     """
     if caller_value:
         return caller_value
-    if not directory_context or directory_context == "global":
-        return "global"
-    # C5: DELETE — everything below this line, both tiers.
-    logger.warning(
-        "project_id write reached the container-side derivation fallback: no "
-        "caller_value for directory_context=%r. Neither container can derive an "
-        "identity (no git binary, no host project mounts), so this yields "
-        "local/<basename> or 'unresolved'. The caller must thread the "
-        "session-minted project_id; C5 makes its absence raise.",
-        directory_context,
+    raise UnresolvedProjectError(
+        "storage write",
+        detail=(
+            f"(directory_context={directory_context!r}; the enqueueing tool must "
+            "stamp project_id — the container that executes the write has no git "
+            "binary and no host project mounts)"
+        ),
     )
-    try:
-        derive_project_id = importlib.import_module(_CORE_IDENTITY_TARGET).derive_project_id
-        project_id, _ = derive_project_id(directory_context)
-        return project_id
-    except Exception:  # noqa: BLE001 — boot-path robustness
-        # C5: DELETE — a write that cannot name its project must fail, not
-        # invent a sentinel the corpus then has to be swept for.
-        logger.warning(
-            "project_id classifier failed for directory_context=%r — stamping "
-            "'unresolved'. C5 deletes this fallback.",
-            directory_context,
-        )
-        return "unresolved"

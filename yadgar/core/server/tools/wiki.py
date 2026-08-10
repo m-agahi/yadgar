@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 
 import yadgar._shared.runtime.state as _st
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
-from yadgar._shared.security.enforcement import _enforcement_on, _inc_relaxed
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.server_helpers import _has_unpaired_surrogate, _push_event
 from yadgar._shared.storage.directory import is_directory_eligible
@@ -51,43 +51,32 @@ CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr", "adr_superseded", "wiki_ro
 # chokepoint so its lifecycle is the SOLE mutator.
 
 
-def _missing_directory_error() -> dict:
-    return {
-        "error": "missing_directory",
-        "stored": False,
-        "message": (
-            "directory required and must be non-empty. Pass the absolute project path or 'global'."
-        ),
-        "field": "directory",
-        "op_type": "wiki_add",
-    }
-
-
 @observe(tier="hot", metric="tools.wiki._check_wiki_add_context")
 def _check_wiki_add_context(directory: str | None) -> dict:
-    """Apply DIRECTORY enforcement at the wiki_add MCP boundary.
+    """Reject a ``wiki_add`` that names no scope at all.
 
-    Returns ``{}`` when the write may proceed, or ``{"error": ...}`` to REJECT.
+    Returns ``{}`` when the write may proceed, or the ``UnresolvedProjectError``
+    payload to REJECT.
 
     ADR-0215/0217: this used to be Car 0's four-flow branch router — it read a
     trusted per-directory git fact and decided branch-scoped vs canonical. Branch
     scoping is gone, so the whole flow table went with it, and the git fact was
-    deleted as redundant (ADR-0217). Directory enforcement was never keyed on it
-    — it tests only whether a directory was supplied — so collapsing this
-    function to directory-only removes nothing it depended on.
+    deleted as redundant (ADR-0217).
+
+    **C5 (0047 PR#40 §5): ``YADGAR_DIRECTORY_ENFORCEMENT`` is DELETED and so is
+    ``_missing_directory_error``.** ADR-0225 set the knob's end condition as
+    "until the registry check is actually wired"; C6 wires it in this same PR.
+    A knob that turns a scoping guarantee OFF is incompatible with a system whose
+    identity is fail-loud by construction — "relaxed enforcement" was precisely
+    the mode in which unscoped rows entered the corpus. The rejection is now the
+    structured error every other boundary raises, so an agent gets one shape of
+    answer and one remedy sentence rather than two.
 
     ``is_draining()`` callers are exempt — this helper should only be called when
     not is_draining().
     """
-    _effective_dir: str | None = (directory or "").strip() or None
-    if not _effective_dir:
-        if _enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT"):
-            return _missing_directory_error()
-        logger.warning(
-            "wiki_add: directory enforcement OFF — proceeding without directory context "
-            "(YADGAR_DIRECTORY_ENFORCEMENT=false)"
-        )
-        _inc_relaxed("directory")
+    if not (directory or "").strip():
+        return dict(UnresolvedProjectError("wiki_add").payload)
     return {}
 
 
@@ -145,17 +134,20 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
     # leaving ``_internal`` as a hole would have taken the two canonical page
     # types out of service.
     #
-    # This resolves EXACTLY as ``_wiki_add_impl`` does, fallback included. The
-    # asymmetric alternative — skip the stamp when the resolver returns
-    # ``GLOBAL_FALLBACK``, so the write DLQs — was rejected: it would DLQ a
-    # canonical page while an ordinary ``wiki_add`` with the identical
-    # resolution outcome succeeds. One rule, uniformly applied; C5 flips both
-    # at once when the fallback tier is deleted.
+    # C5 (0047 PR#40 §5): the resolve-with-fallback that stood here is deleted.
+    # With no derivation tier left there is nothing for it to resolve FROM —
+    # ``project=None`` plus a directory is exactly the case that now raises — so
+    # the sanctioned callers must arrive with the stamp already on the payload.
+    # ``adr_add`` does (it holds the value for the ledger row); C5 gave
+    # ``wiki_write_task_list`` the same obligation.
     if not payload.get("project_id"):
-        payload["project_id"] = resolve_effective_project(
-            project=None,
-            directory=payload.get("directory_context"),
-            session_project=None,
+        raise UnresolvedProjectError(
+            "_wiki_write_canonical",
+            detail=(
+                f"(canonical {payload.get('page_type')!r} write for slug "
+                f"{payload.get('slug')!r}: the sanctioned caller must stamp "
+                "project_id — this process cannot derive one)"
+            ),
         )
     # Canonical writes are server-side sanctioned (adr_add + wiki_write_task_list
     # are the SOLE writers of their page_types). Car J (0047 §7 D25/D26) marks
@@ -182,12 +174,46 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
     }
 
 
+@observe(tier="stage", metric="tools.wiki._task_list_guards")
+def _task_list_guards(project_id: str | None, content: str, title: str) -> dict | None:
+    """Return a rejection envelope for ``wiki_write_task_list``, or ``None``.
+
+    Extracted at C5 (0047 PR#40 §5): the new ``project_id`` requirement pushed
+    the tool over the I30 cyclomatic cap, and these are all "refuse before
+    writing" predicates, so they belong together rather than baselined apart.
+
+    The I26 secret gate deliberately STAYS in the tool body. Hiding
+    ``gate_or_reject`` one frame down would satisfy the letter of the scan and
+    defeat its point: the checker asserts that a write tool visibly gates its
+    own content, and a security control that only a reader tracing call graphs
+    can find is one refactor away from being dropped.
+    """
+    if not (project_id or "").strip():
+        return dict(
+            UnresolvedProjectError(
+                "wiki_write_task_list",
+                detail=(
+                    "(the task-list page needs an owner; `project=` is the slug "
+                    "key, not the identity)"
+                ),
+            ).payload
+        )
+    if len(content) > 65_536:
+        return {"stored": False, "reason": "content_too_large", "max_bytes": 65_536}
+    for field in (content, title):
+        if _has_unpaired_surrogate(field):
+            return {"stored": False, "reason": "invalid_unicode_surrogates"}
+    return None
+
+
 @_tool()
 def wiki_write_task_list(
     project: str,
     content: str,
     directory: str,
     wait: bool = True,
+    *,
+    project_id: str | None = None,
 ) -> dict:
     """Persist a Claude Code harness task list to the wiki — one call.
 
@@ -204,11 +230,22 @@ def wiki_write_task_list(
     page_type, so a model cannot use it to write an arbitrary page.
 
     Args:
-        project: project name; the page is slug ``{project}-task-list``.
+        project: project NAME; the page is slug ``{project}-task-list``. This is
+            a slug component, not an identity — it has never been ``owner/repo``
+            and must not become one (a ``/`` would corrupt the slug).
         content: full page body (## Meta + one ## task:<id> section per task).
         directory: absolute project path (directory_context for the page).
         wait: block until the drainer commits (default True — read-your-writes so
             the caller can verify via wiki_history / wiki_read immediately).
+        project_id: owning ``owner/repo`` key. **Required (C5 / ADR-0227.)**
+            Keyword-only and deliberately NOT folded into ``project`` above,
+            because the two are different things that happen to be adjacent: the
+            slug key is a bare name, the identity is a namespaced path. C4 gave
+            ``adr_add`` — the other sanctioned canonical writer — its stamp and
+            missed this one; ``_wiki_write_canonical`` used to paper over that by
+            resolving with a fallback, and with the fallback deleted the gap is
+            visible. The stop-hook has the value: the SessionStart banner prints
+            it.
 
     Returns the ``wiki_add``-shaped result: ``{stored, committed|queued, slug, ...}``.
     On wait-budget expiry returns ``{stored: False, committed: False,
@@ -219,8 +256,10 @@ def wiki_write_task_list(
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
-    if len(content) > 65_536:
-        return {"stored": False, "reason": "content_too_large", "max_bytes": 65_536}
+    title = f"{project} task list"
+    _reject = _task_list_guards(project_id, content, title)
+    if _reject is not None:
+        return _reject
 
     _tags = ["task-list"]
     _gate = gate_or_reject(content, tags=_tags)
@@ -234,11 +273,6 @@ def wiki_write_task_list(
             return {"stored": False, "reason": f"blocked_by_policy: {wp_reason}"}
         if wp_modified is not None:
             content = wp_modified
-
-    title = f"{project} task list"
-    for _field in (content, title):
-        if _has_unpaired_surrogate(_field):
-            return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
     _effective_dir = (directory or "").strip() or None
     if _effective_dir and _effective_dir != "global":
@@ -261,6 +295,8 @@ def wiki_write_task_list(
         "replace_slug": slug,
         "directory_context": _effective_dir,
         "page_type": "task_list",
+        # C5: the canonical seam no longer resolves on a caller's behalf.
+        "project_id": project_id.strip(),
     }
     return _wiki_write_canonical(payload, wait=wait)
 
@@ -468,8 +504,11 @@ def wiki_add(
         _effective_project_id = resolve_effective_project(
             project=project,
             directory=_effective_dir,
-            session_project=None,  # Car E SessionStart hook — not yet wired here
+            session_project=None,
+            tool="wiki_add",
         )
+    except UnresolvedProjectError as exc:
+        return {"stored": False, "ok": False, **exc.payload}
     except InvalidProjectOverrideError as exc:
         return {
             "stored": False,
@@ -625,7 +664,8 @@ def _resolve_wiki_query_project(*, project: str | None, directory: str | None) -
         return resolve_effective_project(
             project=project,
             directory=directory,
-            session_project=None,  # Car E SessionStart hook — not yet wired here
+            session_project=None,
+            tool="wiki_query",
         )
     except InvalidProjectOverrideError as exc:
         raise ValueError(f"wiki_query: {exc}") from exc
@@ -644,7 +684,8 @@ def _resolve_wiki_read_project(*, project: str | None, directory: str | None) ->
         return resolve_effective_project(
             project=project,
             directory=directory,
-            session_project=None,  # Car E SessionStart hook — not yet wired here
+            session_project=None,
+            tool="wiki_read",
         )
     except InvalidProjectOverrideError as exc:
         raise ValueError(f"wiki_read: {exc}") from exc

@@ -19,6 +19,7 @@ from pathlib import Path
 import yadgar._shared.runtime.state as _st
 from yadgar import __version__
 from yadgar._shared.config import get_settings
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import (
     _get_consolidation,
@@ -320,8 +321,11 @@ def anchor(  # noqa: PLR0913 — MCP tool signature; ``project`` is keyword-only
         _effective_project_id = resolve_effective_project(
             project=project,
             directory=context,
-            session_project=None,  # Car E SessionStart hook — not yet wired here
+            session_project=None,
+            tool="anchor",
         )
+    except UnresolvedProjectError as exc:
+        return {"queued": False, "stored": False, "ok": False, **exc.payload}
     except InvalidProjectOverrideError as exc:
         return {"queued": False, "stored": False, "ok": False, "reason": f"anchor: {exc}"}
 
@@ -597,6 +601,7 @@ def seed_project(directory: str, dry_run: bool = False, *, project: str | None =
         project=project,
         directory=resolved,
         session_project=None,
+        tool="seed_project",
     )
     # T2 Car E1: the store phase forwards to the backend seed_store /admin op —
     # no core engine handles needed (scan + generate run host-side inside _seed).

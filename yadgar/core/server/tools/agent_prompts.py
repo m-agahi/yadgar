@@ -33,6 +33,7 @@ import hashlib
 import logging
 import re
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
@@ -43,7 +44,6 @@ from yadgar._shared.wiki.wiki_meta import (
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 from yadgar.core.server.tools._project_param import (
-    GLOBAL_FALLBACK,
     accept_project_param,
     resolve_effective_project,
 )
@@ -162,6 +162,18 @@ def agent_prompt_save(
             "op_type": "agent_prompt_save",
         }
 
+    # C5 (0047 PR#40 §5): resolve the identity BEFORE the secret gate so an
+    # unnamed project fails as a structured envelope rather than after a scan.
+    try:
+        _project_id = resolve_effective_project(
+            project=project,
+            directory=_effective_dir,
+            session_project=None,
+            tool="agent_prompt_save",
+        )
+    except UnresolvedProjectError as exc:
+        return {"saved": False, **exc.payload}
+
     # I26 secret gate — STAYS core (scan content before any state mutation).
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -195,16 +207,10 @@ def agent_prompt_save(
             # C4b (0047 PR#40 §5): the enqueue-time identity, resolved HERE —
             # the process that can see the session — because the backend op
             # that mints the row runs in a container with no git binary and no
-            # host project mounts (ADR-0227 §1.1). Unconditional and resolved
-            # EXACTLY as ``wiki_add`` resolves it, fallback included: an
-            # asymmetric "skip the stamp when the resolver falls back" rule
-            # would leave agent-prompt pages unattributed while an identical
-            # ``wiki_add`` succeeds. C5 flips both when it deletes the tier.
-            "project_id": resolve_effective_project(
-                project=project,
-                directory=_effective_dir,
-                session_project=None,
-            ),
+            # host project mounts (ADR-0227 §1.1). C5: the fallback C4b
+            # deliberately kept symmetric with ``wiki_add``'s is deleted on both
+            # sides at once, so an unnamed project raises here too.
+            "project_id": _project_id,
             # ADR-0209: the CALLER decides the family — the backend op keys
             # everything else off the payload slug, and re-deriving the type
             # from a slug prefix backend-side would rebuild the string-matching
@@ -347,11 +353,16 @@ DISCIPLINE_SLUG_PREFIX = "agent-discipline-"
 @observe(tier="stage", metric="tools.agent_prompts._seed_contract_page")
 def _seed_contract_page(
     storage,
+    project: str | None = None,
 ) -> bool:
     """Idempotently seed the prelude contract wiki page (create-if-absent).
 
     Separate from seed_agent_prompts so the 4-starter counts/assertions are
     not disturbed. Returns True if a new page was created, False if skipped.
+
+    C5 (0047 PR#40 §5): ``project`` is threaded from the seeder's invoker, not
+    defaulted. ``directory="global"`` declares the page's REACH; §1.4 keeps
+    reach and ownership separate, so it can no longer double as the owner.
     """
     existing = _read_agent_prompt(CONTRACT_SLUG, storage=storage)
     if existing is not None:
@@ -364,6 +375,7 @@ def _seed_contract_page(
         directory="global",
         purpose=purpose,
         storage=storage,
+        project=project,
     )
     return True
 
@@ -393,11 +405,22 @@ def _save_discipline_page(
     C4b (0047 PR#40 §5): this is the SECOND ``agent_prompt_save`` forward site
     — C3's precedent on ``WikiAddOptions`` was explicitly "BOTH construction
     sites", and a stamp on only one of them leaves half the agent-prompt
-    corpus unattributed. ``project_id`` is resolved by the caller: the
-    ``discipline_save`` MCP tool has a session, the seeder does not and takes
-    the ``GLOBAL_FALLBACK`` default that matches this page's declared
-    ``directory="global"`` reach.
+    corpus unattributed. ``project_id`` is resolved by the caller.
+
+    **C5: the ``GLOBAL_FALLBACK`` default is DELETED (C4b handoff #4).** It read
+    the page's declared ``directory="global"`` reach as if it were an owner,
+    which is exactly the conflation §1.4 separates — and it fed a value that C5
+    also adds to the drainer's ``_SENTINEL_PROJECT_IDS``, so keeping the default
+    while adding the sentinel would DLQ every seeded discipline page. Both edits
+    land together. ``project_id`` is now required: the seeder threads its
+    invoker's value down, and a caller that has none gets a raise.
     """
+    if not project_id:
+        raise UnresolvedProjectError(
+            "discipline_save",
+            detail=f"(discipline page {DISCIPLINE_SLUG_PREFIX}{name!s} has no owning project)",
+        )
+
     _gate = gate_or_reject(content)
     if _gate is not None:
         return _gate
@@ -419,11 +442,8 @@ def _save_discipline_page(
             "pattern": slug,
             "purpose": purpose,
             "directory": "global",
-            # C4b: unconditional. ``GLOBAL_FALLBACK`` when the caller named no
-            # project — the same value ``resolve_effective_project`` returns
-            # for an unresolvable tree, and still a live scope value in C4's
-            # DLQ gate (``"global"`` is deliberately NOT a sentinel there).
-            "project_id": project_id or GLOBAL_FALLBACK,
+            # C5: required, guarded above. ``"global"`` is now a DLQ sentinel.
+            "project_id": project_id,
             "page_type": PAGE_TYPE_AGENT_DISCIPLINE,
         },
     )
@@ -544,26 +564,25 @@ def discipline_save(
         _purpose = f"Agent discipline: {name}."
     # C4b (0047 PR#40 §5): this tool HAS a session, so it names the owner.
     # ``directory=None`` on purpose — a discipline page declares
-    # ``directory="global"`` reach, and passing that string as a directory
-    # would send the resolver's derivation tier off to derive an identity from
-    # a non-path. Absent an override the resolver returns ``GLOBAL_FALLBACK``,
-    # which is what this page carried implicitly before the stamp existed.
-    return _save_discipline_page(
-        name,
-        _purpose,
-        new_body,
-        project_id=resolve_effective_project(
+    # ``directory="global"`` REACH, and reach is not ownership (§1.4).
+    # C5: absent an override this now raises instead of answering "global".
+    try:
+        _project_id = resolve_effective_project(
             project=project,
             directory=None,
             session_project=None,
-        ),
-    )
+            tool="discipline_save",
+        )
+    except UnresolvedProjectError as exc:
+        return {"saved": False, **exc.payload}
+    return _save_discipline_page(name, _purpose, new_body, project_id=_project_id)
 
 
 @observe(tier="stage", metric="tools.agent_prompts._seed_discipline_pages")
 def _seed_discipline_pages(
     storage,
     only: str | None = None,
+    project: str | None = None,
 ) -> tuple[int, int]:
     """Idempotently seed the discipline pages (create-if-absent per name).
 
@@ -571,6 +590,9 @@ def _seed_discipline_pages(
         storage: StorageEngine used for the existence check.
         only: When set, seed just this discipline name (Stage-3 seed-on-miss
               path from prelude composition). Unknown names are a no-op.
+        project: Owning project_id, threaded from the invoker (C5). The seeder
+            has no session of its own, so this is the ONLY source — absent it,
+            ``_save_discipline_page`` raises rather than stamping ``"global"``.
 
     Returns:
         (created, skipped) counts over the names considered.
@@ -584,7 +606,7 @@ def _seed_discipline_pages(
         if _read_agent_prompt(slug, storage=storage) is not None:
             skipped += 1
             continue
-        _save_discipline_page(name, purpose, content)
+        _save_discipline_page(name, purpose, content, project_id=project)
         created += 1
     return created, skipped
 
@@ -592,6 +614,8 @@ def _seed_discipline_pages(
 @_tool(power=True)
 def seed_agent_prompts(
     storage=None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Idempotently seed the 15 starter agent-prompts + contract + disciplines (global).
 
@@ -609,6 +633,12 @@ def seed_agent_prompts(
     Args:
         storage: StorageEngine instance (injected for testing; otherwise
                  resolved from server lifecycle).
+        project: Owning project_id for every page this seeds. **Required in
+                 practice (C5 / ADR-0227):** the library pages declare
+                 ``directory="global"`` REACH, which used to double as their
+                 owner via ``GLOBAL_FALLBACK``; §1.4 separates the two, so the
+                 seeder must be told whose namespace the rows belong to. Absent
+                 it, the first write raises ``UnresolvedProjectError``.
 
     Returns:
         {"seeded": True, "created": N, "skipped": M, "patterns": [...all 15...],
@@ -633,14 +663,17 @@ def seed_agent_prompts(
                 directory="global",
                 purpose=purpose,
                 storage=storage,
+                project=project,
             )
             created += 1
 
     # Seed the prelude contract page alongside (idempotent, does not affect counts).
-    _seed_contract_page(storage=storage)
+    _seed_contract_page(storage=storage, project=project)
 
     # Stage 2: seed the discipline pages (idempotent; separate count keys).
-    disciplines_created, disciplines_skipped = _seed_discipline_pages(storage=storage)
+    disciplines_created, disciplines_skipped = _seed_discipline_pages(
+        storage=storage, project=project
+    )
 
     return {
         "seeded": True,

@@ -908,16 +908,16 @@ config knobs.
 - **wiring:** Applied once at server-mode startup after v5.73.0. Adds `surprise_score option<float>` and `would_reject option<bool>` to `memory`. Both are nullable; no backfill needed. Written by the write-gate shadow mode via `update_memory_fields`. `WRITE_GATE_THRESHOLD` stays 0.0 (nothing dropped); this is observation-only.
 - **explanation:** Stores the write-gate's surprisal score and shadow rejection decision on each memory row. `surprise_score` is the gate's surprisal value (distinct from the thermodynamics `compute_surprise()` score used for heat boost). `would_reject` is `True` when the gate would reject the memory at `WRITE_GATE_SHADOW_THRESHOLD`, enabling shadow analysis without actual rejection. Both fields are in `_MEMORY_UPDATABLE_FIELDS` so they can be patched via `update_memory_fields`.
 
-### CAP-STOR-025 — Directory scoping enforcement (DIRECTORY_ENFORCEMENT)
+### CAP-STOR-025 — Directory scoping enforcement
 - **status:** LIVE
 - **category:** storage
-- **settings:** `DIRECTORY_ENFORCEMENT`
+- **settings:** —
 - **tools:** `anchor`, `memory_get`, `memory_update`, `forget`, `validate_memory`
 - **migrations:** —
 - **bc:** `BC-DC1`, `BC-DC2`
 - **refs:** `yadgar/_shared/storage/memory.py::get_memories_for_directory`, `yadgar/core/server/tools/wiki.py`, `yadgar/backend/queue_drainer/dlq.py`
-- **wiring:** `DIRECTORY_ENFORCEMENT=true` (default). Checked via `_enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT")` in `wiki.py` and `file_queue/dlq.py` at write time. Memory reads use `directory_context` predicates to scope results (BC-DC1: eligible set = {caller_dir, global, '', None}). BC-DC2: hard-require directory on reads; no `os.getcwd()` container fallback allowed.
-- **explanation:** Enforces per-directory isolation so that a tool call in project A cannot read memories or wiki pages stamped for project B. The eligible set predicate (`directory_context IN (caller_dir, 'global', '', NULL)`) is the I31 invariant. `DIRECTORY_ENFORCEMENT=false` removes the rejection guard for legacy or test contexts.
+- **wiring:** Unconditional at write time in `wiki.py` and `queue_drainer/dlq.py` — C5 of the 0047 remediation train DELETED the enforcement knob that used to gate it (ADR-0227: identity is never defaulted, so the gate has no OFF position; ADR-0225's end condition for the knob is met by C6's registry check). Memory reads use `directory_context` predicates to scope results (BC-DC1: eligible set = {caller_dir, global, '', None}) until C7 re-keys them onto `project_id`. BC-DC2: hard-require directory on reads; no `os.getcwd()` container fallback allowed.
+- **explanation:** Enforces per-directory isolation so that a tool call in project A cannot read memories or wiki pages stamped for project B. The eligible set predicate (`directory_context IN (caller_dir, 'global', '', NULL)`) is the I31 invariant. The former enforcement-off escape hatch — which removed the rejection guard for legacy or test contexts — is GONE: relaxed enforcement was the mode in which unscoped rows entered the corpus.
 
 ### CAP-STOR-026 — Memory CRUD and field management
 - **status:** LIVE
@@ -1824,7 +1824,7 @@ config knobs.
 - **bc:** —
 - **refs:** `yadgar/core/server/tools/wiki.py::_resolve_page_id_by_slug`, `yadgar/core/server/tools/wiki.py::wiki_read`
 - **wiring:** All read/write tools that accept a `directory` parameter call `_resolve_page_id_by_slug(slug, directory)` or `_st._wiki.read_by_directory()` for §25 resolution.
-- **explanation:** The §25 directory scoping system ensures wiki pages are correctly scoped to the project (`directory_context`) they were written for. Resolution order for reads: (1) caller-dir, (2) 'global', (3) not-found. For writes, directory is validated at the MCP boundary (`YADGAR_DIRECTORY_ENFORCEMENT`). This prevents cross-project wiki leakage. A leading resolution step keyed on the caller's git branch, its write-side enforcement gate, and the `branch_hint` parameter added in v5.42.3–v5.42.6 for container/CI scenarios were all retired by ADR-0215: measured, that axis hid 78% of the corpus from any non-default branch while isolating 0.6% of rows.
+- **explanation:** The §25 directory scoping system ensures wiki pages are correctly scoped to the project (`directory_context`) they were written for. Resolution order for reads: (1) caller-dir, (2) 'global', (3) not-found. For writes, scope is validated unconditionally at the MCP boundary (the enforcement knob was deleted by C5 / ADR-0227). This prevents cross-project wiki leakage. A leading resolution step keyed on the caller's git branch, its write-side enforcement gate, and the `branch_hint` parameter added in v5.42.3–v5.42.6 for container/CI scenarios were all retired by ADR-0215: measured, that axis hid 78% of the corpus from any non-default branch while isolating 0.6% of rows.
 
 ### CAP-WIKI-007 — Stale-wiki-count signal
 - **status:** LIVE
@@ -1985,13 +1985,13 @@ config knobs.
 
 - **status:** LIVE
 - **category:** write-path
-- **settings:** `DIRECTORY_ENFORCEMENT`
+- **settings:** —
 - **tools:** `wiki_add`
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/core/server/tools/wiki.py::_check_wiki_add_context`, `yadgar/core/server/tools/wiki.py::_wiki_write_canonical`, `yadgar/core/server/tools/wiki.py::CANONICAL_PAGE_TYPES`, `yadgar/backend/queue_drainer/dlq.py`
-- **wiring:** At wiki-write time `_check_wiki_add_context` applies DIRECTORY enforcement only: empty directory + `YADGAR_DIRECTORY_ENFORCEMENT` on → REJECT `missing_directory`; otherwise proceed. Sanctioned server-side callers reach the canonical write seam via `_wiki_write_canonical` (sets `_internal`; asserts `page_type ∈ CANONICAL_PAGE_TYPES` as defense-in-depth). The drainer honors `_internal` and strips it before the DB write — unchanged. ADR-0215/0217: the four-flow branch router is DELETED, and so is the trusted host-side git fact it consulted along with its whole hook → endpoint → persist → cache → read chain (ADR-0217 found it redundant with project identity).
-- **explanation:** `_check_wiki_add_context` is now DIRECTORY enforcement and nothing else — it tests whether a directory was supplied, which is all it ever did in practice. Car 0 originally paired it with a trusted, non-forgeable host-side git fact so the canonical-vs-branch-scoped write decision fell out of something a model could not assert; ADR-0215 removed branch scoping, and ADR-0217 then deleted that fact after verifying directory enforcement never read it. `CANONICAL_PAGE_TYPES = {task_list, adr}` is a spoofable defense-in-depth assertion inside `_wiki_write_canonical`, NOT the gate — the real boundary is server-side-only reachability of that seam. The forgeable `__canonical__` sentinel from the prior draft is KILLED. Coverage: `tests/core/test_directory_enforcement_chain_e2e.py`.
+- **wiring:** At wiki-write time `_check_wiki_add_context` rejects a write that names no scope, unconditionally: empty directory → REJECT with the structured `unresolved_project` payload (C5; the enforcement knob and `_missing_directory_error` are both deleted). `_wiki_write_canonical` no longer resolves an identity on a caller's behalf either — it RAISES when the sanctioned caller arrived without a `project_id` stamp. Sanctioned server-side callers reach the canonical write seam via `_wiki_write_canonical` (sets `_internal`; asserts `page_type ∈ CANONICAL_PAGE_TYPES` as defense-in-depth). The drainer honors `_internal` and strips it before the DB write — unchanged. ADR-0215/0217: the four-flow branch router is DELETED, and so is the trusted host-side git fact it consulted along with its whole hook → endpoint → persist → cache → read chain (ADR-0217 found it redundant with project identity).
+- **explanation:** `_check_wiki_add_context` tests whether a directory was supplied, which is all it ever did in practice — and after C5 it does so with no knob to turn it off. Car 0 originally paired it with a trusted, non-forgeable host-side git fact so the canonical-vs-branch-scoped write decision fell out of something a model could not assert; ADR-0215 removed branch scoping, and ADR-0217 then deleted that fact after verifying directory enforcement never read it. `CANONICAL_PAGE_TYPES = {task_list, adr}` is a spoofable defense-in-depth assertion inside `_wiki_write_canonical`, NOT the gate — the real boundary is server-side-only reachability of that seam. The forgeable `__canonical__` sentinel from the prior draft is KILLED. Coverage: `tests/core/test_directory_enforcement_chain_e2e.py`.
 
 ---
 
@@ -1999,12 +1999,12 @@ config knobs.
 
 - **status:** LIVE
 - **category:** write-path
-- **settings:** `DIRECTORY_ENFORCEMENT`
+- **settings:** —
 - **tools:** `wiki_write_task_list`
 - **migrations:** —
 - **bc:** —
 - **refs:** `yadgar/core/server/tools/wiki.py::wiki_write_task_list`, `yadgar/core/server/tools/wiki.py::_wiki_write_canonical`, `yadgar/core/server/tools/wiki.py::CANONICAL_PAGE_TYPES`, `yadgar/core/hooks/templates/stop_checkpoint_prompt.md`
-- **wiring:** The stop-hook checkpoint protocol (step 4c of `stop_checkpoint_prompt.md`) calls `wiki_write_task_list(project, content, directory)` to persist the harness task list. The tool builds a fixed payload (`slug={project}-task-list`, `title="{project} task list"`, `page_type="task_list"`, `tags=["task-list"]`, `replace_slug={project}-task-list`), applies the same secret-gate / size / surrogate guards as `wiki_add`, then routes through the server-side `_wiki_write_canonical` (CAP-WIKI-021: sets `_internal`, `wait` param threaded to the existing `_wiki_add_wait_path`). The page resolves by directory alone, so the SessionStart restore-nudge finds it from any working tree and from a non-git project.
+- **wiring:** The stop-hook checkpoint protocol (step 4c of `stop_checkpoint_prompt.md`) calls `wiki_write_task_list(project, content, directory, project_id=…)` to persist the harness task list. **C5 (0047 PR#40 §5) added the keyword-only `project_id`, and it is REQUIRED**: `project` is the slug key (a bare name) and has never been an identity, so it cannot double as one — `_wiki_write_canonical` used to paper over the gap by resolving with a fallback, and with the fallback deleted the writer must arrive with its owner named. The tool builds a fixed payload (`slug={project}-task-list`, `title="{project} task list"`, `page_type="task_list"`, `tags=["task-list"]`, `replace_slug={project}-task-list`), applies the same secret-gate / size / surrogate guards as `wiki_add`, then routes through the server-side `_wiki_write_canonical` (CAP-WIKI-021: sets `_internal`, `wait` param threaded to the existing `_wiki_add_wait_path`). The page resolves by directory alone, so the SessionStart restore-nudge finds it from any working tree and from a non-git project.
 - **explanation:** Fixes the field-broken task-list mirror. The shipped template told the model to `wiki_add(page_type="task_list")` with no branch context, which the branch router hard-rejected in a git dir — `page_type` was never a canonical gate (forgeable) — so the mirror never persisted. `wiki_write_task_list` is a dedicated sanctioned writer whose sanction is STRUCTURAL (purpose-built, bounded to the `{project}-task-list` slug), NOT a spoofable arg — a model cannot use it to write an arbitrary page through the canonical seam. ADR-0215 removed branch scoping, so the original hard-reject is gone; the structural sanction and its coverage (`tests/core/test_car1_task_list_writer.py`) remain.
 
 ---

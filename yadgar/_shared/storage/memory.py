@@ -119,18 +119,21 @@ class _MemoryMixin:
             "embedding": emb_floats,
             "tags": memory.get("tags", []),
             "source_episode_id": memory.get("source_episode_id"),
-            # v5.46.6: normalise empty-string directory_context to 'global' so it
-            # surfaces in the global anchor bucket without relying on '' equality
-            # (SurrealDB 2 embedded may not round-trip '' reliably in comparisons).
-            "directory_context": memory["directory_context"] or "global",
-            # Car L (0047 §16.9): project_id alongside directory_context. The
-            # caller may already provide a project_id (cleanup path, the
-            # wiki_add replay branch). When the caller did not, fall back to
-            # the lazy classifier — same seam as the migration; failure
-            # falls back to 'unresolved' so the write never blocks.
+            # C5 (0047 PR#40 §5): the v5.46.6 ``or "global"`` normalisation is
+            # DELETED. It was written to make an empty directory_context surface
+            # in the global anchor bucket, but the bucket it fed is keyed on the
+            # ``global`` TAG now (§1.4: reach is a tag, ownership is project_id),
+            # and the same expression was the second of two sites minting the
+            # sentinel inside one dict literal. An empty directory_context is
+            # stored as it arrived; nothing is invented on its behalf.
+            "directory_context": memory["directory_context"],
+            # Car L (0047 §16.9): project_id alongside directory_context. C5:
+            # the caller's value or a raise — there is no classifier seam left
+            # to fall back to, and directory_context is passed only so the
+            # raise can name the write.
             "project_id": _resolve_project_id_for_write(
                 caller_value=memory.get("project_id"),
-                directory_context=memory.get("directory_context") or "global",
+                directory_context=memory.get("directory_context"),
             ),
             "created_at": memory.get("created_at", now),
             "last_accessed": memory.get("last_accessed", now),
@@ -1156,16 +1159,32 @@ class _MemoryMixin:
         directory: str,
         limit: int = 20,
     ) -> list[dict]:
-        """Return anchors in scope priority order: global first, then project.
+        """Return anchors in scope priority order: global-reach first, then project.
 
         Two queries, hard cap `limit` each (safety cap 50 per design).
-        Global = directory_context IN ('', 'global').
+        Global = ``'global' IN tags`` (**C5**).
         Project = directory_context = directory (exact repo root match).
         v5.65: 'system' removed from global bucket (mis-stamp sink; v5.64 stopped new writes).
         Deduplicates by memory id. Returns global anchors first, then project.
         No rank-filter applied — anchors surface unconditionally (design §2).
 
         v5.19.0: replaces flat get_anchored_memories() in restore() path.
+
+        **C5 (0047 PR#40 §5) re-keyed the global bucket from
+        ``directory_context IN ('', 'global')`` to the ``global`` TAG.** §1.4
+        splits ownership from reach: ``project_id`` is always a real registered
+        project and ``"global"`` is never one, so a *reader* keyed on
+        ``directory_context = 'global'`` reads a concept that no longer exists
+        on the write side — C5 deleted every site that minted it.
+
+        **Known, quantified consequence — this bucket is NARROW until C6.** The
+        plan measured the live corpus (§1.5 D2, 2026-08-10): **7** memory rows
+        already carry a ``global`` tag against **~349** stamped
+        ``directory_context = 'global'``. Until C6's operator-invoked backfill
+        re-keys those 349 rows to a real owner + the reach tag, this query
+        returns the 7, not the 349. That is deliberate — surfacing rows through
+        a predicate the write path can no longer produce is how the sentinel
+        stayed alive — but it is a C6 dependency, not a free rename.
         """
         _now = self._now_iso()
         _cap = min(limit, 50)  # hard safety cap
@@ -1173,7 +1192,7 @@ class _MemoryMixin:
         global_rows = self._q(
             "SELECT * FROM memory "
             "WHERE '_anchor' INSIDE tags AND is_protected = true "
-            "AND (directory_context = '' OR directory_context = 'global') "
+            "AND 'global' INSIDE tags "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC LIMIT $lim",
             {"now": _now, "lim": _cap},

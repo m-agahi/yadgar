@@ -23,12 +23,27 @@ Usage:
         subagent_type="general-purpose",
         include_context=True,
     )
+
+An unknown ``pattern`` RAISES (C5, 0047 PR#40 §5)
+-------------------------------------------------
+Before C5 an unknown pattern flowed through ``_cached_agent_prompt`` and was
+dropped by a truthiness guard, so the prelude came back as contract + recall
+hint and **no prompt** — which the caller reads as *"no pattern exists for this
+task-shape"* and which therefore **licenses a bespoke dispatch**. That is the
+same defect class as the ``_local_fallback`` ADR-0227 deletes: a fallback
+manufacturing a plausible-looking wrong answer. The TOC carries **exact slugs**
+and the agent reads **by slug**, so an unavailable slug must fail loud rather
+than let the agent invent one. (Pruning dead TOC entries is cleanup that
+FOLLOWS; it is not the fix.) ``pattern=""`` remains the documented skip, and
+``_build_context_block`` is deliberately untouched — its empty return is
+best-effort enrichment whose caller already drops it.
 """
 
 from __future__ import annotations
 
 import logging
 
+from yadgar._shared.errors import UnresolvedPatternError
 from yadgar._shared.observability.observe import observe
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
@@ -439,6 +454,14 @@ def agent_dispatch_prelude(
 
     Returns:
         Markdown string. Base cap: 3 500 chars. With context: up to 6 000 chars.
+
+    Raises:
+        UnresolvedPatternError: ``pattern`` is non-empty, the library is
+            enabled, and no page exists at ``agent-prompt-<pattern>``. C5
+            (0047 PR#40 §5): this used to return a prelude with the contract and
+            no prompt, which the caller reads as "no pattern exists" — and that
+            reading is what licenses a bespoke dispatch. ``pattern=""`` remains
+            the documented skip.
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
@@ -468,28 +491,37 @@ def agent_dispatch_prelude(
     from yadgar._shared.config import get_settings  # noqa: PLC0415
 
     if pattern and get_settings().AGENT_PROMPT_LIBRARY_ENABLED:
+        # C5 (0047 PR#40 §5) — see the module docstring's "unknown pattern"
+        # note. Read hoisted OUT of the try below (a raise inside it would be
+        # swallowed by the handler this car exists to defeat); empty result
+        # raises; storage errors are no longer reported as absence.
+        prompt_result = _cached_agent_prompt(pattern, storage)
+        if not (prompt_result and prompt_result.get("content")):
+            raise UnresolvedPatternError(f"agent-prompt-{pattern}")
+
+        raw_content = prompt_result["content"]
+        version = prompt_result.get("version", "?")
+        # Stage 3 + 0047 Car I: ledger-first composed-order read
+        # (agent_pattern_composes is the source-of-truth); wiki-body
+        # regex is the fallback when the ledger is unavailable.
+        # Assembly stays best-effort: a discipline-composition or usage-counter
+        # failure is genuinely non-fatal enrichment, and the RESOLUTION above is
+        # what had to stop being best-effort.
         try:
-            prompt_result = _cached_agent_prompt(pattern, storage)
-            if prompt_result and prompt_result.get("content"):
-                raw_content = prompt_result["content"]
-                version = prompt_result.get("version", "?")
-                # Stage 3 + 0047 Car I: ledger-first composed-order read
-                # (agent_pattern_composes is the source-of-truth); wiki-body
-                # regex is the fallback when the ledger is unavailable.
-                discipline_sections = _build_discipline_sections(
-                    _composes_for(pattern, raw_content), storage
-                )
-                body = _strip_composes_section(raw_content)
-                # Truncate if needed to respect the pattern-snippet budget
-                used = len(contract_text) + 100  # 100 for separators
-                available = _AGENT_PROMPT_BUDGET - used
-                if available > 80:
-                    snippet = body[:available]
-                    tail.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
-                # Stage 3.4: count the assembly (pattern resolved → real usage).
-                _record_pattern_usage(pattern)
+            discipline_sections = _build_discipline_sections(
+                _composes_for(pattern, raw_content), storage
+            )
+            body = _strip_composes_section(raw_content)
+            # Truncate if needed to respect the pattern-snippet budget
+            used = len(contract_text) + 100  # 100 for separators
+            available = _AGENT_PROMPT_BUDGET - used
+            if available > 80:
+                snippet = body[:available]
+                tail.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
+            # Stage 3.4: count the assembly (pattern resolved → real usage).
+            _record_pattern_usage(pattern)
         except Exception as _e:
-            logger.debug("agent_dispatch_prelude: _read_agent_prompt failed: %s", _e)
+            logger.debug("agent_dispatch_prelude: prompt assembly failed: %s", _e)
 
     # Recall hint
     if task_topic:

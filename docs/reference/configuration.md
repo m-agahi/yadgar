@@ -485,7 +485,6 @@ Operational literals promoted from hardcoded values to config.yaml-authoritative
 | `wiki_sim_mode` | `YADGAR_WIKI_SIM_MODE` | str | `hard` | `hard`,`soft` | Gate enforcement mode: `hard` rejects duplicate creates; `soft` logs a WARNING but allows the write. |
 | `wiki_sim_top_k` | `YADGAR_WIKI_SIM_TOP_K` | int | `5` | — | Max candidate duplicate pages returned in the rejection response. |
 | `wiki_embed_failure_blocks_write` | `YADGAR_WIKI_EMBED_FAILURE_BLOCKS_WRITE` | bool | `false` | — | When true, `wiki_add` fails if `_compute_embedding` returns None or raises. Default false: WARN log + metric, proceed with NULL embedding. |
-| `directory_enforcement` | `YADGAR_DIRECTORY_ENFORCEMENT` | bool | `true` | — | When true, `wiki_add` rejects payloads missing `directory_context`. Set false as a migration escape hatch (emits WARN + `yadgar_writes_with_enforcement_relaxed` metric). |
 
 ---
 

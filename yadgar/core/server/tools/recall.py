@@ -133,6 +133,7 @@ def _resolve_project_for_recall(
             project=project,
             directory=directory,
             session_project=None,
+            tool="recall",
         )
     except InvalidProjectOverrideError as exc:
         raise ValueError(f"recall: {exc}") from exc

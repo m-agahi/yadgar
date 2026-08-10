@@ -46,7 +46,7 @@ Claude Code (MCP client)
 ### Write path (`memorize` / `wiki_add`)
 
 1. **Secret scrub** — content checked against credential patterns (AWS, JWT, etc.)
-2. **MCP boundary contract validation** — `directory_context` required; missing → hard-reject (`{"error": "missing_directory"}`). Gated by `YADGAR_DIRECTORY_ENFORCEMENT` (default ON). The branch half of this gate was retired by ADR-0215.
+2. **MCP boundary contract validation** — a write must name its scope; missing → hard-reject with the structured `{"error": "unresolved_project", "tool": …, "fix": …}` payload. The branch half of this gate was retired by ADR-0215; the `YADGAR_DIRECTORY_ENFORCEMENT` escape hatch was deleted by C5 of the 0047 remediation train (ADR-0227 — an identity is never defaulted, so there is no OFF position to offer).
 3. **Rules engine** — custom write-block rules evaluated
 4. **File queue enqueue (ADR-0075)** — payload written to `YADGAR_QUEUE_BASE=/data/queue` (shared `yadgar-queue-data` Docker volume). Both core and backend mount this volume.
 5. **Drainer enforcement (defense-in-depth)** — backend drainer re-validates directory; missing → DLQ with `failure_reason=missing_directory`.
@@ -239,7 +239,7 @@ On non-Docker hosts, `yadgar-vacuum.service` (systemd oneshot) runs `yadgar vacu
 **Caller contract:**
 - Writers MUST supply `directory` — hard-reject at MCP boundary otherwise.
 - Drainer re-validates (defense-in-depth) → DLQ on missing.
-- Gated by `YADGAR_DIRECTORY_ENFORCEMENT` (default ON).
+- Unconditional: the enforcement knob was deleted (ADR-0227 / C5).
 
 **Resolution (2-step):**
 - `wiki_read(slug)` resolves via: (1) `directory=caller_dir`; (2) `directory='global'`; (3) not found → error dict.

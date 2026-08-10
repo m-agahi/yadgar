@@ -1,34 +1,35 @@
-"""Project identity derivation — Car A0 of the 0047 spine train.
+"""Pure identity-parsing helpers — Car A0 of the 0047 spine train, gutted by C5.
 
-Resolution order (§16.2 of the master plan):
+**There is no ``derive_project_id`` here any more, and none may be added.**
+C5 deleted it along with ``_local_fallback``, its no-remote arm. ADR-0227:
 
-    1. ``.yadgar/project-id`` walked UP from cwd → use its content
-       (trimmed whitespace, no embedded newlines in the key).
-    2. ``owner/repo`` from the git remote, normalised (§16.4):
-       resolve insteadOf rewrites → strip scheme+host → strip trailing
-       ``.git`` → lowercase. Host excluded. The ``origin`` remote is the
-       canonical source; ``.yadgar/project-id`` is the documented override.
-    3. ``local/<basename>`` fallback when no remote exists.
+> ``derive_project_id`` is removed from every code path reachable by core or
+> backend. […] ALL fallbacks are deleted: no ``_local_fallback``, no
+> ``local/<basename>``, no ``GLOBAL_FALLBACK`` ``"global"`` tier, no directory
+> tier in the resolver.
 
-The ``owner/repo`` key is intentionally a path (not just ``repo``): a
-``group/sub/repo`` triple stays one opaque path (§16.9). Splitting on the
-last ``/`` would have collapsed every nested namespace into a single
+What survives is a set of pure readers with no identity POLICY in them: parse a
+remote URL, apply an insteadOf table, read a ``.yadgar/project-id`` file, shell
+out for ``remote.origin.url``. The policy — which sources count, in what order,
+and what happens when none resolve — is the composition, and it lives in
+``yadgar.core.hooks._identity_mint`` where only the host-side hook entry points
+can reach it. That module raises rather than guessing.
+
+The ``owner/repo`` key those helpers build is intentionally a path (not just
+``repo``): a ``group/sub/repo`` triple stays one opaque path (§16.9). Splitting
+on the last ``/`` would have collapsed every nested namespace into a single
 repo, so a Codeberg group with 30 subprojects would all collide.
 
-Composes with the existing ``_resolve_project_root`` and
-``_worktree_canonical_root`` in ``yadgar/_shared/server_helpers/server_helpers.py``
-to find the git root before reading the remote — does NOT duplicate
-those helpers, and does NOT touch the DB (§15: core never imports
-``yadgar._shared.storage``).
+Does NOT touch the DB (§15: core never imports ``yadgar._shared.storage``).
 """
 
 from __future__ import annotations
 
 import functools
 import logging
-import os
 import re
 import subprocess
+from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
 
@@ -195,24 +196,7 @@ def _walk_project_id_file(start: str) -> str | None:
     return None
 
 
-# ── local fallback (§16.2) ─────────────────────────────────────────────────
-
-
-@observe(tier="stage", metric="core.identity._local_fallback")
-def _local_fallback(cwd: str) -> str:
-    """Return the ``local/<basename>`` key for a non-git directory."""
-    base = os.path.basename(cwd.rstrip(os.sep)) or cwd.rstrip(os.sep) or "."
-    return f"local/{base}"
-
-
-# ── top-level entry point ──────────────────────────────────────────────────
-
-
-from pathlib import Path  # noqa: E402 — kept at module bottom: see comment above
-
-from yadgar._shared.server_helpers.server_helpers import (  # noqa: E402
-    _resolve_project_root,
-)
+# ── remote reader ──────────────────────────────────────────────────────────
 
 
 @observe(tier="stage", metric="core.identity._origin_remote")
@@ -236,41 +220,3 @@ def _origin_remote(git_root: str) -> str:
         FileNotFoundError,
     ):  # fmt: skip — I33 obs-coverage parser rejects the PEP 758 bare form
         return ""
-
-
-@observe(tier="hot", metric="core.identity.derive_project_id")
-def derive_project_id(cwd: str | None = None) -> tuple[str, str]:
-    """Resolve the project_id for the given directory (default: ``os.getcwd()``).
-
-    Returns ``(project_id, remote_url)``:
-
-    * ``project_id`` — the canonical key (always set, never empty).
-    * ``remote_url`` — the provenance URL after insteadOf resolution
-      (empty for the local fallback).
-
-    Resolution order:
-
-        1. ``.yadgar/project-id`` walked UP from cwd → use its content.
-        2. ``owner/repo`` from the git ``origin`` remote, normalised
-           (insteadOf resolved → scheme+host stripped → ``.git`` suffix
-           stripped → lowercase).
-        3. ``local/<basename>`` when no remote exists.
-    """
-    start = cwd if cwd is not None else os.getcwd()
-
-    override = _walk_project_id_file(start)
-    if override:
-        # Even with an override, report the live remote URL (empty if there
-        # isn't one) so a caller can see what they would have derived
-        # without the override — diagnostic value, not a key input.
-        git_root = _resolve_project_root(start)
-        return override, _origin_remote(git_root)
-
-    git_root = _resolve_project_root(start)
-    remote = _origin_remote(git_root)
-
-    if remote:
-        resolved = _parse_insteadof_map(_insteadof_rules(), remote)
-        return _normalise_remote(resolved), resolved
-
-    return _local_fallback(start), ""

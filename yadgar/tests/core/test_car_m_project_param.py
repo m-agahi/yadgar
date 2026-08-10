@@ -34,6 +34,8 @@ from unittest.mock import patch
 
 import pytest
 
+from yadgar._shared.errors import UnresolvedProjectError
+
 # ── resolve_effective_project — precedence + validation ─────────────────────
 
 
@@ -77,59 +79,62 @@ class TestResolveEffectiveProject:
         from yadgar.core.server.tools._project_param import resolve_effective_project
 
         with patch(
-            "yadgar.core.server.tools._project_param.derive_project_id",
-            return_value=("m-agahi/yadgar", ""),
+            "yadgar.core.server.tools._project_param.resolve_effective_project",
+            wraps=resolve_effective_project,
         ):
-            out = resolve_effective_project(
+            # C5 (0047 PR#40 §5) INVERTED this assertion in place, as C3/C4b did
+            # with theirs. Car M asserted that a bare directory DERIVES an
+            # identity; ADR-0227 deleted the tier, because the process running
+            # this code has no git binary and no host project mounts, so what it
+            # "derived" was a well-formed guess indistinguishable at read time
+            # from a real key.
+            with pytest.raises(UnresolvedProjectError):
+                resolve_effective_project(
+                    project=None,
+                    directory="/home/max/git/yadgar",
+                    session_project=None,
+                )
+
+    def test_no_resolution_now_raises(self) -> None:
+        """INVERTED by C5: all None → raise, never ``"global"``.
+
+        §1.4: ``"global"`` is never a project_id — cross-project reach is a
+        separate tag — so the tier that answered this case was minting exactly
+        the sentinel the corpus then has to be swept for.
+        """
+        from yadgar.core.server.tools._project_param import resolve_effective_project
+
+        with pytest.raises(UnresolvedProjectError):
+            resolve_effective_project(
                 project=None,
-                directory="/home/max/git/yadgar",
+                directory=None,
                 session_project=None,
             )
-        assert out == "m-agahi/yadgar"
 
-    def test_falls_back_to_global_when_no_resolution(self) -> None:
-        """All None / empty → ``GLOBAL_FALLBACK`` (= ``"global"``)."""
-        from yadgar.core.server.tools._project_param import (
-            GLOBAL_FALLBACK,
-            resolve_effective_project,
-        )
+    def test_directory_with_empty_string_also_raises(self) -> None:
+        """An empty/whitespace-only ``directory`` is still no identity."""
+        from yadgar.core.server.tools._project_param import resolve_effective_project
 
-        out = resolve_effective_project(
-            project=None,
-            directory=None,
-            session_project=None,
-        )
-        assert out == GLOBAL_FALLBACK
-
-    def test_directory_with_empty_string_falls_through(self) -> None:
-        """An empty/whitespace-only ``directory`` is treated as None."""
-        from yadgar.core.server.tools._project_param import (
-            GLOBAL_FALLBACK,
-            resolve_effective_project,
-        )
-
-        out = resolve_effective_project(
-            project=None,
-            directory="   ",
-            session_project=None,
-        )
-        assert out == GLOBAL_FALLBACK
+        with pytest.raises(UnresolvedProjectError):
+            resolve_effective_project(
+                project=None,
+                directory="   ",
+                session_project=None,
+            )
 
     def test_session_empty_string_falls_through(self) -> None:
         """An empty ``session_project`` is treated as None."""
         from yadgar.core.server.tools._project_param import resolve_effective_project
 
-        with patch(
-            "yadgar.core.server.tools._project_param.derive_project_id",
-            return_value=("m-agahi/yadgar", ""),
-        ):
-            out = resolve_effective_project(
+        # C5: falling through past an empty session_project used to land on the
+        # directory-derivation tier. There is no tier below it any more, so the
+        # observable consequence of "empty is treated as None" is the raise.
+        with pytest.raises(UnresolvedProjectError):
+            resolve_effective_project(
                 project=None,
                 directory="/home/max/git/yadgar",
                 session_project="",
             )
-        # Falls through to directory-derived
-        assert out == "m-agahi/yadgar"
 
     def test_override_rejects_non_string(self) -> None:
         """Type-level guard: non-string ``project`` raises InvalidProjectOverrideError."""
@@ -177,28 +182,28 @@ class TestResolveEffectiveProject:
         msgs = [r.getMessage() for r in caplog.records]
         assert any("overrides supplied directory" in m for m in msgs), msgs
 
-    def test_directory_derivation_failure_falls_back_to_global(self) -> None:
-        """When ``derive_project_id`` raises on the directory path, fall back to
-        GLOBAL_FALLBACK (the safe cross-project sentinel). The tool call must
-        NOT crash on a non-git / unreadable directory."""
-        from yadgar.core.server.tools._project_param import (
-            GLOBAL_FALLBACK,
-            resolve_effective_project,
-        )
+    def test_a_non_git_directory_raises_instead_of_falling_back(self) -> None:
+        """INVERTED by C5. Car M's version asserted that a derivation FAILURE on
+        a non-git / unreadable directory falls back to the sentinel so the tool
+        call does not crash. That "safety" is the defect: it turned an
+        unanswerable question into a plausible-looking answer, and every row it
+        wrote landed in a namespace nobody chose.
 
-        # Patch the imported symbol (resolve_effective_project already bound it
-        # at module load — patch the local reference, not yadgar.core.identity,
-        # so a single test stays self-contained).
-        with patch(
-            "yadgar.core.server.tools._project_param.derive_project_id",
-            side_effect=RuntimeError("nope"),
-        ):
-            out = resolve_effective_project(
+        There is no classifier left to make fail, so the test drives the real
+        thing: a directory that cannot name a project.
+        """
+        from yadgar.core.server.tools._project_param import resolve_effective_project
+
+        with pytest.raises(UnresolvedProjectError) as ei:
+            resolve_effective_project(
                 project=None,
                 directory="/nonexistent",
                 session_project=None,
+                tool="unit",
             )
-        assert out == GLOBAL_FALLBACK
+        # The payload must be actionable, not merely present.
+        assert ei.value.payload["tool"] == "unit"
+        assert 'project="owner/repo"' in ei.value.payload["fix"]
 
 
 # ── recall(project=...) — keyword-only + payload stamping ───────────────────
@@ -303,13 +308,21 @@ class TestRecallProjectParam:
                 None,
             ),
         ):
-            recall(
-                query="x",
-                directory="/home/max/git/yadgar",
-            )
+            # INVERTED by C5 (0047 PR#40 §5). Car M asserted that a bare
+            # ``directory`` forwards no ``project_id`` — wire-compat with an older
+            # ``extra="forbid"`` backend. C3 added the field to ``RecallRequest``,
+            # so the compat reason is spent, and ADR-0227 makes the case itself
+            # an error: a recall that cannot name its project is unscoped, and
+            # answering it from the whole corpus is the cross-project leak the
+            # scoping work exists to close.
+            with pytest.raises(UnresolvedProjectError):
+                recall(
+                    query="x",
+                    directory="/home/max/git/yadgar",
+                )
 
-        # project_id is None → not forwarded.
-        assert captured.get("project_id") is None
+        # The tool raised before reaching the wire — nothing was forwarded.
+        assert captured == {}
 
 
 # ── memorize(project=...) — payload stamping ──────────────────────────────────
@@ -394,7 +407,7 @@ class TestMemorizeProjectParam:
             ),
             patch(
                 "yadgar.core.server.tools.memorize.resolve_effective_project",
-                side_effect=lambda project, directory, session_project: (  # noqa: ARG005
+                side_effect=lambda project, directory, session_project, tool=None: (  # noqa: ARG005
                     project or "session/derived"
                 ),
             ),

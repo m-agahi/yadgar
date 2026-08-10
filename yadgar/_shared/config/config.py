@@ -372,12 +372,11 @@ class Settings(BaseSettings):
     # Max near-duplicate candidates returned in the (non-blocking) near_duplicates list.
     MEMORIZE_SIM_TOP_K: int = 3
 
-    # v5.42.6: enforcement knob (I25 three-way registered).
-    # Default True: strict enforcement — a missing directory rejects the write.
-    # False: relax enforcement, emit WARN log + metric instead of rejecting.
-    # Set to False as a migration escape hatch if legacy callers lack directory.
-    # ADR-0215 deleted the BRANCH_ENFORCEMENT sibling along with branch scoping.
-    DIRECTORY_ENFORCEMENT: bool = True
+    # C5 (0047 PR#40 §5): ``DIRECTORY_ENFORCEMENT`` is DELETED. ADR-0215 had
+    # already removed its BRANCH_ENFORCEMENT sibling; ADR-0225 set this one's end
+    # condition as "until the registry check is actually wired", and C6 wires it
+    # in this same PR. A knob whose OFF position disables a scoping guarantee
+    # cannot coexist with an identity contract that is fail-loud by construction.
 
     # v5.62.0: Recall quality floor — drop results whose cross-encoder score is
     # below this threshold.  Targets keyword-only co-occurrence noise that survives

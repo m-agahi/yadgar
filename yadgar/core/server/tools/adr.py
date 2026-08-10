@@ -46,14 +46,16 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar.core.forward import _forward_admin
-from yadgar.core.identity import derive_project_id
 from yadgar.core.server._app import _tool
 
 # Car M (0047 §7, §16.6): cross-project ``project=`` override on the ADR MCP
-# tools. Resolves the effective project_id (override → session → directory →
-# "global") and threads it through to the ledger-backed write/read paths.
+# tools. C5 (0047 PR#40 §5) deleted the directory-derived and "global" tiers
+# under it, so the chain is override → session → raise, and the unguarded
+# ``from yadgar.core.identity import derive_project_id`` that forced C2 to be
+# additive went with the three call sites it fed.
 from yadgar.core.server.tools._project_param import (
     InvalidProjectOverrideError,
     resolve_effective_project,
@@ -162,18 +164,31 @@ def _validate_adr_add_input(provided: dict[str, str]) -> dict | None:
 @observe(
     exempt="trivial project-root resolve; no I/O, no external call, no error branch worth spanning"
 )
-def _resolve_adr_add_context(directory: str) -> dict | tuple[str, str]:
+def _resolve_adr_add_context(directory: str, project: str | None) -> dict | tuple[str, str]:
     """Resolve ``directory`` → ``project_root`` + ``project_id``. Returns
     ``(resolved, project_id)`` on success, an error dict on failure.
-    Extracted from ``adr_add`` for fn_loc (I13)."""
+    Extracted from ``adr_add`` for fn_loc (I13).
+
+    C5 (0047 PR#40 §5): the ``derive_project_id(cwd=resolved)`` call is gone.
+    ``project_id`` now comes from the caller's ``project=`` and nowhere else —
+    a directory is a filesystem hint, and this process cannot see the tree it
+    names. Absence is an ``UnresolvedProjectError`` returned as the tool's
+    structured envelope so the agent reading it learns what to pass."""
     try:
         resolved = _resolve_project_root(directory)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"cannot resolve project root: {exc}"}
     try:
-        project_id, _remote_url = derive_project_id(cwd=resolved)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"cannot derive project_id: {exc}"}
+        project_id = resolve_effective_project(
+            project=project,
+            directory=resolved,
+            session_project=None,
+            tool="adr_add",
+        )
+    except UnresolvedProjectError as exc:
+        return {"ok": False, **exc.payload}
+    except InvalidProjectOverrideError as exc:
+        return {"ok": False, "error": f"adr_add: {exc}"}
     return resolved, project_id
 
 
@@ -260,28 +275,17 @@ def adr_add(
     if validation_error is not None:
         return validation_error
 
-    ctx = _resolve_adr_add_context(directory)
+    # C5 (0047 PR#40 §5): one resolution, inside ``_resolve_adr_add_context``.
+    # The old shape resolved a directory-derived project_id first and then let
+    # ``project=`` overwrite it; with the derivation tier deleted there is only
+    # the caller's value, so the second pass was dead code that re-ran the same
+    # call. The override is the namespace stamp on the ledger row AND on the
+    # body-page slug; ``directory`` stays as the wiki body's directory_context
+    # (the directory is the file-system hint, the project_id is the namespace).
+    ctx = _resolve_adr_add_context(directory, project)
     if isinstance(ctx, dict):
         return ctx
     resolved, project_id = ctx
-
-    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
-    # directory-derived ``project_id`` (precedence: project > session >
-    # directory). The override is the namespace stamp on the ledger row
-    # AND on the body-page slug. The deep registry check is backend-side
-    # (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
-    # type-level guard. ``directory`` stays as the wiki body's
-    # directory_context (the directory is the file-system hint; the
-    # project_id is the namespace).
-    if project is not None:
-        try:
-            project_id = resolve_effective_project(
-                project=project,
-                directory=resolved,
-                session_project=None,  # Car E SessionStart hook — not yet wired here
-            )
-        except InvalidProjectOverrideError as exc:
-            return {"ok": False, "error": f"adr_add: {exc}"}
 
     # ── Car H: §10 Q2 subsystem normalizer (lowercase + trim; empty → None).
     subsystem_normalized = _normalize_subsystem(subsystem)
@@ -547,25 +551,22 @@ def adr_get(directory: str, adr_id: str, *, project: str | None = None) -> dict:
     normalized = f"ADR-{int(m.group(1)):04d}"
     adr_id_int = int(m.group(1))
 
+    # C5 (0047 PR#40 §5): ``derive_project_id(cwd=resolved)`` deleted. The
+    # namespace stamp on the ledger row comes from ``project=`` and nothing
+    # else. The deep registry check is backend-side
+    # (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
+    # type-level guard.
     try:
-        project_id, _remote_url = derive_project_id(cwd=resolved)
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"cannot derive project_id: {exc}"}
-
-    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
-    # directory-derived ``project_id`` (precedence: project > session >
-    # directory). The override is the namespace stamp on the ledger row.
-    # The deep registry check is backend-side (`_ensure_project_exists_sync`,
-    # §15 / ADR-0078); core enforces the type-level guard.
-    if project is not None:
-        try:
-            project_id = resolve_effective_project(
-                project=project,
-                directory=resolved,
-                session_project=None,  # Car E SessionStart hook — not yet wired here
-            )
-        except InvalidProjectOverrideError as exc:
-            return {"error": f"adr_get: {exc}"}
+        project_id = resolve_effective_project(
+            project=project,
+            directory=resolved,
+            session_project=None,
+            tool="adr_get",
+        )
+    except UnresolvedProjectError as exc:
+        return dict(exc.payload)
+    except InvalidProjectOverrideError as exc:
+        return {"error": f"adr_get: {exc}"}
 
     body = _fetch_adr_body_page(resolved, project_id, normalized, adr_id_int)
     row_result = _fetch_adr_ledger_row(adr_id, adr_id_int, project_id=project_id)
@@ -581,12 +582,19 @@ def _fetch_adr_body_page(
 ) -> dict[str, Any]:
     """D4 body fetch (Car F: unchanged). Try the new D32 ③ slug first, then
     fall back to the legacy `<project>-adr-NNNN` for the 194 pages Car L
-    has not yet re-slugged. Extracted from ``adr_get`` for I13 cyclomatic."""
+    has not yet re-slugged. Extracted from ``adr_get`` for I13 cyclomatic.
+
+    C5 (0047 PR#40 §5): both ``wiki_read`` calls now thread ``project=``. They
+    passed ``directory=`` alone, which worked only because ``wiki_read``'s
+    resolver would derive an identity from that directory — a tool-to-tool call
+    dropping a value the CALLER already holds. With the derivation tier deleted
+    the omission is a raise, which is exactly the class of forgotten caller §2's
+    ordering was designed to surface."""
     new_slug = f"{project_id.replace('/', '_')}_adr-{adr_id_int:04d}"
     legacy_slug = adr_page_slug(resolved, normalized)
-    body: dict[str, Any] = wiki_read(new_slug, directory=resolved)
+    body: dict[str, Any] = wiki_read(new_slug, directory=resolved, project=project_id)
     if "error" in body:
-        body = wiki_read(legacy_slug, directory=resolved)
+        body = wiki_read(legacy_slug, directory=resolved, project=project_id)
     return body
 
 
@@ -735,23 +743,20 @@ def adr_list(
     except Exception as exc:  # noqa: BLE001
         return {"error": f"cannot resolve project root: {exc}"}
 
+    # C5 (0047 PR#40 §5): ``derive_project_id(cwd=resolved)`` deleted. The
+    # namespace stamp on the ledger list comes from ``project=`` and nothing
+    # else.
     try:
-        project_id, _remote_url = derive_project_id(cwd=resolved)
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"cannot derive project_id: {exc}"}
-
-    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
-    # directory-derived ``project_id`` (precedence: project > session >
-    # directory). The override is the namespace stamp on the ledger list.
-    if project is not None:
-        try:
-            project_id = resolve_effective_project(
-                project=project,
-                directory=resolved,
-                session_project=None,  # Car E SessionStart hook — not yet wired here
-            )
-        except InvalidProjectOverrideError as exc:
-            return {"error": f"adr_list: {exc}"}
+        project_id = resolve_effective_project(
+            project=project,
+            directory=resolved,
+            session_project=None,
+            tool="adr_list",
+        )
+    except UnresolvedProjectError as exc:
+        return dict(exc.payload)
+    except InvalidProjectOverrideError as exc:
+        return {"error": f"adr_list: {exc}"}
 
     try:
         result = _forward_admin(

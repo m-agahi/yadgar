@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from yadgar._shared.config import get_settings
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.security.secrets import (
     gate_or_reject,  # noqa: F401 — required by I26 secret-gate check
@@ -143,8 +144,11 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
         effective_project_id = resolve_effective_project(
             project=project,
             directory=ctx.context,
-            session_project=None,  # Car E SessionStart hook — not yet wired here
+            session_project=None,
+            tool="memorize",
         )
+    except UnresolvedProjectError as exc:
+        return {"stored": False, "ok": False, **exc.payload}
     except InvalidProjectOverrideError as exc:
         return {"stored": False, "ok": False, "error": f"memorize: {exc}"}
 

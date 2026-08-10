@@ -1301,19 +1301,15 @@ def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
 
     project_name = _os.path.basename(resolved)
     try:
-        # Derive project_id the same way ``adr_add`` / ``adr_list`` do
-        # (Car A0 derive-and-cache) so the ADR-due nudge keys on the same
-        # project the MCP tools do. Failure to derive falls back to the
-        # basename so the nudge never silently stops firing on an
-        # un-classified directory.
-        from yadgar.core.identity import derive_project_id  # noqa: PLC0415
-
-        try:
-            project_id, _remote = derive_project_id(cwd=resolved)
-        except Exception:  # noqa: BLE001
-            project_id = project_name
-
-        max_dt = storage.max_adr_updated_at(project_id=project_id)
+        # C5 (0047 PR#40 §5): the ``derive_project_id`` call and its
+        # basename fallback are DELETED. This is the ADR-due NUDGE — a
+        # best-effort staleness hint on the session-start brief, not a write —
+        # so it keys on the directory basename it already computed and says so.
+        # It must not raise into ``project_brief`` (an unresolvable identity is
+        # not a reason to fail the whole brief) and it must not invent a
+        # project_id either; the basename is a LOOKUP KEY here, never stamped
+        # onto a row. C6 re-points the nudge at the registry.
+        max_dt = storage.max_adr_updated_at(project_id=project_name)
     except AttributeError:
         # The storage engine surface is partial — fall back to the live
         # forward path (preserves the legacy test stubs).
@@ -1348,16 +1344,13 @@ def _get_adr_log_updated_at_via_forward(resolved: str) -> datetime | None:
     """
     import os as _os  # noqa: PLC0415
 
-    from yadgar.core.identity import derive_project_id  # noqa: PLC0415
-
+    # C5 (0047 PR#40 §5): ``derive_project_id`` + basename fallback deleted;
+    # same reasoning as the storage-surface arm above — a nudge lookup key, not
+    # a stamped identity.
     project_name = _os.path.basename(resolved)
-    try:
-        project_id, _remote = derive_project_id(cwd=resolved)
-    except Exception:  # noqa: BLE001
-        project_id = project_name
 
     try:
-        result = _forward_admin("max_adr_updated_at", {"project_id": project_id})
+        result = _forward_admin("max_adr_updated_at", {"project_id": project_name})
     except Exception:  # noqa: BLE001
         return None
     if not isinstance(result, dict):
@@ -1860,14 +1853,11 @@ def _build_adr_log(resolved: str) -> dict:
     slug = f"{project_name}-adr-index"
     latest_ids: list[str] = []
     try:
-        from yadgar.core.identity import derive_project_id  # noqa: PLC0415
-
-        try:
-            project_id, _remote = derive_project_id(cwd=resolved)
-        except Exception:  # noqa: BLE001
-            project_id = project_name
-
-        result = _forward_admin("list_adr_rows", {"project_id": project_id})
+        # C5 (0047 PR#40 §5): ``derive_project_id`` + basename fallback deleted.
+        # This builds the ADR *log* section of the session brief — a read-only
+        # convenience listing — so it keys on the directory basename it already
+        # holds and never stamps one. C6 re-points it at the registry.
+        result = _forward_admin("list_adr_rows", {"project_id": project_name})
         rows_raw = result.get("rows") if isinstance(result, dict) else []
         rows = rows_raw if isinstance(rows_raw, list) else []
         ordered = sorted(

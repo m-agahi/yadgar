@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.security.enforcement import _enforcement_on, _inc_relaxed
 
 logger = logging.getLogger(__name__)
 
@@ -134,40 +133,39 @@ class _DLQMixin:
 
         # 4. v5.42.5: directory_context required for all writes.
         # _internal=True carve-out applies here too.
+        # C5 (0047 PR#40 §5): the ``YADGAR_DIRECTORY_ENFORCEMENT`` escape hatch is
+        # DELETED — "relaxed enforcement" is the mode in which unscoped rows
+        # entered the corpus, and ADR-0225's end condition for the knob (the
+        # registry check being wired) is met by C6 in this same PR.
         if not p.get("_internal"):
             dc = p.get("directory_context") or p.get("directory")
             if not dc or not str(dc).strip():
-                if _enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT"):
-                    return "missing_directory: wiki_add payload lacks directory_context."
-                logger.warning(
-                    "wiki_add: directory enforcement OFF — missing directory_context allowed "
-                    "(YADGAR_DIRECTORY_ENFORCEMENT=false)"
-                )
-                _inc_relaxed("directory")
+                return "missing_directory: wiki_add payload lacks directory_context."
 
         # 5. C4 (0047 PR#40 §5): the enqueue-time project_id stamp is required.
-        return self._validate_project_id(p)
+        return self._validate_project_id(p, "wiki_add")
 
     #: project_id values treated as ABSENT rather than as an identity.
     #:
-    #: ``"unresolved"`` is here because it has exactly one producer — the
-    #: classifier-failure arm of ``_resolve_project_id_for_write`` — so it can
-    #: only ever mean "a derivation was attempted and failed".
+    #: ``"unresolved"`` had exactly one producer — the classifier-failure arm of
+    #: ``_resolve_project_id_for_write`` — so it can only ever have meant "a
+    #: derivation was attempted and failed". C5 deleted the producer; the
+    #: sentinel stays listed because the DLQ also sees jobs enqueued before this
+    #: car by an older client.
     #:
-    #: **``"global"`` is deliberately NOT here.** It is still a LIVE, documented
-    #: scope value: ``wiki_add(directory="global")`` is a supported call and
-    #: ``resolve_effective_project`` answers it (and every unresolvable tree)
-    #: with ``GLOBAL_FALLBACK``. Rejecting it in C4 would DLQ every legitimate
-    #: global-scoped page write a full car before C5 deletes the tier that
-    #: produces it and C7 splits reach from ownership. **C5: add ``"global"``
-    #: here** in the same edit that deletes ``GLOBAL_FALLBACK`` and
-    #: ``_project_id_writer``'s tier-2 branch — until then this gate is
-    #: fail-loud about the case that is unambiguously a defect and silent about
-    #: the one that is still a supported scope.
-    _SENTINEL_PROJECT_IDS: frozenset[str] = frozenset({"", "unresolved"})
+    #: **``"global"`` joins the set here (C4b handoff #3).** C4 deliberately left
+    #: it accepted: at that point it was still a LIVE scope value that
+    #: ``resolve_effective_project`` produced for every unresolvable tree, so
+    #: rejecting it one car early would have DLQ'd every legitimate global-scoped
+    #: write. C5 deletes the tier that produced it (§1.4: ``"global"`` is never a
+    #: project_id — cross-project reach is a separate TAG), so the same edit that
+    #: removes ``GLOBAL_FALLBACK`` and ``_project_id_writer``'s ``return
+    #: "global"`` branch adds it to the sentinel set. Doing one without the other
+    #: in either order is a live breakage.
+    _SENTINEL_PROJECT_IDS: frozenset[str] = frozenset({"", "global", "unresolved"})
 
     @observe(tier="stage", metric="drainer.dlq.validate_project_id")
-    def _validate_project_id(self, payload: dict) -> str | None:
+    def _validate_project_id(self, payload: dict, op_type: str = "wiki_add") -> str | None:
         """Return a rejection reason when the enqueue-time project_id is missing.
 
         C4 (0047 PR#40 §5). The drainer runs inside the backend container,
@@ -190,22 +188,32 @@ class _DLQMixin:
         session — they have no more excuse for an unnamed project than any
         other tool. Exempting them would leave the canonical page types as the
         one hole through which sentinels keep entering the corpus.
+
+        C5 (0047 PR#40 §5): ``op_type`` is a parameter rather than the hardcoded
+        ``"wiki_add"`` it used to be (C4b handoff #2). The gate now runs for every
+        queued op, so a message naming ``wiki_add`` would misreport a ``memorize``
+        or ``anchor`` rejection to the one reader who has to act on it.
         """
         raw = payload.get("project_id")
         if isinstance(raw, str) and raw.strip() not in self._SENTINEL_PROJECT_IDS:
             return None
-        return f"missing_project_id: wiki_add payload lacks a usable project_id (got {raw!r})."
+        return f"missing_project_id: {op_type} payload lacks a usable project_id (got {raw!r})."
 
     def _build_missing_project_id_metadata(self, record: dict, op_type: str) -> dict:
-        """Build failure_metadata for missing_project_id DLQ entries (C4)."""
+        """Build failure_metadata for missing_project_id DLQ entries (C4).
+
+        C5: the hint is built from ``op_type`` rather than hardcoding
+        ``wiki_add`` (C4b handoff #2) — it goes stale the moment the gate widens,
+        and C5 is the car that widens it.
+        """
         return {
             "field": "project_id",
             "payload_op_type": op_type,
             "hint": (
-                'Re-issue the call with project="owner/repo" so the enqueue '
-                "stamps an identity, then requeue. The drainer cannot resolve "
-                "one: it runs in a container with no git and no project mounts "
-                "(ADR-0227)."
+                f'Re-issue the {op_type} call with project="owner/repo" so the '
+                "enqueue stamps an identity, then requeue. The drainer cannot "
+                "resolve one: it runs in a container with no git and no project "
+                "mounts (ADR-0227)."
             ),
         }
 

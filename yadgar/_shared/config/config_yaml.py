@@ -981,15 +981,6 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Max near-duplicate candidates returned in the memorize near_duplicates list (default 3).",
         "section": "memorize_similarity_gate",
     },
-    # v5.42.6: enforcement knobs
-    "directory_enforcement": {
-        "desc": (
-            "When True (default), wiki_add rejects payloads missing directory_context. "
-            "Set to False as a migration escape hatch. "
-            "Emits WARN log + yadgar_writes_with_enforcement_relaxed metric when off."
-        ),
-        "section": "wiki_similarity_gate",
-    },
     # v5.51.0 — hook recall latency budget
     "hook_recall_timeout_s": {
         "desc": (

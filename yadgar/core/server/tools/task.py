@@ -318,7 +318,8 @@ def task_write(
             project_id = resolve_effective_project(
                 project=project,
                 directory=None,  # task tools do not derive from directory
-                session_project=None,  # Car E SessionStart hook — not yet wired here
+                session_project=None,
+                tool="task",
             )
             # Re-validate the resolved override against the strict-typed
             # validator (mirrors the project_id arg path). Car D's validator
@@ -426,7 +427,8 @@ def task_list(
             project_id = resolve_effective_project(
                 project=project,
                 directory=None,  # task tools do not derive from directory
-                session_project=None,  # Car E SessionStart hook — not yet wired here
+                session_project=None,
+                tool="task",
             )
             project_id = _validate_project_id(project_id)
         except _PROJECT_OVERRIDE_EXC:
@@ -480,7 +482,8 @@ def task_get(
             project_id = resolve_effective_project(
                 project=project,
                 directory=None,  # task tools do not derive from directory
-                session_project=None,  # Car E SessionStart hook — not yet wired here
+                session_project=None,
+                tool="task",
             )
             project_id = _validate_project_id(project_id)
         except _PROJECT_OVERRIDE_EXC:

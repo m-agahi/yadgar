@@ -8,19 +8,23 @@ working tree. Default = the derived current project (from SessionStart
 context — Car E extends ``yadgar/core/hooks/session-start-context.py``).
 Override = the registry-validated caller-supplied ``project``.
 
-PREVALENCE RULE (§9 [VERIFY] — applied as the proposed default):
+PREVALENCE RULE — **two tiers, and no third (C5 / ADR-0227):**
 
     1. ``project`` supplied → use it (override). Non-empty string only;
        backends reject unknown keys (FAIL-LOUD per ADR-0202 amendment,
        backend-side via ``_ensure_project_exists_sync``; core NEVER
        touches the DB — §15).
-    2. ``session_project`` (Car E SessionStart context) → use it.
-       May still be ``None`` until Car E lands.
-    3. ``directory``-derived via ``yadgar.core.identity.derive_project_id``
-       (Car A0): resolves the canonical ``owner/repo`` (host excluded) or
-       the ``local/<basename>`` fallback.
-    4. None of the above → ``"global"`` (the cross-project sentinel;
-       consistent with the WikiStore ``unresolved``/``local`` paths).
+    2. ``session_project`` (SessionStart context) → use it.
+    3. Neither → ``UnresolvedProjectError``.
+
+C5 deleted the two tiers that used to sit under those: a ``directory``
+derivation through ``derive_project_id``, and a final ``return "global"``.
+ADR-0227's rationale, in one sentence: *"A fallback that cannot fail is worse
+than an error, because it manufactures a plausible-looking wrong answer."*
+Both deleted tiers ran inside containers with no git binary and no host
+project mounts, so neither could produce a correct answer even in principle —
+``local/<basename>`` and ``"global"`` are well-formed keys that pass every type
+check and are indistinguishable at read time from a real one.
 
 When BOTH ``project`` AND ``directory`` are supplied, ``project`` wins
 (``directory`` is logged-and-ignored). A caller that supplies a stale
@@ -40,16 +44,10 @@ from __future__ import annotations
 
 import logging
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
-from yadgar.core.identity import derive_project_id
 
 logger = logging.getLogger(__name__)
-
-
-# Sentinel for "no project resolution at all" — same shape the wiki/memory
-# paths use for the cross-project fallback (see WikiStore.unresolved,
-# memory-stamp ``local/<basename>`` paths).
-GLOBAL_FALLBACK: str = "global"
 
 
 class InvalidProjectOverrideError(ValueError):
@@ -69,27 +67,33 @@ def resolve_effective_project(
     project: str | None,
     directory: str | None,
     session_project: str | None,
+    tool: str = "yadgar tool",
 ) -> str:
-    """Resolve the effective project_id for a tool call.
+    """Resolve the effective project_id for a tool call, or raise.
 
     Args:
         project: Caller-supplied override. When ``None`` falls through to
-            ``session_project`` → ``directory``-derived → ``GLOBAL_FALLBACK``.
-        directory: Host-side project directory, used only as the LAST-RESORT
-            derivation source. When ``project`` is also supplied,
-            ``directory`` is logged-and-ignored (project wins — §9 [VERIFY]).
-        session_project: Value the SessionStart hook surfaces to the session
-            (Car E). ``None`` until Car E lands; until then the fallback
-            chain skips it.
+            ``session_project``, and then to a raise.
+        directory: Host-side project directory. **No longer a resolution
+            source** (C5 deleted the derivation tier); it is retained only so a
+            caller that supplies BOTH gets the ignore logged, which is how a
+            stale directory stays observable.
+        session_project: Value the SessionStart hook surfaces to the session.
+        tool: Name of the calling tool, used to build the structured error. The
+            reader of a raise is an agent that has to correct its own call, so
+            an error that does not name the tool is only marginally more useful
+            than the fallback it replaced.
 
     Returns:
-        The validated project_id string. Never empty — the chain ends at
-        ``GLOBAL_FALLBACK`` (= ``"global"``) when nothing resolves.
+        The validated project_id string. Never empty, never a sentinel.
 
     Raises:
         InvalidProjectOverrideError: when ``project`` is supplied but not a
             non-empty string (type-level guard; deep registry validation
             is backend-side per §15).
+        UnresolvedProjectError: when neither ``project`` nor ``session_project``
+            names an identity. ADR-0227: never defaulted, never inferred, never
+            silently substituted.
     """
     # ── 1. Override path (caller-supplied) ─────────────────────────────────
     if project is not None:
@@ -111,29 +115,23 @@ def resolve_effective_project(
             )
         return project
 
-    # ── 2. SessionStart context (Car E) ────────────────────────────────────
+    # ── 2. SessionStart context ────────────────────────────────────────────
     if session_project is not None and session_project:
         return session_project
 
-    # ── 3. directory-derived (Car A0 identity.derive_project_id) ────────────
-    if directory is not None and (directory or "").strip():
-        try:
-            _derived = derive_project_id(cwd=directory.strip())
-            project_id: str = _derived[0]
-        except Exception as exc:  # noqa: BLE001
-            # Identity derivation is best-effort: a non-git dir, a missing
-            # remote, or a corrupt config must not crash a tool call.
-            logger.warning(
-                "project_param: derive_project_id failed for directory=%r: %s",
-                directory,
-                exc,
-            )
-            return GLOBAL_FALLBACK
-        if project_id:
-            return project_id
-
-    # ── 4. No resolution — global fallback (consistent with WikiStore) ─────
-    return GLOBAL_FALLBACK
+    # ── 3. Nothing named an identity — FAIL LOUD (C5 / ADR-0227) ───────────
+    #
+    # What used to be here: a ``derive_project_id(cwd=directory)`` tier and a
+    # ``return GLOBAL_FALLBACK``. Both are deleted. A directory is not an
+    # identity — it is a filesystem hint that happened to be adjacent to one,
+    # and the process reading it cannot see the tree it names.
+    raise UnresolvedProjectError(
+        tool,
+        detail=(
+            f"(directory={directory!r} is a filesystem hint, not an identity; "
+            "the SessionStart banner prints the value to pass)"
+        ),
+    )
 
 
 @observe(tier="hot", span=False)
@@ -155,12 +153,12 @@ def accept_project_param(project: str | None, directory: str | None) -> str | No
     boundary, so a malformed ``project=`` (empty string, non-string) raises
     ``InvalidProjectOverrideError`` at the edge instead of being ignored.
 
-    What it deliberately does NOT do: run the resolver's derivation tiers
-    when ``project`` is ``None``. Those tiers call ``derive_project_id``,
-    which shells out to ``git`` twice and is not cached; paying that on every
-    call of every scoped tool to compute a value nothing reads yet would be a
-    straight latency regression. The session-side resolve belongs on the
-    paths that actually stamp a row.
+    What it deliberately does NOT do: resolve when ``project`` is ``None``.
+    Before C5 that was a latency argument (the derivation tier shelled out to
+    ``git`` twice, uncached, to compute a value nothing read yet). After C5 the
+    tier is gone, so it is a semantics argument instead: these tools' scope key
+    is still ``directory`` until C7 re-keys it, and raising here would fail a
+    call that does not yet need an identity.
 
     KNOWN, ACCEPTED GAP UNTIL C7: a caller who passes ``project=`` to one of
     these tools gets their CURRENT project's rows back, not the named
@@ -177,11 +175,11 @@ def accept_project_param(project: str | None, directory: str | None) -> str | No
         project=project,
         directory=directory,
         session_project=None,
+        tool="accept_project_param",
     )
 
 
 __all__ = [
-    "GLOBAL_FALLBACK",
     "InvalidProjectOverrideError",
     "accept_project_param",
     "resolve_effective_project",

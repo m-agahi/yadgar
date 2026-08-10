@@ -12,7 +12,6 @@ test_branch_schema_migration.py can import them directly:
 from __future__ import annotations
 
 import fcntl
-import importlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -1421,61 +1420,13 @@ def _migration_030_wiki_mutability_override(storage) -> None:
 # ── Car L — project_id backfill (0047 §7 D32 ① / §16.8 + §16.9) ────────────
 
 
-#: Distinct directory_context → (project_id, legacy_directory_or_None) cache.
-#: The migration pre-computes the mapping so each row does not re-walk the
-#: filesystem / re-run the git-subprocess — a row share of 200:1 was measured
-#: on the live corpus. Populated lazily inside the migration body.
-_L031_CLASSIFY_CACHE: dict[str, tuple[str, str | None]] = {}
-
-
-def _classify_directory_for_migration(directory_context: str) -> tuple[str, str | None]:
-    """One-shot classifier used by migration 031.
-
-    Returns ``(project_id, legacy_directory_or_None)``. Sentinels
-    (``'global'``, ``''``) → ``('global', None)`` (unchanged semantics).
-    Every other path falls through to ``yadgar.core.identity.derive_project_id``
-    — a lazy import that runs at daemon boot (the only time this fn is
-    called) so the import direction question (§3 [VERIFY] in the plan) is
-    moot: the migration runs AFTER ``_init_schema`` which is itself core-importable
-    via the lifecycle composition root.
-
-    Quarantine case: when ``derive_project_id`` returns ``local/<basename>``
-    (the no-remote fallback), the directory is presumed to exist on disk.
-    Migration 031 does NOT second-guess that — ``local/<basename>`` is the
-    valid fallback per §16.2. The quarantine row case (legacy_directory set)
-    applies only when the operator has manually flagged a row at write time
-    via a future ``memory_set_legacy_directory`` admin op, or when the live
-    backfill (the optional runtime layer) sees a row whose path no longer
-    resolves. The one-shot offline migration treats every distinct
-    directory_context as best-effort classified; the legacy_directory column
-    is left NULL on every non-flagged row.
-
-    Pure: no I/O outside the lazy import + the underlying subprocess call.
-    Cached per call (keyed by directory_context string) so the inner
-    ``derive_project_id`` does not re-walk the same path N times.
-    """
-    if directory_context in ("", "global"):
-        return ("global", None)
-
-    cached = _L031_CLASSIFY_CACHE.get(directory_context)
-    if cached is not None:
-        return cached
-
-    try:
-        # Lazy classifier lookup via string-target importlib — avoids
-        # the static _shared->core edge that the import-linter forbids.
-        # Same PEP-562 pattern as _shared/storage/_project_id_writer.py
-        # and the _shared.retrieval forwarders.
-        derive_project_id = importlib.import_module("yadgar.core.identity").derive_project_id
-        project_id, _ = derive_project_id(directory_context)
-    except Exception:  # noqa: BLE001 — boot-path robustness
-        # Fail-loud but recoverable: if the classifier can't run (no core
-        # import path, no git, etc.) we still stamp a sane value so no row
-        # is left without a project_id. Quarantine the directory as a
-        # second-line defense.
-        project_id = "unresolved"
-    _L031_CLASSIFY_CACHE[directory_context] = (project_id, None)
-    return project_id, None
+# C5 (0047 PR#40 §5): ``_L031_CLASSIFY_CACHE`` and
+# ``_classify_directory_for_migration`` are DELETED. C4 removed their only
+# consumers (031's Phase D/E per-row backfill), leaving a classifier that
+# lazy-imported ``yadgar.core.identity.derive_project_id`` and swallowed its
+# failure into ``'unresolved'`` — both of the things ADR-0227 deletes, sitting
+# in a module the daemon imports at boot. The operator-invoked backfill (C6)
+# takes a host-resolved value and derives nothing.
 
 
 def _migration_031_project_id_backfill(storage) -> None:

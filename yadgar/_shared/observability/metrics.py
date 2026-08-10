@@ -238,7 +238,10 @@ yadgar_dlq_rejection_count = Gauge(
 )
 
 # ── v5.42.6 — enforcement-relaxed writes counter (I23) ───────────────────────
-# Emitted by dlq.py::_validate_wiki_add when YADGAR_DIRECTORY_ENFORCEMENT is false.
+# C5 (0047 PR#40 §5): the last writer is gone — ``YADGAR_DIRECTORY_ENFORCEMENT``
+# was the only enforcement knob left and it is deleted. The counter is retained
+# (a metric name that disappears breaks dashboards and alert rules that outlive
+# the code) and now records zero.
 # enforcement labels: "directory"
 
 yadgar_writes_with_enforcement_relaxed = Counter(
