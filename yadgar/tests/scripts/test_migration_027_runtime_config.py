@@ -34,17 +34,17 @@ class TestMigration027Registration:
 
         This does NOT assert 027 specifically is last anymore — 028
         (agent page_type split, ADR-0209), 029 (drop branch column,
-        ADR-0215), and 030 (mutability_override, Car J) were appended
-        after 027. The guard's PURPOSE survives: a hardcoded expected
-        value that must be bumped by hand whenever a new migration is
-        appended, so an unnoticed append still fails CI. Update the
-        literal below to the new tail whenever a later migration is
-        appended; do NOT replace it with something computed from
-        `_MIGRATIONS` itself (e.g. asserting the list's max equals its own
-        max) — that would never fail and stops being a guard.
+        ADR-0215), 030 (mutability_override, Car J), and 031
+        (project_id_backfill, Car M) were appended after 027. The guard's
+        PURPOSE survives: a hardcoded expected value that must be bumped by
+        hand whenever a new migration is appended, so an unnoticed append
+        still fails CI. Update the literal below to the new tail whenever
+        a later migration is appended; do NOT replace it with something
+        computed from `_MIGRATIONS` itself (e.g. asserting the list's max
+        equals its own max) — that would never fail and stops being a guard.
         """
         nums = [int(m["version"].split("_")[0]) for m in _MIGRATIONS]
-        assert max(nums) == 30
+        assert max(nums) == 31
 
 
 class TestMigration027DefinesTable:

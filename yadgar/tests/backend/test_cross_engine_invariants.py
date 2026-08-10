@@ -385,7 +385,7 @@ def test_page_row_desync_is_unavailable_while_the_spine_is_unshipped(
     check = _run(_FakeSurrealStorage(_all_code_versions()))["checks"][ce.CHECK_PAGE_ROW_DESYNC]
     assert check["status"] == ce.STATUS_UNAVAILABLE
     assert check["reason"] == ce.REASON_SPINE_NOT_SHIPPED
-    assert check["detail"]["absent_tables"] == sorted(ce.SPINE_LEDGER_TABLES)
+    assert check["detail"]["absent_tables"] == sorted([tbl for tbl, _ in ce._HASH_MIRRORED_TABLES])
 
 
 def test_page_row_desync_trips_itself_once_the_spine_lands(
@@ -397,6 +397,13 @@ def test_page_row_desync_trips_itself_once_the_spine_lands(
     reporting a comfortable 'unavailable' over data it should be comparing —
     the vacuous pass, one layer up.
     """
+    import yadgar.backend.admin_exec.invariants_cross_engine as ce_module
+
+    monkeypatch.setattr(
+        ce_module,
+        "_get_storage",
+        lambda: _FakeSurrealStorage(_all_code_versions()),
+    )
     _install(
         monkeypatch,
         sql_engine=_FakeSqlEngine(tables=["alembic_version", "config", "adr", "agent_pattern"]),

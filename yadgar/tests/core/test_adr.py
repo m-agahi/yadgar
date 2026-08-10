@@ -26,7 +26,6 @@ RED before implementation; GREEN after.
 
 from __future__ import annotations
 
-import re
 import threading
 import time
 from datetime import UTC
@@ -562,6 +561,18 @@ class TestAdrDueSignal:
             return []
 
         mock._q.side_effect = mock_q
+        # Car G (0047 §7 D35a): the ADR log source moved from the wiki
+        # ``<project>-adr-index`` page onto the SQL ``adr`` ledger. The
+        # storage surface exposes ``max_adr_updated_at`` for the nudge;
+        # mock it here so the unit tests exercise the new path without
+        # needing a live MariaStorageEngine.
+        from datetime import UTC as _UTC
+        from datetime import datetime as _datetime
+
+        if adr_ts is None:
+            mock.max_adr_updated_at.return_value = None
+        else:
+            mock.max_adr_updated_at.return_value = _datetime.fromtimestamp(adr_ts, tz=_UTC)
         return mock
 
     def test_adr_due_fires_when_active_work_recent_but_adr_log_stale(self):
@@ -611,60 +622,10 @@ class TestAdrDueSignal:
 
 
 # ── 7. Monolith-parse helpers (migration source) ──────────────────────────────
-
-
-class TestMonolithParseHelpers:
-    def test_parse_adr_ids_from_monolith(self):
-        from yadgar.core.server.tools.adr import parse_adr_ids
-
-        content = (
-            "## ADR-0001: First\n- status: accepted\n"
-            "## ADR-0003: Third\nbody refs ADR-0099 (ignored)\n"
-            "## ADR-0002: Second\n- status: open\n"
-        )
-        assert parse_adr_ids(content) == ["ADR-0003", "ADR-0002", "ADR-0001"]
-
-    def test_index_next_id_ignores_body(self):
-        from yadgar.core.server.tools.adr import _build_index_content, _next_adr_id_from_index
-
-        content = _build_index_content(
-            "proj",
-            [
-                {
-                    "adr_id": "ADR-0005",
-                    "status": "open",
-                    "date": "d",
-                    "title": "t",
-                    "supersedes": "none",
-                    "superseded_by": "-",
-                    "slug": "proj-adr-0005",
-                }
-            ],
-        )
-        assert _next_adr_id_from_index(content) == "ADR-0006"
-
-
-# Guard: index round-trip survives pipes / markdown in the title.
-def test_index_row_sanitises_pipes():
-    from yadgar.core.server.tools.adr import _build_index_content, parse_index_rows
-
-    content = _build_index_content(
-        "proj",
-        [
-            {
-                "adr_id": "ADR-0001",
-                "status": "open",
-                "date": "2026-01-01",
-                "title": "A | B | C table title",
-                "supersedes": "none",
-                "superseded_by": "-",
-                "slug": "proj-adr-0001",
-            }
-        ],
-    )
-    rows = parse_index_rows(content)
-    assert len(rows) == 1
-    assert rows[0]["adr_id"] == "ADR-0001"
-    # No stray table columns injected by the pipe.
-    header_rows = re.findall(r"^\| ADR-\d{4} \|", content, re.MULTILINE)
-    assert len(header_rows) == 1
+#
+# Car G (0047 §7 D35a/D35b) deleted the per-project monolith ADR-index page and
+# the parser/serializer/render helpers that maintained it. The ADR log source
+# moved to the SQL ``adr`` ledger; the corresponding tests live in
+# test_adr_seed_retype_car_g.py under TestDeadCodeDeleted and assert the removal.
+# Tests in this section are intentionally absent to the same; the new coverage lives
+# at yadgar/tests/core/test_adr_seed_retype_car_g.py.
