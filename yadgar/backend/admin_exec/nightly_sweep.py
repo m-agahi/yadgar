@@ -109,7 +109,7 @@ def _parse_iso(ts: str | None) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(ts)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):  # fmt: skip
         return None
 
 
