@@ -798,6 +798,15 @@ class WikiStore:
         # seam so storage.insert_wiki_page picks it up for the mutability gate.
         if sanctioned:
             page["_sanctioned"] = True
+        # C3 (0047 PR#40 §5.C3): the enqueue-time project_id. Stamped SEPARATELY
+        # from ``effective_dir`` on purpose — the storage_scope="global"
+        # override above rewrites the DIRECTORY of a cross-project page type,
+        # and must not also collapse its ownership: a library page found in this
+        # repo is still FROM this repo (§1.4, ownership ≠ reach). Reaches
+        # ``insert_wiki_page`` as ``_resolve_project_id_for_write``'s
+        # ``caller_value``, so a stamped write never touches the classifier.
+        if o.project_id is not None:
+            page["project_id"] = o.project_id
         page_id = self._storage.insert_wiki_page(page)
         page["id"] = page_id
         self._sync_crossrefs(slug, links)

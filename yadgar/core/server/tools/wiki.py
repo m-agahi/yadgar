@@ -23,6 +23,7 @@ from yadgar.core.server._app import _tool
 # "global") and threads it through to the wiki enqueue / read path.
 from yadgar.core.server.tools._project_param import (
     InvalidProjectOverrideError,
+    accept_project_param,
     resolve_effective_project,
 )
 
@@ -492,14 +493,15 @@ def wiki_add(
         # Car C (#83): upsert semantics — drainer reads upsert from payload.
         "upsert": upsert,
     }
-    # Car M: stamp the validated project_id ONLY when the caller supplied
-    # ``project=`` (override). A bare session-derived or directory-derived
-    # project_id stays out of the wire payload so existing drainer semantics
-    # (inferring project_id from directory_context) are preserved for
-    # pre-Car-M callers. The deep registry check is backend-side
-    # (`_ensure_project_exists_sync`, Car A0, §15 / ADR-0078).
-    if project is not None:
-        _payload["project_id"] = _effective_project_id
+    # C3 (0047 PR#40 §5.C3): stamp the resolved project_id UNCONDITIONALLY.
+    # Car M stamped it only when the caller passed ``project=``, which left the
+    # DEFAULT path relying on the drainer to infer one from directory_context —
+    # inside a container with no git binary and no host project mounts, where
+    # the classifier silently yields ``local/<basename>`` or ``unresolved``
+    # (§1.1). This tool call is the only participant that can see the session,
+    # so it is the only honest place to resolve. The deep registry check stays
+    # backend-side (`_ensure_project_exists_sync`, §15 / ADR-0078).
+    _payload["project_id"] = _effective_project_id
 
     # wait=True: enqueue first (preserves FIFO), then poll until the drainer commits.
     # The drainer runs the similarity gate; rejection surfaces synchronously via the
@@ -899,6 +901,8 @@ def wiki_list(
     limit: int = 100,
     slug_prefix: str | None = None,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> list[dict]:
     """List wiki pages by metadata only (no content). Use wiki_read(slug) for full content.
 
@@ -907,6 +911,9 @@ def wiki_list(
     v5.42.5: when directory is supplied, results are scoped to that directory + 'global'.
     When absent (legacy call pattern), all pages are returned with a WARNING.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     assert _st._wiki is not None, "WikiStore not initialized"
 
     if directory is None:
@@ -958,6 +965,8 @@ def wiki_autolink(
     max_links_per_page: int = 20,
     similarity_threshold: float = 0.70,
     semantic_guard: bool = True,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Auto-insert [[slug]] cross-refs by matching other pages' titles in body text.
 
@@ -982,6 +991,9 @@ def wiki_autolink(
     Returns {applied, dry_run, proposals:[{page,target,title}], pages_changed,
              links_added}.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # R3 Car 3c: forward the whole tool — it writes when dry_run=False (upsert +
     # crossref re-sync + epoch bump). Forwarding the dry-run compute too keeps a
     # single path (harmless — no write on dry_run).
@@ -1006,6 +1018,8 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
     threshold: float | None = None,
     top_k: int = 5,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Dry-run similarity check: returns candidate duplicate pages without writing anything.
 
@@ -1024,6 +1038,9 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
         {"candidates": [...], "threshold_used": float}
         Each candidate: {slug, title, similarity}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     assert _st._wiki is not None, "WikiStore not initialized"
 
     from yadgar._shared.config import get_settings  # noqa: PLC0415
@@ -1067,7 +1084,9 @@ def _resolve_page_id_by_slug(
 
 
 @_tool()
-def wiki_history(slug: str, limit: int = 20, directory: str | None = None) -> dict:
+def wiki_history(
+    slug: str, limit: int = 20, directory: str | None = None, *, project: str | None = None
+) -> dict:
     """List version history for a wiki page, newest first.
 
     Returns metadata for each version (no content — use wiki_read_version for that).
@@ -1084,6 +1103,9 @@ def wiki_history(slug: str, limit: int = 20, directory: str | None = None) -> di
         limit: Max versions to return (default 20).
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     assert _st._wiki is not None, "WikiStore not initialized"
     page_id, page = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
@@ -1094,7 +1116,9 @@ def wiki_history(slug: str, limit: int = 20, directory: str | None = None) -> di
 
 
 @_tool()
-def wiki_read_version(slug: str, version: int, directory: str | None = None) -> dict:
+def wiki_read_version(
+    slug: str, version: int, directory: str | None = None, *, project: str | None = None
+) -> dict:
     """Read a specific historical version of a wiki page (full content + snapshot fields).
 
     Args:
@@ -1107,6 +1131,9 @@ def wiki_read_version(slug: str, version: int, directory: str | None = None) -> 
 
     Error: {"error": "...", "max_version": N} if version not found.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     assert _st._wiki is not None, "WikiStore not initialized"
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
@@ -1123,6 +1150,8 @@ def wiki_diff(
     v2: int,
     fmt: str = "unified",
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Diff two versions of a wiki page.
 
@@ -1137,6 +1166,9 @@ def wiki_diff(
     json format returns: {"hunks": [...], "added_lines": N, "removed_lines": M,
                           "sections_changed": [...], ...}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     assert _st._wiki is not None, "WikiStore not initialized"
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
     if page_id is None:
@@ -1152,6 +1184,8 @@ def wiki_restore(
     version: int,
     wait: bool = False,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Restore a wiki page to a previous version by creating a new version.
 
@@ -1179,6 +1213,9 @@ def wiki_restore(
 
     Returns: {"page_id": N, "restored_from_version": V, "new_version": N+1, "note": "..."}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # R3 Car 3c: slug→page_id resolution stays CORE (backend has a different cwd,
     # so backend-side resolution would resolve the wrong row); the restore write
     # forwards keyed by page_id.
@@ -1197,6 +1234,8 @@ def wiki_append_section(
     wait: bool = False,
     directory: str | None = None,
     heading_type: str = "h2",
+    *,
+    project: str | None = None,
 ) -> dict:
     """Section-atomic wiki write: patch a specific section without replacing entire content.
 
@@ -1231,6 +1270,9 @@ def wiki_append_section(
     Returns: {"page_id": N, "new_version": M, "section_heading": "...",
               "action": "appended", "size_before": X, "size_after": Y}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # I26: secret-gate on written content (STAYS core)
     _gate = gate_or_reject(content, tags=[])
     if _gate is not None:
@@ -1263,7 +1305,9 @@ def wiki_set_metadata(
     slug: str,
     field: str,
     value: str | None,
-    directory: str | None = None,  # noqa: ARG001 — kept for API back-compat
+    directory: str | None = None,
+    *,
+    project: str | None = None,  # noqa: ARG001 — kept for API back-compat
 ) -> dict:
     """Set directory_context on ALL rows sharing a slug (BC-G10 fix).
 
@@ -1293,6 +1337,9 @@ def wiki_set_metadata(
     Returns: {ok, slug, rows_updated, page_ids} or {ok: False, error}.
     Preserved keys for back-compat callers that inspect {ok, slug}.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # ADR-0215: 'branch' left the allowed-field set with the rest of branch
     # scoping. Rejected here at the MCP boundary; Car 9 also removed it from
     # WikiStore._METADATA_FIELDS, which closes the privileged POST /admin path
@@ -1312,7 +1359,9 @@ def wiki_set_mutability(
     slug: str,
     value: str | None,
     reason: str,
-    directory: str | None = None,  # noqa: ARG001 — kept for API back-compat
+    directory: str | None = None,
+    *,
+    project: str | None = None,  # noqa: ARG001 — kept for API back-compat
 ) -> dict:
     """Set ``mutability_override`` on ALL rows sharing *slug* (Car J).
 
@@ -1339,6 +1388,9 @@ def wiki_set_mutability(
 
     Returns: ``{ok, slug, rows_updated, page_ids}`` or ``{ok: False, error}``.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     if not reason or not reason.strip():
         return {
             "ok": False,
@@ -1360,6 +1412,8 @@ def wiki_replace_text(
     new_text: str,
     occurrences: int | str = 1,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Replace old_text with new_text in a wiki page (surgical anchor-text edit).
 
@@ -1383,6 +1437,9 @@ def wiki_replace_text(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
@@ -1411,6 +1468,8 @@ def wiki_delete_text(
     text: str,
     occurrences: int | str = 1,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Delete text from a wiki page (surgical anchor-text edit).
 
@@ -1429,6 +1488,9 @@ def wiki_delete_text(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     # No secret gate (nothing new is written).
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
@@ -1447,6 +1509,8 @@ def wiki_insert_after(
     anchor_text: str,
     new_text: str,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Insert new_text immediately after anchor_text in a wiki page.
 
@@ -1461,6 +1525,9 @@ def wiki_insert_after(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
@@ -1483,6 +1550,8 @@ def wiki_insert_before(
     anchor_text: str,
     new_text: str,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Insert new_text immediately before anchor_text in a wiki page.
 
@@ -1497,6 +1566,9 @@ def wiki_insert_before(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
@@ -1525,6 +1597,8 @@ def wiki_replace_at(
     new_text: str,
     anchor_hint: str,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Replace `length` chars at (line, col) in a wiki page (positional escape hatch).
 
@@ -1547,6 +1621,9 @@ def wiki_replace_at(
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
@@ -1579,6 +1656,8 @@ def wiki_delete_at(
     length: int,
     anchor_hint: str,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Delete `length` chars at (line, col) in a wiki page (positional escape hatch).
 
@@ -1601,6 +1680,9 @@ def wiki_delete_at(
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     # No secret gate (nothing new is written).
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
@@ -1628,6 +1710,8 @@ def wiki_insert_at(
     new_text: str,
     anchor_hint: str,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Insert new_text at (line, col) in a wiki page (positional escape hatch).
 
@@ -1649,6 +1733,9 @@ def wiki_insert_at(
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
@@ -1682,6 +1769,8 @@ def wiki_replace_markdown_block(
     block_index: int,
     new_content: str,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Replace the Nth block of block_type in a wiki page (structural edit).
 
@@ -1704,6 +1793,9 @@ def wiki_replace_markdown_block(
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_content, tags=[])
     if _gate is not None:

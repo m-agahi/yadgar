@@ -32,6 +32,7 @@ import logging
 from yadgar._shared.observability.observe import observe
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._project_param import accept_project_param
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +405,8 @@ def agent_dispatch_prelude(
     directory: str | None = None,
     subagent_type: str | None = None,
     include_context: bool = False,
+    *,
+    project: str | None = None,
 ) -> str:
     """Return a markdown prelude to prepend to a subagent prompt.
 
@@ -437,6 +440,9 @@ def agent_dispatch_prelude(
     Returns:
         Markdown string. Base cap: 3 500 chars. With context: up to 6 000 chars.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     if storage is None:
         from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
 

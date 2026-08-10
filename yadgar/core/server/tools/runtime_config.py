@@ -34,6 +34,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._project_param import accept_project_param
 
 # Import the resolver module's public read + invalidation entry points. Aliased so
 # the tool-level ``config_get`` does not shadow the resolver's ``config_get``.
@@ -89,7 +90,9 @@ def _resolve_scope(scope: str, directory: str | None) -> tuple[str | None, dict 
 
 
 @_tool(power=False)
-def config_get(key: str, directory: str | None = None, default: Any = None) -> Any:
+def config_get(
+    key: str, directory: str | None = None, default: Any = None, *, project: str | None = None
+) -> Any:
     """Resolve a runtime config value (per-dir override → global → ``default``).
 
     PTC read-through the G2 resolver cache. Never raises — a storage error
@@ -103,11 +106,14 @@ def config_get(key: str, directory: str | None = None, default: Any = None) -> A
     Returns:
         The resolved value, or ``default``.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     return _resolver_get(key, directory=directory, default=default)
 
 
 @_tool(power=False)
-def config_list(directory: str | None = None) -> list[dict]:
+def config_list(directory: str | None = None, *, project: str | None = None) -> list[dict]:
     """List effective runtime config rows (debug/read).
 
     Args:
@@ -117,6 +123,9 @@ def config_list(directory: str | None = None) -> list[dict]:
     Returns:
         List of ``{key, directory, value, ...}`` dicts (empty on no storage).
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     storage = _get_storage()
     if storage is None:
         return []
@@ -183,6 +192,8 @@ def config_set(
     value: Any,
     scope: str = "global",
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Set a runtime config value; write forwards to the backend, then bust cache.
 
@@ -197,6 +208,9 @@ def config_set(
         The written row ``{key, directory, value}`` on success, or
         ``{ok: False, error: "..."}`` on a validation failure.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     return _apply_config_set(key, value, scope, directory)
 
 
@@ -205,6 +219,8 @@ def config_delete(
     key: str,
     scope: str = "global",
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Delete a runtime config row (revert to fallback/default); forward + bust cache.
 
@@ -217,4 +233,7 @@ def config_delete(
         ``{deleted: True, key}`` on success (idempotent), or
         ``{ok: False, error: "..."}`` on a validation failure.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     return _apply_config_delete(key, scope, directory)

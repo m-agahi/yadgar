@@ -136,8 +136,53 @@ def resolve_effective_project(
     return GLOBAL_FALLBACK
 
 
+@observe(tier="hot", span=False)
+def accept_project_param(project: str | None, directory: str | None) -> str | None:
+    """C3 boundary guard for a tool whose scope key is still ``directory``.
+
+    C3 (0047 PR#40 remediation §5.C3) adds ``project`` to every scoped MCP
+    tool. For the tools whose read/write path already has a ``project_id``
+    sink (``recall``, ``memorize``, ``wiki_add``, ``adr_*``, ``task_*``) the
+    resolved value is threaded for real. For the rest, the scope key does not
+    become ``project_id`` until **C7** re-keys the WHERE clause (and C11 adds
+    the missing per-table columns) — so this helper is what the parameter
+    reaches in the meantime, and its call sites are the exact list of
+    signatures C7 has to revisit::
+
+        git grep -n 'accept_project_param' -- yadgar/core/server/tools
+
+    What it DOES do, today: validate the caller's override at the MCP
+    boundary, so a malformed ``project=`` (empty string, non-string) raises
+    ``InvalidProjectOverrideError`` at the edge instead of being ignored.
+
+    What it deliberately does NOT do: run the resolver's derivation tiers
+    when ``project`` is ``None``. Those tiers call ``derive_project_id``,
+    which shells out to ``git`` twice and is not cached; paying that on every
+    call of every scoped tool to compute a value nothing reads yet would be a
+    straight latency regression. The session-side resolve belongs on the
+    paths that actually stamp a row.
+
+    KNOWN, ACCEPTED GAP UNTIL C7: a caller who passes ``project=`` to one of
+    these tools gets their CURRENT project's rows back, not the named
+    project's. That is inherent to the additive ordering §2 chose (C3 adds
+    the parameter, C5 makes absence fail loud, C7 re-keys the scope) and all
+    three land in the same PR.
+
+    Returns:
+        The validated project_id when the caller supplied one, else ``None``.
+    """
+    if project is None:
+        return None
+    return resolve_effective_project(
+        project=project,
+        directory=directory,
+        session_project=None,
+    )
+
+
 __all__ = [
     "GLOBAL_FALLBACK",
     "InvalidProjectOverrideError",
+    "accept_project_param",
     "resolve_effective_project",
 ]

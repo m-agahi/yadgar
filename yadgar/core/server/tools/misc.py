@@ -31,6 +31,7 @@ from yadgar.core.forward import _forward_restore
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool, mcp_server
+from yadgar.core.server.tools._project_param import accept_project_param
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,8 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     next_steps: list[str] = None,
     active_errors: list[str] = None,
     custom_context: str = "",
+    *,
+    project: str | None = None,
 ) -> dict:
     """Snapshot your current working state for post-compaction recovery.
 
@@ -109,6 +112,9 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     Checkpoints auto-supersede — only the latest one matters.
 
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
     _surrogate_err = _validate_checkpoint_surrogates(
         current_task,
@@ -157,7 +163,7 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
 
 
 @_tool(always_load=True)
-def restore(directory: str = "") -> dict:
+def restore(directory: str = "", *, project: str | None = None) -> dict:
     """Restore context after compaction using Hippocampal Replay.
 
     Reconstructs your working context from:
@@ -173,6 +179,9 @@ def restore(directory: str = "") -> dict:
     T2 Car B: thin forwarder — the restore compute (CheckpointRestore +
     CognitiveMap SR navigation) runs backend-side behind POST /restore.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     return _forward_restore(directory)
 
 
@@ -529,7 +538,7 @@ def resource_processes() -> str:
 
 
 @_tool(power=True)
-def seed_project(directory: str, dry_run: bool = False) -> dict:
+def seed_project(directory: str, dry_run: bool = False, *, project: str | None = None) -> dict:
     """Bootstrap Yadgar memory for an existing project in one call.
 
     Scans the project directory and creates foundational memories from:
@@ -546,6 +555,9 @@ def seed_project(directory: str, dry_run: bool = False) -> dict:
     directory: Project root directory to scan (absolute path).
     dry_run: If True, scan and show what would be stored without actually storing.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     from yadgar.core.seed import seed_project as _seed
 
     resolved = str(Path(directory).resolve())

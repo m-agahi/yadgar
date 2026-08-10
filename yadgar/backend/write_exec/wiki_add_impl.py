@@ -71,6 +71,13 @@ def run_wiki_add_replay(payload: dict) -> dict:
     # Car B (#83): explicit-slug + upsert. slug=None → title-derived (legacy).
     explicit_slug = payload.get("slug")
     upsert = payload.get("upsert", True)
+    # C3 (0047 PR#40 §5.C3): the enqueue-time project_id stamped by the core
+    # tool (the only process that can see the session). Carried to
+    # WikiAddOptions on BOTH construction sites below — the replace_slug branch
+    # is a real write path — so ``insert_wiki_page`` receives it as
+    # ``caller_value`` and never reaches the classifier this container cannot
+    # run (§1.1). None only for a legacy payload enqueued before this car.
+    project_id = payload.get("project_id")
 
     # replace_slug: overwrite a named existing page (gate already bypassed)
     # Car F (0047 §7): server-side sanctioned token threads from _wiki_write_canonical
@@ -91,6 +98,7 @@ def run_wiki_add_replay(payload: dict) -> dict:
                     directory_context=directory_context,
                     page_type=page_type,
                     sanctioned=_sanctioned,
+                    project_id=project_id,
                 ),
             )
             result.pop("embedding", None)
@@ -124,6 +132,7 @@ def run_wiki_add_replay(payload: dict) -> dict:
                 slug=explicit_slug,  # Car B (#83): store at caller slug, no title fallback
                 upsert=upsert,
                 sanctioned=_sanctioned,
+                project_id=project_id,
             ),
         )
     # Car C (#83): upsert=False collision → surface synchronously.

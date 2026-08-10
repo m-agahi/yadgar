@@ -42,6 +42,7 @@ from yadgar._shared.wiki.wiki_meta import (
 )
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._project_param import accept_project_param
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,9 @@ def agent_prompt_save(
     content: str,
     directory: str | None = None,
     purpose: str | None = None,
-    storage=None,  # noqa: ARG001 — kept for API back-compat (seed_agent_prompts passes it);
+    storage=None,
+    *,
+    project: str | None = None,  # noqa: ARG001 — kept for API back-compat (seed_agent_prompts passes it);
     # R3 Car 3c: the DB write forwards to backend /admin, which uses its own storage.
 ) -> dict:
     """Save (upsert) an agent-prompt for the given task pattern.
@@ -141,6 +144,9 @@ def agent_prompt_save(
     Returns:
         {"saved": True, "version": N, "slug": "...", "page_id": ...}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # v5.42.5: directory required — reject at MCP boundary (same contract as wiki_add)
     _effective_dir = (directory or "").strip() or None
     if not _effective_dir:
@@ -670,6 +676,8 @@ def agent_prompt_list(
     status: str | None = None,
     directory: str | None = None,  # noqa: ARG001 — accepted for tool surface parity; ledger is reach-global (D3)
     limit: int = 20,
+    *,
+    project: str | None = None,
 ) -> dict:
     """List agent_prompt library entries from the ``agent_pattern`` ledger table.
 
@@ -694,6 +702,9 @@ def agent_prompt_list(
                        "count": N, "engine": "mariadb"}.
         On engine unavailable: {"ok": False, "error": "...", "patterns": []}.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     payload: dict = {"limit": int(limit)}
     if status is not None:
         payload["status"] = status
@@ -721,7 +732,9 @@ def agent_prompt_list(
 @_tool(power=True)
 def agent_prompt_get(
     pattern: str,
-    directory: str | None = None,  # noqa: ARG001 — accepted for tool surface parity; ledger is reach-global (D3)
+    directory: str | None = None,
+    *,
+    project: str | None = None,  # noqa: ARG001 — accepted for tool surface parity; ledger is reach-global (D3)
 ) -> dict:
     """Read a single agent_prompt library entry (ledger row + wiki body).
 
@@ -745,6 +758,9 @@ def agent_prompt_get(
         On absent row: {"error": "not_found", "name": pattern}.
         On engine unavailable: {"ok": False, "error": "..."}.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     row_result = _forward_admin("get_agent_pattern_row", {"name": pattern})
     if row_result.get("ok") is False:
         return row_result

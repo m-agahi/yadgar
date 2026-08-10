@@ -25,6 +25,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._project_param import accept_project_param
 from yadgar.core.server.tools.project import (
     _ANCHOR_PROMOTE_TAGS,
     _cosine_similarity,
@@ -649,6 +650,8 @@ def audit_anchors(
     dry_run: bool = True,
     cosine_threshold: float | None = None,
     include_global: bool = False,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Audit anchors for redundancy, oversize, expiry, and completion.
 
@@ -671,6 +674,9 @@ def audit_anchors(
 
     Idempotent: second call on unchanged state returns empty applied list.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     cfg = get_settings()
     storage = _get_storage()
     resolved = _resolve_project_root(directory)

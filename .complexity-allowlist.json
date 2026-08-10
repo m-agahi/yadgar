@@ -425,5 +425,16 @@
   "rationale": "Car F (0047 §7): WikiStore.add gained one +1 cyclo branch (the sanctioned token thread-through) for the Car J mutability gate, pushing the pre-Car-F 15 to 16. The branch is irreducible: storage.insert_wiki_page reads _sanctioned from the page dict, so the call site can't be moved out. Bundling the new branch into the existing policy+slug-resolution preamble wouldn't reduce cyclomatic — it would just relocate one branch. Decomposing add() into a per-page-type helper family is a wiki-store complexity wave of its own (the function already has 3 nested helpers: _resolve_slug, _merge_existing_tags, _build_new_page).",
   "added": "2026-08-09",
   "added_by": "car-f-adr-tools"
+ },
+ {
+  "path": "yadgar/core/server/tools/misc.py",
+  "function": "checkpoint",
+  "lineno": 96,
+  "metrics": {
+   "params": 9
+  },
+  "rationale": "C3 (0047 PR#40 remediation §5.C3) adds `project` to all 42 scoped MCP tools; checkpoint was the only one already sitting exactly ON the params_hard=8 cap, so it lands at 9. The parameter is not optional-by-taste: the AST surface test pins every @_tool function taking `directory` to also take `project`, and checkpoint is one of them. Deliberately NOT bundled into an options dataclass (the memorize/wiki_add I13 remedy) because C5 REMOVES `directory` from this same signature, returning it to 8 without a refactor — bundling now would be churn in both directions across one PR. Delete this entry in C5.",
+  "added": "2026-08-10",
+  "added_by": "car-c3-project-param"
  }
 ]

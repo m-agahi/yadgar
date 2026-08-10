@@ -62,6 +62,14 @@ class RecallRequest(BaseModel):
 
     query: str
     directory: str
+    # C3 (0047 PR#40 remediation §5.C3): the read path's project key. The core
+    # forwarder (``core/server/tools/recall.py:_forward_to_backend``) has been
+    # sending ``project_id`` since Car M while this model was ``extra="forbid"``
+    # WITHOUT the field — so every ``recall(project=…)`` came back HTTP 422 and
+    # cross-project recall has never worked on any branch. Optional here: C3 is
+    # additive and the pipeline still scopes on ``directory``; C7 re-keys the
+    # WHERE clause onto this field and retires ``directory``.
+    project_id: str | None = None
     max_results: int = 5
     min_heat: float = 0.0
     type: str = "all"  # noqa: A003 — matches MCP schema convention

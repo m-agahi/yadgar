@@ -131,6 +131,12 @@ class _ApplyMixin:
             # migration uses) — backend can import _shared, so this is the
             # canonical entry point and the only place we call the classifier
             # from a backend write path.
+            #
+            # C3 (0047 PR#40 §5.C3): the enqueue-time stamp now READS through
+            # here as ``caller_value`` and short-circuits the classifier — the
+            # core tool resolved it in the process that can see the session.
+            # The derivation fallback below survives only for payloads enqueued
+            # before this car; C5 deletes it (this container cannot derive).
             from yadgar._shared.storage._project_id_writer import (  # noqa: PLC0415
                 _resolve_project_id_for_write,
             )

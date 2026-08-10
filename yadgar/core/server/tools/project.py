@@ -28,6 +28,7 @@ from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._project_param import accept_project_param
 
 logger = logging.getLogger(__name__)
 
@@ -2045,7 +2046,7 @@ _project_brief_cache = _make_project_brief_cache()
 
 
 @_tool(always_load=True)
-def project_brief(directory: str, mode: str = "catalog") -> dict:
+def project_brief(directory: str, mode: str = "catalog", *, project: str | None = None) -> dict:
     """Return a layered project context snapshot for the given directory.
 
     Choose mode based on your use-case — new callers should use "signals" or "restore":
@@ -2070,6 +2071,9 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
             Default "catalog" is kept only for back-compat — prefer "signals" or
             "restore" for all new callers.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     resolved = _resolve_project_root(directory)
 
     # Car 1: whole-payload cache for the query-agnostic modes (catalog/restore/full).
@@ -2141,7 +2145,7 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
 
 
 @_tool(power=True)
-def bootstrap_project(directory: str, content: str) -> dict:
+def bootstrap_project(directory: str, content: str, *, project: str | None = None) -> dict:
     """Replace this directory's _project_init memory with caller-supplied content.
 
     Content must be concise markdown: wiki slugs, key memory IDs, conventions,
@@ -2160,6 +2164,9 @@ def bootstrap_project(directory: str, content: str) -> dict:
     Use bootstrap_project only when you need a hand-curated init string that
     seed_project's auto-scan cannot capture.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -2210,7 +2217,7 @@ def _register_active_work_directory(resolved: str) -> None:
 
 
 @_tool(power=True)
-def update_active_work(directory: str, content: str) -> dict:
+def update_active_work(directory: str, content: str, *, project: str | None = None) -> dict:
     """Replace this directory's _active_work memory atomically.
 
     Deletes any existing _active_work memory(ies) for the directory,
@@ -2222,6 +2229,9 @@ def update_active_work(directory: str, content: str) -> dict:
 
     Returns: {previous_content: str | None, new_memory: dict}
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
     if _gate is not None:

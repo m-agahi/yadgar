@@ -470,8 +470,19 @@ class TestWikiProjectParam:
         assert result.get("stored") is True
         assert captured["payload"]["project_id"] == "quinyx/aws2slack"
 
-    def test_wiki_add_no_project_omits_project_id_from_payload(self) -> None:
-        """``wiki_add`` without ``project=`` does not stamp project_id."""
+    def test_wiki_add_no_project_still_stamps_the_resolved_project_id(self) -> None:
+        """``wiki_add`` without ``project=`` stamps the SESSION-resolved value.
+
+        SUPERSEDES the Car M contract "no ``project=`` → no ``project_id`` on
+        the payload". C3 (0047 PR#40 §5.C3) makes the stamp unconditional:
+        leaving the default path unstamped meant the DRAINER had to infer a
+        project_id, and it runs in a container with no git binary and no host
+        project mounts, so the inference silently yielded ``local/<basename>``
+        or ``"unresolved"`` (§1.1 / ADR-0227). The tool call is the only
+        participant that can see the session, so it is the only honest place
+        to resolve. Kept as a test of the OPPOSITE assertion rather than
+        deleted, so the reversal is visible in the diff.
+        """
         from yadgar.core.server.tools.wiki import wiki_add
 
         captured: dict = {}
@@ -499,13 +510,17 @@ class TestWikiProjectParam:
                 return_value={},
             ),
         ):
-            wiki_add(
-                title="car m test",
-                content="body",
-                directory="/home/max/git/yadgar",
-            )
+            with patch(
+                "yadgar.core.server.tools.wiki.resolve_effective_project",
+                return_value="m-agahi/yadgar",
+            ):
+                wiki_add(
+                    title="car m test",
+                    content="body",
+                    directory="/home/max/git/yadgar",
+                )
 
-        assert "project_id" not in captured["payload"]
+        assert captured["payload"]["project_id"] == "m-agahi/yadgar"
 
     def test_wiki_add_invalid_project_returns_error_envelope(self) -> None:
         """``wiki_add(project=123)`` returns the tool's error envelope, no raise."""

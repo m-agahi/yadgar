@@ -20,6 +20,7 @@ from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 from yadgar.core.server._helpers import _q_with_timeout
+from yadgar.core.server.tools._project_param import accept_project_param
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,8 @@ def recent_memories(
     limit: int = 10,
     since: str = "24h",
     directory: str = "",
+    *,
+    project: str | None = None,
 ) -> dict:
     """Return recently stored memories, newest first, without classifier dependency.
 
@@ -205,6 +208,9 @@ def recent_memories(
             "directory": <str>,
         }
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     storage = _get_storage()
     effective_limit = min(max(1, limit), 100)
     effective_dir = directory.strip() if directory else ""
@@ -448,8 +454,11 @@ def add_rule(
 
 
 @_tool(power=True)
-def get_rules(directory: str = "") -> list[dict]:
+def get_rules(directory: str = "", *, project: str | None = None) -> list[dict]:
     """Get active rules. If directory is provided, returns only applicable rules."""
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     if _st._rules_engine is None:
         return []
     if directory:
