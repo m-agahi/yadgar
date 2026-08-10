@@ -161,6 +161,11 @@ _IMPORTED_ONLY = {
     # findings_capture.py: shared collector imported by the pending-findings CLI +
     # session-end-capture.py; never copied/installed as a standalone hook.
     "findings_capture.py",
+    # _identity_mint.py (Car C2, ADR-0227): the host-side project_id mint,
+    # imported by session-start-context.py and core/cli/hook.py. It is a library
+    # module, never an executable hook — it deliberately has no main() and is
+    # never copied to hooks_dir.
+    "_identity_mint.py",
 }
 
 # #64: hook_runner-dispatched core hooks. These are executed via

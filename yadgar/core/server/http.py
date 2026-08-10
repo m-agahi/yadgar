@@ -826,19 +826,32 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
 
 @observe(tier="stage")
-async def _task_list_legacy_wiki_nudge(directory: str, project: str) -> str:
+async def _task_list_legacy_wiki_nudge(directory: str) -> str:
     """Legacy wiki-page parser for the without-Car-D branch.
 
     Extracted from `_task_list_restore_nudge` to keep the handler under the
     C901 complexity cap. Returns "" on any error (fail-open). Deleted at
     master 0047 cutover time.
+
+    Car C2: this reader deliberately keeps the BASENAME key. Its pages were
+    minted under `<basename>-task-list` by the pre-ADR-0227 stop hook, so a
+    legacy reader must use the legacy key — handing it the minted `owner/repo`
+    would build `m-agahi/yadgar-task-list`, which is not a slug shape (slugs
+    replace `/` with `_`, ADR-0202) and matches nothing. The LIVE path
+    (`_task_list_restore_nudge`) uses the minted key; only this soon-to-be
+    deleted compatibility arm looks backwards.
     """
+    from pathlib import Path as _Path  # noqa: PLC0415
+
     from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
 
     storage = _get_storage()
     if storage is None:
         return ""
-    slug = f"{project}-task-list"
+    legacy_key = _Path(directory).name if directory else ""
+    if not legacy_key:
+        return ""
+    slug = f"{legacy_key}-task-list"
     try:
         page = await asyncio.to_thread(
             storage.get_wiki_page_by_slug_directory,
@@ -936,7 +949,7 @@ def _format_task_list_nudge_rows(rows: list[dict], cap: int, project: str) -> st
 
 
 @observe(tier="stage")
-async def _task_list_restore_nudge(directory: str) -> str:
+async def _task_list_restore_nudge(directory: str, project: str = "") -> str:
     """Return the task-list restore-nudge line, or "" when no ledged exists.
 
     Car E (0047 spine train): reads open tasks from the ``task`` ledger table
@@ -960,12 +973,18 @@ async def _task_list_restore_nudge(directory: str) -> str:
     ADR-0215 removed branch scoping; the existence check resolves by
     directory alone and is reachable from any working tree.
 
+    Car C2 / ADR-0227: ``project`` is the project_id MINTED BY THE SESSION HOOK
+    and forwarded as a query parameter — core-server derives nothing. It used
+    to be ``Path(directory).name``, which is not an identity: every checkout
+    named ``yadgar`` addressed the same ledger rows, and no checkout addressed
+    the rows written under the real ``owner/repo`` key. An ABSENT project means
+    a caller with no identity, and the correct response is no project-scoped
+    read at all — never a guess (ADR-0227: "never defaulted, never inferred,
+    never silently substituted").
+
     Fail-open: any error returns "" so session-start is never blocked.
     """
     try:
-        from pathlib import Path as _Path  # noqa: PLC0415
-
-        project = _Path(directory).name if directory else ""
         if not project:
             return ""
 
@@ -990,10 +1009,48 @@ async def _task_list_restore_nudge(directory: str) -> str:
             return _format_task_list_nudge_rows(list(_rows or []), 12, project)
 
         # ── Legacy path: wiki-page parse. Removed once Car D lands.
-        return await _task_list_legacy_wiki_nudge(directory, project)
+        return await _task_list_legacy_wiki_nudge(directory)
     except Exception as _te:
         logger.debug("session-context task-list nudge error: %s", _te)
         return ""
+
+
+_CURRENT_PROJECT_BLOCK = "current_project"
+
+
+@observe(tier="stage")
+def _upsert_current_project_block(directory: str, project: str) -> None:
+    """Persist the session's minted project_id into an always-injected block.
+
+    Car C2 / ADR-0227. The SessionStart banner is a one-shot line: compaction
+    eats it, and after that the agent has no way to recover the identity — MCP
+    calls carry no session key, so there is nothing to look it up from. Memory
+    blocks ARE re-injected on every session-context render, so writing the key
+    into ``current_project`` is what makes it survive a compaction inside a
+    long session.
+
+    Writes only what the caller minted. Fail-open (blocks are an ergonomic
+    aid, not the transport): a storage error must never break session start.
+    """
+    if not project or not directory:
+        return
+    content = (
+        f"project_id: {project}\n"
+        f'Pass project="{project}" on yadgar tool calls that take it. '
+        "A different value is deliberate cross-project work."
+    )
+    try:
+        from yadgar.core.server.tools import blocks as _blocks  # noqa: PLC0415
+
+        result = _blocks.block_update(
+            _CURRENT_PROJECT_BLOCK, content, scope="project", directory=directory
+        )
+        if isinstance(result, dict) and result.get("ok") is False:
+            _blocks.block_create(
+                _CURRENT_PROJECT_BLOCK, content, scope="project", directory=directory
+            )
+    except Exception as _be:  # noqa: BLE001 — never block session start
+        logger.debug("current_project block upsert failed: %s", _be)
 
 
 @observe(tier="stage")
@@ -1040,6 +1097,10 @@ async def hook_session_context(request: Request) -> JSONResponse:
     Returns: {"text": "...markdown..."}
     """
     directory = request.query_params.get("directory", os.getcwd())
+    # Car C2 / ADR-0227: the project_id is MINTED HOST-SIDE by the SessionStart
+    # hook and arrives here as an explicit parameter. This process cannot derive
+    # it (no git, no repo mounted in the container) and must not try.
+    project = request.query_params.get("project", "")
     mode = request.query_params.get("mode", "catalog")
     # v5.7.9: read source for per-source hint copy and compact suppression.
     # Unknown/missing values fall through to the "startup" default.
@@ -1050,6 +1111,11 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
     # Record timestamp for prompt-recall throttling (bounded dict)
     _bounded_set(_st._last_session_context, directory, time.monotonic())
+
+    # Car C2: persist the minted identity BEFORE the compact early-return below,
+    # so a compaction refreshes the block too (that is the case the block exists
+    # for). No-op + fail-open when the caller sent no project.
+    _upsert_current_project_block(directory, project)
 
     # v5.10.6: import any pending session-end sentinel files before project_brief query.
     _sentinel_dir_env = os.environ.get("YADGAR_SESSION_END_DIR", "")
@@ -1156,7 +1222,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
             # Hoisted FIRST (v5.149): the task-restore nudge led the render so it is
             # not buried under the project-brief catalog — the advisory tail form was
             # ignored. Prepend keeps it the first thing the model reads this session.
-            render = await _task_list_restore_nudge(directory) + render
+            render = await _task_list_restore_nudge(directory, project) + render
 
         return JSONResponse({"text": render})
     except Exception as _e:

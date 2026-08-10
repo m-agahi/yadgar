@@ -115,13 +115,11 @@ def test_task_nudge_uses_the_supplied_project_id_for_the_ledger_read(tmp_path):
 
     calls: dict = {}
 
-    class _FakeTaskTools:
-        @staticmethod
-        def task_list(project_id, status=None, **kw):
-            calls["project_id"] = project_id
-            return []
+    def _fake_task_list(project_id, status=None, **kw):
+        calls["project_id"] = project_id
+        return []
 
-    with patch.dict("sys.modules", {"yadgar.core.server.tools.task": _FakeTaskTools}, clear=False):
+    with patch("yadgar.core.server.tools.task.task_list", _fake_task_list):
         asyncio.run(_http._task_list_restore_nudge(str(tmp_path), "m-agahi/yadgar"))
 
     assert calls.get("project_id") == "m-agahi/yadgar", (
@@ -135,13 +133,11 @@ def test_task_nudge_returns_empty_when_no_project_supplied(tmp_path):
 
     calls: dict = {}
 
-    class _FakeTaskTools:
-        @staticmethod
-        def task_list(project_id, status=None, **kw):
-            calls["project_id"] = project_id
-            return [{"id": 1, "title": "leaked", "status": "pending"}]
+    def _fake_task_list(project_id, status=None, **kw):
+        calls["project_id"] = project_id
+        return [{"id": 1, "title": "leaked", "status": "pending"}]
 
-    with patch.dict("sys.modules", {"yadgar.core.server.tools.task": _FakeTaskTools}, clear=False):
+    with patch("yadgar.core.server.tools.task.task_list", _fake_task_list):
         out = asyncio.run(_http._task_list_restore_nudge(str(tmp_path), ""))
 
     assert out == "", f"a missing identity must produce no nudge; got {out!r}"
@@ -222,11 +218,13 @@ def test_stop_template_project_is_not_the_basename():
     it as "basename of {directory}" made every checkpoint write to the wrong
     namespace.
     """
+    import re
+
     text = _TEMPLATE.read_text(encoding="utf-8")
     header = text.split("-->", 1)[0]
-    assert "basename of {directory}" not in header, (
-        "the stop-hook template still defines {project} as a basename"
+    assert not re.search(r"\{project\}\s*=\s*basename", header), (
+        "the stop-hook template still DEFINES {project} as a basename"
     )
-    assert "project_id" in header, (
+    assert re.search(r"\{project\}\s*=.*project_id", header), (
         "the template header must define {project} in terms of the minted project_id"
     )

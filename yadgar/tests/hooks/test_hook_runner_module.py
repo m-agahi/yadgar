@@ -203,19 +203,38 @@ def test_session_start_context_prints_text(capsys):
 
 
 def test_session_start_context_no_output_when_empty(capsys):
+    """Empty daemon payload → nothing but the identity banner is printed.
+
+    Car C2: the banner is NOT daemon output — it is minted host-side, so it is
+    emitted whatever the daemon says. Pinning it as the whole of stdout keeps
+    this test's original meaning (no CONTEXT injected) exact rather than loose.
+    """
     data = {"cwd": "/myproject"}
-    with patch.object(hr, "_http_get", return_value={"text": ""}):
+    with (
+        patch(
+            "yadgar.core.hooks._identity_mint.resolve_session_project",
+            return_value=("m-agahi/yadgar", "BANNER-LINE"),
+        ),
+        patch.object(hr, "_http_get", return_value={"text": ""}),
+    ):
         _run_hook_with_stdin(hr.hook_session_start_context, data)
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert captured.out.strip() == "BANNER-LINE"
 
 
 def test_session_start_context_no_output_when_server_down(capsys):
+    """Daemon down → no context injected; the host-side banner still is."""
     data = {"cwd": "/myproject"}
-    with patch.object(hr, "_http_get", return_value=None):
+    with (
+        patch(
+            "yadgar.core.hooks._identity_mint.resolve_session_project",
+            return_value=("m-agahi/yadgar", "BANNER-LINE"),
+        ),
+        patch.object(hr, "_http_get", return_value=None),
+    ):
         _run_hook_with_stdin(hr.hook_session_start_context, data)
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert captured.out.strip() == "BANNER-LINE"
 
 
 def test_session_start_context_bad_stdin_uses_cwd(capsys):

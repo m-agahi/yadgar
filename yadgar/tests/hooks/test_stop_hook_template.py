@@ -47,7 +47,15 @@ _TEMPLATE_PATH = _REPO / "core" / "hooks" / "templates" / "stop_checkpoint_promp
 _EXPECTED_TEMPLATE = """<!-- YADGAR CHECKPOINT PROTOCOL
      Substitute these placeholders throughout this file before following instructions:
        {directory}      = your current working directory (absolute path; the project root)
-       {project}        = basename of {directory}
+       {project}        = the session's minted project_id — the `owner/repo` value
+                          emitted at SessionStart as `yadgar: project_id=<owner/repo>`.
+                          It is NOT the basename of {directory}: the basename is not an
+                          identity (two checkouts named `yadgar` are two projects), and
+                          the task ledger is keyed on the minted value (ADR-0227).
+                          If you cannot find that line, scroll for the `current_project`
+                          memory block, which carries the same value. If NEITHER exists,
+                          the mint failed — say so and SKIP the ledger steps below rather
+                          than inventing a key.
 -->
 
 Yadgar checkpoint. CAPTURE FIRST (steps 1-5), THEN maintenance (steps 6-7).

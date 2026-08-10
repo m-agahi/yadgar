@@ -243,7 +243,7 @@ def test_session_context_non_compact_still_renders_catalog(tmp_path, monkeypatch
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
         resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -399,7 +399,7 @@ def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
         resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -436,7 +436,7 @@ def test_task_list_nudge_absent_when_page_missing(tmp_path, monkeypatch):
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
         resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -543,7 +543,7 @@ def test_task_list_nudge_fail_open_on_existence_check_error(tmp_path, monkeypatc
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
         resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -626,7 +626,7 @@ def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
         resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -668,7 +668,7 @@ def test_task_list_nudge_excludes_completed_tasks(tmp_path, monkeypatch):
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
         resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -691,7 +691,7 @@ def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
         resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup",
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
             headers={"Authorization": f"Bearer {token}"},
         )
 
