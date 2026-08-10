@@ -188,3 +188,66 @@ class TestResolveEffectiveProjectSignatureUnchanged:
         params = inspect.signature(resolve_effective_project).parameters
         assert set(params) == {"project", "directory", "session_project"}
         assert all(p.kind == inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+class TestAcceptProjectParamIsNotDecorative:
+    """The helper the 42 no-sink tools route their ``project`` into.
+
+    Without these, the sweep's only assertion is signature SHAPE — the helper
+    could ``return None`` unconditionally and every other test would stay
+    green (ADR-0080: a check that cannot fail).
+    """
+
+    def test_valid_override_is_returned(self) -> None:
+        from yadgar.core.server.tools._project_param import accept_project_param
+
+        assert (
+            accept_project_param("quinyx/aws2slack", "/home/max/git/yadgar") == "quinyx/aws2slack"
+        )
+
+    def test_empty_override_raises_at_the_boundary(self) -> None:
+        from yadgar.core.server.tools._project_param import (
+            InvalidProjectOverrideError,
+            accept_project_param,
+        )
+
+        with pytest.raises(InvalidProjectOverrideError):
+            accept_project_param("", "/home/max/git/yadgar")
+
+    def test_non_string_override_raises_at_the_boundary(self) -> None:
+        from yadgar.core.server.tools._project_param import (
+            InvalidProjectOverrideError,
+            accept_project_param,
+        )
+
+        with pytest.raises(InvalidProjectOverrideError):
+            accept_project_param(17, "/home/max/git/yadgar")  # type: ignore[arg-type]
+
+    def test_absent_override_never_touches_the_classifier(self, monkeypatch) -> None:
+        """``project=None`` must NOT pay for a derivation nothing reads yet.
+
+        ``derive_project_id`` shells out to git twice and is uncached; running
+        it on every call of every scoped tool to compute a value with no sink
+        would be a straight latency regression (see the helper's docstring).
+        """
+        from yadgar.core.server.tools import _project_param as pp
+
+        def _explode(*_a: object, **_kw: object) -> tuple[str, str]:
+            raise AssertionError("derive_project_id must not be called when project is None")
+
+        monkeypatch.setattr(pp, "derive_project_id", _explode)
+        assert pp.accept_project_param(None, "/home/max/git/yadgar") is None
+
+    def test_every_scoped_tool_rejects_an_empty_project(self) -> None:
+        """Boundary validation is reachable through the REAL tool signatures.
+
+        Spot-checks one tool per module that got the sweep, so a helper that
+        stopped raising, or a tool wired to swallow the error, is caught.
+        """
+        from yadgar.core.server.tools._project_param import InvalidProjectOverrideError
+        from yadgar.core.server.tools.blocks import block_list
+        from yadgar.core.server.tools.runtime_config import config_list
+
+        for fn in (block_list, config_list):
+            with pytest.raises(InvalidProjectOverrideError):
+                fn(directory="/home/max/git/yadgar", project="")
