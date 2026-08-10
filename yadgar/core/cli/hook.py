@@ -141,6 +141,31 @@ def hook_post_tool_capture() -> None:
     )
 
 
+def _emit_project_id(cwd: str) -> str | None:
+    """Mint the session's project_id, print the banner, return the id (or None).
+
+    Car C2 / ADR-0227: the CLI hook runner is the second host-side SessionStart
+    entry point (the opencode plugin shells out to ``yadgar hook <event>``), so
+    it mints exactly like ``core/hooks/session-start-context.py`` does. Shared
+    wording and shared policy live in ``_identity_mint``; only the printing is
+    duplicated, because the two runners print to different transports.
+
+    Fail-open on a crash: an unresolvable tree still prints a loud notice with
+    no candidate key, but nothing here may prevent the rest of the hook running.
+    """
+    from yadgar.core.hooks._identity_mint import (  # noqa: PLC0415
+        resolve_session_project,
+    )
+
+    try:
+        project_id, notice = resolve_session_project(cwd)
+    except Exception:  # noqa: BLE001 — a mint crash must not brick the hook
+        return None
+    if notice:
+        print(notice)
+    return project_id
+
+
 def hook_session_start_context() -> None:
     """SessionStart — inject project context into Claude's conversation."""
     try:
@@ -152,6 +177,9 @@ def hook_session_start_context() -> None:
         source = ""
 
     params: dict = {"directory": cwd}
+    project_id = _emit_project_id(cwd)
+    if project_id:
+        params["project"] = project_id
     if source:
         params["source"] = source
 
@@ -171,6 +199,12 @@ def hook_post_compact_rehydrate() -> None:
         directory = os.getcwd()
 
     params: dict = {"directory": directory}
+    # Car C2: re-emit the identity. Compaction ate the original banner, and the
+    # transport is the line itself (§1.3 T1) — an un-repeated identity is a lost
+    # identity for the whole remainder of the session.
+    project_id = _emit_project_id(directory)
+    if project_id:
+        params["project"] = project_id
 
     result = _http_get("/hooks/post-compact", params)
     if result:
