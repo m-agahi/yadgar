@@ -67,14 +67,24 @@ class TestResolveEffectiveProject:
 
         ``/home/max/git/yadgar`` is the live yadgar repo (Car A0's derive
         returns ``m-agahi/yadgar``; host excluded).
+
+        Live ``derive_project_id`` reads git remotes — in the CI runner the
+        checkout URL is ``local/yadgar`` (not the GitHub path) so the real
+        classifier returns ``local/yadgar`` instead. Patch the seam (same
+        pattern test_car_l_write_paths_stamp_project_id uses) so the
+        precedence contract is what's under test, not the runner's git state.
         """
         from yadgar.core.server.tools._project_param import resolve_effective_project
 
-        out = resolve_effective_project(
-            project=None,
-            directory="/home/max/git/yadgar",
-            session_project=None,
-        )
+        with patch(
+            "yadgar.core.server.tools._project_param.derive_project_id",
+            return_value=("m-agahi/yadgar", ""),
+        ):
+            out = resolve_effective_project(
+                project=None,
+                directory="/home/max/git/yadgar",
+                session_project=None,
+            )
         assert out == "m-agahi/yadgar"
 
     def test_falls_back_to_global_when_no_resolution(self) -> None:
@@ -109,11 +119,15 @@ class TestResolveEffectiveProject:
         """An empty ``session_project`` is treated as None."""
         from yadgar.core.server.tools._project_param import resolve_effective_project
 
-        out = resolve_effective_project(
-            project=None,
-            directory="/home/max/git/yadgar",
-            session_project="",
-        )
+        with patch(
+            "yadgar.core.server.tools._project_param.derive_project_id",
+            return_value=("m-agahi/yadgar", ""),
+        ):
+            out = resolve_effective_project(
+                project=None,
+                directory="/home/max/git/yadgar",
+                session_project="",
+            )
         # Falls through to directory-derived
         assert out == "m-agahi/yadgar"
 
