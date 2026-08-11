@@ -41,6 +41,7 @@ import pytest
 
 from yadgar._shared.storage import StorageEngine
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # R3 Car 3a: the block_* write tools forward to the backend /admin endpoint.
 # Route _forward_admin → run_admin_op directly (no HTTP) against the test's _st
@@ -322,7 +323,7 @@ class TestBootstrapSeedsBlocks:
         from yadgar.core.server.tools.blocks import block_list
         from yadgar.core.server.tools.project import bootstrap_project
 
-        bootstrap_project(directory=_PROJ_DIR, content="# Test project")
+        bootstrap_project(directory=_PROJ_DIR, content="# Test project", project=TEST_PROJECT_ID)
         blocks = block_list(scope="project", directory=_PROJ_DIR)
         names = [b["name"] for b in blocks]
         assert "current_task" in names
@@ -333,14 +334,16 @@ class TestBootstrapSeedsBlocks:
         from yadgar.core.server.tools.blocks import block_get, block_update
         from yadgar.core.server.tools.project import bootstrap_project
 
-        bootstrap_project(directory=_PROJ_DIR, content="# First bootstrap")
+        bootstrap_project(directory=_PROJ_DIR, content="# First bootstrap", project=TEST_PROJECT_ID)
         # Manually update current_task
 
         block_update(
             name="current_task", content="Working on feat/foo", scope="project", directory=_PROJ_DIR
         )
         # Re-run bootstrap
-        bootstrap_project(directory=_PROJ_DIR, content="# Second bootstrap")
+        bootstrap_project(
+            directory=_PROJ_DIR, content="# Second bootstrap", project=TEST_PROJECT_ID
+        )
         block = block_get(name="current_task", scope="project", directory=_PROJ_DIR)
         assert block.get("content") == "Working on feat/foo"
 

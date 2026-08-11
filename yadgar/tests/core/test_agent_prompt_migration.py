@@ -108,3 +108,75 @@ class TestMigration025AgentPromptSlugCollapse:
         _migration_025_agent_prompt_slug_collapse(storage)
         page = storage.get_wiki_page_by_slug("agent-prompt-deploy")
         assert page is not None
+
+    def test_collapsed_page_inherits_the_source_project_id(self, storage):
+        """C5b: the migration is a WRITER — it must name an owner (ADR-0227).
+
+        The collapse builds a new page from a ``-vN`` source row it already
+        holds, so the owner is inherited, never derived: reading the stamped
+        value back is what "travels as an explicit caller parameter" means for
+        a write whose input is another row. C13c added this; the assertion was
+        missing, so a regression to the pre-C13c SELECT (which did not even
+        fetch the column) would have gone unnoticed until it raised at boot.
+        """
+        from yadgar._shared.storage.migrations import _migration_025_agent_prompt_slug_collapse
+
+        owner = "someone-else/their-repo"
+        storage.insert_wiki_page(
+            {
+                "slug": "agent-prompt-inherit-v3",
+                "title": "Agent Prompt: inherit v3",
+                "content": "Inherited content.",
+                "tags": ["agent-prompt"],
+                "links": [],
+                "category": "reference",
+                "confidence": "high",
+                "source_memory_ids": [],
+                "directory_context": "global",
+                "project_id": owner,
+            }
+        )
+
+        _migration_025_agent_prompt_slug_collapse(storage)
+
+        page = storage.get_wiki_page_by_slug("agent-prompt-inherit")
+        assert page is not None
+        assert page["project_id"] == owner, (
+            "the collapsed page must carry the -vN source's owner, not a manufactured or empty one"
+        )
+
+    def test_ownerless_source_is_skipped_with_its_versioned_pages_retained(self, storage):
+        """A pre-Car-L row names nobody — skip-and-count, never a fatal migration.
+
+        Two halves matter and only one is obvious: the bare slug must NOT be
+        created (an unattributed page is the failure this car exists to stop),
+        AND the ``-vN`` source must survive (it holds the only copy of the
+        content, so deleting it would destroy data an operator backfill still
+        needs).
+        """
+        from yadgar._shared.storage.migrations import _migration_025_agent_prompt_slug_collapse
+
+        storage._q(
+            "CREATE type::record('wiki_page', $id) SET "
+            "slug = $slug, title = $title, content = $content, tags = $tags, "
+            "links = [], category = 'reference', confidence = 'high', "
+            "source_memory_ids = [], directory_context = 'global', "
+            "created_at = $now, updated_at = $now, wiki_schema_version = 1",
+            {
+                "id": storage._next_id("wiki_page"),
+                "slug": "agent-prompt-ownerless-v1",
+                "title": "Agent Prompt: ownerless v1",
+                "content": "Legacy content with no owner.",
+                "tags": ["agent-prompt"],
+                "now": storage._now_iso(),
+            },
+        )
+
+        _migration_025_agent_prompt_slug_collapse(storage)
+
+        assert storage.get_wiki_page_by_slug("agent-prompt-ownerless") is None, (
+            "an ownerless source must not mint an unattributed bare page"
+        )
+        assert storage.get_wiki_page_by_slug("agent-prompt-ownerless-v1") is not None, (
+            "the retained -vN source is the only copy of the content"
+        )

@@ -793,12 +793,19 @@ class _WikiMixin:
     # ------------------------------------------------------------------ _project_init / _active_work atomic helpers
 
     @observe(tier="stage")
-    def upsert_project_init(self, directory: str, content: str) -> dict:
+    def upsert_project_init(self, directory: str, content: str, *, project_id: str = "") -> dict:
         """Atomic delete-then-insert for _project_init memory.
 
         Deletes all existing _project_init memories for the directory, then
         inserts a new one tagged [_project_init, _anchor] as semantic+protected.
         Returns the new memory dict (without embedding).
+
+        C5b (0047 PR#40 §2 amendment 2): the raw CREATE below routed around
+        ``_resolve_project_id_for_write`` and wrote an UNATTRIBUTED row — the
+        column is ``option<string>``, so the omission never raised. A
+        ``_project_init`` row is a per-directory singleton describing one
+        project, so its owner is the caller's project; it is threaded, never
+        derived (ADR-0227).
         """
         now = self._now_iso()
         mid = self._next_id("memory")
@@ -811,7 +818,7 @@ class _WikiMixin:
             "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = NONE, tags = $tags, "
             "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
+            "project_id = $project_id, created_at = $now, last_accessed = $now, "
             "heat = $heat, is_stale = false, file_hash = NONE, "
             "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
             "excitability = 1.0, store_type = $store_type, "
@@ -824,6 +831,9 @@ class _WikiMixin:
                 "content": content,
                 "tags": ["_project_init", "_anchor"],
                 "dir": directory,
+                "project_id": _resolve_project_id_for_write(
+                    caller_value=project_id, directory_context=directory
+                ),
                 "now": now,
                 "heat": 1.0,
                 "store_type": "semantic",
@@ -842,10 +852,13 @@ class _WikiMixin:
         }
 
     @observe(tier="stage")
-    def upsert_active_work(self, directory: str, content: str) -> dict:
+    def upsert_active_work(self, directory: str, content: str, *, project_id: str = "") -> dict:
         """Atomic delete-then-insert for _active_work memory.
 
         Returns dict with keys: previous_content (str | None), new_memory (dict).
+
+        C5b: same bypass, same fix as ``upsert_project_init`` — a per-directory
+        singleton is owned by the caller's project.
         """
         now = self._now_iso()
         mid = self._next_id("memory")
@@ -867,7 +880,7 @@ class _WikiMixin:
             "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = NONE, tags = $tags, "
             "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
+            "project_id = $project_id, created_at = $now, last_accessed = $now, "
             "heat = $heat, is_stale = false, file_hash = NONE, "
             "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
             "excitability = 1.0, store_type = $store_type, "
@@ -880,6 +893,9 @@ class _WikiMixin:
                 "content": content,
                 "tags": ["_active_work"],
                 "dir": directory,
+                "project_id": _resolve_project_id_for_write(
+                    caller_value=project_id, directory_context=directory
+                ),
                 "now": now,
                 "heat": 1.0,
                 "store_type": "episodic",
@@ -899,12 +915,19 @@ class _WikiMixin:
         return {"previous_content": previous_content, "new_memory": new_memory}
 
     @observe(tier="stage")
-    def upsert_dispatch_prelude_marker(self, directory: str) -> dict:
+    def upsert_dispatch_prelude_marker(self, directory: str, *, project_id: str = "") -> dict:
         """Atomic delete-then-insert for _dispatch_prelude marker memory.
 
         Mirrors upsert_active_work but uses tag '_dispatch_prelude' and a fixed
         content string.  Only the latest timestamp persists (no memory spam).
         Returns dict with keys: id, created_at.
+
+        C5b: third bypass, same fix. The marker records that a dispatch
+        prelude was assembled FOR this directory, so the owning project is the
+        caller's — the row is per-directory, not cross-project. The caller
+        (``_record_prelude_marker``) skips the write rather than raising when
+        it cannot name one; see that function for why a read tool must not die
+        over telemetry.
         """
         now = self._now_iso()
         mid = self._next_id("memory")
@@ -915,7 +938,7 @@ class _WikiMixin:
             "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = NONE, tags = $tags, "
             "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
+            "project_id = $project_id, created_at = $now, last_accessed = $now, "
             "heat = $heat, is_stale = false, file_hash = NONE, "
             "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
             "excitability = 1.0, store_type = $store_type, "
@@ -928,6 +951,9 @@ class _WikiMixin:
                 "content": "dispatch_prelude marker",
                 "tags": ["_dispatch_prelude"],
                 "dir": directory,
+                "project_id": _resolve_project_id_for_write(
+                    caller_value=project_id, directory_context=directory
+                ),
                 "now": now,
                 "heat": 1.0,
                 "store_type": "episodic",
@@ -935,63 +961,3 @@ class _WikiMixin:
             },
         )
         return {"id": mid, "created_at": now}
-
-    @observe(tier="stage")
-    def get_prompt_usage_counts(self) -> dict:
-        """Return the per-pattern prelude-usage counts (Stage 3.4, #33).
-
-        Counts live in a single global memory row tagged '_prompt_usage' whose
-        content is a JSON dict {pattern: count}. Missing row → {}.
-        """
-        import json  # noqa: PLC0415
-
-        rows = self._q("SELECT content FROM memory WHERE '_prompt_usage' INSIDE tags LIMIT 1")
-        if not rows:
-            return {}
-        try:
-            counts = json.loads(rows[0].get("content") or "{}")
-        except (ValueError, TypeError):  # fmt: skip
-            return {}
-        return counts if isinstance(counts, dict) else {}
-
-    @observe(tier="stage")
-    def increment_prompt_usage(self, pattern: str) -> int:
-        """Increment the prelude-usage counter for *pattern*; return the new count.
-
-        Read-modify-write on the single '_prompt_usage' row via the same atomic
-        delete-then-insert as upsert_dispatch_prelude_marker (memory rows are not
-        wiki-versioned — no churn). Best-effort counter: a lost increment under
-        concurrent prelude calls is acceptable.
-        """
-        import json  # noqa: PLC0415
-
-        counts = self.get_prompt_usage_counts()
-        counts[pattern] = int(counts.get(pattern, 0)) + 1
-        now = self._now_iso()
-        mid = self._next_id("memory")
-        self._q(
-            "BEGIN TRANSACTION;\n"
-            "DELETE FROM memory WHERE '_prompt_usage' INSIDE tags;\n"
-            "CREATE type::record('memory', $id) SET "
-            "content = $content, embedding = NONE, tags = $tags, "
-            "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
-            "heat = $heat, is_stale = false, file_hash = NONE, "
-            "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
-            "excitability = 1.0, store_type = $store_type, "
-            "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
-            "reconsolidation_count = 0, provenance_agent = $agent, "
-            "vector_clock = '{}', is_protected = true;\n"
-            "COMMIT TRANSACTION",
-            {
-                "id": mid,
-                "content": json.dumps(counts, sort_keys=True),
-                "tags": ["_prompt_usage"],
-                "dir": "global",
-                "now": now,
-                "heat": 1.0,
-                "store_type": "episodic",
-                "agent": "default",
-            },
-        )
-        return counts[pattern]

@@ -205,7 +205,9 @@ class TestDispatchPreludeUnknownPattern:
         import yadgar.core.server.tools.dispatch_helper as dh
 
         monkeypatch.setattr(dh, "_cached_agent_prompt", lambda pattern, storage: None)
-        monkeypatch.setattr(dh, "_record_prelude_marker", lambda storage, directory: None)
+        monkeypatch.setattr(
+            dh, "_record_prelude_marker", lambda storage, directory, project=None: None
+        )
         monkeypatch.setattr(dh, "_get_contract_text", lambda storage: "## Contract\n\nbody")
 
         with pytest.raises(UnresolvedPatternError) as ei:
@@ -225,7 +227,9 @@ class TestDispatchPreludeUnknownPattern:
             raise RuntimeError("surreal is down")
 
         monkeypatch.setattr(dh, "_cached_agent_prompt", _boom)
-        monkeypatch.setattr(dh, "_record_prelude_marker", lambda storage, directory: None)
+        monkeypatch.setattr(
+            dh, "_record_prelude_marker", lambda storage, directory, project=None: None
+        )
         monkeypatch.setattr(dh, "_get_contract_text", lambda storage: "## Contract\n\nbody")
 
         with pytest.raises(RuntimeError, match="surreal is down"):
@@ -238,7 +242,9 @@ class TestDispatchPreludeUnknownPattern:
             raise AssertionError("pattern='' must not reach the prompt lookup")
 
         monkeypatch.setattr(dh, "_cached_agent_prompt", _never)
-        monkeypatch.setattr(dh, "_record_prelude_marker", lambda storage, directory: None)
+        monkeypatch.setattr(
+            dh, "_record_prelude_marker", lambda storage, directory, project=None: None
+        )
         monkeypatch.setattr(dh, "_get_contract_text", lambda storage: "## Contract\n\nbody")
 
         out = dh.agent_dispatch_prelude(pattern="", task_topic="topic", storage=_StubStorage())
@@ -249,7 +255,9 @@ class TestDispatchPreludeUnknownPattern:
         """GREEN-unchanged: ``_build_context_block`` is deliberately untouched."""
         import yadgar.core.server.tools.dispatch_helper as dh
 
-        monkeypatch.setattr(dh, "_record_prelude_marker", lambda storage, directory: None)
+        monkeypatch.setattr(
+            dh, "_record_prelude_marker", lambda storage, directory, project=None: None
+        )
         monkeypatch.setattr(dh, "_get_contract_text", lambda storage: "## Contract\n\nbody")
         monkeypatch.setattr(
             dh,

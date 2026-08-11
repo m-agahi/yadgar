@@ -43,11 +43,16 @@ from __future__ import annotations
 
 import logging
 
-from yadgar._shared.errors import UnresolvedPatternError
+from yadgar._shared.errors import UnresolvedPatternError, UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import observe_project_id_skip
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._project_param import accept_project_param
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    accept_project_param,
+    resolve_effective_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +409,7 @@ def _record_pattern_usage(pattern: str) -> None:
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._record_prelude_marker")
-def _record_prelude_marker(storage, directory: str | None) -> None:
+def _record_prelude_marker(storage, directory: str | None, project: str | None = None) -> None:
     """Best-effort record of agent_dispatch_prelude call (read-side nudge, #69).
 
     Writes a _dispatch_prelude marker so _apply_dispatch_prelude_signal can
@@ -415,11 +420,31 @@ def _record_prelude_marker(storage, directory: str | None) -> None:
     to the backend /admin op. ``storage`` is kept for signature stability but the
     write no longer touches it directly. Transport errors are swallowed — the
     marker is a nudge, never load-bearing.
+
+    C5b (0047 PR#40 §2 amendment 2): the marker row used to reach the raw
+    ``CREATE`` unattributed. It is a per-directory row, so its owner is the
+    caller's project — but ``agent_dispatch_prelude`` is a READ tool, and
+    raising there would break prompt assembly over telemetry. So the write
+    takes C4's declared skip-and-count path instead: no identity, no row, one
+    counted skip. **Stated consequence:** a caller that passes no ``project=``
+    records no marker at all, so ``_apply_dispatch_prelude_signal`` reads
+    "never called" for it — a real behaviour change, made observable by the
+    metric rather than hidden.
     """
     if not directory:
         return
     try:
-        _forward_admin("record_prelude_marker", {"directory": directory})
+        project_id = resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,
+            tool="agent_dispatch_prelude",
+        )
+    except (UnresolvedProjectError, InvalidProjectOverrideError):  # fmt: skip
+        observe_project_id_skip("dispatch_prelude_marker")
+        return
+    try:
+        _forward_admin("record_prelude_marker", {"directory": directory, "project_id": project_id})
     except Exception as _e:  # noqa: BLE001
         logger.debug("agent_dispatch_prelude: record_prelude_marker forward failed: %s", _e)
 
@@ -485,7 +510,7 @@ def agent_dispatch_prelude(
         storage = _get_storage()
 
     # Record that agent_dispatch_prelude was called (read-side nudge, #69).
-    _record_prelude_marker(storage, directory)
+    _record_prelude_marker(storage, directory, project)
 
     # v5.122.0: contract sourced from wiki page (agent-prompt-contract) via cache,
     # with seed-on-miss + genesis fallback. Fetched BEFORE the kill-gate so the

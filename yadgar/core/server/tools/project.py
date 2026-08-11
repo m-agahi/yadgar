@@ -28,7 +28,10 @@ from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
-from yadgar.core.server.tools._project_param import accept_project_param
+from yadgar.core.server.tools._project_param import (
+    accept_project_param,
+    resolve_effective_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,11 +136,13 @@ def _render_project_brief(brief: dict) -> str:
     # F4: empty-state nudges
     if not init_present:
         lines.append(
-            "*Suggestion: call `bootstrap_project(directory, ...)` to seed project context.*"
+            "*Suggestion: call `bootstrap_project(directory, content, project=...)`"
+            " to seed project context.*"
         )
     if not active_present:
         lines.append(
-            "*Suggestion: call `update_active_work(directory, ...)` once you start a session"
+            "*Suggestion: call `update_active_work(directory, content, project=...)`"
+            " once you start a session"
             " to store working-state and checkpoint context.*"
         )
         lines.append(
@@ -1730,7 +1735,12 @@ def _project_brief_signals(
     )
     # Enrich actions with suggested_call (copy-paste-able MCP call) — v5.9+v5.10.1 pattern.
     # Enrichment is done post-build to avoid passing resolved dir into _build_recommended_actions.
-    _aw_call = f"update_active_work(directory={resolved!r}, content='...')"
+    # C5b: the suggested call must be copy-paste-able, and ``update_active_work``
+    # now RAISES without ``project=`` (its write path stamps project_id). A
+    # suggestion that fails on paste is worse than none. The literal placeholder
+    # is deliberate — this helper has no ``project`` in scope, and inventing one
+    # from ``resolved`` is the derivation ADR-0227 deletes.
+    _aw_call = f"update_active_work(directory={resolved!r}, content='...', project='<owner/repo>')"
     _cp_call = f"checkpoint(directory={resolved!r}, current_task='...', key_decisions=[...], next_steps=[...])"
     _audit_call = f"audit_anchors(directory={resolved!r}, dry_run=True)"
     for action_entry in recommended_actions:
@@ -2170,9 +2180,19 @@ def bootstrap_project(directory: str, content: str, *, project: str | None = Non
     Use bootstrap_project only when you need a hand-curated init string that
     seed_project's auto-scan cannot capture.
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # C5b (0047 PR#40 §2 amendment 2): PROMOTED from ``accept_project_param``
+    # to a real resolution. That helper exists for tools whose scope key is
+    # still ``directory`` and whose write path has no ``project_id`` sink —
+    # the init upsert behind this tool now stamps the column, so the
+    # boundary-validation-only path would keep minting unattributed rows.
+    # Raising rather than returning an envelope matches this tool's existing
+    # hard-failure style (the cap check below raises ValueError).
+    _effective_project_id = resolve_effective_project(
+        project=project,
+        directory=directory,
+        session_project=None,
+        tool="bootstrap_project",
+    )
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -2186,7 +2206,10 @@ def bootstrap_project(directory: str, content: str, *, project: str | None = Non
     # T2 Car F (ADR-0078): the store phase (init upsert + default-block seed)
     # forwards to the backend bootstrap_project_store /admin op — validation +
     # secret gate + host path resolution stay core-side.
-    return _forward_admin("bootstrap_project_store", {"resolved": resolved, "content": content})
+    return _forward_admin(
+        "bootstrap_project_store",
+        {"resolved": resolved, "content": content, "project_id": _effective_project_id},
+    )
 
 
 @observe(tier="stage", metric="tools.project._get_active_work_tracked_dir")
@@ -2235,9 +2258,15 @@ def update_active_work(directory: str, content: str, *, project: str | None = No
 
     Returns: {previous_content: str | None, new_memory: dict}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # C5b (0047 PR#40 §2 amendment 2): promoted to a real resolution — see
+    # ``bootstrap_project`` for why ``accept_project_param`` is no longer the
+    # right helper for a tool whose write path stamps ``project_id``.
+    _effective_project_id = resolve_effective_project(
+        project=project,
+        directory=directory,
+        session_project=None,
+        tool="update_active_work",
+    )
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -2252,7 +2281,10 @@ def update_active_work(directory: str, content: str, *, project: str | None = No
     # _active_work delete-then-insert (+ project_brief epoch bump) forwards to the
     # backend /admin op. The host-FS watchdog marker stays core (host lifecycle).
     resolved = _resolve_project_root(directory)
-    result = _forward_admin("update_active_work", {"resolved": resolved, "content": content})
+    result = _forward_admin(
+        "update_active_work",
+        {"resolved": resolved, "content": content, "project_id": _effective_project_id},
+    )
     _register_active_work_directory(resolved)
     return result
 

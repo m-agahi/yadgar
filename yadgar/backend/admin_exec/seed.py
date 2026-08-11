@@ -142,8 +142,15 @@ def seed_store(payload: dict) -> dict:
 
     if init_content:
         # §23: starter _project_init from README + top-level docs (drafted core-side).
+        # C5b: the fifth chokepoint bypass. This function already HELD the
+        # caller's project_id (it threads it into every ``_store_one`` above)
+        # and dropped it here, so the one row the seed wrote through the raw
+        # upsert path was the one row that arrived unattributed. The existing
+        # guard is unchanged and now also catches the chokepoint raise: an
+        # ownerless init draft degrades to a warning rather than failing the
+        # seed, which is what this except clause was written to promise.
         try:
-            storage.upsert_project_init(root, init_content)
+            storage.upsert_project_init(root, init_content, project_id=project_id or "")
             logger.info("Drafted _project_init for %s", root)
         except Exception:  # noqa: BLE001 — init draft failure must not fail the seed
             logger.warning("Failed to draft _project_init for %s", root, exc_info=True)

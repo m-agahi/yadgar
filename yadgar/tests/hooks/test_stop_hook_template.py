@@ -232,7 +232,9 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      consider_refresh_checkpoint, extract_last_session_findings, update_roadmap,
      review_rejections.)
    - bootstrap_project (no suggested_call): propose a <=1500-char project-summary
-     memory, then bootstrap_project("{directory}", content).
+     memory, then bootstrap_project("{directory}", content, project="{project}").
+     (C5b: bootstrap_project raises without project= — this line is the one
+     place the protocol used to omit it, against its own rule at the top.)
    - Any action type NOT covered above AND with no suggested_call → SKIP and flag
      it in your reply (do not improvise the mechanics).
 

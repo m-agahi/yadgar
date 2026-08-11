@@ -23,18 +23,26 @@ logger = logging.getLogger(__name__)
 def bootstrap_project_store(payload: dict) -> dict:
     """Store phase of bootstrap_project (T2 Car F sweep — 6th raw-write path).
 
-    payload: {"resolved": str, "content": str}
+    payload: {"resolved": str, "content": str, "project_id": str}
     ``resolved`` is the git-root-resolved directory (host-side); ``content``
     is already secret-gated + cap-validated core-side. Upserts the
     _project_init memory and seeds the default memory blocks (current_task +
     gotchas) idempotently. Returns the new _project_init memory dict.
+
+    C5b (0047 PR#40 §2 amendment 2): ``project_id`` arrives from the core
+    tool shell and is passed through verbatim. Nothing is derived here — the
+    backend container has no git binary and no host project mounts, so a
+    derivation could only manufacture an answer (ADR-0227 §1.1). A payload
+    without one reaches the storage chokepoint and raises there.
     """
     import yadgar._shared.runtime.state as _st  # noqa: PLC0415
 
     resolved = payload["resolved"]
     content = payload["content"]
     storage = _st._storage
-    result = storage.upsert_project_init(resolved, content)
+    result = storage.upsert_project_init(
+        resolved, content, project_id=payload.get("project_id") or ""
+    )
 
     # v5.33.0: seed default memory blocks (idempotent — skip existing).
     for name, block_content in (("current_task", ""), ("gotchas", "")):
@@ -58,18 +66,22 @@ def bootstrap_project_store(payload: dict) -> dict:
 def update_active_work(payload: dict) -> dict:
     """Replace a directory's _active_work memory (atomic). Storage-write half.
 
-    payload: {"resolved": str, "content": str}
+    payload: {"resolved": str, "content": str, "project_id": str}
     ``resolved`` is the git-root-resolved directory (core resolved it host-side;
     the backend container cannot run git). Returns {previous_content, new_memory}.
 
     A new _active_work row is a STRUCTURAL write for that directory — bump its
     project_brief epoch so any cached brief busts. Cross-process via the shared
     queue volume (Car 2). Guarded: never breaks the write.
+
+    C5b: ``project_id`` is the core shell's resolved value, passed through.
     """
     resolved = payload["resolved"]
     content = payload["content"]
     storage = _get_storage()
-    result = storage.upsert_active_work(resolved, content)
+    result = storage.upsert_active_work(
+        resolved, content, project_id=payload.get("project_id") or ""
+    )
     try:
         from yadgar._shared.server_helpers import _bump_epoch_for_context  # noqa: PLC0415
 
@@ -83,17 +95,24 @@ def update_active_work(payload: dict) -> dict:
 def record_prelude_marker(payload: dict) -> dict:
     """Upsert the _dispatch_prelude marker for a directory. Storage-write half.
 
-    payload: {"directory": str}
+    payload: {"directory": str, "project_id": str}
     Best-effort nudge write (agent_dispatch_prelude read-side signal, #69). The
     core shell already guards the forward with a swallow, so a failure here is
     non-fatal. Returns {"recorded": bool}.
+
+    C5b: the core shell resolves ``project_id`` and SKIPS the forward when it
+    cannot, so an unstamped payload arriving here is a defect rather than a
+    routine case — it reaches the storage chokepoint, raises, and is reported
+    as ``{"recorded": False}`` by the existing guard.
     """
     directory = payload.get("directory")
     if not directory:
         return {"recorded": False}
     storage = _get_storage()
     try:
-        storage.upsert_dispatch_prelude_marker(directory)
+        storage.upsert_dispatch_prelude_marker(
+            directory, project_id=payload.get("project_id") or ""
+        )
         return {"recorded": True}
     except Exception:
         logger.debug("record_prelude_marker: upsert failed for %s", directory, exc_info=True)
