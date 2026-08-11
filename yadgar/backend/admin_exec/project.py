@@ -45,6 +45,11 @@ def bootstrap_project_store(payload: dict) -> dict:
     )
 
     # v5.33.0: seed default memory blocks (idempotent — skip existing).
+    # C11 (0047 PR#40 §5): the seeded blocks carry the SAME project_id the
+    # _project_init page above is stamped with — migration 033 gave
+    # ``memory_block`` the column. The existence check stays keyed on the path:
+    # it must keep finding blocks seeded before this car, or bootstrap would
+    # duplicate every one of them.
     for name, block_content in (("current_task", ""), ("gotchas", "")):
         try:
             existing = storage.get_block(name, scope="project", directory=resolved)
@@ -54,6 +59,7 @@ def bootstrap_project_store(payload: dict) -> dict:
                     content=block_content,
                     scope="project",
                     directory=resolved,
+                    project_id=payload.get("project_id") or None,
                     char_limit=2000,
                 )
         except Exception:  # noqa: BLE001 — block seeding must never break the upsert

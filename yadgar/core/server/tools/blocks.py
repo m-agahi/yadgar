@@ -71,7 +71,10 @@ def block_create(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # C11: the validated value is KEPT and put on the payload. It was computed
+    # and discarded — the same defect C13 found on ``checkpoint`` — because
+    # ``memory_block`` had no column for it. Migration 033 added one.
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -90,6 +93,7 @@ def block_create(
             "content": content,
             "scope": scope,
             "directory": directory,
+            "project_id": _project_id,
             "char_limit": char_limit,
         },
     )
@@ -232,13 +236,15 @@ def block_list(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # C11: the read takes BOTH — project_id for rows written after migration
+    # 033, the legacy path for the historical corpus no backfill reaches.
+    _project_id = accept_project_param(project, directory)
     storage = _get_storage()
     if storage is None:
         return []
 
     try:
-        rows = storage.list_blocks(scope=scope, directory=directory)
+        rows = storage.list_blocks(scope=scope, directory=directory, project_id=_project_id)
     except Exception as exc:
         logger.warning("block_list error scope=%s directory=%s: %s", scope, directory, exc)
         return []

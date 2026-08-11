@@ -94,6 +94,40 @@ def observe_project_id_skip(writer: str, count: int = 1) -> None:
 
 
 @observe(tier="hot", span=False)
+def project_id_set_fragment(
+    project_id: str | None, *, param: str = "project_id"
+) -> tuple[str, dict]:
+    """Return the ``SET project_id = …`` fragment + params for an INSERT.
+
+    C11 (0047 PR#40 §5). This exists because of a real SurrealDB behaviour that
+    a bound ``None`` does NOT satisfy: ``project_id`` is declared
+    ``option<string>`` by migration 033, and binding Python ``None`` sends
+    ``NULL``, which the coercer rejects —
+
+        Couldn't coerce value for field `project_id` of `memory_block:1`:
+        Expected `none | string` but found `NULL`
+
+    ``NONE`` must therefore appear as a LITERAL in the statement, exactly as the
+    surrounding writers already do for ``directory = NONE``. Centralised here so
+    the four C11 writers cannot each rediscover it — and so the ADR-0227 rule is
+    expressed once: **an absent identity writes NONE. It is never substituted
+    with a path, a basename, or a sentinel.**
+
+    Args:
+        project_id: The caller's resolved identity, or falsy for "none named".
+        param: Bind-parameter name, so the fragment can join a statement that
+            already uses ``$project_id`` for something else.
+
+    Returns:
+        ``(sql_fragment, params_dict)`` — the fragment never has a trailing
+        comma, so the caller controls the join.
+    """
+    if project_id:
+        return f"{param} = ${param}", {param: project_id}
+    return f"{param} = NONE", {}
+
+
+@observe(tier="hot", span=False)
 def _resolve_project_id_for_write(
     *,
     caller_value: Any,

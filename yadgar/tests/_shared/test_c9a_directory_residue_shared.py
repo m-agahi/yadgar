@@ -71,10 +71,45 @@ _C10 = (
     "plan §5 C10 judgement site — the plan names this function by line and "
     "prescribes a redesign (not a rename), so C9a must not pre-empt it."
 )
-_C11 = (
-    "plan §5 C11 — the backing table has no ``project_id`` column until "
-    "migration 033. Migration 031 declared ``project_id`` on ``wiki_page`` and "
-    "``memory`` ONLY, so there is nothing to re-key onto here yet."
+# ── C11 landed. The old ``_C11`` reason ("the backing table has no
+# ``project_id`` column until migration 033") became FALSE the moment 033
+# shipped, and Direction 2 exists to catch exactly that kind of lie. These are
+# its replacements, split by what is actually true per signature now.
+
+_C11_DUAL_KEY = (
+    "C11 (plan §5) SHIPPED — migration 033 declared ``project_id`` on this "
+    "table and the writer/reader here now carry it. The ``directory``-family "
+    "parameter SURVIVES because the key is transitional, not because the car "
+    "did not reach it: nothing backfills these tables "
+    "(``project_backfill._TABLES`` is ``('memory', 'wiki_page')`` and plan §8 "
+    "defines no step for the rest), so the legacy value is the ONLY way rows "
+    "written before C11 stay reachable. Dropping the parameter now would not "
+    "be a degraded window — it would be permanent silent loss of the "
+    "historical corpus. It goes with the column, in the next PR's drop "
+    "migration."
+)
+_C11_LEGACY_COLUMN_WRITE = (
+    "C11 (plan §5) SHIPPED — this writer DUAL-WRITES: it stamps ``project_id`` "
+    "(migration 033) and keeps writing the legacy column, so the parameter "
+    "stays. Two independent reasons, both load-bearing: ADR-0225 keeps the "
+    "legacy columns because the backfill DERIVES from them (a row with an "
+    "identity and no path is unattributable in both directions), and three "
+    "live consumers read them today — ``causal_discovery/pc.py`` filters "
+    "episodes on ``e['directory']``, ``consolidation/cls.py`` reads "
+    "``ep.get('directory')``, and ``consolidation/cleanup.py`` takes the "
+    "action-log row's ``directory`` as the summary memory's "
+    "``directory_context``. Dies with the column, in the drop PR."
+)
+_C11_SCHEMA_ONLY = (
+    "C11 (plan §5) declared the COLUMN here and deliberately stopped. The "
+    "two-condition rename rule needs BOTH a ``project_id`` column and a caller "
+    "that HOLDS an identity to pass; condition 1 is now met and condition 2 is "
+    "not, so re-keying the predicate would silently match zero rows and raise "
+    "nothing. ``runtime_config``'s callers thread a real filesystem path from "
+    "the host client and the CLI, and ``list_config_rows``' unfiltered arm is "
+    "the G2 boot WARMUP — re-key the reads with old rows unreachable and every "
+    "knob in the corpus silently reverts to its default. Needs the knob train "
+    "(plan §6), not a mechanical rename."
 )
 # ── C9c's re-reasoning of the former ``_C9B`` bucket ─────────────────────────
 # C9a deferred 13 signatures to C9b with the reason "C9a's territory is _shared
@@ -120,12 +155,14 @@ _C9C_COUPLED_PASSTHROUGH = (
     "C9a's rule forbids: the caller passes ``owner/repo``, the query matches "
     "zero rows, nothing raises. Unblocks when its callee does."
 )
-_NO_OWNER = (
-    "GAP — ``runtime_config`` carries its own ``directory`` COLUMN and is "
-    "absent from plan §5 C11's four-table list (memory_block / episode / "
-    "action_log / queue). It has no ``project_id`` and no owning car. Reported "
-    "by C9a for C11 and C15."
-)
+# ``_NO_OWNER`` is GONE. It read: "GAP — ``runtime_config`` carries its own
+# ``directory`` COLUMN and is absent from plan §5 C11's four-table list
+# (memory_block / episode / action_log / queue). It has no ``project_id`` and no
+# owning car." C11 ADOPTED it: migration 033 declares ``runtime_config.project_id``
+# (the plan's fourth table, ``queue``, does not exist — the cited site is inside
+# ``insert_action_log``'s docstring and the queue is file-backed, so there was a
+# free slot and a real table to put in it). The six signatures below are no longer
+# ownerless; they carry ``_C11_SCHEMA_ONLY``, which states what is and is not done.
 
 #: ``<path relative to yadgar/_shared>::<function name>`` → reason.
 #: Every entry is a deliberate exclusion; none is "not got to yet".
@@ -165,29 +202,33 @@ _ALLOWLIST: dict[str, str] = {
     # residue is gone, so the entries had to go WITH the sweep. This is the
     # cross-car lint coupling C9c named: a sweep can strand a sibling car's
     # allowlist, and neither car can see the other's tree. Checked at merge.
-    # ── plan §5 C11 — no project_id column until migration 033 ───────────────
-    "sensory_buffer/sensory_buffer.py::capture": _C11,
-    "sensory_buffer/sensory_buffer.py::capture_action": _C11,
-    "storage/queue.py::insert_action_log": _C11,
-    "storage/ops.py::get_active_checkpoint": _C11,
-    "storage/narrative.py::get_narratives_for_directory": _C11,
-    "storage/blocks.py::_canonical_dir": _C11,
-    "storage/blocks.py::_block_dir_clause": _C11,
-    "storage/blocks.py::_count_blocks_in_scope": _C11,
-    "storage/blocks.py::create_block": _C11,
-    "storage/blocks.py::get_block": _C11,
-    "storage/blocks.py::update_block": _C11,
-    "storage/blocks.py::delete_block": _C11,
-    "storage/blocks.py::list_blocks": _C11,
-    "storage/blocks.py::replace_block": _C11,
-    "storage/blocks.py::append_block": _C11,
-    # ── no owning car — reported upward ──────────────────────────────────────
-    "storage/runtime_config.py::_canonical_config_dir": _NO_OWNER,
-    "storage/runtime_config.py::_config_dir_clause": _NO_OWNER,
-    "storage/runtime_config.py::set_config_row": _NO_OWNER,
-    "storage/runtime_config.py::get_config_row": _NO_OWNER,
-    "storage/runtime_config.py::list_config_rows": _NO_OWNER,
-    "storage/runtime_config.py::delete_config_row": _NO_OWNER,
+    # ── plan §5 C11 — SHIPPED; these are the transitional legacy keys ────────
+    # NOT "not got to yet". Migration 033 declared the columns and the writers
+    # and readers below carry ``project_id`` now; the ``directory`` half is the
+    # second arm that keeps the un-backfilled historical corpus reachable.
+    "sensory_buffer/sensory_buffer.py::capture": _C11_LEGACY_COLUMN_WRITE,
+    "sensory_buffer/sensory_buffer.py::capture_action": _C11_LEGACY_COLUMN_WRITE,
+    "storage/queue.py::insert_action_log": _C11_LEGACY_COLUMN_WRITE,
+    "storage/ops.py::get_active_checkpoint": _C11_DUAL_KEY,
+    "storage/narrative.py::get_narratives_for_directory": _C11_DUAL_KEY,
+    "storage/blocks.py::_canonical_dir": _C11_LEGACY_COLUMN_WRITE,
+    "storage/blocks.py::_block_dir_clause": _C11_DUAL_KEY,
+    "storage/blocks.py::_block_project_clause": _C11_DUAL_KEY,
+    "storage/blocks.py::_count_blocks_in_scope": _C11_DUAL_KEY,
+    "storage/blocks.py::create_block": _C11_LEGACY_COLUMN_WRITE,
+    "storage/blocks.py::get_block": _C11_DUAL_KEY,
+    "storage/blocks.py::update_block": _C11_DUAL_KEY,
+    "storage/blocks.py::delete_block": _C11_DUAL_KEY,
+    "storage/blocks.py::list_blocks": _C11_DUAL_KEY,
+    "storage/blocks.py::replace_block": _C11_DUAL_KEY,
+    "storage/blocks.py::append_block": _C11_DUAL_KEY,
+    # ── the GAP C9a reported upward: C11 shipped the SCHEMA, not the re-key ──
+    "storage/runtime_config.py::_canonical_config_dir": _C11_SCHEMA_ONLY,
+    "storage/runtime_config.py::_config_dir_clause": _C11_SCHEMA_ONLY,
+    "storage/runtime_config.py::set_config_row": _C11_SCHEMA_ONLY,
+    "storage/runtime_config.py::get_config_row": _C11_SCHEMA_ONLY,
+    "storage/runtime_config.py::list_config_rows": _C11_SCHEMA_ONLY,
+    "storage/runtime_config.py::delete_config_row": _C11_SCHEMA_ONLY,
     # ── formerly "C9b-coupled"; re-reasoned by C9c, which swept ONE of the 13 ─
     # ``storage/memory.py::get_memories_by_store_type`` is GONE from this dict:
     # C9c renamed it AND re-keyed its WHERE onto ``build_project_scope_clause``.

@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import project_id_set_fragment
 
 _log = logging.getLogger(__name__)
 
@@ -90,17 +91,31 @@ class _NarrativeMixin:
 
     @observe(tier="stage")
     def insert_narrative_entry(self, entry: dict) -> int:
+        """Insert one narrative entry.
+
+        C11 (0047 PR#40 §5): **DUAL-WRITE.** Migration 033 declares
+        ``narrative_entry.project_id``. The sole caller
+        (``backend/narrative/narrative.py``) already held a resolved
+        ``project_id`` and was putting it in ``directory_context``, so both
+        conditions of the two-condition rename rule are met — the column exists
+        and the caller holds an identity. The legacy column is still written
+        because nothing backfills this table and its reader keeps a legacy arm.
+        """
         now = self._now_iso()
         nid = self._next_id("narrative_entry")
+        pid_sql, pid_params = project_id_set_fragment(
+            entry.get("project_id") or entry.get("directory_context")
+        )
         self._q(
             "CREATE type::record('narrative_entry', $id) SET "
-            "directory_context = $dir, summary = $summary, "
+            f"directory_context = $dir, {pid_sql}, summary = $summary, "
             "period_start = $period_start, period_end = $period_end, "
             "key_decisions = $key_decisions, key_events = $key_events, "
             "created_at = $created_at, heat = $heat",
             {
                 "id": nid,
                 "dir": entry["directory_context"],
+                **pid_params,
                 "summary": entry["summary"],
                 "period_start": entry["period_start"],
                 "period_end": entry["period_end"],
@@ -113,8 +128,22 @@ class _NarrativeMixin:
         return nid
 
     def get_narratives_for_directory(self, directory: str, limit: int = 10) -> list[dict]:
+        """Return narrative entries for a caller, newest first.
+
+        C11 (0047 PR#40 §5) — **TWO ARMS.** ``(project_id = $dir OR
+        directory_context = $dir)``. Its one caller already passes a resolved
+        ``project_id`` here, so the first arm is what matches rows written after
+        migration 033; the second keeps entries written before it readable,
+        since no backfill covers ``narrative_entry``.
+
+        The parameter keeps its ``directory`` name deliberately: it takes ONE
+        value that is matched against BOTH columns, so renaming it to
+        ``project_id`` would describe only half of what it does. It is renamed
+        when the legacy arm dies with the column, in the drop PR.
+        """
         rows = self._q(
-            "SELECT * FROM narrative_entry WHERE directory_context = $dir "
+            "SELECT * FROM narrative_entry "
+            "WHERE (project_id = $dir OR directory_context = $dir) "
             "ORDER BY period_end DESC LIMIT $lim",
             {"dir": directory, "lim": limit},
         )

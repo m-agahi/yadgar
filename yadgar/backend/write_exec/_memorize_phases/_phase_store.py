@@ -65,11 +65,13 @@ def phase_store(ctx: MemorizeContext) -> None:
     if fhash is not None:
         storage.upsert_file_hash(ctx.context, fhash)
 
-    # Capture in sensory buffer. C10 (f): the buffer's ``directory`` feeds the
-    # ``episode`` table, which does NOT get a ``project_id`` column until C11 —
-    # so this deliberately keeps passing the path and does NOT substitute the
-    # project_id, which would mint a row the path-keyed readers cannot find.
-    buffer.capture(ctx.content, ctx.context or "")
+    # Capture in sensory buffer. C10 (f) kept passing ONLY the path because the
+    # ``episode`` table had no ``project_id`` column and substituting one would
+    # have minted a row the path-keyed readers cannot find. C11's migration 033
+    # added the column, so BOTH now travel: the path still feeds the readers
+    # that key on it (``causal_discovery/pc.py``, ``consolidation/cls.py``) and
+    # the identity is stamped alongside rather than in place of it.
+    buffer.capture(ctx.content, ctx.context or "", project_id=ctx.project_id)
 
     # Record activity on consolidation engine
     if _st._consolidation is not None:

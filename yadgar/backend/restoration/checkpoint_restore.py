@@ -88,12 +88,20 @@ class CheckpointRestore:
         directory: str,
         ctx: CheckpointContext | None = None,
         session_id: str = "default",
+        project_id: str | None = None,
     ) -> dict:
         """Create a working state checkpoint for post-compaction recovery.
 
         ctx bundles the optional payload fields: current_task,
         files_being_edited, key_decisions, open_questions, next_steps,
         active_errors, custom_context.
+
+        C11 (0047 PR#40 §5): ``project_id`` is the host-minted identity the
+        ``checkpoint`` MCP tool already puts on its enqueue payload; migration
+        033 gives the table a column to hold it and ``insert_checkpoint`` stamps
+        it. ``directory_context`` is still written — it remains the supersede
+        key and the transitional read arm, since no backfill covers this table.
+        Absent → NONE, never derived (ADR-0227).
         """
         c = ctx or CheckpointContext()
         epoch = self._storage.get_current_epoch()
@@ -101,6 +109,7 @@ class CheckpointRestore:
             {
                 "session_id": session_id,
                 "directory_context": directory,
+                "project_id": project_id,
                 "current_task": c.current_task,
                 "files_being_edited": c.files_being_edited,
                 "key_decisions": c.key_decisions,
@@ -162,12 +171,13 @@ class CheckpointRestore:
         unstamped row is the same accepted cost as the un-backfilled corpus
         (plan §8 step 5b), and the C6 backfill is what closes it.
 
-        NOTE — the ``checkpoint`` table is deliberately NOT part of this. It
-        has no ``project_id`` column (see ``insert_checkpoint`` in
-        ``_shared/storage/ops.py``: the CREATE statement sets none), so
-        ``create_checkpoint`` / ``create_micro_checkpoint`` /
-        ``pre_compact_drain`` have nothing to stamp. Adding the column is
-        C11's per-table work, not this car's.
+        NOTE — the ``checkpoint`` table was deliberately NOT part of this when
+        C10g wrote it, because it had no ``project_id`` column. **C11 added it**
+        (migration 033), so ``create_checkpoint`` / ``create_micro_checkpoint`` /
+        ``pre_compact_drain`` now take and stamp a ``project_id`` of their own.
+        Unlike the memory sinks, the checkpoint READ keeps a transitional legacy
+        arm: no backfill covers ``checkpoint``, so a project_id-only predicate
+        would make every pre-C11 checkpoint unrestorable.
         """
         embedding = self._embeddings.encode(content)
         memory_payload: dict = {
@@ -234,7 +244,13 @@ class CheckpointRestore:
         return False, ""
 
     @trace_span()
-    def create_micro_checkpoint(self, directory: str, content: str, reason: str) -> dict | None:
+    def create_micro_checkpoint(
+        self,
+        directory: str,
+        content: str,
+        reason: str,
+        project_id: str | None = None,
+    ) -> dict | None:
         """Create a lightweight checkpoint triggered by a significant event.
 
         These are more frequent than manual checkpoints but capture less data.
@@ -243,7 +259,9 @@ class CheckpointRestore:
         """
         summary = content[:150].replace("\n", " ")
         ctx = CheckpointContext(current_task=f"[micro:{reason}] {summary}")
-        return self.create_checkpoint(directory, ctx, session_id="micro-auto")
+        return self.create_checkpoint(
+            directory, ctx, session_id="micro-auto", project_id=project_id
+        )
 
     @trace_span()
     def pre_compact_drain(
@@ -252,6 +270,7 @@ class CheckpointRestore:
         transcript_path: str | None = None,
         in_flight: dict | None = None,
         worktree_path: str | None = None,
+        project_id: str | None = None,
     ) -> dict:
         """Emergency context capture before compaction.
 
@@ -282,27 +301,30 @@ class CheckpointRestore:
         parameter, ``worktree_path``; when absent it falls back to ``directory``
         so the in-container fallback parse keeps working exactly as before.
 
-        The identity half is deliberately STILL named ``directory``. Every sink
-        it reaches keys on a directory-valued column that has no ``project_id``
-        yet — ``checkpoint.directory_context`` (no ``project_id`` column; see the
-        note on ``anchor_memory``) and ``memory.directory_context``. Renaming the
-        parameter without re-keying those reads would make callers pass
-        ``owner/repo`` into ``WHERE directory_context = $dir`` and match zero
-        rows without raising. That re-key is C11's per-table work; the seams are
-        marked at each call site below.
+        The identity half is deliberately STILL named ``directory``, and it is
+        now JOINED by ``project_id`` rather than replaced by it. C11 added
+        ``checkpoint.project_id`` and stamps it here, but the legacy column stays
+        the supersede key and the second read arm: no backfill covers this table
+        (``project_backfill._TABLES`` is ``("memory", "wiki_page")``; plan §8
+        names no step for it), so dropping the path arm would silently strand
+        every checkpoint written before this car. Both keys travel; the drop PR
+        takes the path one.
         """
         new_epoch = self._storage.increment_epoch()
 
         if in_flight is None:
             in_flight = self._capture_in_flight(transcript_path, worktree_path or directory)
 
-        # Create an auto-checkpoint if no recent one exists (per-directory)
-        active = self._storage.get_active_checkpoint(directory)
+        # Create an auto-checkpoint if no recent one exists (per-caller).
+        # C11: the lookup takes BOTH keys — project_id for rows this car stamps,
+        # the legacy path for the historical corpus no backfill reaches.
+        active = self._storage.get_active_checkpoint(directory, project_id=project_id or "")
         auto_created = False
         if active is None or active.get("epoch", 0) < new_epoch - 1:
-            checkpoint_data = {
+            checkpoint_data: dict = {
                 "session_id": "auto-drain",
                 "directory_context": directory,
+                "project_id": project_id,
                 "current_task": "[auto-captured before compaction]",
                 "epoch": new_epoch,
             }
@@ -490,12 +512,12 @@ class CheckpointRestore:
         THAT IS THE DESIGN, NOT AN UNFINISHED SWEEP.** ``restore`` takes BOTH
         values and routes each sink to the one its table actually keys on:
 
-          1. ``get_active_checkpoint``        → ``checkpoint.directory_context``
-             — **PATH.** The table has no ``project_id`` column (migration 031
-             declared it on ``wiki_page`` + ``memory`` only). It would flip
-             *symmetrically* with the drain writer, but flipping it would store
-             an identity in a column named for a path with no column to move
-             onto. C11 adds the column.
+          1. ``get_active_checkpoint``        → ``checkpoint.project_id``
+             — **project_id, PLUS a legacy path arm.** C10g left this on the
+             path because the table had no ``project_id`` column; C11's
+             migration 033 added it and ``insert_checkpoint`` stamps it, so the
+             sink moved together with its writer. The path arm SURVIVES because
+             no backfill covers ``checkpoint`` — see ``get_active_checkpoint``.
           2. ``get_anchored_memories_scoped`` → ``memory.directory_context``
              — **project_id.** C10g moved ``anchor_memory``'s stamp onto the
              project_id in the SAME change; move either alone and every anchor
@@ -503,16 +525,21 @@ class CheckpointRestore:
           3. ``get_memories_for_directory``   → ``memory.directory_context``
              — **project_id.** C10f moved ``memorize``'s stamp here, so every
              row written after that car carries ``owner/repo`` in this column.
-          4. ``list_blocks``                  → ``memory_block.directory``
-             — **PATH, and it does NOT flip symmetrically.** Blocks are written
-             by ``block_create(directory=…)``, a C11-blocked site that still
-             stores real paths. Route this sink onto project_id and every block
-             silently vanishes from every restore. See ``_fetch_blocks_safe``.
+          4. ``list_blocks``                  → ``memory_block.project_id``
+             — **project_id, PLUS a legacy path arm.** C10g's rule was "a sink
+             moves only when its WRITER has already moved"; C11 moved
+             ``create_block``, so this one moved with it. The path arm is what
+             keeps blocks written before this car visible — and there is no
+             backfill that would ever close that gap. See ``_fetch_blocks_safe``.
           5. ``detect_gaps``                  → forwards into sink 3
              — **project_id**, inherited.
 
-        The rule for the next reader: a sink moves only when its WRITER has
-        already moved. Sinks 2 and 3 had; 1 and 4 had not.
+        The rule C10g stated for the next reader — a sink moves only when its
+        WRITER has already moved — is why sinks 1 and 4 stayed put then and why
+        they move now: C11 moved both writers. **C11 adds the second half of the
+        rule:** a sink moves onto a NEW key alone only when something makes the
+        OLD rows reachable. Nothing does for these two tables, so both keep a
+        legacy arm rather than trading a stale read for an empty one.
 
         Args:
             directory: Host-side project path. Still the key for the checkpoint
@@ -524,8 +551,9 @@ class CheckpointRestore:
         max_memories = self._settings.REPLAY_MAX_RESTORE_MEMORIES
         scope = project_id or ""
 
-        # 1. Latest checkpoint — PATH-keyed (no project_id column on the table).
-        checkpoint = self._storage.get_active_checkpoint(directory)
+        # 1. Latest checkpoint — C11 moved this sink: project_id FIRST, the
+        # legacy path as the transitional second arm.
+        checkpoint = self._storage.get_active_checkpoint(directory, project_id=scope)
 
         # 2. Anchored memories (scope-split: global first then project)
         anchored = self._storage.get_anchored_memories_scoped(project_id=scope, limit=max_memories)
@@ -559,7 +587,7 @@ class CheckpointRestore:
         )
 
         # 7. Memory blocks (v5.33.0) — always-injected named text containers.
-        blocks = self._fetch_blocks_safe(directory)
+        blocks = self._fetch_blocks_safe(directory, project_id=scope)
         markdown = self._prepend_blocks(blocks, directory, markdown)
 
         return {
@@ -653,29 +681,32 @@ class CheckpointRestore:
         section = self._render_blocks_section(blocks, directory)
         return (section + "\n" + markdown) if section else markdown
 
-    # ── C11 SEAM (0047 §5, judgement site (b)) — the sink that forced the split ──
+    # ── C11 (0047 §5) — the sink that forced C10g's split, now DISCHARGED ──
     #
-    # ``list_blocks`` filters ``memory_block`` on ``WHERE directory = $directory``
-    # (``_shared/storage/blocks.py``), an EXACT match. ``memory_block`` has **no
-    # ``project_id`` column** — migration 031 declared ``project_id`` on
-    # ``wiki_page`` and ``memory`` only.
+    # C10g left this on the path because ``memory_block`` had no ``project_id``
+    # column and ``block_create(..., directory=...)`` still wrote real paths:
+    # flipping restore's value alone would have made every block vanish from
+    # every restore — zero rows, no exception.
     #
-    # This is why ``restore()``'s identity parameter is still named ``directory``
-    # and why C10 did NOT rename it. The other storage sinks flip SYMMETRICALLY:
-    # the drain writes ``checkpoint.directory_context`` and restore reads it back,
-    # so if both move to project_id together they still match. **Blocks do not.**
-    # ``memory_block`` rows are written by ``block_create(..., directory=...)``,
-    # one of the 18 ``accept_project_param`` sites correctly left C11-blocked
-    # because its table has no project_id column. Flip restore's value while the
-    # write side stays on real paths and every block silently vanishes from every
-    # restore — zero rows, no exception.
+    # C11 discharged it by moving BOTH sides in one commit: migration 033 adds
+    # ``memory_block.project_id``, ``create_block`` stamps it, and ``list_blocks``
+    # reads ``(project_id = $pid OR directory = $dir)``.
     #
-    # C11 fixes this by adding the column and re-keying BOTH sides together.
+    # **The legacy arm is not laziness — it is the only thing that keeps the
+    # historical corpus visible.** ``project_backfill._TABLES`` is
+    # ``("memory", "wiki_page")`` and plan §8 defines no backfill step for
+    # ``memory_block``, so a project_id-only predicate here would be permanent
+    # silent loss of the user's own curated blocks, not the bounded degraded
+    # window §8 5b sanctions for memory/wiki. It dies with the column.
     @observe(tier="stage")
-    def _fetch_blocks_safe(self, directory: str) -> list[dict]:
+    def _fetch_blocks_safe(self, directory: str, project_id: str = "") -> list[dict]:
         """Fetch memory blocks, swallowing errors (v5.33.0). Returns [] on failure."""
         try:
-            return self._storage.list_blocks(scope=None, directory=directory if directory else None)
+            return self._storage.list_blocks(
+                scope=None,
+                directory=directory if directory else None,
+                project_id=project_id or None,
+            )
         except Exception:
             logger.debug("Failed to fetch memory blocks for restore")
             return []

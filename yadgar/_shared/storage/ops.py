@@ -12,6 +12,7 @@ import logging
 import re as _re
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import project_id_set_fragment
 
 _log = logging.getLogger(__name__)
 
@@ -650,17 +651,30 @@ class _OpsMixin:
         Old per-directory checkpoints are HARD-DELETED. Other directories untouched.
         is_active=true is kept on every row for backward compat with callers that
         still filter on it; get_active_checkpoint() now uses directory_context.
+
+        C11 (0047 PR#40 §5): **DUAL-WRITE.** Migration 033 declares
+        ``checkpoint.project_id`` and this writer stamps the value the enqueueing
+        session minted host-side (``core/server/tools/misc.py`` puts it on the
+        payload; the drainer threads it here). Nothing is derived (ADR-0227).
+
+        ``directory_context`` is deliberately still written, and **the supersede
+        DELETE deliberately still keys on it**. One checkpoint per directory is
+        the invariant; re-keying the DELETE onto ``project_id`` while legacy rows
+        carry none would leave every pre-C11 checkpoint behind, and
+        ``ORDER BY created_at DESC LIMIT 1`` would keep returning a stale one.
         """
         now = self._now_iso()
         cid = self._next_id("checkpoint")
         directory = data.get("directory_context", "")
         resume_hint = data.get("resume_hint", "") or f'restore(directory="{directory}")'
+        pid_sql, pid_params = project_id_set_fragment(data.get("project_id"))
         # Hard-delete existing rows for this directory, then create new one.
         self._q(
             "BEGIN TRANSACTION;\n"
             "DELETE FROM checkpoint WHERE directory_context = $dir;\n"
             "CREATE type::record('checkpoint', $id) SET "
             "session_id = $session_id, directory_context = $dir, "
+            f"{pid_sql}, "
             "current_task = $task, files_being_edited = $files, "
             "key_decisions = $decisions, open_questions = $questions, "
             "next_steps = $steps, active_errors = $errors, "
@@ -687,21 +701,51 @@ class _OpsMixin:
                 # migration, not in the Pydantic Checkpoint model.
                 "in_flight": data.get("in_flight"),
                 "now": now,
+                **pid_params,
             },
         )
         return cid
 
     @observe(tier="stage", metric="storage.ops.get_active_checkpoint")
-    def get_active_checkpoint(self, directory: str = "") -> dict | None:
-        """Latest checkpoint for this directory. Empty directory = global most-recent."""
+    def get_active_checkpoint(self, directory: str = "", project_id: str = "") -> dict | None:
+        """Latest checkpoint for this caller. No key at all = global most-recent.
+
+        C11 (0047 PR#40 §5) — **TWO ARMS, the second transitional.**
+        ``(project_id = $pid OR directory_context = $dir)``. C10g left this sink
+        path-keyed because the table had no ``project_id`` column; 033 adds it
+        and ``insert_checkpoint`` now stamps it, so the sink moves — but the
+        legacy arm stays until the drop PR because **no backfill covers
+        ``checkpoint``** (``project_backfill._TABLES`` is
+        ``("memory", "wiki_page")``; §8 names no step for it). Dropping the
+        legacy arm would make every pre-C11 checkpoint unrestorable, silently.
+
+        Spelled out rather than delegated to ``build_project_scope_clause``:
+        that helper's second arm is ``'global' IN tags`` and ``checkpoint`` has
+        no ``tags`` column (the C13f finding, applied here).
+
+        **KNOWN LEAK, PRE-EXISTING, NOT INTRODUCED HERE:** the no-key branch
+        returns the most recent checkpoint of ANY project. It is reachable only
+        by a caller that names neither key, and this car deliberately does not
+        change it — narrowing it is a behaviour change to every unscoped caller
+        with no test pinning the current outcome. Reported upward for C12/C14/C15.
+        """
+        # ONE statement, arms assembled — not a four-way branch. Each extra
+        # ``self._q`` call site is a fresh mixin ``attr-defined`` error against
+        # the strict-typing ratchet for this legacy file, so the branchy form
+        # would have had to be paid for with a baseline bump.
+        arms: list[str] = []
+        params: dict = {}
+        if project_id:
+            arms.append("project_id = $pid")
+            params["pid"] = project_id
         if directory:
-            rows = self._q(
-                "SELECT * FROM checkpoint WHERE directory_context = $dir "
-                "ORDER BY created_at DESC LIMIT 1",
-                {"dir": directory},
-            )
-        else:
-            rows = self._q("SELECT * FROM checkpoint ORDER BY created_at DESC LIMIT 1")
+            arms.append("directory_context = $dir")
+            params["dir"] = directory
+        where = f"WHERE ({' OR '.join(arms)}) " if arms else ""
+        rows = self._q(
+            f"SELECT * FROM checkpoint {where}ORDER BY created_at DESC LIMIT 1",
+            params,
+        )
         if not rows:
             return None
         return self._row_to_dict(rows[0])

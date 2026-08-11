@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import project_id_set_fragment
 
 _log = logging.getLogger(__name__)
 
@@ -15,11 +16,26 @@ class _EpisodeMixin:
 
     @observe(tier="stage")
     def insert_episode(self, episode: dict) -> int:
+        """Insert one episode row.
+
+        C11 (0047 PR#40 §5): **DUAL-WRITE.** Migration 033 declares
+        ``episode.project_id`` and this writer stamps the producing session's
+        value — taken from the episode dict, never derived (ADR-0227: the
+        container has no git binary and no host project mounts).
+
+        ``directory`` is deliberately still written. Two live consumers read
+        that column today — ``backend/causal_discovery/pc.py`` filters on
+        ``e["directory"]`` and ``backend/consolidation/cls.py`` reads
+        ``ep.get("directory")`` — and ADR-0225 keeps the legacy columns because
+        the backfill derives from them. It dies with the column, in the drop PR.
+        """
         eid = self._next_id("episode")
+        pid_sql, pid_params = project_id_set_fragment(episode.get("project_id"))
         self._q(
             "CREATE type::record('episode', $id) SET "
             "session_id = $session_id, timestamp = $timestamp, "
-            "directory = $directory, raw_content = $raw_content, "
+            f"directory = $directory, {pid_sql}, "
+            "raw_content = $raw_content, "
             "overlap_start = $overlap_start, overlap_end = $overlap_end",
             {
                 "id": eid,
@@ -29,6 +45,7 @@ class _EpisodeMixin:
                 "raw_content": episode["raw_content"],
                 "overlap_start": episode.get("overlap_start"),
                 "overlap_end": episode.get("overlap_end"),
+                **pid_params,
             },
         )
         return eid

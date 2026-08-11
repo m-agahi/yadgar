@@ -114,16 +114,12 @@ class _ApplyMixin:
         if op == "checkpoint":
             from yadgar.backend.write_exec import run_checkpoint_replay
 
-            run_checkpoint_replay(
-                directory=p["directory"],
-                current_task=p.get("current_task", ""),
-                files_being_edited=p.get("files_being_edited"),
-                key_decisions=p.get("key_decisions"),
-                open_questions=p.get("open_questions"),
-                next_steps=p.get("next_steps"),
-                active_errors=p.get("active_errors"),
-                custom_context=p.get("custom_context", ""),
-            )
+            # C11: the whole payload, exactly like ``run_action_log_replay``
+            # below. The old per-key kwarg list is what silently dropped
+            # ``project_id`` — misc.py::checkpoint has always put it on the
+            # payload and the drainer validated it, but this call did not
+            # forward it and the table had no column for it anyway.
+            run_checkpoint_replay(p)
             return
         if op == "action_log":
             from yadgar.backend.write_exec import run_action_log_replay

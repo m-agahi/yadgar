@@ -189,7 +189,15 @@ def _zero_gap_5_action_stream(ctx: MemorizeContext, buffer) -> None:
         summary = ctx.content[:150].replace("\n", " ")
         # C10 (f): feeds ``action_log``, which gets its project_id column in
         # C11 — path until then, same reasoning as the micro-checkpoint above.
-        buffer.capture_action("memorize", ctx.context or "", summary, ctx.curation_action)
+        buffer.capture_action(
+            "memorize",
+            ctx.context or "",
+            summary,
+            ctx.curation_action,
+            # C11: the action stream feeds the same episode row, so it carries
+            # the same identity migration 033 gave the table a column for.
+            project_id=ctx.project_id,
+        )
 
 
 @observe(tier="stage")

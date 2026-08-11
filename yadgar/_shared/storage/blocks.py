@@ -34,6 +34,7 @@ import re
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage._project_id_writer import project_id_set_fragment
 
 _log = logging.getLogger(__name__)
 
@@ -123,11 +124,24 @@ class _BlocksMixin:
         scope: str = "project",
         directory: str | None = None,
         char_limit: int | None = None,
+        project_id: str | None = None,
     ) -> dict:
         """Create a new memory block.
 
         Returns {id, name, scope, content, char_limit, created_at, updated_at} on success.
         Returns {ok: False, error: "..."} on validation failure or duplicate.
+
+        C11 (0047 PR#40 §5): **DUAL-WRITE.** Migration 033 declares
+        ``memory_block.project_id``, and this writer stamps the caller's value
+        into the CREATE — but it keeps writing ``directory`` too. ADR-0225 keeps
+        the legacy column *because the backfill derives from it*, so a row with
+        a ``project_id`` and no ``directory`` would be unattributable in both
+        directions. The legacy write dies with the column, in the drop PR.
+
+        ``project_id`` is NEVER derived and never substituted: a caller that
+        names none writes NONE (ADR-0227). A ``scope='global'`` block belongs to
+        no project by construction, so it is stored unstamped — the same reason
+        ``_canonical_dir`` returns ``None`` for it.
         """
         if char_limit is None:
             char_limit = _default_char_limit()
@@ -191,10 +205,15 @@ class _BlocksMixin:
         now = self._now_iso()
         bid = self._next_id("memory_block")
 
+        # A global block names no project — never stamp one on it (ADR-0227).
+        canonical_pid = project_id if canonical_dir is not None else None
+        pid_sql, pid_params = project_id_set_fragment(canonical_pid)
+
         if canonical_dir is None:
             self._q(
                 "CREATE type::record('memory_block', $id) SET "
                 "name = $name, scope = $scope, directory = NONE, "
+                f"{pid_sql}, "
                 "content = $content, char_limit = $char_limit, "
                 "created_at = $ts, updated_at = $ts",
                 {
@@ -204,12 +223,14 @@ class _BlocksMixin:
                     "content": content,
                     "char_limit": char_limit,
                     "ts": now,
+                    **pid_params,
                 },
             )
         else:
             self._q(
                 "CREATE type::record('memory_block', $id) SET "
                 "name = $name, scope = $scope, directory = $directory, "
+                f"{pid_sql}, "
                 "content = $content, char_limit = $char_limit, "
                 "created_at = $ts, updated_at = $ts",
                 {
@@ -220,6 +241,7 @@ class _BlocksMixin:
                     "content": content,
                     "char_limit": char_limit,
                     "ts": now,
+                    **pid_params,
                 },
             )
 
@@ -228,6 +250,7 @@ class _BlocksMixin:
             "name": name,
             "scope": scope,
             "directory": canonical_dir,
+            "project_id": canonical_pid,
             "content": content,
             "char_limit": char_limit,
             "created_at": now,
@@ -339,13 +362,63 @@ class _BlocksMixin:
                 {"name": name, "scope": scope, "directory": canonical_dir},
             )
 
-    @trace_span()
-    def list_blocks(self, scope: str | None = None, directory: str | None = None) -> list[dict]:
-        """Return blocks filtered by scope and directory.
+    @observe(tier="hot")
+    def _block_project_clause(
+        self, directory: str | None, project_id: str | None
+    ) -> tuple[str, dict]:
+        """Return the project-scope arm for ``memory_block`` + its params.
 
-        scope=None: return both global and project blocks for the given directory.
+        C11 (0047 PR#40 §5) — **TWO ARMS, and the second one is transitional.**
+
+        ``(project_id = $pid OR directory = $dir)``. The first arm is the one
+        this car adds; the second is what keeps the HISTORICAL corpus readable.
+        No backfill covers ``memory_block`` — ``project_backfill._TABLES`` is
+        ``("memory", "wiki_page")`` and plan §8 names no step for this table —
+        so a ``project_id``-only predicate would not be the degraded window
+        §8 5b sanctions but permanent silent loss of the user's own curated
+        blocks from every ``restore()``. The legacy arm dies with the column, in
+        the drop PR.
+
+        **This is NOT the ``project_id IS NONE`` sentinel
+        ``build_project_scope_clause`` refuses.** That would admit EVERY
+        unstamped row in the corpus into every project. This matches one
+        specific legacy key the caller actually holds.
+
+        **Spelled out here rather than delegated to
+        ``build_project_scope_clause``** for the reason C13f recorded:
+        that helper emits ``project_id = $p OR 'global' IN tags``, and
+        ``memory_block`` has no ``tags`` column — importing it would attach an
+        arm this table cannot answer.
+
+        A caller with no ``project_id`` gets the path arm ALONE, never a
+        widening one: C10g's ``_fetch_hot_memories`` leak is the generalised
+        lesson that an ``else`` branch becomes the default when a key changes.
+        """
+        if project_id and directory:
+            return "(project_id = $project_id OR directory = $directory)", {
+                "project_id": project_id,
+                "directory": directory,
+            }
+        if project_id:
+            return "project_id = $project_id", {"project_id": project_id}
+        return "directory = $directory", {"directory": directory}
+
+    @trace_span()
+    def list_blocks(
+        self,
+        scope: str | None = None,
+        directory: str | None = None,
+        project_id: str | None = None,
+    ) -> list[dict]:
+        """Return blocks filtered by scope and project (with a legacy path arm).
+
+        scope=None: return both global and project blocks for the caller.
         scope='global': return only global blocks.
-        scope='project': return only project blocks for the given directory.
+        scope='project': return only project blocks for the caller.
+
+        C11: the project arm is ``_block_project_clause`` — ``project_id``
+        first, the legacy ``directory`` second. Global blocks are unaffected:
+        they carry neither key by construction.
         """
         if scope == "global":
             rows = self._q(
@@ -353,22 +426,24 @@ class _BlocksMixin:
                 "ORDER BY name ASC"
             )
         elif scope == "project":
-            if not directory:
+            if not (directory or project_id):
                 return []
+            proj_sql, proj_params = self._block_project_clause(directory, project_id)
             rows = self._q(
-                "SELECT * FROM memory_block WHERE scope = 'project' AND directory = $directory "
+                f"SELECT * FROM memory_block WHERE scope = 'project' AND {proj_sql} "
                 "ORDER BY name ASC",
-                {"directory": directory},
+                proj_params,
             )
         else:
-            # scope=None: return global + project for this directory
-            if directory:
+            # scope=None: return global + project for this caller
+            if directory or project_id:
+                proj_sql, proj_params = self._block_project_clause(directory, project_id)
                 rows = self._q(
                     "SELECT * FROM memory_block WHERE "
                     "(scope = 'global' AND directory IS NONE) "
-                    "OR (scope = 'project' AND directory = $directory) "
+                    f"OR (scope = 'project' AND {proj_sql}) "
                     "ORDER BY scope ASC, name ASC",
-                    {"directory": directory},
+                    proj_params,
                 )
             else:
                 rows = self._q(
