@@ -126,5 +126,5 @@ def test_seed_adr_rows_dispatches_async_not_sync() -> None:
     """
     assert admin_exec._is_async_op(admin_exec._ADMIN_OPS["seed_adr_rows"]) is True
     with patch.object(admin_exec, "_ensure_engines", lambda: None):
-        with pytest.raises(TypeError, match="async"):
+        with pytest.raises(TypeError, match="dispatch it via run_admin_op_async"):
             admin_exec.run_admin_op("seed_adr_rows", {})

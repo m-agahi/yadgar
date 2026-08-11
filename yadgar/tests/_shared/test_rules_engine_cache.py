@@ -194,10 +194,13 @@ def test_memorize_check_write_policy_query_count(settings, tmp_path):
         first_global = call_counts["global"]
         first_by_scope = call_counts["by_scope"]
         assert first_global == 1, f"Expected 1 global query on first call, got {first_global}"
-        # C10(a): "project" + the one-shot legacy census ("directory", "file").
-        # No "path" query — check_write_policy supplies no filesystem path.
-        assert first_by_scope == 3, (
-            f"Expected 3 by-scope queries on first call, got {first_by_scope}"
+        # C10(a): "project" + "path" + the one-shot legacy census
+        # ("directory", "file"). The "path" query IS issued here because
+        # check_write_policy threads its `context` as the PATH predicate — the
+        # caller (write_exec/validate.py) forwards a working-directory path,
+        # never a project_id.
+        assert first_by_scope == 4, (
+            f"Expected 4 by-scope queries on first call, got {first_by_scope}"
         )
 
         # Reset counters

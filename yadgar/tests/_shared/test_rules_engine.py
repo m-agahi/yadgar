@@ -225,7 +225,10 @@ class TestAddSoftRule:
         scope_value, which can never equal a project_id — dead on arrival.
         """
         for retired, replacement in (("directory", "project"), ("file", "path")):
-            with pytest.raises(ValueError, match=replacement):
+            # Assert on the MAPPING, not just the word: the error's explanatory
+            # tail names both replacements, so match=replacement alone cannot
+            # tell a correct mapping from a swapped one.
+            with pytest.raises(ValueError, match=f"use '{replacement}' instead"):
                 engine.add_rule(
                     rule_type="soft",
                     scope=retired,

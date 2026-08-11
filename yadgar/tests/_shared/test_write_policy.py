@@ -140,8 +140,42 @@ class TestWriteBlockPolicy:
         assert blocked is False
         assert modified is None
 
-    def test_project_scoped_block_matches(self, engine):
-        # C10(a): scope="directory" (prefix) → scope="project" (exact equality).
+    def test_path_scoped_block_matches(self, engine):
+        """C10(a): `context` is a PATH, so scope="path" is its migration target.
+
+        The retired scope="directory" prefix-matched `context` against a
+        filesystem `scope_value`. Its replacement here is scope="path" with a
+        glob — verified against the real caller, which forwards `ctx.context`
+        (a working-directory path), never a project_id.
+        """
+        engine.add_rule(
+            "write_block",
+            "path",
+            "content contains secret",
+            "filter",
+            scope_value="/work/classified*",
+        )
+        blocked, _, _ = engine.check_write_policy("this is secret", "/work/classified/docs", [])
+        assert blocked is True
+
+    def test_path_scoped_block_does_not_match_other_path(self, engine):
+        engine.add_rule(
+            "write_block",
+            "path",
+            "content contains secret",
+            "filter",
+            scope_value="/work/classified*",
+        )
+        blocked, _, _ = engine.check_write_policy("this is secret", "/other/project", [])
+        assert blocked is False
+
+    def test_project_scoped_block_never_fires_on_the_write_path(self, engine):
+        """The write path has no project identity, so project rules cannot match.
+
+        Stated as a contract rather than left as a surprise: `check_write_policy`
+        passes an EMPTY project_id because none of its three callers holds one
+        (ADR-0227 — no match beats a wrong match). Site (f) is what supplies it.
+        """
         engine.add_rule(
             "write_block",
             "project",
@@ -150,17 +184,6 @@ class TestWriteBlockPolicy:
             scope_value="acme/classified",
         )
         blocked, _, _ = engine.check_write_policy("this is secret", "acme/classified", [])
-        assert blocked is True
-
-    def test_project_scoped_block_does_not_match_other_project(self, engine):
-        engine.add_rule(
-            "write_block",
-            "project",
-            "content contains secret",
-            "filter",
-            scope_value="acme/classified",
-        )
-        blocked, _, _ = engine.check_write_policy("this is secret", "acme/other", [])
         assert blocked is False
 
     def test_no_rules_returns_not_blocked(self, engine):

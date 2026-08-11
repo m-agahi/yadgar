@@ -577,13 +577,23 @@ class RulesEngine:
 
         Args:
             content: The text about to be stored.
-            context: The write's scope key, used for rule scope matching. C10(a)
-                re-keyed ``get_applicable_rules`` onto the **project_id**, so
-                that is what this should carry. It is deliberately NOT renamed
-                here: this parameter is the ``memorize``/``anchor`` ``context``
-                argument, judgement site (f), which is a separate car — it is
-                dual-purpose (scope key AND a real path for staleness hashing)
-                and splitting it is that car's job, not this one's.
+            context: A real path (or free text) — **NOT a project_id**. This is
+                the ``memorize``/``anchor`` ``context`` argument, judgement site
+                (f), which is a separate car. C10(a) VERIFIED what the callers
+                actually pass rather than assuming: ``write_exec/validate.py``
+                forwards ``ctx.context`` (whose own docstring says "the actual
+                working directory path", and which the live corpus shows is
+                often free-text prose), and the two ``wiki.py`` callers pass
+                ``""``. None of them holds a project_id.
+
+                It is therefore threaded as ``path``, not as the project scope
+                key. Consequence, stated rather than hidden: **project-scoped
+                write rules do not fire on this path** — the caller has no
+                project identity to match with, and ADR-0227's rule applies
+                (no match beats a wrong match). ``global`` rules are unaffected,
+                and a rule that used to rely on the retired ``scope="directory"``
+                prefix match migrates to ``scope="path"`` with a glob
+                (``/work/classified*``), which DOES fire here.
             tags: Memory tags.
 
         Returns:
@@ -593,7 +603,11 @@ class RulesEngine:
         """
         mem: dict = {"content": content, "directory_context": context, "tags": tags}
 
-        all_rules = self.get_applicable_rules(context)
+        # C10(a): `context` is a PATH (see the Args note above) — it is passed as
+        # the path predicate, never as the project scope key. Passing it
+        # positionally would silently compare a filesystem path against
+        # project_ids under the new exact-equality match and never fire.
+        all_rules = self.get_applicable_rules("", path=context)
         write_rules = [r for r in all_rules if r["rule_type"] in ("write_block", "write_redact")]
 
         if not write_rules:
