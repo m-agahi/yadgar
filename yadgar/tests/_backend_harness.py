@@ -172,6 +172,7 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
     Args:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
+    from yadgar._shared.storage.directory import RecallScope
     from yadgar.backend.retrieval.compose import ensure_retrieval_engine
     from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
@@ -211,11 +212,16 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         ensure_retrieval_engine()
         # Car C7 (0047 §5 C7): _fanout_recall's scope param is project_id
         # (required), not directory — mirrors conftest.py's recall_backend_bypass.
+        # Car C8: that param is now a RecallScope. ``excluded_slugs`` is left
+        # EMPTY here deliberately — the superseded-ADR set is loaded in the
+        # async route (``recall_route``), which this bypass replaces, and the
+        # loader is async while this shim is sync. Tests that exercise the
+        # exclusion drive the route or the clause builder directly.
         return _fanout_recall(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
-            project_id=project_id,
+            recall_scope=RecallScope(project_id=project_id),
             type_filter=type_filter,
             tags=tags,
             profile=profile,

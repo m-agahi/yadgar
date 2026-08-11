@@ -81,12 +81,21 @@ class WikiProvider(SourceProvider):
         # carry them explicitly; fall back to this provider's own ``tags`` so a
         # caller that only set ``tags=`` keeps reaching the agent-prompt library.
         opt_in = scope.opt_in_tags if scope.opt_in_tags is not None else self._tags
+        # Car C8: ``excluded_slugs`` MUST be threaded here. This is the second of
+        # two ``RecallScope`` re-constructions on the hot path (the other is
+        # ``with_default_opt_in``); dropping the field at either one leaves every
+        # clause-level test green while production excludes nothing — recall
+        # keeps returning results, just the wrong ones.
         results = self._wiki.query(
             query,
             max_results=limit,
             include_tag=include_tag,
             exclude_tags=self._exclude_tags,
-            scope=RecallScope(project_id=scope.project_id or None, opt_in_tags=opt_in),
+            scope=RecallScope(
+                project_id=scope.project_id or None,
+                opt_in_tags=opt_in,
+                excluded_slugs=scope.excluded_slugs,
+            ),
         )
 
         candidates: list[Candidate] = []

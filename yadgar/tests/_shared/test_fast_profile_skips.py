@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from yadgar._shared.retrieval.profiles import PROFILES
+from yadgar._shared.storage.directory import RecallScope
 
 _DIR = "/home/test/yadgar-project"
 
@@ -80,7 +81,7 @@ def _fanout(profile, type_filter="all", monkey_wiki=None, monkey_memory=None):
             query="architecture decisions",
             max_results=5,
             min_heat=0.0,
-            project_id=_DIR,
+            recall_scope=RecallScope(project_id=_DIR),
             type_filter=type_filter,
             tags=None,
             profile=profile,

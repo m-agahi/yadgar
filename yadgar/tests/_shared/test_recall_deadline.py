@@ -22,6 +22,8 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
+from yadgar._shared.storage.directory import RecallScope
+
 _DIR = "/home/test/yadgar-project"
 
 
@@ -217,7 +219,7 @@ def _fanout_with_deadline(deadline):
             query="architecture decisions",
             max_results=5,
             min_heat=0.0,
-            project_id=_DIR,
+            recall_scope=RecallScope(project_id=_DIR),
             type_filter="all",
             tags=None,
             profile=None,

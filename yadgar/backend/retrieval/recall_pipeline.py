@@ -72,6 +72,7 @@ from yadgar._shared.runtime.recall_session import (  # noqa: F401 (combiner + re
     _record_recall_sr_transition,
 )
 from yadgar._shared.runtime.recall_utils import _is_episodic_query
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.backend.retrieval.providers.base import Scope
 from yadgar.backend.retrieval.providers.fusion import fuse_candidates
 from yadgar.backend.retrieval.providers.memory import MemoryProvider
@@ -447,7 +448,7 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
     query: str,
     max_results: int,
     min_heat: float,
-    project_id: str,
+    recall_scope: RecallScope,
     type_filter: str = "all",
     tags: list[str] | None = None,
     profile: str | None = None,
@@ -491,8 +492,13 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
         query: Search query.
         max_results: Maximum results to return.
         min_heat: Minimum heat threshold forwarded to MemoryProvider.
-        project_id: Caller's resolved project id (required, validated upstream).
-            Car C7 re-keyed this parameter from ``directory``.
+        recall_scope: The caller's ``RecallScope`` — resolved project id plus
+            the slugs this read must not surface. Car C7 re-keyed the scope
+            from ``directory`` to ``project_id``; Car C8 replaced the bare
+            ``project_id: str`` with the bundled object rather than adding a
+            ninth parameter (the I30 HARD cap is 8, and a loose parallel
+            parameter is how the exclusion arm gets dropped by a caller that
+            threads the project and forgets the rest).
         type_filter: One of {"all", "memory", "wiki"}. Selects provider subset.
         tags: Tag include filter for wiki retrieval. When set, triggers SQL pre-filter
               (search_wiki_vectors_tagged) and suppresses the default agent-prompt exclude.
@@ -510,10 +516,18 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
     # rides along as ``opt_in_tags`` so the policy-derived ``page_type``
     # exclusion can be relaxed per request — without that,
     # ``recall(type="wiki", tags=["agent-prompt"])`` returns nothing.
+    #
+    # Car C8: ``excluded_slugs`` (the superseded-ADR set) is carried through
+    # ALREADY RESOLVED. It is read from the SQL ledger in the async route,
+    # upstream of the ``asyncio.to_thread`` boundary — this function is SYNC
+    # and runs in a worker thread, while ``asyncmy`` is async-only, so a lookup
+    # here would need a private event loop per recall. See
+    # ``backend/retrieval/superseded.py``: the hazard is closed by PLACEMENT.
     scope = Scope(
-        project_id=project_id or "",
+        project_id=recall_scope.project_id or "",
         min_heat=min_heat,
         opt_in_tags=tags,
+        excluded_slugs=recall_scope.excluded_slugs,
     )
 
     # Candidate pool size: ask for more than max_results so fusion + dedup

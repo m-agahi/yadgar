@@ -37,11 +37,18 @@ class Scope:
             agent-prompt library (ADR-0007).
         min_heat: Minimum heat threshold forwarded to the memory provider.
             Wiki candidates have no heat; this field is ignored by WikiProvider.
+        excluded_slugs: Car C8 (0047 §5 C8) — wiki slugs this read must not
+            surface, today the SUPERSEDED ADR set read from the SQL ledger. It
+            arrives already-resolved from the async route (upstream of the
+            ``to_thread`` boundary) because ``asyncmy`` is async-only and a
+            lookup down here would need a private event loop per recall. The
+            memory table has no ``slug`` column, so MemoryProvider ignores it.
     """
 
     project_id: str
     min_heat: float = 0.0
     opt_in_tags: list[str] | None = None
+    excluded_slugs: tuple[str, ...] | None = None
 
 
 @dataclass

@@ -1422,6 +1422,7 @@ def recall_backend_bypass(monkeypatch):
     """
     import sys
 
+    from yadgar._shared.storage.directory import RecallScope
     from yadgar.backend.retrieval.compose import ensure_retrieval_engine
     from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
@@ -1459,11 +1460,14 @@ def recall_backend_bypass(monkeypatch):
         # T2 Car E2: compose the backend retriever lazily against the test's
         # live engines (idempotent; the shared root no longer builds it).
         ensure_retrieval_engine()
+        # Car C8: the scope param is a RecallScope. ``excluded_slugs`` stays
+        # EMPTY here — the superseded-ADR set is loaded in the async route this
+        # bypass replaces, and the loader is async while this shim is sync.
         return _fanout_recall(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
-            project_id=project_id,
+            recall_scope=RecallScope(project_id=project_id),
             type_filter=type_filter,
             tags=tags,
             profile=profile,

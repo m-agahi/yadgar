@@ -23,6 +23,8 @@ the reach tag. That is deliberate. See ``build_project_scope_clause``.
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from yadgar._shared.observability.observe import observe
@@ -32,12 +34,12 @@ from yadgar._shared.observability.observe import observe
 class RecallScope:
     """The caller's read scope, as ONE value.
 
-    Car C7. Bundled rather than passed as two loose parameters because the two
-    always travel together and several signatures on the path were already at
-    the I30 parameter cap — and, more to the point, because splitting them is
-    how the opt-in arm gets dropped: a caller that threads ``project_id`` and
-    forgets ``opt_in_tags`` silently loses the agent-prompt library, with no
-    error and no obviously-wrong result.
+    Car C7. Bundled rather than passed as loose parameters because they always
+    travel together and several signatures on the path were already at the I30
+    parameter cap — and, more to the point, because splitting them is how an arm
+    gets dropped: a caller that threads ``project_id`` and forgets
+    ``opt_in_tags`` silently loses the agent-prompt library, with no error and
+    no obviously-wrong result.
 
     Attributes:
         project_id: Resolved project id, or ``None``/empty for an explicitly
@@ -45,10 +47,18 @@ class RecallScope:
         opt_in_tags: Tags the caller explicitly requested; relaxes the
             policy-derived ``page_type`` exclusion for the types that declare
             them.
+        excluded_slugs: Car C8 — wiki slugs this read must not surface. Today
+            this carries the SUPERSEDED ADR set, loaded ONCE per recall from
+            the SQL ledger (``adr.status``) in the async route, BEFORE the
+            ``asyncio.to_thread`` boundary, and passed down as plain data. It
+            is deliberately not a per-candidate lookup: filtering after the
+            providers return spends the query's LIMIT first, which is the exact
+            defect C7 exists to delete.
     """
 
     project_id: str | None = None
     opt_in_tags: list[str] | None = field(default=None)
+    excluded_slugs: tuple[str, ...] | None = field(default=None)
 
     @observe(exempt="pure dataclass copy; no I/O, no branching beyond one guard")
     def with_default_opt_in(self, tags: list[str] | None) -> RecallScope:
@@ -58,10 +68,15 @@ class RecallScope:
         — the row-level ``is_recall_visible`` has always read it that way — so
         the derived exclusion must see them too, or the same request reaches the
         agent-prompt library through one gate and not the other.
+
+        Car C8: ``dataclasses.replace``, NOT an explicit constructor. This runs
+        on every recall, and an explicit constructor listing two of three fields
+        drops the third SILENTLY — recall keeps returning results, just the
+        wrong ones. ``replace`` cannot forget a field that is added later.
         """
         if self.opt_in_tags is not None or not tags:
             return self
-        return RecallScope(project_id=self.project_id, opt_in_tags=tags)
+        return dataclasses.replace(self, opt_in_tags=tags)
 
     @observe(exempt="thin delegation to build_recall_scope_clause; no I/O")
     def clause(self, *, page_types: bool = True, prefix: str = "sc") -> tuple[str, dict]:
@@ -69,6 +84,7 @@ class RecallScope:
         return build_recall_scope_clause(
             self.project_id,
             opt_in_tags=self.opt_in_tags,
+            excluded_slugs=self.excluded_slugs,
             page_types=page_types,
             prefix=prefix,
         )
@@ -134,16 +150,59 @@ def build_project_scope_clause(
 
 
 @observe(tier="hot")
+def build_slug_exclusion_clause(
+    excluded_slugs: Iterable[str] | None,
+    *,
+    prefix: str = "sc",
+) -> tuple[str, dict]:
+    """Return ``(sql_fragment, params)`` excluding *excluded_slugs* by slug.
+
+    Car C8. The mechanism the user chose over the two designs that died:
+
+        "we dont remove superseeded adrs i said we keep them but in the stage 1,
+         we exclude them (and/or) in surrealdb query use where clause (using the
+         policy) to not include them in results for much faster results."
+
+    The set is TINY and PRE-COMPUTED — 14 superseded ADRs in yadgar, order tens
+    across every project — and it arrives as plain data from the async route,
+    which read it from the SQL ledger before the ``to_thread`` boundary.
+    SurrealDB carries NOTHING about ADR status (ADR-0206: one writer, in SQL),
+    so nothing here consults a wiki tag to decide what to drop.
+
+    THE ORDER IS SORTED ON PURPOSE. Callers may hand in a set; an unordered
+    bind value makes the emitted SQL differ between two identical recalls,
+    which defeats plan caching and makes every SQL-comparing test flaky.
+
+    An empty/None set yields ``("", {})``: no superseded ADRs is a normal
+    state, and ``slug NOT IN []`` is a no-op predicate at best.
+
+    Args:
+        excluded_slugs: Wiki slugs to drop from the stage-1 result set.
+        prefix: Bind-parameter prefix so this fragment can be AND-ed with
+            others without a param-name collision.
+
+    Returns:
+        ``(sql_fragment, params_dict)``.
+    """
+    if not excluded_slugs:
+        return "", {}
+    key = f"{prefix}_excl_slugs"
+    return f"(slug NOT IN ${key})", {key: sorted(excluded_slugs)}
+
+
+@observe(tier="hot")
 def build_recall_scope_clause(
     project_id: str | None,
     *,
     opt_in_tags=None,
+    excluded_slugs: Iterable[str] | None = None,
     page_types: bool = True,
     prefix: str = "sc",
 ) -> tuple[str, dict]:
-    """Return the ONE stage-1 recall WHERE clause: project + reach + page_type.
+    """Return the ONE stage-1 recall WHERE clause: project + reach + type + slug.
 
-    Car C7. Three things, one clause, one place:
+    Car C7 built arms 1–3; Car C8 added arm 4. Four things, one clause, one
+    place:
 
       1. ``project_id = $p``      the project predicate
       2. ``'global' IN tags``     the cross-project reach tag
@@ -151,10 +210,20 @@ def build_recall_scope_clause(
                                   ``POLICY_BY_TYPE`` — never a second
                                   hand-maintained list (see
                                   ``policy.excluded_page_types``)
+      4. ``slug NOT IN …``        the caller-supplied slug exclusion — today
+                                  the SUPERSEDED ADR set, loaded from the SQL
+                                  ledger in the async route (Car C8)
 
-    Arm 3 is wiki-only: the ``memory`` table has no ``page_type`` column, so
-    memory callers pass ``page_types=False``. Arms 1–2 apply to both tables —
-    both carry ``project_id`` and ``tags``.
+    Arms 3 AND 4 are wiki-only: the ``memory`` table has neither a ``page_type``
+    nor a ``slug`` column, so memory callers pass ``page_types=False`` and both
+    are omitted. (One flag governs both because it means the same thing — "this
+    is the wiki table" — and a second boolean would let a caller enable an arm
+    against a table that cannot answer it.) Arms 1–2 apply to both tables.
+
+    Arm 4 is deliberately NOT conditional on arm 1. A daemon-internal caller
+    with no project id still must not surface superseded ADRs when a set was
+    supplied; coupling them would make the exclusion vanish on exactly those
+    paths, invisibly.
 
     The ``opt_in_tags`` pass-through is what keeps
     ``recall(type="wiki", tags=["agent-prompt"])`` working: without it the
@@ -164,7 +233,8 @@ def build_recall_scope_clause(
     Args:
         project_id: Caller's resolved project id. Falsy → arms 1–2 omitted.
         opt_in_tags: Tags the caller explicitly requested.
-        page_types: Include arm 3 (wiki tables only).
+        excluded_slugs: Slugs to exclude (arm 4). Falsy → arm omitted.
+        page_types: Include the wiki-only arms 3 and 4.
         prefix: Bind-parameter prefix.
 
     Returns:
@@ -189,6 +259,11 @@ def build_recall_scope_clause(
         if pt_sql:
             fragments.append(pt_sql)
             params.update(pt_params)
+
+        slug_sql, slug_params = build_slug_exclusion_clause(excluded_slugs, prefix=prefix)
+        if slug_sql:
+            fragments.append(slug_sql)
+            params.update(slug_params)
 
     if not fragments:
         return "", {}

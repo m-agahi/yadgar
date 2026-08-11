@@ -81,6 +81,7 @@ CHECK_ENGINE_TWO_SCHEMA_HEAD = "engine_two_schema_head"
 CHECK_SURREAL_SCHEMA_HEAD = "surreal_schema_head"
 CHECK_CONFIG_ROW_BASELINE = "config_row_baseline"
 CHECK_PAGE_ROW_DESYNC = "page_row_desync"
+CHECK_SUPERSEDED_ADR_EXCLUSION = "superseded_adr_exclusion"
 
 # The arm's own contract with itself. ``run_cross_engine_checks`` compares the
 # names it actually produced against this set and raises a VIOLATION on any gap,
@@ -93,10 +94,13 @@ REQUIRED_CHECKS = frozenset(
         CHECK_SURREAL_SCHEMA_HEAD,
         CHECK_CONFIG_ROW_BASELINE,
         CHECK_PAGE_ROW_DESYNC,
+        CHECK_SUPERSEDED_ADR_EXCLUSION,
     }
 )
 
 CONFIG_TABLE = "config"
+ADR_TABLE = "adr"
+REASON_ADR_TABLE_ABSENT = "adr_table_absent"
 
 # DECLARED BASELINE, not a snapshot. ADR-0203 makes "config ships empty" a
 # load-bearing property of THIS train: task 0095's free-re-key window stays open
@@ -592,6 +596,168 @@ async def check_page_row_desync(engine: Any, storage: Any = None) -> dict:
     }
 
 
+# ── assertion 4: the superseded-ADR exclusion set matches SQL (Car C8) ───────
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.superseded_sql_truth")
+async def _superseded_rows_by_project(engine: Any) -> dict[str, list[dict]]:
+    """Read EVERY superseded ``adr`` row, grouped by project, with its OWN SQL.
+
+    THE INDEPENDENCE IS THE POINT. The recall path loads its exclusion set
+    through ``list_adr_rows``; this reads ``list_superseded_adr_rows``, a
+    SEPARATELY WRITTEN corpus-wide query that exists for this check alone. A
+    check calling the same accessor the mechanism calls would compare a
+    function against itself and pass for every bug that function can have —
+    the vacuous-pass shape this module was written to eliminate. The two
+    queries live in the same class only because D20 requires every ledger row
+    access to go through ``MariaStorageEngine``.
+
+    Grouping by project also comes free: the loader is project-scoped, so the
+    check must be able to enumerate the projects it should be asked about
+    rather than being told which ones to look at.
+    """
+    rows = await engine.list_superseded_adr_rows()
+
+    by_project: dict[str, list[dict]] = {}
+    for row in rows:
+        by_project.setdefault(str(row.get("project_id") or ""), []).append(row)
+    return by_project
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.superseded_project")
+async def _check_superseded_for_project(
+    engine: Any, project_id: str, rows: list[dict]
+) -> list[str]:
+    """Return this project's violation messages (empty list = agreement).
+
+    Three assertions, each its own message because each has a different fix:
+
+    (a) COVERAGE — ``adr.body_slug`` is ``nullable=True`` in migration 002. A
+        superseded row with no slug CANNOT be excluded by a slug predicate; the
+        exclusion silently does not apply to it. The fix is stamping the row.
+    (b) ROUND-TRIP — the params the PRODUCTION clause builder actually binds,
+        reached through ``RecallScope`` exactly as recall reaches it, must equal
+        this check's own slug set. This is what catches a dataclass hop that
+        drops ``excluded_slugs``: the loader can be perfect and the clause still
+        carry nothing. The fix is in the plumbing, not the data.
+    (c) EMISSION — a non-empty set must produce a ``slug NOT IN`` fragment. The
+        fix is restoring the arm a refactor deleted.
+    """
+    from yadgar._shared.storage.directory import RecallScope  # noqa: PLC0415
+    from yadgar.backend.retrieval.superseded import load_superseded_slugs  # noqa: PLC0415
+
+    violations: list[str] = []
+    expected = {str(r["body_slug"]) for r in rows if r.get("body_slug")}
+
+    # (a) coverage
+    unstamped = sorted(str(r.get("id")) for r in rows if not r.get("body_slug"))
+    if unstamped:
+        violations.append(
+            f"{len(unstamped)} superseded adr row(s) in {project_id!r} carry no body_slug "
+            f"and therefore CANNOT be excluded from recall (adr ids {unstamped}) — "
+            "they rank normally today"
+        )
+
+    loaded = await load_superseded_slugs(engine, project_id=project_id)
+
+    # (b) round-trip THROUGH the production clause builder.
+    sql, params = RecallScope(project_id=project_id, excluded_slugs=tuple(loaded)).clause()
+    bound: set[str] = set()
+    for key, value in params.items():
+        if key.endswith("_excl_slugs"):
+            bound = {str(v) for v in value}
+    if bound != expected:
+        missing = sorted(expected - bound)
+        extra = sorted(bound - expected)
+        violations.append(
+            f"superseded-ADR exclusion for {project_id!r} DISAGREES with the ledger: "
+            f"SQL says {len(expected)} superseded page(s), the recall clause binds "
+            f"{len(bound)}; missing={missing} unexpected={extra} — superseded ADRs "
+            "matching 'missing' rank normally in recall right now"
+        )
+
+    # (c) emission
+    if expected and "slug NOT IN" not in sql:
+        violations.append(
+            f"the recall scope clause for {project_id!r} emits no slug-exclusion arm "
+            f"while {len(expected)} superseded ADR(s) exist — the WHERE arm is gone"
+        )
+    return violations
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.superseded_adr_exclusion")
+async def check_superseded_adr_exclusion(engine: Any) -> dict:
+    """Car C8 (0047 §5 C8) — SQL status ↔ recall exclusion consistency.
+
+    NOTHING ELSE ENFORCES THIS, AND THE FAILURE IS INVISIBLE. A stale or
+    silently-empty exclusion set does not raise, does not empty a result list,
+    and does not look wrong: superseded ADRs simply rank normally again. Every
+    other symptom this repo has learned to watch for is absent. That is the
+    ADR-0080 lesson applied to C8's own mechanism, which is why the check is a
+    first-class member of ``REQUIRED_CHECKS`` (nightly) rather than a unit test.
+
+    Absence stays ``unavailable``, never ``ok`` — same rule as every sibling.
+    """
+    if engine is None:
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_ENGINE_TWO_ABSENT,
+            "detail": {"message": "engine #2 is not composed — adr.status is unreadable"},
+        }
+    try:
+        tables = set(await engine.list_tables())
+    except Exception as exc:  # noqa: BLE001 — a read failure is UNAVAILABLE, not ok
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_QUERY_FAILED,
+            "detail": {"error": str(exc)},
+        }
+    if ADR_TABLE not in tables:
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_ADR_TABLE_ABSENT,
+            "detail": {"message": f"the {ADR_TABLE!r} ledger table does not exist"},
+        }
+
+    try:
+        by_project = await _superseded_rows_by_project(engine)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_QUERY_FAILED,
+            "detail": {"error": str(exc)},
+        }
+
+    violations: list[str] = []
+    for project_id in sorted(by_project):
+        try:
+            violations.extend(
+                await _check_superseded_for_project(engine, project_id, by_project[project_id])
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": STATUS_UNAVAILABLE,
+                "reason": REASON_QUERY_FAILED,
+                "detail": {"project_id": project_id, "error": str(exc)},
+            }
+
+    rows_total = sum(len(v) for v in by_project.values())
+    detail = {
+        "superseded_rows": rows_total,
+        "projects": sorted(by_project),
+    }
+    if violations:
+        return {
+            "status": STATUS_VIOLATION,
+            "message": "; ".join(violations),
+            "detail": {**detail, "violations": violations},
+        }
+    # A zero-row corpus reports ok WITH the count, not on silence: the read ran
+    # and returned evidence. "No superseded ADRs" and "the read never happened"
+    # must not look the same, which is this module's founding complaint.
+    return {"status": STATUS_OK, "detail": detail}
+
+
 # ── orchestrator ─────────────────────────────────────────────────────────────
 
 
@@ -628,6 +794,8 @@ _CHECK_REGISTRY: tuple[tuple[str, Callable[[dict], dict | Awaitable[dict]]], ...
         ),
     ),
     (CHECK_PAGE_ROW_DESYNC, lambda ctx: check_page_row_desync(ctx["engine"], ctx["storage"])),
+    # Car C8 (0047 §5 C8): SQL adr.status ↔ the recall exclusion set.
+    (CHECK_SUPERSEDED_ADR_EXCLUSION, lambda ctx: check_superseded_adr_exclusion(ctx["engine"])),
 )
 
 

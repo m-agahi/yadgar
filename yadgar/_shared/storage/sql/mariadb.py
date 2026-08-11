@@ -613,6 +613,42 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         async with self._engine.begin() as conn:
             await conn.execute(sql, {"id": adr_id, "status": status})
 
+    @observe(tier="boundary", metric="backend.sql.adr.list_superseded")
+    async def list_superseded_adr_rows(self) -> list[dict]:
+        """Every superseded ``adr`` row across ALL projects — audit read (Car C8).
+
+        DELIBERATELY NOT ``list_adr_rows(status='superseded')``. This is the
+        INDEPENDENT half of the C8 invariant
+        (``invariants_cross_engine.check_superseded_adr_exclusion``): the
+        production recall path loads its exclusion set through
+        ``list_adr_rows``, so a check that reached for the same accessor would
+        compare a function against itself and agree with every bug that
+        function can have — the vacuous-pass shape ADR-0195's arm exists to
+        eliminate. Two separately-written queries is the whole point; they live
+        in the same class only because D20 requires every ledger row access to
+        go through this chokepoint.
+
+        Corpus-wide rather than project-scoped for the same reason: the check
+        must ENUMERATE the projects it should interrogate the loader about,
+        instead of being told which ones to look at.
+
+        Returns:
+            ``[{project_id, id, body_slug}, ...]`` — the three columns the
+            invariant compares. ``body_slug`` is nullable; a superseded row
+            without one cannot be excluded by a slug predicate, which is a
+            violation the invariant reports rather than something this read
+            filters away.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT project_id, id, body_slug FROM adr "
+            "WHERE status = 'superseded' ORDER BY project_id ASC, id ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql)
+            return [dict(row._mapping) for row in result]
+
     @observe(tier="boundary", metric="backend.sql.adr.max_updated_at")
     async def max_adr_updated_at(self, *, project_id: str) -> datetime.datetime | None:
         """Return ``MAX(adr.updated_at)`` scoped to *project_id*.
