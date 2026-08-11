@@ -58,12 +58,18 @@ class MemoryThermodynamics:
     # -- a. Surprise Scoring --
 
     @observe(tier="stage")
-    def compute_surprise(self, content: str, directory: str) -> float:
+    def compute_surprise(self, content: str, project_id: str) -> float:
         """Compute how novel this content is relative to existing memories.
 
         Encodes the content, finds the top 5 most similar existing memories,
         and returns surprise = 1.0 - max_similarity.
         Returns 0.5 (moderate) if no existing memories are found.
+
+        C9a (0047 §5): renamed from ``directory`` per ADR-0225. The parameter
+        is **not read** — the search is corpus-wide, unscoped. It is kept
+        (rather than deleted) because every caller passes it positionally from
+        ``backend/**``, which C9b owns; deleting it here would be a
+        cross-tree change. C14 (dead code) drops it once both trees are swept.
         """
         query_embedding = self._embeddings.encode(content)
         if query_embedding is None:

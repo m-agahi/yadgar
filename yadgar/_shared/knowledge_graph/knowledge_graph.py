@@ -196,10 +196,17 @@ class KnowledgeGraph:
     # -- d. Enhanced Entity Extraction --
 
     @observe(tier="boundary", metric="knowledge_graph.extract_entities_typed")
-    def extract_entities_typed(self, content: str, directory: str) -> list[tuple[str, str, str]]:
+    def extract_entities_typed(self, content: str, project_id: str) -> list[tuple[str, str, str]]:
+        """Extract typed entities from *content*.
+
+        C9a (0047 §5): ``directory`` renamed to ``project_id`` per ADR-0225.
+        The parameter is **not read** — extraction is pure regex over
+        ``content``. Kept rather than deleted because every caller passes it
+        positionally from ``backend/**`` (C9b's tree); C14 drops it.
+        """
         _t0 = time.monotonic()
         try:
-            return self._extract_entities_typed_inner(content, directory)
+            return self._extract_entities_typed_inner(content, project_id)
         finally:
             _elapsed_ms = (time.monotonic() - _t0) * 1000.0
             try:
@@ -213,7 +220,7 @@ class KnowledgeGraph:
 
     @observe(tier="stage", metric="knowledge_graph.extract_entities_typed_inner")
     def _extract_entities_typed_inner(
-        self, content: str, directory: str
+        self, content: str, project_id: str
     ) -> list[tuple[str, str, str]]:
         results: list[tuple[str, str, str]] = []
 
