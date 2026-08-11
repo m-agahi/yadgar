@@ -12,6 +12,11 @@ from yadgar._shared.storage import StorageEngine
 from yadgar.backend.admin_exec.invariants import _run_check_invariants
 from yadgar.core import server
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 # ── Shared fixture ────────────────────────────────────────────────────────────
 
 
@@ -105,6 +110,7 @@ def _insert_bare_memory(storage: StorageEngine, content: str) -> int:
     embedding = struct.pack("<384f", *([0.0] * 384))
     return storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": content,
             "embedding": embedding,
             "tags": ["test"],
@@ -305,6 +311,7 @@ def test_per_table_size_in_check_invariants():
     for i in range(3):
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": f"per-table test memory {i}",
                 "embedding": embedding,
                 "tags": ["test"],

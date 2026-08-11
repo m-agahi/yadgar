@@ -9,6 +9,11 @@ from yadgar._shared.config import Settings
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar.backend.narrative import NarrativeEngine
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture(scope="module")
 def storage(module_storage):
@@ -53,6 +58,7 @@ class TestGenerateNarrative:
         for i in range(3):
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"Implemented feature {i} for the API server",
                     "embedding": _make_embedding(),
                     "directory_context": "/home/proj",
@@ -73,6 +79,7 @@ class TestGenerateNarrative:
         """Narrative captures decision keywords."""
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "decided to use FastAPI instead of Flask for the backend",
                 "embedding": _make_embedding(),
                 "directory_context": "/proj",
@@ -90,6 +97,7 @@ class TestGenerateNarrative:
         """Narrative captures notable events from high-importance memories."""
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Fixed critical authentication bug in login handler",
                 "embedding": _make_embedding(),
                 "directory_context": "/proj",
@@ -184,6 +192,7 @@ class TestAutoNarrate:
         for directory in ["/proj-a", "/proj-b"]:
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"Working on {directory}",
                     "embedding": _make_embedding(),
                     "directory_context": directory,
@@ -206,6 +215,7 @@ class TestAutoNarrate:
         """Auto-narrate skips directories with recent narrative entries."""
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Active memory",
                 "embedding": _make_embedding(),
                 "directory_context": "/proj",
@@ -234,6 +244,7 @@ class TestAutoNarrate:
         """Directories with only cold memories (heat < 0.3) are skipped."""
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Old cold memory",
                 "embedding": _make_embedding(),
                 "directory_context": "/old-proj",

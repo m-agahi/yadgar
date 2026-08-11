@@ -15,6 +15,11 @@ from yadgar._shared.runtime.sr_session import _MIN_TRANSITIONS
 from yadgar.backend.restoration.cognitive_map import CognitiveMap
 from yadgar.backend.retrieval import Retriever
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture(scope="module")
 def storage(module_storage):
@@ -55,6 +60,7 @@ def _make_memory(storage, embeddings, content, directory="/proj", tags=None, hea
     embedding = embeddings.encode(content)
     mid = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": content,
             "embedding": embedding,
             "tags": tags or [],
@@ -73,6 +79,7 @@ class TestRecordTransition:
         """Transition is stored correctly."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "mem1",
                 "tags": [],
                 "directory_context": "/p",
@@ -82,6 +89,7 @@ class TestRecordTransition:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "mem2",
                 "tags": [],
                 "directory_context": "/p",
@@ -102,6 +110,7 @@ class TestRecordTransition:
         """Recording the same transition increments the count."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "mem1",
                 "tags": [],
                 "directory_context": "/p",
@@ -111,6 +120,7 @@ class TestRecordTransition:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "mem2",
                 "tags": [],
                 "directory_context": "/p",
@@ -132,6 +142,7 @@ class TestTransitionMatrix:
         """Rows of the transition matrix sum to 1.0."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "a",
                 "tags": [],
                 "directory_context": "/p",
@@ -141,6 +152,7 @@ class TestTransitionMatrix:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "b",
                 "tags": [],
                 "directory_context": "/p",
@@ -150,6 +162,7 @@ class TestTransitionMatrix:
         )
         m3 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "c",
                 "tags": [],
                 "directory_context": "/p",
@@ -197,6 +210,7 @@ class TestTransitionMatrix:
         """Transition probabilities reflect counts."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "a",
                 "tags": [],
                 "directory_context": "/p",
@@ -206,6 +220,7 @@ class TestTransitionMatrix:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "b",
                 "tags": [],
                 "directory_context": "/p",
@@ -232,6 +247,7 @@ class TestSRMatrix:
         """SR matrix is square N×N."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "a",
                 "tags": [],
                 "directory_context": "/p",
@@ -241,6 +257,7 @@ class TestSRMatrix:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "b",
                 "tags": [],
                 "directory_context": "/p",
@@ -250,6 +267,7 @@ class TestSRMatrix:
         )
         m3 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "c",
                 "tags": [],
                 "directory_context": "/p",
@@ -269,6 +287,7 @@ class TestSRMatrix:
         """M[i,i] >= M[i,j] for all j — you visit yourself most often."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "a",
                 "tags": [],
                 "directory_context": "/p",
@@ -278,6 +297,7 @@ class TestSRMatrix:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "b",
                 "tags": [],
                 "directory_context": "/p",
@@ -287,6 +307,7 @@ class TestSRMatrix:
         )
         m3 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "c",
                 "tags": [],
                 "directory_context": "/p",
@@ -318,6 +339,7 @@ class TestCoordinates:
         for i in range(4):
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"mem{i}",
                     "tags": [],
                     "directory_context": "/p",
@@ -343,6 +365,7 @@ class TestCoordinates:
         """Extracting coords recomputes SR if dirty."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "a",
                 "tags": [],
                 "directory_context": "/p",
@@ -352,6 +375,7 @@ class TestCoordinates:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "b",
                 "tags": [],
                 "directory_context": "/p",
@@ -400,6 +424,7 @@ class TestIncrementalUpdate:
         """TD update modifies the correct row of SR matrix."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "a",
                 "tags": [],
                 "directory_context": "/p",
@@ -409,6 +434,7 @@ class TestIncrementalUpdate:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "b",
                 "tags": [],
                 "directory_context": "/p",
@@ -418,6 +444,7 @@ class TestIncrementalUpdate:
         )
         m3 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "c",
                 "tags": [],
                 "directory_context": "/p",
@@ -466,6 +493,7 @@ class TestFrequentlyCoaccessed:
         # Group A: frequently co-accessed
         a1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "group A mem 1",
                 "tags": [],
                 "directory_context": "/p",
@@ -475,6 +503,7 @@ class TestFrequentlyCoaccessed:
         )
         a2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "group A mem 2",
                 "tags": [],
                 "directory_context": "/p",
@@ -484,6 +513,7 @@ class TestFrequentlyCoaccessed:
         )
         a3 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "group A mem 3",
                 "tags": [],
                 "directory_context": "/p",
@@ -495,6 +525,7 @@ class TestFrequentlyCoaccessed:
         # Group B: frequently co-accessed among themselves
         b1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "group B mem 1",
                 "tags": [],
                 "directory_context": "/p",
@@ -504,6 +535,7 @@ class TestFrequentlyCoaccessed:
         )
         b2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "group B mem 2",
                 "tags": [],
                 "directory_context": "/p",
@@ -553,6 +585,7 @@ class TestHasSufficientData:
         """Returns True when enough transitions exist."""
         m1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "a",
                 "tags": [],
                 "directory_context": "/p",
@@ -562,6 +595,7 @@ class TestHasSufficientData:
         )
         m2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "b",
                 "tags": [],
                 "directory_context": "/p",

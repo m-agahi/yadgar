@@ -28,6 +28,11 @@ import pytest
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.write_exec import MemorizeContext
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def storage(tmp_path):
@@ -99,6 +104,7 @@ class TestPhaseSoftGate:
     def _seed(self, storage, content, embedding):
         return storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content,
                 "tags": ["decision"],
                 "store_type": "semantic",
@@ -205,6 +211,7 @@ class TestMemoryUpdateReembed:
     def _insert(self, storage, content, embedding):
         return storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content,
                 "tags": ["t"],
                 "store_type": "episodic",

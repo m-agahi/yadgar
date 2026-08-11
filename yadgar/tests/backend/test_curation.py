@@ -11,7 +11,12 @@ from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
-from yadgar.backend.curation import MemoryCurator
+from yadgar.backend.curation import CurateParams, MemoryCurator
+
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
 
 # Detect whether the embedding model can be loaded
 _engine = EmbeddingEngine()
@@ -96,6 +101,7 @@ def test_curate_new_memory(curator, storage):
         context="/test/project",
         tags=["test", "physics"],
         embedding=emb,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
     assert result["action"] == "created"
     assert "memory_id" in result
@@ -118,6 +124,7 @@ def test_curate_merge_similar(curator, storage, embeddings):
         context="/test/project",
         tags=["python", "syntax"],
         embedding=emb1,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
     assert result1["action"] == "created"
     original_id = result1["memory_id"]
@@ -130,6 +137,7 @@ def test_curate_merge_similar(curator, storage, embeddings):
         context="/test/project",
         tags=["python", "language"],
         embedding=emb2,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
     assert result2["action"] == "merged"
     assert result2["memory_id"] == original_id
@@ -156,6 +164,7 @@ def test_curate_link_moderate(curator, storage, embeddings):
         context="/test/project",
         tags=["fastapi"],
         embedding=emb1,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
     assert result1["action"] == "created"
     original_id = result1["memory_id"]
@@ -172,6 +181,7 @@ def test_curate_link_moderate(curator, storage, embeddings):
             context="/test/project",
             tags=["django"],
             embedding=emb2,
+            params=CurateParams(project_id=_TEST_PROJECT),
         )
         assert result2["action"] == "linked"
         assert result2["memory_id"] != original_id
@@ -192,6 +202,7 @@ def test_curate_link_moderate(curator, storage, embeddings):
             context="/test/project",
             tags=["base"],
             embedding=emb_base,
+            params=CurateParams(project_id=_TEST_PROJECT),
         )
 
         # Create embedding in moderate similarity range
@@ -210,6 +221,7 @@ def test_curate_link_moderate(curator, storage, embeddings):
                 context="/test/project",
                 tags=["linked"],
                 embedding=emb_moderate,
+                params=CurateParams(project_id=_TEST_PROJECT),
             )
             assert result_mod["action"] == "linked"
         else:
@@ -226,6 +238,7 @@ def test_contradiction_detection(curator, storage, embeddings):
     emb1 = embeddings.encode(content1)
     storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": content1,
             "embedding": emb1,
             "tags": ["database"],
@@ -259,6 +272,7 @@ def test_memify_prune(curator, storage):
     emb = _make_embedding(seed=10)
     mid = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "This is a cold unreliable memory that was never accessed",
             "embedding": emb,
             "tags": ["cold", "_action_stream"],  # pruner only removes _action_stream memories
@@ -286,6 +300,7 @@ def test_memify_strengthen(curator, storage):
     emb = _make_embedding(seed=20)
     mid = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Frequently accessed and useful memory about project architecture",
             "embedding": emb,
             "tags": ["architecture"],
@@ -366,6 +381,7 @@ def test_curation_preserves_existing(curator, storage):
     emb1 = _make_embedding(seed=50)
     mid1 = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Important existing memory about database migrations",
             "embedding": emb1,
             "tags": ["database", "migrations"],
@@ -388,6 +404,7 @@ def test_curation_preserves_existing(curator, storage):
         context="/test/other",
         tags=["react", "frontend"],
         embedding=emb2,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
     assert result["action"] == "created"
 
@@ -704,6 +721,7 @@ def test_memify_prune_auto_generated(tmp_path):
     #    last_accessed also backdated: no recent recall -> eligible for purge.
     autogen_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "auto-generated derived fact about a.py and b.py",
             "tags": ["derived", "auto-generated"],
             "directory_context": "system",
@@ -720,6 +738,7 @@ def test_memify_prune_auto_generated(tmp_path):
     # 2. User memory — MUST survive regardless
     user_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "important user memory about project architecture",
             "tags": ["architecture"],
             "directory_context": "/proj",
@@ -734,6 +753,7 @@ def test_memify_prune_auto_generated(tmp_path):
     # 3. Protected auto-generated memory — MUST survive
     protected_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "auto-generated but protected memory",
             "tags": ["derived", "auto-generated"],
             "directory_context": "system",
@@ -884,6 +904,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
     #    Both created_at and last_accessed backdated: no recent recall -> eligible.
     prunable_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Recurring pattern across 5 observations: bash git diff cat",
             "tags": ["semantic", "auto-abstracted"],
             "directory_context": "system",
@@ -898,6 +919,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
     # 2. User memory (no auto-abstracted tag) — MUST survive
     user_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "important user memory about architecture",
             "tags": ["architecture"],
             "directory_context": "/proj",
@@ -912,6 +934,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
     # 3. Protected auto-abstracted memory — MUST survive
     protected_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Recurring pattern across 3 observations: deploy pipeline",
             "tags": ["semantic", "auto-abstracted"],
             "directory_context": "system",
@@ -927,6 +950,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
     # 4. Recent auto-abstracted memory — MUST survive (too young: created_at within window)
     recent_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Recurring pattern across 4 observations: test fixture setup",
             "tags": ["semantic", "auto-abstracted"],
             "directory_context": "system",
@@ -943,6 +967,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
     #    This models the correct case: memory is old but is still being used.
     accessed_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Recurring pattern across 6 observations: authentication flow",
             "tags": ["semantic", "auto-abstracted"],
             "directory_context": "system",
@@ -959,6 +984,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
     #    last_accessed also at boundary_under_date (same as created_at).
     boundary_under_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Recurring pattern boundary: just under max age",
             "tags": ["semantic", "auto-abstracted"],
             "directory_context": "system",
@@ -973,6 +999,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
     # 7. Boundary: age = MAX + 1 days — SHOULD be pruned (just over the age cap).
     boundary_over_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Recurring pattern boundary: just over max age",
             "tags": ["semantic", "auto-abstracted"],
             "directory_context": "system",
@@ -989,6 +1016,7 @@ def test_memify_prune_auto_abstracted(tmp_path):
     high_heat_date = (datetime.now(UTC) - timedelta(days=max_age + 5)).isoformat()
     high_heat_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Recurring pattern: high-heat fresh auto-abstracted, but old enough",
             "tags": ["semantic", "auto-abstracted"],
             "directory_context": "system",
@@ -1074,6 +1102,7 @@ def test_memify_prune_dream_insights(tmp_path):
     # 1. Old, heat=0.1 (above COLD_THRESHOLD), unaccessed dream insight → PRUNED
     dream_prunable_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Dream connection: authentication and caching may relate to session handling",
             "tags": ["dream", "auto-generated"],
             "directory_context": "system",
@@ -1088,6 +1117,7 @@ def test_memify_prune_dream_insights(tmp_path):
     # 2. Old dream insight with accesses — MUST be PRUNED (hard age cap, no escape)
     dream_accessed_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Dream connection: deployment and testing relate to CI pipeline",
             "tags": ["dream", "auto-generated"],
             "directory_context": "system",
@@ -1102,6 +1132,7 @@ def test_memify_prune_dream_insights(tmp_path):
     # 3. Recent dream insight — MUST survive (not old enough)
     dream_recent_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Dream connection: refactoring and architecture may relate",
             "tags": ["dream", "auto-generated"],
             "directory_context": "system",
@@ -1116,6 +1147,7 @@ def test_memify_prune_dream_insights(tmp_path):
     # 4. Dream tag but NOT auto-generated — MUST survive (not targeted by this pass)
     dream_manual_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Dream insight: user manually recorded dream about project architecture",
             "tags": ["dream"],
             "directory_context": "system",
@@ -1130,6 +1162,7 @@ def test_memify_prune_dream_insights(tmp_path):
     # 5. Protected dream+auto-generated memory (old) — MUST survive
     dream_protected_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Dream connection: protected critical insight about system design",
             "tags": ["dream", "auto-generated"],
             "directory_context": "system",
@@ -1145,6 +1178,7 @@ def test_memify_prune_dream_insights(tmp_path):
     # 6. Boundary: age = MAX - 1 days — MUST survive (just under the cap)
     dream_boundary_under_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Dream connection: boundary under — should not be pruned yet",
             "tags": ["dream", "auto-generated"],
             "directory_context": "system",
@@ -1159,6 +1193,7 @@ def test_memify_prune_dream_insights(tmp_path):
     # 7. Boundary: age = MAX + 1 days — SHOULD be pruned (just over the cap)
     dream_boundary_over_id = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "Dream connection: boundary over — should be pruned",
             "tags": ["dream", "auto-generated"],
             "directory_context": "system",
@@ -1218,6 +1253,7 @@ class TestMemifyPruneDegenerateAutoAbstracted:
     ) -> int:
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content,
                 "tags": tags,
                 "directory_context": "/proj",

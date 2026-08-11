@@ -8,6 +8,11 @@ from yadgar._shared.storage import StorageEngine
 from yadgar.backend.predictive_coding import WriteGate
 from yadgar.backend.retrieval import Retriever
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -44,6 +49,7 @@ def _make_memory(storage, embeddings, content, directory="/tmp/project", tags=No
     """Helper to insert a memory with real embedding."""
     embedding = embeddings.encode(content)
     mem = {
+        "project_id": _TEST_PROJECT,
         "content": content,
         "embedding": embedding,
         "tags": tags or ["test"],

@@ -629,15 +629,29 @@ class _MemoryMixin:
 
     @observe(tier="stage")
     def get_memories_by_ids_projected(self, ids: list[int]) -> list[dict]:
-        """Return id, embedding, and content for a given list of memory ids.
+        """Return id, embedding, content and project_id for a list of memory ids.
 
         Projected (not SELECT *) — returns only the fields dream_replay needs:
-          - id        → _build_connected_pair_index_by_ids, _ensure_memory_entity
-          - embedding → similarity check
-          - content   → _create_dream_insight
+          - id         → _build_connected_pair_index_by_ids, _ensure_memory_entity
+          - embedding  → similarity check
+          - content    → _create_dream_insight
+          - project_id → _create_dream_insight's resolve_project_id_from_rows
         Rows pass through _rows_to_dicts so id is a bare int and embedding is
         bytes — identical to the row format produced by get_all_memories_with_embeddings.
         Used by C3 two-phase fetch: phase-2 fetch for only the ~40 sampled ids.
+
+        **C13: ``project_id`` joins the projection because C4 gave this fetch's
+        sole consumer a fourth need and the SELECT was not widened with it.**
+        ``_create_dream_insight`` (``sleep_compute/dream.py``) resolves the
+        insight's owner from the PAIR's own rows — inheritance, the sanctioned
+        substitute for the derivation ADR-0227 deleted. A projection that omits
+        the column makes ``resolve_project_id_from_rows`` see two rows naming no
+        project, so it returns ``None`` and every single dream insight is
+        skipped and counted. The rows carry the value in the DB; only this
+        SELECT lost it. The failure is invisible in ``dream_replay``'s stats,
+        which count candidate pairs rather than committed writes — a projected
+        column is exactly the kind of dependency that goes stale silently, so
+        the list above is a contract, not a comment.
 
         Note: inlines record ids directly into the query (WHERE id IN [memory:N, ...])
         because parameterised IN with string values is not supported by the embedded
@@ -648,7 +662,8 @@ class _MemoryMixin:
             return []
         id_list = ", ".join(f"memory:{i}" for i in ids)
         rows = self._q(
-            f"SELECT meta::id(id) AS id, embedding, content FROM memory WHERE id IN [{id_list}]"
+            f"SELECT meta::id(id) AS id, embedding, content, project_id "
+            f"FROM memory WHERE id IN [{id_list}]"
         )
         return self._rows_to_dicts(rows)
 
