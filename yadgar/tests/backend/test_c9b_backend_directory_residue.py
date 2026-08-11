@@ -72,7 +72,11 @@ ALLOWLIST: dict[str, str] = {
     "consolidation/cls.py": "stored episode column — ep.get('directory')",
     "prospective/prospective.py": "stored prospective_memory column — target_directory",
     # ── `_shared` signatures owned by C9a; the keyword spelling moves with them.
-    "cls_store/clustering.py": "C9a — storage.get_memories_by_store_type(directory=)",
+    # ``cls_store/clustering.py`` is GONE from this dict: C9c renamed
+    # ``get_memories_by_store_type``'s parameter to ``project_id`` and re-keyed
+    # its WHERE, so both call sites here now spell it ``project_id=`` and the
+    # file has no residue left. Direction 2 (stale entries hard-fail) is what
+    # forces the removal — the entry could not outlive the boundary it named.
     "admin_exec/blocks.py": "C9a — storage block API (directory=) + core-owned payload key",
     "admin_exec/project.py": "C9a — storage.get_block/create_block(directory=)",
     "write_exec/action_log_impl.py": "C9a — storage.insert_action_log(directory=)",

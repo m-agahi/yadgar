@@ -76,12 +76,49 @@ _C11 = (
     "migration 033. Migration 031 declared ``project_id`` on ``wiki_page`` and "
     "``memory`` ONLY, so there is nothing to re-key onto here yet."
 )
-_C9B = (
-    "C9b-coupled — the table (``memory`` / ``wiki_page``) does carry "
-    "``project_id``, but every non-test caller lives in ``yadgar/backend`` "
-    "which is C9b's tree. Renaming the parameter and re-keying the WHERE must "
-    "land in the same commit as the callers or the query silently matches "
-    "nothing; C9a's territory is ``_shared`` only."
+# ── C9c's re-reasoning of the former ``_C9B`` bucket ─────────────────────────
+# C9a deferred 13 signatures to C9b with the reason "C9a's territory is _shared
+# only". That reason DIED with C9c, whose whole remit was those 13 end-to-end.
+# C9c swept ONE (``get_memories_by_store_type``) and found the other twelve
+# blocked for four DISTINCT reasons that the single ``_C9B`` string hid. They are
+# split out below so C11/C15 inherit the real blocker per signature rather than a
+# reason that stopped being true.
+
+_C9C_PARAM_COLLISION = (
+    "NOT A RENAME — ``project_id`` is ALREADY a parameter of this function "
+    "(``*, project_id: str = ''``), threaded from the core tool shell since C5b. "
+    "The name is taken, so renaming ``directory`` onto it is a two-parameter "
+    "MERGE: one selects rows (``WHERE directory_context = $dir``) and one stamps "
+    "them. Collapsing them is a redesign with an owner (C11), not a mechanical "
+    "rename, and C9c must not pre-empt it."
+)
+_C9C_C10_CALLER = (
+    "C10-owned caller — the table does carry ``project_id`` and the re-key is "
+    "otherwise safe, but every non-test caller lives in C10's tree (``core/**``, "
+    "``backend/restoration/**``, ``backend/admin_exec/adr_seed.py``), which was "
+    "mid-flight during C9c. The rename and the WHERE re-key must land WITH the "
+    "callers or the query silently matches nothing. Reconciled at merge: C10 is "
+    "deferring its own identity rename to C11 because two of ``restore()``'s "
+    "other sinks (``checkpoint``, ``memory_block``) have no ``project_id`` "
+    "column, so ``restore()`` must pass project_id to the memory sinks and "
+    "directory to the checkpoint/block sinks until C11 adds them."
+)
+_C9C_SEMANTIC_SPLIT = (
+    "SEMANTIC SPLIT, not a rename — this one function is called with two "
+    "incompatible kinds of value. ``backend/admin_exec/staleness.py`` passes "
+    "``str(Path(filepath).parent)``, a CHANGED FILE's parent directory, which is "
+    "never a project identity; the predictive_coding and narrative callers pass "
+    "a real resolved project_id. Re-keying the WHERE onto ``project_id`` would "
+    "silently empty the staleness arm (its heat-halving would stop firing and "
+    "nothing would raise). Splitting the function is C11's shape."
+)
+_C9C_COUPLED_PASSTHROUGH = (
+    "COUPLED PASS-THROUGH — this function does not query anything itself; it "
+    "forwards its argument into a function that is still keyed on "
+    "``directory_context`` (blocked above). Renaming the parameter here while "
+    "the downstream predicate is untouched is precisely the caller-facing lie "
+    "C9a's rule forbids: the caller passes ``owner/repo``, the query matches "
+    "zero rows, nothing raises. Unblocks when its callee does."
 )
 _NO_OWNER = (
     "GAP — ``runtime_config`` carries its own ``directory`` COLUMN and is "
@@ -146,20 +183,22 @@ _ALLOWLIST: dict[str, str] = {
     "storage/runtime_config.py::get_config_row": _NO_OWNER,
     "storage/runtime_config.py::list_config_rows": _NO_OWNER,
     "storage/runtime_config.py::delete_config_row": _NO_OWNER,
-    # ── C9b-coupled — re-keyable, but the callers are not C9a's ──────────────
-    "metacognition/gap_detection.py::detect_gaps": _C9B,
-    "storage/memory.py::get_memories_for_directory": _C9B,
-    "storage/memory.py::get_memories_by_store_type": _C9B,
-    "storage/memory.py::get_anchored_memories_scoped": _C9B,
-    "storage/memory.py::get_recent_memories_since": _C9B,
-    "storage/wiki.py::list_wiki_pages": _C9B,
-    "storage/wiki.py::list_wiki_catalog": _C9B,
-    "storage/wiki.py::upsert_project_init": _C9B,
-    "storage/wiki.py::upsert_active_work": _C9B,
-    "storage/wiki.py::upsert_dispatch_prelude_marker": _C9B,
-    "wiki/store.py::list_pages": _C9B,
-    "wiki/store.py::_autolink_title_map": _C9B,
-    "wiki/store.py::autolink": _C9B,
+    # ── formerly "C9b-coupled"; re-reasoned by C9c, which swept ONE of the 13 ─
+    # ``storage/memory.py::get_memories_by_store_type`` is GONE from this dict:
+    # C9c renamed it AND re-keyed its WHERE onto ``build_project_scope_clause``.
+    # It is pinned in ``_SWEPT`` below instead.
+    "storage/memory.py::get_memories_for_directory": _C9C_SEMANTIC_SPLIT,
+    "storage/memory.py::get_anchored_memories_scoped": _C9C_C10_CALLER,
+    "storage/memory.py::get_recent_memories_since": _C9C_C10_CALLER,
+    "storage/wiki.py::list_wiki_pages": _C9C_C10_CALLER,
+    "storage/wiki.py::list_wiki_catalog": _C9C_C10_CALLER,
+    "wiki/store.py::list_pages": _C9C_C10_CALLER,
+    "storage/wiki.py::upsert_project_init": _C9C_PARAM_COLLISION,
+    "storage/wiki.py::upsert_active_work": _C9C_PARAM_COLLISION,
+    "storage/wiki.py::upsert_dispatch_prelude_marker": _C9C_PARAM_COLLISION,
+    "metacognition/gap_detection.py::detect_gaps": _C9C_COUPLED_PASSTHROUGH,
+    "wiki/store.py::_autolink_title_map": _C9C_COUPLED_PASSTHROUGH,
+    "wiki/store.py::autolink": _C9C_COUPLED_PASSTHROUGH,
 }
 
 #: The FIVE signatures C9a renamed to ``project_id``. Pinned so a later car
@@ -172,6 +211,12 @@ _SWEPT: tuple[str, ...] = (
     "knowledge_graph/knowledge_graph.py::_extract_entities_typed_inner",
     "metacognition/coverage.py::assess_coverage",
     "blocks_render/blocks_render.py::render_blocks_section",
+    # C9c — the only one of C9a's 13 deferred signatures that was clean
+    # end-to-end. Unlike the five above (whose arguments are dead or
+    # presentation-only), this one is a LIVE predicate: the rename landed
+    # together with its WHERE re-key onto ``build_project_scope_clause`` and
+    # both of its call sites in ``backend/cls_store/clustering.py``.
+    "storage/memory.py::get_memories_by_store_type",
 )
 
 #: Anti-vacuity floors (ADR-0080). A walk that silently found nothing would

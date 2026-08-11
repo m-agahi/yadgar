@@ -798,9 +798,11 @@ class TestClsPatternCandidateCap:
         original = storage.get_memories_by_store_type
         called_with_limit = []
 
-        def spy(store_type, directory=None, limit=None):
+        # C9c (0047 §5): the spy mirrors the real signature, so it moved with it
+        # when ``get_memories_by_store_type``'s ``directory`` became ``project_id``.
+        def spy(store_type, project_id=None, limit=None):
             called_with_limit.append(limit)
-            return original(store_type, directory=directory, limit=limit)
+            return original(store_type, project_id=project_id, limit=limit)
 
         with patch.object(storage, "get_memories_by_store_type", side_effect=spy):
             cls.find_recurring_patterns()

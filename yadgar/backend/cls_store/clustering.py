@@ -56,7 +56,7 @@ class _ClusteringMixin:
         cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
         if project_id:
             return self._storage.get_memories_by_store_type(
-                "episodic", directory=project_id, limit=cap
+                "episodic", project_id=project_id, limit=cap
             )
         return self._storage.get_memories_by_store_type("episodic", limit=cap)
 
@@ -182,7 +182,7 @@ class _ClusteringMixin:
         cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
         if project_id:
             memories = self._storage.get_memories_by_store_type(
-                store_type, directory=project_id, limit=cap
+                store_type, project_id=project_id, limit=cap
             )
         else:
             memories = self._storage.get_memories_by_store_type(store_type, limit=cap)

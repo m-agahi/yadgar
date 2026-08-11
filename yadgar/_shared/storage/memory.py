@@ -42,6 +42,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.security.secrets import SecretLeakBlocked, check_secrets
 from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
+from yadgar._shared.storage.directory import build_project_scope_clause
 
 _log = logging.getLogger(__name__)
 
@@ -947,37 +948,46 @@ class _MemoryMixin:
     def get_memories_by_store_type(
         self,
         store_type: str,
-        directory: str | None = None,
+        project_id: str | None = None,
         limit: int | None = None,
     ) -> list[dict]:
-        """Return memories for a store type.
+        """Return memories for a store type, optionally scoped to one project.
 
         When `limit` is given, returns the most-recently-accessed memories up
         to that count (ORDER BY last_accessed DESC).  Callers that build pairwise
         similarity matrices should pass limit=CLS_PATTERN_MAX_CANDIDATES to avoid
         allocating an unbounded N×N matrix.
+
+        C9c (0047 §5): ``directory`` renamed to ``project_id`` AND the predicate
+        re-keyed off ``directory_context`` in the SAME change, per ADR-0225.
+        Doing only the rename would ship a caller-facing lie — the caller passes
+        ``owner/repo`` into ``WHERE directory_context = $dir``, matches zero rows,
+        and nothing raises. ``memory`` carries ``project_id`` (migration 031), so
+        there is a column to re-key ONTO here; the C11 tables have none yet.
+
+        The predicate is ``build_project_scope_clause`` rather than a hand-rolled
+        ``project_id = $pid`` so this arm agrees BY CONSTRUCTION with the Car C7
+        retrieval arm — same two arms (project match OR the global reach tag),
+        same treatment of unstamped rows. Unstamped rows (``project_id`` IS NONE,
+        i.e. everything the C6 operator backfill has not reached) DELIBERATELY do
+        not match: admitting them would rebuild the permissive fallback ADR-0227
+        exists to delete. Zero results over an un-backfilled corpus is the
+        sanctioned cost of that window, recorded in the plan's §8 step 5b runbook.
         """
         order_clause = " ORDER BY last_accessed DESC" if limit is not None else ""
         limit_clause = " LIMIT $lim" if limit is not None else ""
-        if directory:
-            params: dict = {"st": store_type, "dir": directory}
-            if limit is not None:
-                params["lim"] = int(limit)
-            rows = self._q(
-                f"SELECT * FROM memory WHERE store_type = $st "
-                f"AND heat > 0 AND embedding IS NOT NONE "
-                f"AND directory_context = $dir{order_clause}{limit_clause}",
-                params,
-            )
-        else:
-            params = {"st": store_type}
-            if limit is not None:
-                params["lim"] = int(limit)
-            rows = self._q(
-                f"SELECT * FROM memory WHERE store_type = $st "
-                f"AND heat > 0 AND embedding IS NOT NONE{order_clause}{limit_clause}",
-                params,
-            )
+        # Empty/None project_id yields ("", {}) — an unscoped, corpus-wide read.
+        scope_clause, scope_params = build_project_scope_clause(project_id)
+        scope_sql = f" AND {scope_clause}" if scope_clause else ""
+        params: dict = {"st": store_type, **scope_params}
+        if limit is not None:
+            params["lim"] = int(limit)
+        rows = self._q(
+            f"SELECT * FROM memory WHERE store_type = $st "
+            f"AND heat > 0 AND embedding IS NOT NONE"
+            f"{scope_sql}{order_clause}{limit_clause}",
+            params,
+        )
         return self._rows_to_dicts(rows)
 
     # ------------------------------------------------------------------ Generic helpers
