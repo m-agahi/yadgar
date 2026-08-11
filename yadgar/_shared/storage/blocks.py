@@ -103,16 +103,27 @@ class _BlocksMixin:
         }
 
     @observe(tier="stage")
-    def _count_blocks_in_scope(self, scope: str, directory: str | None) -> int:
-        """Count existing blocks for a (scope, directory) tuple."""
+    def _count_blocks_in_scope(
+        self, scope: str, directory: str | None, project_id: str | None = None
+    ) -> int:
+        """Count existing blocks for this scope, using the READ key.
+
+        C11: counted through ``_block_project_clause`` for the same reason the
+        uniqueness check is — the cap must be measured over the set the reader
+        will actually return, or one project checked out twice gets
+        ``MEMORY_BLOCK_MAX_PER_SCOPE`` blocks per checkout and the reader sees
+        the sum.
+        """
         if scope == "global":
             rows = self._q(
                 "SELECT count() AS cnt FROM memory_block WHERE scope = 'global' AND directory IS NONE GROUP ALL"
             )
         else:
+            proj_sql, params = self._block_project_clause(directory, project_id)
             rows = self._q(
-                "SELECT count() AS cnt FROM memory_block WHERE scope = $scope AND directory = $directory GROUP ALL",
-                {"scope": scope, "directory": directory},
+                f"SELECT count() AS cnt FROM memory_block WHERE scope = $scope AND {proj_sql} "
+                "GROUP ALL",
+                {"scope": scope, **params},
             )
         return int(rows[0]["cnt"]) if rows else 0
 
@@ -178,9 +189,12 @@ class _BlocksMixin:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
+        # A global block names no project — never stamp one on it (ADR-0227).
+        canonical_pid = project_id if canonical_dir is not None else None
+
         # Check per-scope cap
         max_per_scope = _max_per_scope()
-        count = self._count_blocks_in_scope(scope, canonical_dir)
+        count = self._count_blocks_in_scope(scope, canonical_dir, canonical_pid)
         if count >= max_per_scope:
             return {
                 "ok": False,
@@ -191,8 +205,10 @@ class _BlocksMixin:
                 ),
             }
 
-        # Check uniqueness: (name, scope, directory)
-        existing = self.get_block(name, scope=scope, directory=canonical_dir)
+        # Check uniqueness on the READ key, not the storage path — see get_block.
+        existing = self.get_block(
+            name, scope=scope, directory=canonical_dir, project_id=canonical_pid
+        )
         if existing is not None:
             return {
                 "ok": False,
@@ -205,8 +221,6 @@ class _BlocksMixin:
         now = self._now_iso()
         bid = self._next_id("memory_block")
 
-        # A global block names no project — never stamp one on it (ADR-0227).
-        canonical_pid = project_id if canonical_dir is not None else None
         pid_sql, pid_params = project_id_set_fragment(canonical_pid)
 
         if canonical_dir is None:
@@ -259,9 +273,28 @@ class _BlocksMixin:
 
     @trace_span()
     def get_block(
-        self, name: str, scope: str = "project", directory: str | None = None
+        self,
+        name: str,
+        scope: str = "project",
+        directory: str | None = None,
+        project_id: str | None = None,
     ) -> dict | None:
-        """Fetch a single block by (name, scope, directory). Returns None if not found."""
+        """Fetch a single block by name within the caller's scope, or None.
+
+        C11 — **the lookup key must be at least as WIDE as the read key.**
+        ``list_blocks`` selects on ``(project_id = $pid OR directory = $dir)``;
+        if this stayed path-only, ``create_block``'s uniqueness check would miss
+        a sibling row stored under a different path in the SAME project and
+        create a second one. That is reachable today: ``block_create`` does not
+        normalize worktree paths (only ``misc.py::checkpoint`` does), so a
+        worktree and its main clone are distinct ``directory`` values under one
+        resolved project — and ``restore()`` would then render the same block
+        twice. Measured before the fix: two ``create_block`` calls, same name,
+        same project, different directories → ``list_blocks`` returned 2 rows.
+
+        Both keys go through ``_block_project_clause``, so the write's duplicate
+        check and the read's selection cannot diverge again.
+        """
         try:
             canonical_dir = _canonical_dir(scope, directory)
         except ValueError:
@@ -273,9 +306,11 @@ class _BlocksMixin:
                 {"name": name, "scope": scope},
             )
         else:
+            proj_sql, params = self._block_project_clause(canonical_dir, project_id)
             rows = self._q(
-                "SELECT * FROM memory_block WHERE name = $name AND scope = $scope AND directory = $directory LIMIT 1",
-                {"name": name, "scope": scope, "directory": canonical_dir},
+                f"SELECT * FROM memory_block WHERE name = $name AND scope = $scope AND {proj_sql} "
+                "LIMIT 1",
+                {"name": name, "scope": scope, **params},
             )
 
         if not rows:
@@ -289,18 +324,25 @@ class _BlocksMixin:
         content: str,
         scope: str = "project",
         directory: str | None = None,
+        project_id: str | None = None,
     ) -> dict:
         """Replace block content. Validates against char_limit.
 
         Returns updated block dict on success.
         Returns {ok: False, error: "..."} on failure.
+
+        C11: the lookup AND the UPDATE predicate both go through
+        ``_block_project_clause``. Re-keying only the lookup would be worse than
+        leaving both alone — ``get_block`` would find a row stored under another
+        path in the same project and the ``UPDATE`` would then match nothing,
+        returning success while writing no row.
         """
         try:
             canonical_dir = _canonical_dir(scope, directory)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-        existing = self.get_block(name, scope=scope, directory=canonical_dir)
+        existing = self.get_block(name, scope=scope, directory=canonical_dir, project_id=project_id)
         if existing is None:
             return {
                 "ok": False,
@@ -325,15 +367,16 @@ class _BlocksMixin:
                 {"name": name, "scope": scope, "content": content, "ts": now},
             )
         else:
+            proj_sql, proj_params = self._block_project_clause(canonical_dir, project_id)
             self._q(
                 "UPDATE memory_block SET content = $content, updated_at = $ts "
-                "WHERE name = $name AND scope = $scope AND directory = $directory",
+                f"WHERE name = $name AND scope = $scope AND {proj_sql}",
                 {
                     "name": name,
                     "scope": scope,
-                    "directory": canonical_dir,
                     "content": content,
                     "ts": now,
+                    **proj_params,
                 },
             )
 
@@ -344,8 +387,18 @@ class _BlocksMixin:
         }
 
     @trace_span()
-    def delete_block(self, name: str, scope: str = "project", directory: str | None = None) -> None:
-        """Delete block by (name, scope, directory). Idempotent — no error if missing."""
+    def delete_block(
+        self,
+        name: str,
+        scope: str = "project",
+        directory: str | None = None,
+        project_id: str | None = None,
+    ) -> None:
+        """Delete a block within the caller's scope. Idempotent — no error if missing.
+
+        C11: keyed like the read. A delete narrower than ``list_blocks``' select
+        would report success and leave the block still rendering into restore.
+        """
         try:
             canonical_dir = _canonical_dir(scope, directory)
         except ValueError:
@@ -357,9 +410,10 @@ class _BlocksMixin:
                 {"name": name, "scope": scope},
             )
         else:
+            proj_sql, proj_params = self._block_project_clause(canonical_dir, project_id)
             self._q(
-                "DELETE memory_block WHERE name = $name AND scope = $scope AND directory = $directory",
-                {"name": name, "scope": scope, "directory": canonical_dir},
+                f"DELETE memory_block WHERE name = $name AND scope = $scope AND {proj_sql}",
+                {"name": name, "scope": scope, **proj_params},
             )
 
     @observe(tier="hot")
@@ -461,6 +515,7 @@ class _BlocksMixin:
         new_text: str,
         scope: str = "project",
         directory: str | None = None,
+        project_id: str | None = None,
     ) -> dict:
         """String-replace old_text with new_text in block content.
 
@@ -473,7 +528,7 @@ class _BlocksMixin:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-        existing = self.get_block(name, scope=scope, directory=canonical_dir)
+        existing = self.get_block(name, scope=scope, directory=canonical_dir, project_id=project_id)
         if existing is None:
             return {
                 "ok": False,
@@ -507,7 +562,9 @@ class _BlocksMixin:
                 ),
             }
 
-        return self.update_block(name, new_content, scope=scope, directory=canonical_dir)
+        return self.update_block(
+            name, new_content, scope=scope, directory=canonical_dir, project_id=project_id
+        )
 
     @trace_span()
     def append_block(
@@ -516,6 +573,7 @@ class _BlocksMixin:
         text: str,
         scope: str = "project",
         directory: str | None = None,
+        project_id: str | None = None,
     ) -> dict:
         """Append text to block content with a newline separator.
 
@@ -527,7 +585,7 @@ class _BlocksMixin:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
-        existing = self.get_block(name, scope=scope, directory=canonical_dir)
+        existing = self.get_block(name, scope=scope, directory=canonical_dir, project_id=project_id)
         if existing is None:
             return {
                 "ok": False,
@@ -546,4 +604,6 @@ class _BlocksMixin:
                 ),
             }
 
-        return self.update_block(name, new_content, scope=scope, directory=canonical_dir)
+        return self.update_block(
+            name, new_content, scope=scope, directory=canonical_dir, project_id=project_id
+        )

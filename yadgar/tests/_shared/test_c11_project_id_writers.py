@@ -326,3 +326,104 @@ class TestActionLogWriterAlreadyStamped:
         )
         _sql, params = _creates(recorder, "action_log")[-1]
         assert params["directory"] == _PATH
+
+
+class TestTheUniquenessKeyIsAtLeastAsWideAsTheReadKey:
+    """C11 — the write's duplicate check must not be narrower than the read.
+
+    **Found by review, confirmed by measurement, fixed in the same commit.** With
+    ``list_blocks`` selecting on ``(project_id = $pid OR directory = $dir)`` and
+    ``create_block``'s uniqueness check still keyed on the path alone, two
+    ``create_block`` calls with the same name and project but different
+    directories produced TWO rows and ``list_blocks`` returned both — so
+    ``restore()`` would render the same block twice.
+
+    It is reachable, not theoretical: ``block_create`` does not normalize
+    worktree paths (only ``misc.py::checkpoint`` does), so a worktree and its
+    main clone are distinct ``directory`` values under one resolved project. The
+    ``(name, scope, directory)`` invariant still held the whole time; the
+    invariant that matters to the reader — one block per ``(name, project)`` —
+    did not, and ``MEMORY_BLOCK_MAX_PER_SCOPE`` counts per-directory so the cap
+    could not catch it either.
+
+    Every block operation now goes through ``_block_project_clause``, so the
+    write's duplicate check and the read's selection cannot diverge again.
+    """
+
+    _WORKTREE = "/home/max/git/yadgar/.claude/worktrees/foo"
+
+    def _seed_main(self, storage):
+        return storage.create_block(
+            name="current_task",
+            content="from main clone",
+            scope="project",
+            directory=_PATH,
+            project_id=_PROJECT,
+        )
+
+    def test_a_second_checkout_cannot_create_a_duplicate(self, storage):
+        self._seed_main(storage)
+        result = storage.create_block(
+            name="current_task",
+            content="from worktree",
+            scope="project",
+            directory=self._WORKTREE,
+            project_id=_PROJECT,
+        )
+        assert result.get("ok") is False
+        assert "already exists" in result["error"]
+
+    def test_the_reader_sees_exactly_one_row(self, storage):
+        self._seed_main(storage)
+        storage.create_block(
+            name="current_task",
+            content="from worktree",
+            scope="project",
+            directory=self._WORKTREE,
+            project_id=_PROJECT,
+        )
+        rows = storage.list_blocks(scope="project", directory=_PATH, project_id=_PROJECT)
+        assert [r["content"] for r in rows] == ["from main clone"]
+
+    def test_the_block_stays_writable_from_the_second_checkout(self, storage):
+        """Refusing the create is only correct if update still reaches the row.
+
+        A uniqueness check widened without widening the update would leave the
+        worktree caller unable to create OR modify the block — a dead end.
+        """
+        self._seed_main(storage)
+        updated = storage.update_block(
+            name="current_task",
+            content="edited from the worktree",
+            scope="project",
+            directory=self._WORKTREE,
+            project_id=_PROJECT,
+        )
+        assert updated.get("ok") is not False
+        rows = storage.list_blocks(scope="project", directory=_PATH, project_id=_PROJECT)
+        assert [r["content"] for r in rows] == ["edited from the worktree"]
+
+    def test_delete_from_the_second_checkout_reaches_the_row(self, storage):
+        """A delete narrower than the read would report success and leave it rendering."""
+        self._seed_main(storage)
+        storage.delete_block(
+            name="current_task",
+            scope="project",
+            directory=self._WORKTREE,
+            project_id=_PROJECT,
+        )
+        assert storage.list_blocks(scope="project", directory=_PATH, project_id=_PROJECT) == []
+
+    def test_another_projects_block_is_not_treated_as_a_duplicate(self, storage):
+        """The widening must be per-PROJECT, not per-name."""
+        self._seed_main(storage)
+        result = storage.create_block(
+            name="current_task",
+            content="different project, same name",
+            scope="project",
+            directory="/home/max/git/other",
+            project_id=_OTHER_PROJECT,
+        )
+        assert result.get("ok") is not False
+        rows = storage.list_blocks(scope="project", directory=_PATH, project_id=_PROJECT)
+        assert [r["content"] for r in rows] == ["from main clone"]

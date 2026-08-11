@@ -66,6 +66,7 @@ def block_update(payload: dict) -> dict:
             content=payload["content"],
             scope=payload.get("scope", "project"),
             directory=payload.get("directory"),
+            project_id=payload.get("project_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("block_update error name=%s: %s", payload.get("name"), exc)
@@ -85,6 +86,7 @@ def block_delete(payload: dict) -> dict:
             name=name,
             scope=payload.get("scope", "project"),
             directory=payload.get("directory"),
+            project_id=payload.get("project_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("block_delete error name=%s: %s", name, exc)
@@ -107,6 +109,7 @@ def block_replace(payload: dict) -> dict:
             new_text=payload["new_text"],
             scope=payload.get("scope", "project"),
             directory=payload.get("directory"),
+            project_id=payload.get("project_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("block_replace error name=%s: %s", payload.get("name"), exc)
@@ -127,6 +130,7 @@ def block_append(payload: dict) -> dict:
             text=payload["text"],
             scope=payload.get("scope", "project"),
             directory=payload.get("directory"),
+            project_id=payload.get("project_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("block_append error name=%s: %s", payload.get("name"), exc)

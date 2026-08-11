@@ -120,7 +120,7 @@ def block_get(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    _project_id = accept_project_param(project, directory)
     storage = _get_storage()
     if storage is None:
         return {"ok": False, "error": "storage_not_initialized"}
@@ -131,7 +131,9 @@ def block_get(
         return _dir_guard
 
     try:
-        result = storage.get_block(name=name, scope=scope, directory=directory)
+        result = storage.get_block(
+            name=name, scope=scope, directory=directory, project_id=_project_id
+        )
     except Exception as exc:
         logger.warning("block_get error name=%s: %s", name, exc)
         return {"ok": False, "error": str(exc)}
@@ -168,7 +170,7 @@ def block_update(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -182,7 +184,13 @@ def block_update(
     # R3 Car 3a: storage write forwards to backend /admin.
     return _forward_admin(
         "block_update",
-        {"name": name, "content": content, "scope": scope, "directory": directory},
+        {
+            "name": name,
+            "content": content,
+            "scope": scope,
+            "directory": directory,
+            "project_id": _project_id,
+        },
     )
 
 
@@ -207,14 +215,17 @@ def block_delete(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
         return _dir_guard
 
     # R3 Car 3a: storage write forwards to backend /admin.
-    return _forward_admin("block_delete", {"name": name, "scope": scope, "directory": directory})
+    return _forward_admin(
+        "block_delete",
+        {"name": name, "scope": scope, "directory": directory, "project_id": _project_id},
+    )
 
 
 @_tool(power=True)
@@ -290,7 +301,7 @@ def block_replace(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -310,6 +321,7 @@ def block_replace(
             "new_text": new_text,
             "scope": scope,
             "directory": directory,
+            "project_id": _project_id,
         },
     )
 
@@ -340,7 +352,7 @@ def block_append(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -354,5 +366,11 @@ def block_append(
     # R3 Car 3a: storage write forwards to backend /admin.
     return _forward_admin(
         "block_append",
-        {"name": name, "text": text, "scope": scope, "directory": directory},
+        {
+            "name": name,
+            "text": text,
+            "scope": scope,
+            "directory": directory,
+            "project_id": _project_id,
+        },
     )

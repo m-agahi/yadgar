@@ -662,6 +662,18 @@ class _OpsMixin:
         the invariant; re-keying the DELETE onto ``project_id`` while legacy rows
         carry none would leave every pre-C11 checkpoint behind, and
         ``ORDER BY created_at DESC LIMIT 1`` would keep returning a stale one.
+
+        **ASYMMETRY THIS LEAVES, RECORDED RATHER THAN FIXED:** the supersede is
+        per-DIRECTORY while ``get_active_checkpoint`` now reads per-PROJECT, so
+        one project checked out twice keeps TWO active rows, and
+        ``vacuum_checkpoints`` keeps the latest per ``directory_context`` so it
+        does not collapse them either. The behaviour is benign — the read is
+        ``ORDER BY created_at DESC LIMIT 1``, so the newest still wins — which
+        is why this car did not widen the DELETE: doing so is a destructive
+        change whose safe form needs the backfill, and getting it wrong deletes
+        checkpoints. Unlike the ``memory_block`` case (where the same asymmetry
+        made the READER return a visible duplicate and was therefore fixed),
+        nothing here surfaces twice. Resolved by the drop PR.
         """
         now = self._now_iso()
         cid = self._next_id("checkpoint")
