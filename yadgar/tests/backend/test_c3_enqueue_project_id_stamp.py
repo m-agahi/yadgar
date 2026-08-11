@@ -10,9 +10,15 @@ drainer-executed write was therefore a sessionless writer.
 The C3 contract: the value is resolved ONCE, in the process that has the
 session (the core tool), stamped on the queue payload, and carried unchanged
 through ``run_wiki_add_replay`` → ``WikiAddOptions`` → ``WikiStore.add`` →
-``insert_wiki_page``. The strongest assertion below patches the classifier to
-RAISE: a row that still carries ``"a/b"`` proves the value came from the
-enqueue stamp and not from a derivation that happened to agree.
+``insert_wiki_page``. The strongest assertion below proved the classifier was
+never reached: a row that still carries ``"a/b"`` proves the value came from
+the enqueue stamp and not from a derivation that happened to agree.
+
+**C13: that proof is re-pointed, not dropped.** C5 deleted
+``derive_project_id``, so patching it to raise is now an ``AttributeError`` at
+``__enter__`` rather than an assertion about the write path.
+``identity_mint_absent()`` sits at the same lines and asserts the stronger
+fact — the mint does not exist to be reached (``_mint_absent.py``).
 """
 
 from __future__ import annotations
@@ -22,8 +28,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.wiki.contract import WikiAddOptions
 from yadgar._shared.wiki.store import WikiStore
+from yadgar.tests.backend._mint_absent import identity_mint_absent
 
 
 class _FakeWikiStorage:
@@ -51,10 +59,6 @@ def _wiki_store(storage: _FakeWikiStorage) -> WikiStore:
     return store
 
 
-def _exploding_classifier(*_a: Any, **_kw: Any) -> tuple[str, str]:
-    raise AssertionError("derive_project_id must not be called on the drained write path")
-
-
 class TestWikiAddOptionsCarriesProjectId:
     """The option bundle is the seam that survives the canonical-write boundary."""
 
@@ -71,7 +75,7 @@ class TestWikiStoreAddStampsCallerProjectId:
     def test_page_carries_the_caller_project_id(self) -> None:
         storage = _FakeWikiStorage()
         store = _wiki_store(storage)
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_classifier):
+        with identity_mint_absent():
             store.add(
                 "C3 page",
                 "body",
@@ -90,7 +94,7 @@ class TestWikiStoreAddStampsCallerProjectId:
         """
         storage = _FakeWikiStorage()
         store = _wiki_store(storage)
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_classifier):
+        with identity_mint_absent():
             store.add(
                 "C3 library page",
                 "body",
@@ -132,7 +136,7 @@ class TestDrainedWikiAddCarriesEnqueueValue:
             patch("yadgar._shared.runtime.state._wiki", store),
             patch("yadgar._shared.runtime.state._file_queue", None),
             patch("yadgar.backend.write_exec.wiki_add_impl._push_event", lambda event: None),
-            patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_classifier),
+            identity_mint_absent(),
         ):
             apply_obj._apply_inner(  # type: ignore[attr-defined]
                 {
@@ -178,7 +182,9 @@ class TestCoreWikiAddStampsUnconditionally:
             patch("yadgar.core.server.tools.wiki._check_wiki_add_context", return_value={}),
             patch(
                 "yadgar.core.server.tools.wiki.resolve_effective_project",
-                side_effect=lambda project, directory, session_project: (
+                # C13: ``tool=`` is C5's error label — the double takes it so a
+                # signature drift reds the SIGNATURE test, not every caller.
+                side_effect=lambda project, directory, session_project, tool: (  # noqa: ARG005
                     project or "session/derived"
                 ),
             ),
@@ -199,45 +205,72 @@ class TestCoreWikiAddStampsUnconditionally:
 
 
 class TestWriteChokepointPrefersTheCallerValue:
-    """``_resolve_project_id_for_write`` — C3's mandatory-caller_value contract.
+    """``_resolve_project_id_for_write`` — the caller's value, or a raise.
 
-    The derivation tier and the ``"unresolved"`` tier are marked C5: DELETE.
-    Until then they must be OBSERVABLE, so a surviving unconverted caller
-    shows up in the logs before C5 turns it into a raise.
+    C3 wrote these three against a chokepoint that still HAD a derivation tier
+    and an ``"unresolved"`` tier, both marked "C5: DELETE"; until then they had
+    to be OBSERVABLE, so two of the three asserted the fallback's log line.
+
+    **C13 inverts those two in place rather than deleting them** — the surface
+    they cover (what a write with no caller value does) is exactly the surface
+    C5 changed, so the file that pinned the old answer is the file that must
+    pin the new one. Each now asserts the raise the fallback became, which is
+    strictly more than "it logged": a log line is advisory, a raise is the
+    contract.
     """
 
     def test_caller_value_short_circuits_the_classifier(self) -> None:
         from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
 
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_classifier):
+        with identity_mint_absent():
             out = _resolve_project_id_for_write(
                 caller_value="a/b",
                 directory_context="/home/max/git/yadgar",
             )
         assert out == "a/b"
 
-    def test_derivation_fallback_logs_a_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_absent_caller_value_raises_instead_of_deriving(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """C5: the ``local/<basename>`` derivation tier is a raise now.
+
+        Was ``test_derivation_fallback_logs_a_warning``, asserting
+        ``out == "local/yadgar"`` plus a "derivation fallback" WARNING. Both
+        halves are gone with the tier: nothing derives, and nothing is logged
+        at all, because a value that is never produced needs no warning.
+        """
         from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
 
         with (
             caplog.at_level("WARNING", logger="yadgar._shared.storage._project_id_writer"),
-            patch(
-                "yadgar.core.identity.derive_project_id",
-                return_value=("local/yadgar", ""),
-            ),
+            identity_mint_absent(),
+            pytest.raises(UnresolvedProjectError) as exc,
         ):
-            out = _resolve_project_id_for_write(
+            _resolve_project_id_for_write(
                 caller_value=None,
                 directory_context="/home/max/git/yadgar",
             )
-        assert out == "local/yadgar"
-        assert any("derivation fallback" in r.getMessage() for r in caplog.records)
+        # The raise names the write and carries the actionable fix — the agent
+        # reading it has to correct its own call.
+        assert exc.value.payload["error"] == "unresolved_project"
+        assert "/home/max/git/yadgar" in str(exc.value)
+        assert not caplog.records, "the deleted tier must not survive as a log line"
 
-    def test_sentinel_directory_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
-        """``global``/empty is a legitimate C3-era answer, not an unconverted caller."""
+    def test_sentinel_directory_raises_too(self, caplog: pytest.LogCaptureFixture) -> None:
+        """``"global"`` was the C3-era answer for a sentinel directory. It is not one.
+
+        Was ``test_sentinel_directory_does_not_warn``, asserting
+        ``out == "global"``. §1.4: ``"global"`` names REACH, never OWNERSHIP —
+        and the ``if not directory_context or directory_context == "global":
+        return "global"`` line that produced it here was the single most
+        prolific minting site C5 deleted. A sentinel directory is now exactly
+        as unresolvable as a real one.
+        """
         from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
 
-        with caplog.at_level("WARNING", logger="yadgar._shared.storage._project_id_writer"):
-            out = _resolve_project_id_for_write(caller_value=None, directory_context="global")
-        assert out == "global"
+        with (
+            caplog.at_level("WARNING", logger="yadgar._shared.storage._project_id_writer"),
+            pytest.raises(UnresolvedProjectError),
+        ):
+            _resolve_project_id_for_write(caller_value=None, directory_context="global")
         assert not caplog.records

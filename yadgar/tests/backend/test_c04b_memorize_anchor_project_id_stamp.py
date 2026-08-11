@@ -22,9 +22,15 @@ What this file pins:
   threads the caller's value into ``WikiAddOptions`` and into its
   ``insert_wiki_page`` fallback.
 
-The strongest assertions patch ``derive_project_id`` to RAISE: a row that still
-carries the caller's value proves it came from the enqueue stamp and not from a
-derivation that happened to agree (ADR-0080 gate-blindness).
+The strongest assertions proved ``derive_project_id`` was never reached: a row
+that still carries the caller's value proves it came from the enqueue stamp and
+not from a derivation that happened to agree (ADR-0080 gate-blindness).
+
+**C13: those assertions are re-pointed, not dropped.** C5 deleted the mint, so
+``patch("…identity.derive_project_id", …)`` is an ``AttributeError`` at
+``__enter__`` rather than a statement about the write path.
+``identity_mint_absent()`` sits at the same lines and asserts the stronger
+fact — it cannot be reached because it does not exist (``_mint_absent.py``).
 """
 
 from __future__ import annotations
@@ -37,11 +43,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.write_exec import MemorizeContext
-
-
-def _exploding_classifier(*_a: Any, **_kw: Any) -> tuple[str, str]:
-    raise AssertionError("derive_project_id must not be called on a stamped write path")
+from yadgar.tests.backend._mint_absent import identity_mint_absent
 
 
 class _FakeMemoryStorage:
@@ -121,7 +125,7 @@ def _run_phase_store(ctx: MemorizeContext, storage: _FakeMemoryStorage, curator:
         patch.object(store_mod._st, "_consolidation", None),
         patch.object(store_mod._st, "_pool", None),
         patch.object(store_mod, "_file_hash", return_value=None),
-        patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_classifier),
+        identity_mint_absent(),
     ):
         store_mod.phase_store(ctx)
 
@@ -153,7 +157,7 @@ class TestMemorizeStampsUnconditionally:
             ),
             patch(
                 "yadgar.core.server.tools.memorize.resolve_effective_project",
-                side_effect=lambda project, directory, session_project: (  # noqa: ARG005
+                side_effect=lambda project, directory, session_project, tool: (  # noqa: ARG005
                     project or "session/derived"
                 ),
             ),
@@ -195,7 +199,7 @@ class TestMemorizeStampsUnconditionally:
             patch("yadgar.core.server.tools.memorize._forward_admin", return_value={}),
             patch(
                 "yadgar.core.server.tools.memorize.resolve_effective_project",
-                side_effect=lambda project, directory, session_project: (  # noqa: ARG005
+                side_effect=lambda project, directory, session_project, tool: (  # noqa: ARG005
                     project or "session/derived"
                 ),
             ),
@@ -301,7 +305,7 @@ class TestAnchorChainCarriesProjectId:
             patch.object(
                 misc_mod,
                 "resolve_effective_project",
-                side_effect=lambda project, directory, session_project: (  # noqa: ARG005
+                side_effect=lambda project, directory, session_project, tool: (  # noqa: ARG005
                     project or "session/derived"
                 ),
             ),
@@ -370,7 +374,7 @@ class TestAnchorChainCarriesProjectId:
         replay._embeddings = _fake_embeddings()
         replay._settings = MagicMock(REPLAY_ANCHOR_HEAT=1.0)
 
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_classifier):
+        with identity_mint_absent():
             replay.anchor_memory(
                 "c4b anchor",
                 "/home/max/git/yadgar",
@@ -424,7 +428,7 @@ class TestAgentPromptSaveThreadsProjectId:
         with (
             patch.object(admin_wiki._st, "_wiki", wiki),
             patch.object(admin_wiki, "_get_storage", return_value=storage),
-            patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_classifier),
+            identity_mint_absent(),
         ):
             return admin_wiki.agent_prompt_save(payload)
 
@@ -460,7 +464,7 @@ class TestAgentPromptSaveThreadsProjectId:
             patch.object(
                 ap,
                 "resolve_effective_project",
-                side_effect=lambda project, directory, session_project: (  # noqa: ARG005
+                side_effect=lambda project, directory, session_project, tool: (  # noqa: ARG005
                     project or "session/derived"
                 ),
             ),
@@ -488,7 +492,7 @@ class TestAgentPromptSaveThreadsProjectId:
             patch.object(
                 ap,
                 "resolve_effective_project",
-                side_effect=lambda project, directory, session_project: (  # noqa: ARG005
+                side_effect=lambda project, directory, session_project, tool: (  # noqa: ARG005
                     project or "session/derived"
                 ),
             ),
@@ -505,12 +509,41 @@ class TestAgentPromptSaveThreadsProjectId:
         writes = self._discipline_forwards(project="quinyx/aws2slack")
         assert writes and writes[0]["project_id"] == "quinyx/aws2slack"
 
-    def test_seeder_path_stamps_the_global_default(self) -> None:
-        """``_seed_discipline_pages`` calls the helper directly, sessionless.
+    def test_seeder_path_without_a_project_raises_instead_of_defaulting(self) -> None:
+        """C5 inverted this one: the sessionless seeder no longer gets ``"global"``.
 
-        Its declared reach is ``directory="global"``; the stamp matches it
-        rather than being omitted, because C4's DLQ gate treats a MISSING
-        project_id as a defect and ``"global"`` as a live scope value.
+        Was ``test_seeder_path_stamps_the_global_default``, asserting
+        ``writes[0]["project_id"] == "global"`` on the grounds that the page's
+        declared reach is ``directory="global"`` and C4's DLQ gate accepted
+        that value. Both premises died in the same edit: §1.4 says ``"global"``
+        names REACH and never OWNERSHIP, and C5 added it to the drainer's
+        ``_SENTINEL_PROJECT_IDS`` — so the old behaviour would now stamp a
+        value the very next hop DLQs. ``_seed_discipline_pages`` threads its
+        invoker's ``project`` down instead, and a caller with none gets this
+        raise. Nothing is written.
+        """
+        from yadgar.core.server.tools import agent_prompts as ap
+
+        seen: list[dict] = []
+
+        def _spy(op: str, payload: dict) -> dict:
+            seen.append({"op": op, **payload})
+            return {"saved": True, "version": 1, "slug": payload.get("slug"), "page_id": 1}
+
+        with (
+            patch.object(ap, "_forward_admin", _spy),
+            pytest.raises(UnresolvedProjectError) as exc,
+        ):
+            ap._save_discipline_page("c4b-seeded", "p", "body")
+
+        assert exc.value.payload["error"] == "unresolved_project"
+        assert seen == [], "an unattributable discipline page must not reach the wire"
+
+    def test_seeder_path_stamps_the_project_its_invoker_threaded(self) -> None:
+        """The other half of the inversion: an explicit value still reaches the wire.
+
+        Asserting only the raise would leave the seeder's WORKING path unpinned
+        — and a helper that raised unconditionally would pass such a test.
         """
         from yadgar.core.server.tools import agent_prompts as ap
 
@@ -521,10 +554,10 @@ class TestAgentPromptSaveThreadsProjectId:
             return {"saved": True, "version": 1, "slug": payload.get("slug"), "page_id": 1}
 
         with patch.object(ap, "_forward_admin", _spy):
-            ap._save_discipline_page("c4b-seeded", "p", "body")
+            ap._save_discipline_page("c4b-seeded", "p", "body", project_id="m-agahi/yadgar")
 
         writes = [s for s in seen if s["op"] == "agent_prompt_save"]
-        assert writes and writes[0]["project_id"] == "global"
+        assert writes and writes[0]["project_id"] == "m-agahi/yadgar"
 
 
 # ── 5. the regression guard ──────────────────────────────────────────────────
