@@ -115,6 +115,11 @@ def _corpus() -> tuple[list[dict], list[dict]]:
         {"id": "memory:7", "directory_context": _PROSE, "tags": [], "content": "p"},
         # same producer at a REAL dir — D4 says KEEP and migrate normally
         _memify_row(8, _YADGAR),
+        # NO directory_context at all. Probably extinct (migrations 018/023
+        # backfilled the empty case and the memory table carries a non-empty
+        # ASSERT) — present here so the totals identity below is checked
+        # against this class rather than passing because no row exercises it.
+        {"id": "memory:9", "directory_context": None, "tags": [], "content": "n"},
     ]
     wiki = [
         {"id": "wiki_page:1", "directory_context": _YADGAR, "tags": ["adr"], "content": "w"},
@@ -135,6 +140,26 @@ _REGISTERED = ["m-agahi/yadgar", "quinyx/qwfm", "local/aws-work"]
 def fakes(monkeypatch):
     """Install the two storage doubles and hand them back."""
     memory, wiki = _corpus()
+    storage = _FakeStorage(memory, wiki)
+    sql = _FakeSql(_REGISTERED)
+    import yadgar.backend.admin_exec.project_backfill as mod
+
+    monkeypatch.setattr(mod, "_get_storage", lambda: storage)
+    monkeypatch.setattr(mod, "_get_sql_storage", lambda: sql)
+    return storage, sql
+
+
+@pytest.fixture
+def clean_fakes(monkeypatch):
+    """``fakes`` minus the directory-less row.
+
+    The apply-path tests need a corpus the op will actually apply. A row with
+    no ``directory_context`` is an unconditional refusal — it admits no
+    acknowledgement flag — so it is excluded here rather than waved through,
+    which would defeat the point of the refusal.
+    """
+    memory, wiki = _corpus()
+    memory = [r for r in memory if r["directory_context"] is not None]
     storage = _FakeStorage(memory, wiki)
     sql = _FakeSql(_REGISTERED)
     import yadgar.backend.admin_exec.project_backfill as mod
@@ -176,7 +201,15 @@ async def test_dry_run_returns_the_full_manifest_unapplied(fakes):
     """
     _, _ = fakes
     result = await project_id_backfill(_payload())
-    for key in ("updates", "deletes", "quarantine", "unmapped", "visibility_changes", "totals"):
+    for key in (
+        "updates",
+        "deletes",
+        "quarantine",
+        "unmapped",
+        "no_directory",
+        "visibility_changes",
+        "totals",
+    ):
         assert key in result, f"manifest missing {key!r}"
 
 
@@ -192,7 +225,11 @@ async def test_dry_run_classifies_every_row_exactly_once(fakes):
     r = await project_id_backfill(_payload())
     t = r["totals"]
     assert t["rows_seen"] == (
-        t["rows_updated"] + t["rows_deleted"] + t["rows_quarantined"] + t["rows_unmapped"]
+        t["rows_updated"]
+        + t["rows_deleted"]
+        + t["rows_quarantined"]
+        + t["rows_unmapped"]
+        + t["rows_no_directory"]
     ), t
 
 
@@ -410,14 +447,14 @@ async def test_three_of_four_conjuncts_is_not_enough_to_delete(row, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_unmapped_prose_is_quarantined_not_guessed(fakes):
+async def test_unmapped_prose_is_quarantined_not_guessed(clean_fakes):
     """Free-text prose has no derivable owner — it goes to ``legacy_directory``.
 
     ``memorize(context=)`` used as a description is what its own docstring
     forbids; the original value is preserved for human adjudication rather
     than dropped or heuristically basenamed.
     """
-    storage, _ = fakes
+    storage, _ = clean_fakes
     r = await project_id_backfill(
         _payload(dry_run=False, quarantine_unmapped=True, confirm_deletes=True)
     )
@@ -434,14 +471,14 @@ async def test_unmapped_prose_is_quarantined_not_guessed(fakes):
 
 
 @pytest.mark.asyncio
-async def test_apply_writes_exactly_the_dry_run_manifest(fakes, monkeypatch):
+async def test_apply_writes_exactly_the_dry_run_manifest(clean_fakes, monkeypatch):
     """``dry_run=False`` applies EXACTLY what ``dry_run=True`` reported.
 
     Compared entry-for-entry against a dry run over the same corpus: the
     review is worthless if the apply can do something the manifest did not
     describe.
     """
-    _, _ = fakes
+    _, _ = clean_fakes
     ack = {"quarantine_unmapped": True, "confirm_deletes": True}
     preview = await project_id_backfill(_payload(**ack))
 
@@ -449,6 +486,7 @@ async def test_apply_writes_exactly_the_dry_run_manifest(fakes, monkeypatch):
     import yadgar.backend.admin_exec.project_backfill as mod
 
     memory, wiki = _corpus()
+    memory = [r for r in memory if r["directory_context"] is not None]
     storage2 = _FakeStorage(memory, wiki)
     monkeypatch.setattr(mod, "_get_storage", lambda: storage2)
     monkeypatch.setattr(mod, "_get_sql_storage", lambda: _FakeSql(_REGISTERED))
@@ -461,14 +499,14 @@ async def test_apply_writes_exactly_the_dry_run_manifest(fakes, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_apply_deletes_before_it_stamps_the_global_cohort(fakes):
+async def test_apply_deletes_before_it_stamps_the_global_cohort(clean_fakes):
     """Ordering is load-bearing: the D4 cohort is a SUBSET of ``global``.
 
     Stamping first would write a project_id onto rows about to be deleted,
     and — worse — the manifest's ``global`` row count would describe a set
     larger than the one that survives.
     """
-    storage, _ = fakes
+    storage, _ = clean_fakes
     await project_id_backfill(
         _payload(dry_run=False, quarantine_unmapped=True, confirm_deletes=True)
     )
@@ -526,3 +564,61 @@ def test_backfill_op_is_registered_on_the_admin_dispatch():
     from yadgar.backend.admin_exec import admin_ops
 
     assert "project_id_backfill" in admin_ops()
+
+
+# ── the no-directory bucket ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_row_with_no_directory_lands_in_its_own_bucket(fakes):
+    """A directory-less row is NAMED, never dropped.
+
+    It counts in ``rows_seen`` and cannot be mapped, deleted or quarantined,
+    so without its own bucket it would fall through every branch while the
+    op reported success — the exact silent-bucketing failure this manifest
+    exists to prevent, and one the totals identity could not catch because
+    the identity would simply never be checked against it.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    assert [row["id"] for row in r["no_directory"]] == ["memory:9"]
+    assert r["totals"]["rows_no_directory"] == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_while_any_row_has_no_directory(fakes):
+    """No acknowledgement flag exists for this class, and that is deliberate.
+
+    A row with no directory has no basis for ANY of the three decisions the
+    other gates cover — not a mapping, not a cohort, and not a quarantine
+    (there is nothing to preserve). The operator's move is to fix or forget
+    those rows, not to wave them through.
+    """
+    storage, _ = fakes
+    r = await project_id_backfill(
+        _payload(dry_run=False, quarantine_unmapped=True, confirm_deletes=True)
+    )
+    assert r["ok"] is False
+    assert r["reason"] == "rows_without_a_directory_context"
+    assert storage.mutations == []
+
+
+@pytest.mark.asyncio
+async def test_wiki_scan_does_not_pull_page_bodies(fakes):
+    """``content`` is projected for ``memory`` only.
+
+    It feeds exactly one predicate (D4's) and both delete cohorts are
+    ``memory`` cohorts, so projecting it for ``wiki_page`` would pull 2,343
+    full page bodies — every ADR body among them — that nothing reads. The
+    fakes carry three-character bodies, so nothing else in this file would
+    ever show that cost.
+    """
+    storage, _ = fakes
+    await project_id_backfill(_payload())
+    wiki_selects = [
+        q
+        for q, _ in storage.statements
+        if q.strip().upper().startswith("SELECT") and "wiki_page" in q
+    ]
+    assert wiki_selects, "no wiki_page SELECT was issued"
+    assert all("content" not in q for q in wiki_selects), wiki_selects

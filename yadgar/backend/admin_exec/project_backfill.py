@@ -31,10 +31,13 @@ So the op REFUSES to apply in two situations, and writes nothing in either:
   * ``deletes`` is non-empty and the caller did not pass
     ``confirm_deletes=True``.
 
-Plus a third for correctness rather than review: any mapping target that is
-not a registered project (ADR-0223 — registry enforcement is FAIL LOUD).
-Discovering that as a per-row FK error halfway through the apply is the
-failure the pre-flight check exists to prevent.
+Plus two more that admit no acknowledgement at all. Any mapping target that
+is not a registered project (ADR-0223 — registry enforcement is FAIL LOUD);
+discovering that as a per-row FK error halfway through the apply is the
+failure the pre-flight check exists to prevent. And any row with NO
+``directory_context``: it has no basis for a mapping, no cohort, and nothing
+to quarantine, so there is no flag to wave it through with — the operator
+fixes or forgets those rows first.
 
 THE FOUR CLASSES
 ----------------
@@ -175,16 +178,27 @@ _DELETE_COHORTS: tuple[dict[str, Any], ...] = (
 def _scan(storage: Any) -> dict[str, list[dict]]:
     """Read every row's classification fields from both tables.
 
-    ``content`` is projected because D4's signature needs it. That is the one
-    expensive column here, and it is read once for a one-shot operator op —
-    the alternative (a SurrealQL ``string::contains`` filter) would move the
-    predicate out of the manifest and break the apply-exactly-the-manifest
-    property.
+    ``content`` is projected for ``memory`` ONLY. It is needed by exactly one
+    predicate — D4's ``_is_memify_global`` — and both delete cohorts are
+    ``memory`` cohorts, so projecting it for ``wiki_page`` would pull 2,343
+    full page bodies (every ADR body among them) that nothing reads. That is
+    the one place a one-shot op over this corpus could actually hurt, and no
+    test would show it: the fakes carry three-character bodies.
+
+    Reading the column at all — rather than pushing a SurrealQL
+    ``string::contains`` into a ``DELETE ... WHERE`` — is what lets the
+    matched ids live IN the manifest, which is what makes
+    apply-exactly-the-manifest a property rather than a claim.
     """
     out: dict[str, list[dict]] = {}
     for table in _TABLES:
+        columns = (
+            "id, directory_context, tags, content"
+            if table == "memory"
+            else ("id, directory_context, tags")
+        )
         rows = storage._q(  # noqa: SLF001 — the established migration/admin-op idiom
-            f"SELECT id, directory_context, tags, content FROM {table}"  # noqa: S608
+            f"SELECT {columns} FROM {table}"  # noqa: S608
         )
         out[table] = list(rows or [])
     return out
@@ -219,20 +233,33 @@ def _plan_updates(
     scanned: dict[str, list[dict]],
     mapping: dict[str, str],
     doomed: set[str],
-) -> tuple[list[dict], list[dict]]:
-    """Split the surviving rows into mapped updates and unmapped leftovers.
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Split the surviving rows into mapped updates, unmapped, and no-directory.
 
     *doomed* is the set of row ids the delete cohorts claim; they are excluded
     from the counts so the ``global`` entry reports the SURVIVORS (349 minus
     D4's 238 ≈ 111) rather than the whole class.
     """
     counts: dict[tuple[str, str], int] = {}
+    no_directory: list[dict] = []
     for table, rows in scanned.items():
         for row in rows:
             if str(row.get("id")) in doomed:
                 continue
             dc = row.get("directory_context")
-            if dc is None:
+            if dc is None or dc == "":
+                # A row with no directory has NO BASIS for any decision — it
+                # cannot be mapped, and quarantining it would preserve
+                # nothing. It gets its own manifest bucket rather than a
+                # `continue`: a row that counts in ``rows_seen`` and lands in
+                # no bucket is precisely the silent-bucketing failure this op
+                # exists to prevent, and the totals identity would not catch
+                # it because the identity would simply never be checked
+                # against that row. Migrations 018/023 backfilled the empty
+                # case and the memory table carries a non-empty ASSERT, so
+                # the real count is probably zero — "probably zero" is what a
+                # manifest replaces.
+                no_directory.append({"table": table, "id": str(row.get("id"))})
                 continue
             counts[(table, str(dc))] = counts.get((table, str(dc)), 0) + 1
 
@@ -254,7 +281,7 @@ def _plan_updates(
                 "add_global_tag": dc == GLOBAL_SENTINEL,
             }
         )
-    return updates, unmapped
+    return updates, unmapped, no_directory
 
 
 @observe(tier="stage")
@@ -277,7 +304,7 @@ def _plan_visibility_changes(scanned: dict[str, list[dict]], doomed: set[str]) -
             if rid in doomed:
                 continue
             dc = row.get("directory_context")
-            if dc == GLOBAL_SENTINEL or dc is None:
+            if dc == GLOBAL_SENTINEL or dc is None or dc == "":
                 continue
             if GLOBAL_TAG in set(row.get("tags") or ()):
                 out.append(
@@ -366,7 +393,7 @@ async def _build_manifest(
     scanned = _scan(storage)
     deletes = _plan_deletes(scanned)
     doomed = {rid for cohort in deletes for rid in cohort["ids"]}
-    updates, unmapped = _plan_updates(scanned, mapping, doomed)
+    updates, unmapped, no_directory = _plan_updates(scanned, mapping, doomed)
     unknown_targets, registry_available = await _unknown_registry_targets(mapping)
     pending = sum(u["rows"] for u in unmapped)
 
@@ -378,6 +405,7 @@ async def _build_manifest(
         "deletes": deletes,
         "quarantine": list(unmapped) if acknowledged else [],
         "unmapped": unmapped,
+        "no_directory": no_directory,
         "visibility_changes": _plan_visibility_changes(scanned, doomed),
         "totals": {
             "rows_seen": sum(len(rows) for rows in scanned.values()),
@@ -385,6 +413,7 @@ async def _build_manifest(
             "rows_deleted": sum(d["rows"] for d in deletes),
             "rows_quarantined": pending if acknowledged else 0,
             "rows_unmapped": 0 if acknowledged else pending,
+            "rows_no_directory": len(no_directory),
         },
     }
 
@@ -453,6 +482,13 @@ def _refusal(manifest: dict, payload: dict) -> str | None:
             return "unconfirmed_deletes"
     if manifest["unmapped"] and not payload.get("quarantine_unmapped"):
         return "unreviewed_directory_contexts"
+    if manifest["no_directory"]:
+        # No directory means no basis for ANY of the three decisions above —
+        # not a mapping, not a delete cohort, not even a quarantine (there is
+        # nothing to preserve). There is deliberately no acknowledgement flag:
+        # the operator's move is to fix or forget those rows, not to wave
+        # them through.
+        return "rows_without_a_directory_context"
     return None
 
 
