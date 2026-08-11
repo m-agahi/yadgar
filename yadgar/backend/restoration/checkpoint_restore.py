@@ -233,6 +233,7 @@ class CheckpointRestore:
         directory: str,
         transcript_path: str | None = None,
         in_flight: dict | None = None,
+        worktree_path: str | None = None,
     ) -> dict:
         """Emergency context capture before compaction.
 
@@ -255,11 +256,27 @@ class CheckpointRestore:
           in-container parse (embedded/dev deploy where the paths ARE visible).
           Preserves the HOOKS Car 2 behaviour.
         * Both absent → no in_flight written (pre-Car-2 degrade).
+
+        C10 (0047 §5, judgement site (b)) — ``directory`` was doing TWO jobs here:
+        the checkpoint **identity** (``get_active_checkpoint`` / the
+        ``directory_context`` stamp below) and a **real filesystem path** handed
+        to ``git -C`` for the worktree capture. The real-path half is now its own
+        parameter, ``worktree_path``; when absent it falls back to ``directory``
+        so the in-container fallback parse keeps working exactly as before.
+
+        The identity half is deliberately STILL named ``directory``. Every sink
+        it reaches keys on a directory-valued column that has no ``project_id``
+        yet — ``checkpoint.directory_context`` (no ``project_id`` column; see the
+        note on ``anchor_memory``) and ``memory.directory_context``. Renaming the
+        parameter without re-keying those reads would make callers pass
+        ``owner/repo`` into ``WHERE directory_context = $dir`` and match zero
+        rows without raising. That re-key is C11's per-table work; the seams are
+        marked at each call site below.
         """
         new_epoch = self._storage.increment_epoch()
 
         if in_flight is None:
-            in_flight = self._capture_in_flight(transcript_path, directory)
+            in_flight = self._capture_in_flight(transcript_path, worktree_path or directory)
 
         # Create an auto-checkpoint if no recent one exists (per-directory)
         active = self._storage.get_active_checkpoint(directory)
@@ -288,12 +305,17 @@ class CheckpointRestore:
         }
 
     @observe(tier="stage")
-    def _capture_in_flight(self, transcript_path: str | None, directory: str) -> dict | None:
+    def _capture_in_flight(
+        self, transcript_path: str | None, worktree_path: str | None
+    ) -> dict | None:
         """Parse the transcript for in-flight agents/shells + capture worktrees.
 
         Returns None when no transcript_path is given (back-compat) or when the
         parse+worktree capture yields nothing actionable. Never raises — the
         drain must not be blocked by a parse failure.
+
+        C10 (b): ``worktree_path`` is a real filesystem path for ``git -C``
+        (carve-out 3), never a scoping key. Absent → ``worktrees: []``.
         """
         if not transcript_path:
             return None
@@ -303,7 +325,7 @@ class CheckpointRestore:
             )
 
             in_flight = parse_in_flight(transcript_path)
-            in_flight["worktrees"] = _list_worktrees(directory)
+            in_flight["worktrees"] = _list_worktrees(worktree_path or "")
             return in_flight
         except Exception:
             logger.debug("pre_compact_drain in-flight capture failed", exc_info=True)
@@ -343,13 +365,26 @@ class CheckpointRestore:
         return [m for m in hot if m["id"] not in exclude_ids][:max_memories]
 
     @observe(tier="hot")
-    def _build_sr_query(self, checkpoint: dict | None, directory: str) -> str:
-        """Derive SR navigation query from checkpoint task or directory (step 5 of restore)."""
+    def _build_sr_query(self, checkpoint: dict | None, project_id: str) -> str:
+        """Derive SR navigation query from checkpoint task or project (step 5 of restore).
+
+        C10 (0047 §5, judgement site (b)): this is the ONE site in ``restore``'s
+        fan-out whose parameter could be renamed today. It builds **embedding
+        query text** — it reads no table, so it cannot produce a silent zero-row
+        match the way the four storage-backed sinks would.
+
+        Caveat for the next reader: until C11 re-keys ``restore()`` itself, the
+        caller still supplies the directory-valued scope key, so the string may
+        read ``project work in /home/max/git/yadgar`` rather than
+        ``project work in m-agahi/yadgar``. That is a slightly-off embedding
+        query, not a wrong answer, and it corrects itself for free when C11
+        lands.
+        """
         if checkpoint:
             task = checkpoint.get("current_task", "")
             if task:
                 return task
-        return f"project work in {directory}" if directory else ""
+        return f"project work in {project_id}" if project_id else ""
 
     @observe(tier="stage")
     def _predict_memories(
@@ -413,6 +448,31 @@ class CheckpointRestore:
         5. Gap detection (what might have been lost)
 
         Returns structured data + formatted markdown for injection.
+
+        C10 (0047 §5, judgement site (b)) — C11 WORKLIST. ``directory`` here is
+        the **identity** half of the parameter (b) split; the real-path half is
+        gone (``worktree_path``, drain side only). It is deliberately NOT
+        renamed to ``project_id``, because it fans out to FIVE sinks and every
+        one still keys on a directory-valued column:
+
+          1. ``get_active_checkpoint``      → ``checkpoint.directory_context``
+             — table has **no ``project_id`` column** (migration 031 declared it
+             on ``wiki_page`` + ``memory`` only). Flips symmetrically with the
+             drain writer.
+          2. ``get_anchored_memories_scoped`` → ``memory.directory_context``
+             — ``memory`` HAS ``project_id``; the READ is not re-keyed yet.
+          3. ``get_memories_for_directory``   → ``memory.directory_context``
+             — same; ``WHERE directory_context = $dir``.
+          4. ``list_blocks``                  → ``memory_block.directory``
+             — **no ``project_id`` column, and does NOT flip symmetrically.**
+             See the seam note on ``_fetch_blocks_safe``; this is the sink that
+             forced the deferral.
+          5. ``detect_gaps``                  → metacognition, directory-keyed.
+
+        Renaming the parameter without re-keying these reads would have callers
+        pass ``owner/repo`` into ``WHERE directory_context = $dir`` and match
+        zero rows while raising nothing. C11 re-keys the columns; sinks 2/3/5
+        are also in C9c's path.
         """
         max_memories = self._settings.REPLAY_MAX_RESTORE_MEMORIES
 
@@ -547,6 +607,24 @@ class CheckpointRestore:
         section = self._render_blocks_section(blocks, directory)
         return (section + "\n" + markdown) if section else markdown
 
+    # ── C11 SEAM (0047 §5, judgement site (b)) — the sink that forced the split ──
+    #
+    # ``list_blocks`` filters ``memory_block`` on ``WHERE directory = $directory``
+    # (``_shared/storage/blocks.py``), an EXACT match. ``memory_block`` has **no
+    # ``project_id`` column** — migration 031 declared ``project_id`` on
+    # ``wiki_page`` and ``memory`` only.
+    #
+    # This is why ``restore()``'s identity parameter is still named ``directory``
+    # and why C10 did NOT rename it. The other storage sinks flip SYMMETRICALLY:
+    # the drain writes ``checkpoint.directory_context`` and restore reads it back,
+    # so if both move to project_id together they still match. **Blocks do not.**
+    # ``memory_block`` rows are written by ``block_create(..., directory=...)``,
+    # one of the 18 ``accept_project_param`` sites correctly left C11-blocked
+    # because its table has no project_id column. Flip restore's value while the
+    # write side stays on real paths and every block silently vanishes from every
+    # restore — zero rows, no exception.
+    #
+    # C11 fixes this by adding the column and re-keying BOTH sides together.
     @observe(tier="stage")
     def _fetch_blocks_safe(self, directory: str) -> list[dict]:
         """Fetch memory blocks, swallowing errors (v5.33.0). Returns [] on failure."""

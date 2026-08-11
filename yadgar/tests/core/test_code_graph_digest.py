@@ -388,12 +388,36 @@ class TestBlockPayload:
             _endpoint_rows(),
             {"canonical_root": "/repo", "subdir": "svc"},
         )
-        assert payload["block_name"] == "code_graph"
+        # C10(e): a monorepo LEAF carries its subdir in the block NAME, so that
+        # every leaf keeps its own row once C11 re-keys `directory` onto the
+        # per-repo project_id (which would otherwise collapse them all onto one).
+        assert payload["block_name"] == "code_graph_svc"
         # directory = canonical_root joined with subdir (exact-match injection scope)
         assert payload["directory"] == "/repo/svc"
         assert payload["skipped"] is False
         assert payload["chars"] == len(payload["content"])
         assert "── code_graph:" in payload["content"]
+
+    def test_block_name_discriminates_monorepo_leaves(self):
+        """Two leaves of ONE repo must not share a block name (C10(e))."""
+        from yadgar.core.code_graph import digest
+
+        names = {
+            digest._digest_block_name({"canonical_root": "/repo", "subdir": sd})
+            for sd in ("apps/web", "apps/api", "libs/Foo-2")
+        }
+        assert names == {"code_graph_apps_web", "code_graph_apps_api", "code_graph_libs_foo_2"}
+        # A repo root keeps the bare, back-compatible name.
+        assert digest._digest_block_name({"canonical_root": "/repo", "subdir": ""}) == "code_graph"
+
+    def test_block_name_is_a_valid_memory_block_name(self):
+        """Names must satisfy memory_block's ^[a-z][a-z0-9_]*$ validator."""
+        from yadgar._shared.storage.blocks import _BLOCK_NAME_RE
+        from yadgar.core.code_graph import digest
+
+        for sd in ("", "apps/web", "libs/Foo-2", "a/b/c", "UPPER/Case"):
+            name = digest._digest_block_name({"canonical_root": "/repo", "subdir": sd})
+            assert _BLOCK_NAME_RE.match(name), f"invalid block name {name!r} for subdir {sd!r}"
 
     def test_build_block_payload_root_no_subdir(self):
         from yadgar.core.code_graph import digest

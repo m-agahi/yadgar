@@ -206,15 +206,36 @@ class TestAddSoftRule:
         assert rules[0]["action"] == "boost:0.3"
 
     def test_creates_soft_penalty_rule(self, engine):
+        # C10(a): scope="directory" was retired in favour of scope="project",
+        # whose scope_value is a project_id matched by exact equality.
         rule_id = engine.add_rule(
             rule_type="soft",
-            scope="directory",
+            scope="project",
             condition="heat < 0.3",
             action="penalty:0.1",
             priority=2,
-            scope_value="/project",
+            scope_value="acme/project",
         )
         assert rule_id > 0
+
+    def test_retired_scope_kinds_are_rejected_with_their_replacement(self, engine):
+        """C10(a): "directory"/"file" raise and NAME the kind that replaced them.
+
+        Accepting them silently would mint a rule carrying a filesystem path in
+        scope_value, which can never equal a project_id — dead on arrival.
+        """
+        for retired, replacement in (("directory", "project"), ("file", "path")):
+            # Assert on the MAPPING, not just the word: the error's explanatory
+            # tail names both replacements, so match=replacement alone cannot
+            # tell a correct mapping from a swapped one.
+            with pytest.raises(ValueError, match=f"use '{replacement}' instead"):
+                engine.add_rule(
+                    rule_type="soft",
+                    scope=retired,
+                    condition="heat < 0.3",
+                    action="penalty:0.1",
+                    scope_value="/project",
+                )
 
 
 # -- Condition evaluation tests --
@@ -395,14 +416,14 @@ class TestSoftRuleBoosts:
 
 
 class TestDirectoryScopedRule:
-    def test_applies_in_matching_directory(self, engine):
+    def test_applies_in_matching_project(self, engine):
         engine.add_rule(
             "hard",
-            "directory",
+            "project",
             "importance > 0.5",
             "filter",
             priority=10,
-            scope_value="/critical-project",
+            scope_value="acme/critical",
         )
 
         memories = [
@@ -410,19 +431,19 @@ class TestDirectoryScopedRule:
             _make_memory_dict(2, "trivial", importance=0.2, score=0.6),
         ]
 
-        # Rule applies for matching directory
-        result = engine.apply_rules(memories, "/critical-project/src")
+        # Rule applies for the exact project_id
+        result = engine.apply_rules(memories, "acme/critical")
         assert len(result) == 1
         assert result[0]["id"] == 1
 
-    def test_does_not_apply_outside_directory(self, engine):
+    def test_does_not_apply_outside_project(self, engine):
         engine.add_rule(
             "hard",
-            "directory",
+            "project",
             "importance > 0.5",
             "filter",
             priority=10,
-            scope_value="/critical-project",
+            scope_value="acme/critical",
         )
 
         memories = [
@@ -430,8 +451,33 @@ class TestDirectoryScopedRule:
             _make_memory_dict(2, "trivial", importance=0.2, score=0.6),
         ]
 
-        # Rule does NOT apply for different directory
-        result = engine.apply_rules(memories, "/other-project/src")
+        # Rule does NOT apply to a different project
+        result = engine.apply_rules(memories, "acme/other")
+        assert len(result) == 2
+
+    def test_project_match_is_exact_not_prefix(self, engine):
+        """C10(a): the fix for the bug the old ``startswith`` shipped.
+
+        ``"acme/critical-extra".startswith("acme/critical")`` is True, so the
+        retired prefix match leaked one project's hard filter into another.
+        project_ids have no hierarchy — only equality is meaningful.
+        """
+        engine.add_rule(
+            "hard",
+            "project",
+            "importance > 0.5",
+            "filter",
+            priority=10,
+            scope_value="acme/critical",
+        )
+
+        memories = [
+            _make_memory_dict(1, "important", importance=0.8, score=0.5),
+            _make_memory_dict(2, "trivial", importance=0.2, score=0.6),
+        ]
+
+        # A project whose id merely STARTS WITH the scope_value must not match.
+        result = engine.apply_rules(memories, "acme/critical-extra")
         assert len(result) == 2
 
 
@@ -451,11 +497,18 @@ class TestGlobalRuleAppliesEverywhere:
             assert result[0]["id"] == 1
 
 
-class TestFileScopedRule:
-    def test_file_glob_matching(self, engine):
+class TestPathScopedRule:
+    """C10(a): scope="file" → scope="path".
+
+    The glob still runs, but against an explicit ``path`` argument rather than
+    against the scope key — a path rule is a filter WITHIN a project now, not a
+    way of selecting one.
+    """
+
+    def test_path_glob_matching(self, engine):
         engine.add_rule(
             "soft",
-            "file",
+            "path",
             "tag contains typescript",
             "boost:0.5",
             priority=5,
@@ -468,7 +521,7 @@ class TestFileScopedRule:
         ]
 
         # Matches .ts file
-        result = engine.apply_rules(memories, "src/app.ts")
+        result = engine.apply_rules(memories, "acme/app", path="src/app.ts")
         assert result[0]["id"] == 1  # boosted to 0.8
 
         # Doesn't match .py file — use fresh memory dicts, no boost applied
@@ -476,11 +529,31 @@ class TestFileScopedRule:
             _make_memory_dict(1, "ts code", tags=["typescript"], score=0.3),
             _make_memory_dict(2, "other code", tags=["python"], score=0.5),
         ]
-        result = engine.apply_rules(memories2, "src/app.py")
+        result = engine.apply_rules(memories2, "acme/app", path="src/app.py")
         # No rules match, so scores unchanged
         scores = {m["id"]: m["_retrieval_score"] for m in result}
         assert scores[1] == pytest.approx(0.3, abs=0.01)  # no boost
         assert scores[2] == pytest.approx(0.5, abs=0.01)
+
+    def test_no_path_supplied_means_no_path_rule_fires(self, engine):
+        """A filesystem predicate with no file to test must not match.
+
+        The retired ``scope="file"`` globbed the SCOPE KEY, so it fired against
+        whatever directory string happened to be passed. Omitting ``path`` now
+        means the rule simply does not apply.
+        """
+        engine.add_rule(
+            "soft",
+            "path",
+            "tag contains typescript",
+            "boost:0.5",
+            priority=5,
+            scope_value="*",
+        )
+
+        memories = [_make_memory_dict(1, "ts code", tags=["typescript"], score=0.3)]
+        result = engine.apply_rules(memories, "acme/app")
+        assert result[0]["_retrieval_score"] == pytest.approx(0.3, abs=0.01)
 
 
 # -- Priority ordering tests --
@@ -674,8 +747,8 @@ class TestMcpAddRuleTool:
         finally:
             srv._rules_engine = original
 
-    def test_get_rules_with_directory_filter(self, storage, settings):
-        """Test get_rules with directory scoping."""
+    def test_get_rules_with_project_filter(self, storage, settings):
+        """Test get_rules with project scoping (C10(a): exact-equality match)."""
         import yadgar.core.server as srv
         from yadgar.core.server import get_rules as _get_rules_tool
 
@@ -687,24 +760,29 @@ class TestMcpAddRuleTool:
             rules_eng.add_rule("hard", "global", "importance > 0.5", "filter", 10)
             rules_eng.add_rule(
                 "soft",
-                "directory",
+                "project",
                 "tag contains web",
                 "boost:0.2",
                 priority=5,
-                scope_value="/web-project",
+                scope_value="acme/web",
             )
 
             # All rules
             all_rules = _get_rules_tool()
             assert len(all_rules) == 2
 
-            # Only applicable to /web-project
-            web_rules = _get_rules_tool(directory="/web-project/src")
-            assert len(web_rules) == 2  # global + matching directory
+            # Only applicable to the acme/web project — EXACT match (C10(a)).
+            web_rules = _get_rules_tool(directory="acme/web")
+            assert len(web_rules) == 2  # global + matching project
 
-            # Only global rules for other directory
-            other_rules = _get_rules_tool(directory="/other-project")
+            # Only global rules for another project
+            other_rules = _get_rules_tool(directory="acme/other")
             assert len(other_rules) == 1  # only global
+
+            # A project_id that merely has the scope_value as a PREFIX must not
+            # match — the retired startswith() would have returned 2 here.
+            prefix_rules = _get_rules_tool(directory="acme/web-extra")
+            assert len(prefix_rules) == 1  # only global
         finally:
             srv._rules_engine = original
 

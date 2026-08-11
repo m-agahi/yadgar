@@ -26,6 +26,18 @@ from yadgar._shared.storage import StorageEngine
 
 logger = logging.getLogger(__name__)
 
+# C10 (0047 §5, judgement site (a)) — rule scope kinds, re-keyed off `directory`.
+#   "global"  — applies everywhere.
+#   "project" — scope_value is a project_id, matched by EXACT equality.
+#   "path"    — scope_value globs a REAL filesystem path (ADR-0225 carve-out 3).
+#               A filter *within* a project, never a scoping key.
+_SCOPE_KINDS: frozenset[str] = frozenset({"global", "project", "path"})
+
+# Retired kinds → their replacement. Rejected on write; counted and reported on
+# read (their scope_value holds a filesystem path that needs the C6 manifest to
+# map onto a project_id, so they are never force-matched).
+_LEGACY_SCOPE_KINDS: dict[str, str] = {"directory": "project", "file": "path"}
+
 # Valid condition operators
 VALID_OPERATORS = {
     "==",
@@ -241,7 +253,10 @@ class RulesEngine:
     def __init__(self, storage: StorageEngine, settings: Settings) -> None:
         self._storage = storage
         self._settings = settings
-        self._applicable_rules_cache: dict[str, list[dict]] = {}
+        # C10(a): keyed by (project_id, path) — `path` is an optional real
+        # filesystem path, so it is part of the identity of a rule set.
+        self._applicable_rules_cache: dict[tuple[str, str | None], list[dict]] = {}
+        self._reported_unmigrated = False
 
     @observe(tier="boundary")
     def add_rule(
@@ -257,11 +272,29 @@ class RulesEngine:
 
         Args:
             rule_type: "hard" (must satisfy) or "soft" (preference)
-            scope: "global", "directory", or "file"
+            scope: "global", "project", or "path" (C10 — see below)
             condition: Condition string (e.g., "importance > 0.7")
             action: Action string (e.g., "filter", "boost:0.3")
             priority: Higher = applied first (default 0)
-            scope_value: Directory path or file pattern for scoped rules
+            scope_value: project_id for ``scope="project"``; a glob pattern over
+                a real filesystem path for ``scope="path"``; unused for
+                ``scope="global"``.
+
+        C10 (0047 §5, judgement site (a)) — the two scope kinds were RE-KEYED,
+        not collapsed:
+
+        * ``"directory"`` → ``"project"``, matched by **exact equality** against
+          the project_id. The old kind prefix-matched (``startswith``), which is
+          meaningless for ``owner/repo``: it has no hierarchy, and
+          ``"a/b".startswith("a")`` is a false positive waiting to happen.
+        * ``"file"`` → ``"path"``, still ``fnmatch`` over a REAL filesystem path
+          (ADR-0225 carve-out 3). It survives as a genuine filesystem predicate
+          but is **no longer a scoping key** — it is a filter *within* a project.
+
+        The legacy names are rejected rather than silently accepted: a rule
+        written under ``scope="directory"`` would carry a filesystem path in
+        ``scope_value`` and could never match a project_id, so accepting it
+        would mint a rule that is dead on arrival.
 
         Returns:
             Rule ID
@@ -272,8 +305,15 @@ class RulesEngine:
             raise ValueError(
                 f"rule_type must be one of {_READ_TYPES + _WRITE_TYPES!r}, got {rule_type!r}"
             )
-        if scope not in ("global", "directory", "file"):
-            raise ValueError(f"scope must be 'global', 'directory', or 'file', got {scope!r}")
+        if scope in _LEGACY_SCOPE_KINDS:
+            raise ValueError(
+                f"scope {scope!r} was retired by C10 (0047 §5(a)): use "
+                f"{_LEGACY_SCOPE_KINDS[scope]!r} instead. "
+                f"'project' matches a project_id by exact equality; 'path' globs a "
+                f"real filesystem path and is a filter within a project, not a scope key."
+            )
+        if scope not in _SCOPE_KINDS:
+            raise ValueError(f"scope must be one of {sorted(_SCOPE_KINDS)!r}, got {scope!r}")
 
         # Validate condition parses correctly
         _parse_condition(condition)
@@ -312,54 +352,116 @@ class RulesEngine:
         return rule_id
 
     @observe(tier="stage")
-    def get_applicable_rules(self, directory: str) -> list[dict]:
-        """Get all active rules that apply to the given directory.
+    def get_applicable_rules(self, project_id: str, path: str | None = None) -> list[dict]:
+        """Get all active rules that apply to a project (and optionally a path).
 
         Returns rules where:
         - scope == "global", OR
-        - scope == "directory" AND scope_value is a prefix of directory, OR
-        - scope == "file" AND scope_value matches directory as a glob pattern
+        - scope == "project" AND scope_value **equals** project_id, OR
+        - scope == "path" AND scope_value globs ``path`` (skipped when ``path``
+          is None — a path predicate with no path is not a match, it is a
+          missing input).
 
         Sorted by priority descending (highest first).
 
-        Results are cached per directory for the lifetime of this process.
-        The cache is invalidated whenever rules are mutated (add_rule,
+        C10 (0047 §5, judgement site (a)). Two changes, one of which fixes a
+        live bug:
+
+        1. **Project matching is exact equality, not ``startswith``.** Car C7
+           re-wired the retrieval path to pass ``ctx.project_id`` here
+           (``backend/retrieval/reranking.py``), so a project_id has been
+           prefix-matched against filesystem-path ``scope_value``\\ s ever since
+           — every ``scope="directory"`` rule was already silently dead on that
+           path. Prefix matching is also wrong in principle: ``owner/repo`` has
+           no hierarchy and ``"a/b".startswith("a")`` is a false positive.
+        2. **``path`` is a separate parameter.** The old signature globbed the
+           SCOPE KEY, conflating "which project" with "which file". ``path`` is
+           a real filesystem path (ADR-0225 carve-out 3) and now filters
+           *within* a project rather than selecting one.
+
+        Legacy ``scope="directory"`` / ``scope="file"`` rows are **reported, not
+        guessed**: their ``scope_value`` holds a filesystem path that cannot be
+        mapped to a project_id without the C6 manifest, so they are counted and
+        logged once rather than being force-matched into a wrong answer. The
+        row migration is an operator action against that manifest.
+
+        Results are cached per (project_id, path) for the lifetime of this
+        process. The cache is invalidated whenever rules are mutated (add_rule,
         delete_rule).  Use this method in hot paths; skip it only when
         freshness is required immediately after a rule mutation.
         """
         from yadgar._shared.observability.metrics import record_cache_hit, record_cache_miss
 
-        if directory in self._applicable_rules_cache:
+        cache_key = (project_id, path)
+        if cache_key in self._applicable_rules_cache:
             record_cache_hit("rules")
-            return self._applicable_rules_cache[directory]
+            return self._applicable_rules_cache[cache_key]
         record_cache_miss("rules")
 
         # Get global rules
         global_rules = self._storage.get_rules_for_scope("global")
 
-        # Get directory-scoped rules: need to check prefix match
-        # Query all active directory rules and filter by prefix
-        dir_rules = []
-        for rule in self._storage.get_all_active_rules_by_scope("directory"):
-            sv = rule.get("scope_value") or ""
-            if directory.startswith(sv):
-                dir_rules.append(rule)
+        # Project-scoped rules: EXACT equality against the project_id.
+        project_rules = [
+            rule
+            for rule in self._storage.get_all_active_rules_by_scope("project")
+            if (rule.get("scope_value") or "") == project_id
+        ]
 
-        # Get file-scoped rules: glob pattern matching
-        file_rules = []
-        for rule in self._storage.get_all_active_rules_by_scope("file"):
-            sv = rule.get("scope_value") or ""
-            if fnmatch.fnmatch(directory, sv):
-                file_rules.append(rule)
+        # Path-scoped rules: glob over a REAL filesystem path. No path supplied
+        # → no path rules apply (a filesystem predicate with nothing to test).
+        path_rules: list[dict] = []
+        if path:
+            path_rules = [
+                rule
+                for rule in self._storage.get_all_active_rules_by_scope("path")
+                if fnmatch.fnmatch(path, rule.get("scope_value") or "")
+            ]
+
+        self._report_unmigrated_rules()
 
         # Combine and sort by priority descending
-        all_rules = global_rules + dir_rules + file_rules
+        all_rules = global_rules + project_rules + path_rules
         all_rules.sort(key=lambda r: r.get("priority", 0), reverse=True)
-        self._applicable_rules_cache[directory] = all_rules
+        self._applicable_rules_cache[cache_key] = all_rules
         return all_rules
 
     @observe(tier="stage")
-    def apply_rules(self, memories: list[dict], directory: str) -> list[dict]:
+    def _report_unmigrated_rules(self) -> None:
+        """Count legacy-scope rows and log once per process. Never raises.
+
+        C10(a): a ``scope="directory"`` / ``scope="file"`` row carries a
+        filesystem path in ``scope_value``. Mapping it to a project_id needs the
+        C6 manifest, which this process does not have — so the rows are surfaced
+        rather than silently dropped OR force-matched. ADR-0227's rule applied to
+        rule scoping: a guess that cannot fail is worse than a report.
+        """
+        if self._reported_unmigrated:
+            return
+        self._reported_unmigrated = True
+        try:
+            stale = {
+                kind: len(self._storage.get_all_active_rules_by_scope(kind))
+                for kind in _LEGACY_SCOPE_KINDS
+            }
+        except Exception:  # reporting must never break rule application
+            logger.debug("legacy rule-scope census failed", exc_info=True)
+            return
+        total = sum(stale.values())
+        if total:
+            logger.warning(
+                "rules_engine: %d active rule(s) still use retired scope kinds %s and are "
+                "NOT being applied — their scope_value holds a filesystem path that cannot "
+                "be mapped to a project_id without the C6 manifest. Re-add them with "
+                "scope='project' (exact project_id) or scope='path' (glob).",
+                total,
+                {k: v for k, v in stale.items() if v},
+            )
+
+    @observe(tier="stage")
+    def apply_rules(
+        self, memories: list[dict], project_id: str, path: str | None = None
+    ) -> list[dict]:
         """Apply rules to filter and re-rank memories.
 
         Hard rules filter out non-matching memories.
@@ -367,12 +469,20 @@ class RulesEngine:
 
         Args:
             memories: List of memory dicts (must have _retrieval_score)
-            directory: Current directory context
+            project_id: The project whose rules apply. C10(a): the sole caller
+                on the retrieval path already passes ``ctx.project_id``
+                (``backend/retrieval/reranking.py``); the parameter name now
+                matches what it has been receiving since Car C7.
+            path: Optional REAL filesystem path (ADR-0225 carve-out 3). Only
+                ``scope="path"`` rules consult it, and they are a filter
+                *within* the project — omit it and no path rule fires, which is
+                the correct outcome for a filesystem predicate with no file to
+                test.
 
         Returns:
             Filtered and re-ranked list of memories
         """
-        rules = self.get_applicable_rules(directory)
+        rules = self.get_applicable_rules(project_id, path)
         if not rules:
             return memories
 
@@ -467,7 +577,23 @@ class RulesEngine:
 
         Args:
             content: The text about to be stored.
-            context: Directory path (used for scope matching).
+            context: A real path (or free text) — **NOT a project_id**. This is
+                the ``memorize``/``anchor`` ``context`` argument, judgement site
+                (f), which is a separate car. C10(a) VERIFIED what the callers
+                actually pass rather than assuming: ``write_exec/validate.py``
+                forwards ``ctx.context`` (whose own docstring says "the actual
+                working directory path", and which the live corpus shows is
+                often free-text prose), and the two ``wiki.py`` callers pass
+                ``""``. None of them holds a project_id.
+
+                It is therefore threaded as ``path``, not as the project scope
+                key. Consequence, stated rather than hidden: **project-scoped
+                write rules do not fire on this path** — the caller has no
+                project identity to match with, and ADR-0227's rule applies
+                (no match beats a wrong match). ``global`` rules are unaffected,
+                and a rule that used to rely on the retired ``scope="directory"``
+                prefix match migrates to ``scope="path"`` with a glob
+                (``/work/classified*``), which DOES fire here.
             tags: Memory tags.
 
         Returns:
@@ -477,7 +603,11 @@ class RulesEngine:
         """
         mem: dict = {"content": content, "directory_context": context, "tags": tags}
 
-        all_rules = self.get_applicable_rules(context)
+        # C10(a): `context` is a PATH (see the Args note above) — it is passed as
+        # the path predicate, never as the project scope key. Passing it
+        # positionally would silently compare a filesystem path against
+        # project_ids under the new exact-equality match and never fire.
+        all_rules = self.get_applicable_rules("", path=context)
         write_rules = [r for r in all_rules if r["rule_type"] in ("write_block", "write_redact")]
 
         if not write_rules:

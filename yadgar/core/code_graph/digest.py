@@ -783,12 +783,52 @@ def _digest_directory(identity: dict[str, Any]) -> str:
     Block injection scope is an EXACT ``str(directory)`` match against the
     session cwd, so a monorepo-leaf digest MUST be keyed to
     ``canonical_root/subdir`` (not the bare root) or it never injects.
+
+    C10 (0047 §5, judgement site (e)): this stays a REAL filesystem path
+    (ADR-0225 carve-out 3). ``memory_block``'s key tuple is
+    ``(name, scope, directory)`` and the table has **no ``project_id`` column**,
+    so the scope key cannot move here yet — that is C11's per-table work. The
+    monorepo-collision fix rides :func:`_digest_block_name` instead, which is
+    independent of this column and therefore safe to land now.
     """
     root = str(identity.get("canonical_root", ""))
     subdir = str(identity.get("subdir", "") or "")
     if subdir:
         return str(Path(root) / subdir)
     return root
+
+
+@observe(tier="stage")
+def _digest_block_name(identity: dict[str, Any]) -> str:
+    """Return the block name, carrying the monorepo ``subdir`` discriminator.
+
+    C10 (0047 §5, judgement site (e)) resolves that section's ``[VERIFY]``:
+    *"``memory_block`` gets a ``subdir`` column in C11, **or** the discriminator
+    lives in the block ``name`` — decide at build time."* **It lives in the
+    name.** The other branch is not available to this car: keying a block on
+    ``project_id`` requires a ``project_id`` column, and ``memory_block`` has
+    none (migration 031 declared it on ``wiki_page`` + ``memory`` only).
+
+    Why it matters even though nothing collides today: the digest is currently
+    disambiguated by ``directory`` (``canonical_root/subdir``), so each leaf gets
+    its own row. The moment C11 re-keys that column onto ``project_id`` — one id
+    per REPO — every subdir digest in a monorepo would collapse onto a single
+    key and overwrite each other. Putting the discriminator in the name makes
+    that re-key safe in advance, at zero cost now.
+
+    ``memory_block`` names are validated against ``^[a-z][a-z0-9_]*$``
+    (``_shared/storage/blocks.py``), so the subdir is lowercased and every
+    character outside ``[a-z0-9]`` collapses to ``_``::
+
+        subdir ""          → "code_graph"
+        subdir "apps/web"  → "code_graph_apps_web"
+        subdir "libs/Foo-2"→ "code_graph_libs_foo_2"
+    """
+    subdir = str(identity.get("subdir", "") or "").strip("/")
+    if not subdir:
+        return "code_graph"
+    slug = re.sub(r"[^a-z0-9]+", "_", subdir.lower()).strip("_")
+    return f"code_graph_{slug}" if slug else "code_graph"
 
 
 @observe(tier="stage")
@@ -808,10 +848,15 @@ def build_block_payload(
 
     ``directory`` = ``canonical_root`` joined with ``subdir`` (exact-match
     injection scope).  ``chars`` == ``len(content)`` and ≤ budget.
+
+    C10 (0047 §5(e)): ``block_name`` now carries the monorepo ``subdir``
+    discriminator (``code_graph_apps_web``) rather than being the constant
+    ``"code_graph"``. See :func:`_digest_block_name` for why the discriminator
+    went into the name and not into a new column.
     """
     content = render_digest(architecture, endpoints, identity, budget=budget)
     return {
-        "block_name": "code_graph",
+        "block_name": _digest_block_name(identity),
         "directory": _digest_directory(identity),
         "content": content,
         "chars": len(content),

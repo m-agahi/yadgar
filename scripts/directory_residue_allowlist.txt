@@ -1,0 +1,121 @@
+# ADR-0225 `directory` residue-sweep allowlist — produced by C10 (0047 §5).
+#
+# WHAT THIS IS
+# ------------
+# ADR-0225 retires `directory` as a scoping/identity concept and says the
+# retirement is "enforced by a residue sweep rather than by review". C15 owns
+# that lint. This file is the sweep's allowlist: every path here still contains
+# a word-boundary `directory` AFTER C10, on purpose, with the reason recorded.
+#
+# Without this file C15 would be RED ON ARRIVAL against ~40 files that were
+# never in any car and never should have been.
+#
+# THE RULE C10 APPLIED (from the plan, verbatim in intent)
+# --------------------------------------------------------
+# A file lands in this allowlist ONLY when EVERY `directory` in it is a real
+# filesystem path (carve-out 3). One scoping use disqualifies the whole file.
+#
+# TWO KINDS OF ENTRY — read the tag, they are not the same claim
+# --------------------------------------------------------------
+#   carve-out-3  A genuine filesystem path. PERMANENT. Never sweep.
+#   c11-blocked  A real scope key that CANNOT be renamed yet, because the
+#                table beneath it has no `project_id` column. Migration 031
+#                declared `project_id` on `wiki_page` and `memory` and NOWHERE
+#                ELSE. Renaming the parameter while the SQL still reads
+#                `WHERE directory_context = $dir` ships a caller-facing lie:
+#                the caller passes `owner/repo`, the query matches zero rows,
+#                and nothing raises. These are TEMPORARY — C11 adds the
+#                columns, then they leave this file. They are also C11's
+#                worklist.
+#   c9c-blocked  Reaches `wiki_page`/`memory` (which DO have `project_id`) but
+#                the READ is still keyed on `directory_context` in
+#                `_shared/storage/{wiki,memory}.py`, which C9c is re-keying.
+#                Rename after C9c lands, not before.
+#
+# Format: <tag> <path>  # reason
+
+# ── carve-out 3: real filesystem paths, permanent ───────────────────────────
+carve-out-3  scripts/bump_version.py                     # repo-walking guard; path on disk
+carve-out-3  scripts/check_complexity.py                 # repo-walking guard
+carve-out-3  scripts/check_e2e_assertions.py             # repo-walking guard
+carve-out-3  scripts/check_metric_writers.py             # repo-walking guard
+carve-out-3  scripts/check_observe_coverage.py           # repo-walking guard
+carve-out-3  scripts/check_plan_signature_drift.py       # repo-walking guard
+carve-out-3  scripts/check_secret_gate.py                # repo-walking guard
+carve-out-3  scripts/check_subsystem_readmes.py          # repo-walking guard
+carve-out-3  scripts/scan_db_for_secrets.py              # repo-walking guard
+carve-out-3  yadgar/core/install/**                      # install targets, config + interpreter paths
+carve-out-3  yadgar/core/daemon/**                       # unit files, data dirs
+carve-out-3  yadgar/core/update/**                       # install-method + snapshot paths
+carve-out-3  yadgar/core/vacuum/**                       # DB file paths
+carve-out-3  yadgar/core/backup/**                       # file paths
+carve-out-3  yadgar/core/staleness/**                    # hash inputs (real files)
+carve-out-3  docs/diagrams/generate.py                   # output directory
+carve-out-3  yadgar/core/cli/install.py                  # --project-directory = install target
+carve-out-3  yadgar/core/cli/install_hooks.py            # --project-directory = install target
+carve-out-3  yadgar/core/cli/install_mcp.py              # --project-directory = install target
+carve-out-3  yadgar/core/cli/update.py                   # snapshot dir on disk
+carve-out-3  yadgar/core/seed/_scan.py                   # Path(directory).resolve() — genuine fs walk
+carve-out-3  yadgar/core/seed/_analysis.py               # prose about a literal fs tree
+carve-out-3  yadgar/core/server/_helpers.py              # DLQ filesystem dir
+carve-out-3  yadgar/_shared/storage/migrations.py        # "016_directory_context" is a MIGRATION-LEDGER KEY.
+                                                         # Renaming it re-runs or orphans migrations on
+                                                         # deployed DBs. 95 hits, ZERO edits. (found by C9a)
+carve-out-3  yadgar/backend/retrieval/core.py            # generate_contextual_prefix: basename(directory) is
+                                                         # EMBEDDING INPUT text, not a scope key. Sweeping it
+                                                         # makes new rows embed differently from the whole
+                                                         # existing corpus — a silent cosine-space regression
+                                                         # with no error surface. Migration path is
+                                                         # `reembed_all`, an operator action. Full reasoning
+                                                         # is at the site.
+carve-out-3  yadgar/_shared/restoration/transcript_parse.py  # _list_worktrees / capture_in_flight take a real
+                                                             # path for `git -C`. C10(b) RENAMED these to
+                                                             # `worktree_path`; the remaining hits are prose.
+
+# ── c11-blocked: no project_id column on the backing table (C11's worklist) ──
+c11-blocked  yadgar/core/server/tools/blocks.py          # memory_block, key (name, scope, directory)
+c11-blocked  yadgar/_shared/storage/blocks.py            # memory_block — the storage impl
+c11-blocked  yadgar/core/server/tools/runtime_config.py  # runtime_config, key (key, directory)
+c11-blocked  yadgar/core/server/tools/_runtime_config.py # runtime_config — the resolver
+c11-blocked  yadgar/_shared/storage/runtime_config.py    # runtime_config — own `directory` COLUMN, in NO car
+                                                         # and absent from C11's four-table list. PLAN GAP
+                                                         # (found by C9a); 6 signatures depend on it.
+c11-blocked  yadgar/core/runtime_config_client.py        # runtime_config — host-side client
+c11-blocked  yadgar/core/server/tools/misc.py            # checkpoint (checkpoint()/restore())
+c11-blocked  yadgar/core/server/tools/project.py         # checkpoint via _fetch_presence_rows
+c11-blocked  yadgar/core/server/tools/recall.py          # runtime_config via _resolve_shape_limit
+c11-blocked  yadgar/core/server/tools/admin_other.py     # `rule` table via get_applicable_rules
+c11-blocked  yadgar/core/server/http.py                  # MIXED: checkpoint, memory_block, runtime_config,
+                                                         # action_log. NOT the MCP tool surface — these are
+                                                         # Starlette hook routes.
+c11-blocked  yadgar/core/cli/capture.py                  # action_log
+c11-blocked  yadgar/core/cli/drain.py                    # checkpoint
+c11-blocked  yadgar/core/cli/restore.py                  # checkpoint
+c11-blocked  yadgar/core/cli/_shared.py                  # checkpoint (forward_restore / forward_pre_compact_drain)
+c11-blocked  yadgar/core/cli/hook.py                     # memory_block + mixed hook routes
+c11-blocked  yadgar/core/forward.py                      # checkpoint via _forward_restore
+c11-blocked  yadgar/core/hooks/post-tool-capture.py      # action_log
+c11-blocked  yadgar/core/hooks/session-start-context.py  # checkpoint + memory_block downstream
+c11-blocked  yadgar/core/hooks/stop-memory-checkpoint.py # runtime_config via _code_graph_enabled
+c11-blocked  yadgar/backend/restoration/checkpoint_restore.py  # FIVE sinks; see the C11 WORKLIST docstring on
+                                                               # restore(). The memory_block sink is the one
+                                                               # that does not flip symmetrically.
+c11-blocked  yadgar/core/code_graph/digest.py            # memory_block injection scope is an exact directory
+                                                         # match. C10(e) moved the monorepo discriminator into
+                                                         # the block NAME so this re-key is safe when it lands.
+
+# ── c9c-blocked: reaches wiki_page/memory, but the READ is still directory-keyed ──
+c9c-blocked  yadgar/core/server/tools/wiki.py            # wiki_page via the §25 ladder
+c9c-blocked  yadgar/core/server/tools/adr.py             # wiki_page
+c9c-blocked  yadgar/core/server/tools/adr_render.py      # wiki_page
+c9c-blocked  yadgar/core/server/tools/agent_prompts.py   # wiki_page
+c9c-blocked  yadgar/core/server/tools/audit.py           # memory
+c9c-blocked  yadgar/core/server/tools/dispatch_helper.py # memory + wiki_page
+c9c-blocked  yadgar/core/cli/context.py                  # memory
+c9c-blocked  yadgar/core/cli/seed.py                     # memory + wiki_page
+c9c-blocked  yadgar/core/cli/stats.py                    # memory
+c9c-blocked  yadgar/core/seed/_generate.py               # memory payload stamping
+c9c-blocked  yadgar/core/hooks/prompt-recall.py          # memory (local FTS fallback)
+c9c-blocked  benchmarks/run_eval.py                      # --eval-directory → recall() → memory/wiki_page
+c9c-blocked  benchmarks/run_longmemeval.py               # BENCHMARK_DIRECTORY → recall() → memory/wiki_page
+c9c-blocked  benchmarks/run_perf_loadtest.py             # recall load test
