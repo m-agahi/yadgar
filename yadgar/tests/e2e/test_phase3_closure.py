@@ -26,6 +26,12 @@ pytestmark = pytest.mark.e2e
 
 _E2E_BRANCH = "feat/v6-t5-e2e-cogmap"
 
+#: The identity every seed in this file names. C5/ADR-0227 made ``project_id``
+#: mandatory at the storage write chokepoint, so an unnamed seed cannot be
+#: inserted at all. The cognitive-map subject here is transition structure, not
+#: cross-project reach, so one value suffices across every seeded directory.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror Phase-1 / Phase-2 seeding style)
@@ -52,6 +58,7 @@ def _insert_mem(
         "content": content,
         "embedding": emb,
         "directory_context": directory,
+        "project_id": _TEST_PROJECT,
         "heat": heat,
         "tags": tags or [],
         "last_accessed": now,

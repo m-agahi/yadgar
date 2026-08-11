@@ -32,6 +32,14 @@ pytestmark = pytest.mark.e2e
 
 YADGAR_DIR = "/home/test/yadgar-project"
 
+#: The identity every seed and every recall in this file names. C5/ADR-0227
+#: made ``project_id`` mandatory at the storage write chokepoint, so even the
+#: field-absent row this file manufactures must be INSERTED under an identity
+#: before its ``directory_context`` is cleared. The two dimensions are
+#: independent: migration 023 repairs ``directory_context`` and never touches
+#: ``project_id``.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 def _run_fanout_recall(monkeypatch, query: str, directory: str, max_results: int = 20):
     """Run fan-out recall (UNIFIED_RECALL_ENABLED=True) via the MCP tool."""
@@ -41,7 +49,9 @@ def _run_fanout_recall(monkeypatch, query: str, directory: str, max_results: int
     if _rm is None:
         import yadgar.core.server.tools.recall as _rm
 
-    return _rm.recall(query=query, directory=directory, max_results=max_results)
+    return _rm.recall(
+        query=query, directory=directory, max_results=max_results, project=_TEST_PROJECT
+    )
 
 
 def _seed_field_absent_memory(storage, embeddings, content: str) -> int:
@@ -65,6 +75,7 @@ def _seed_field_absent_memory(storage, embeddings, content: str) -> int:
             "content": content,
             "embedding": emb,
             "directory_context": YADGAR_DIR,
+            "project_id": _TEST_PROJECT,
             "tags": [],
             "heat": 1.0,
         }
@@ -128,9 +139,16 @@ class TestMigration023E2E:
     def test_backfilled_row_surfaces_in_directory_recall(
         self, e2e_engines, monkeypatch, recall_backend_bypass
     ):
-        """After backfill to 'global', the row is returned by directory-scoped recall.
+        """After backfill to 'global', the row is still returned by a scoped recall.
 
-        'global' is an always-eligible sentinel — it must surface for any directory query.
+        C13 (e) corrects a now-stale premise. This used to read "'global' is an
+        always-eligible sentinel — it must surface for any directory query".
+        Car C7 retired that: reach is decided by ``project_id`` plus the
+        ``'global'`` reach TAG in the stage-1 WHERE, and ``directory_context``
+        scopes nothing. The assertion is unchanged and still load-bearing — what
+        it proves is that migration 023's backfill does not render the row
+        unreachable — but it passes on the row's PROJECT, not on the literal
+        ``directory_context='global'`` this docstring once credited.
         """
         storage = e2e_engines["storage"]
         embeddings = e2e_engines["embeddings"]
@@ -148,7 +166,8 @@ class TestMigration023E2E:
 
         _migration_023_memory_directory_context_backfill(storage)
 
-        # Step f: fan-out recall with YADGAR_DIR — 'global' rows are always eligible
+        # Step f: fan-out recall scoped to the row's own project (C7: the
+        # stage-1 WHERE keys on project_id; directory_context scopes nothing).
         results = _run_fanout_recall(
             monkeypatch,
             f"migration023 recall test {unique_token}",
@@ -178,6 +197,7 @@ class TestMigration023E2E:
                 "content": f"migration023 stamped test {unique_token}",
                 "embedding": emb,
                 "directory_context": target_dir,
+                "project_id": _TEST_PROJECT,
                 "tags": [],
                 "heat": 1.0,
             }

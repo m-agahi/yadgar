@@ -38,6 +38,13 @@ pytestmark = pytest.mark.e2e
 # Helpers
 # ---------------------------------------------------------------------------
 
+#: The identity every memory seed in this file names. C5/ADR-0227 made
+#: ``project_id`` mandatory at the storage write chokepoint, so an unnamed seed
+#: cannot be inserted. One value suffices: the viz read path is a god's-eye
+#: admin overlay with no project scoping, so nothing here turns on two
+#: identities being distinguishable.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 def _insert_entity_direct(e2e_engines, name: str, heat: float) -> int:
     """Seed an entity row with the given name and heat. Returns the integer id."""
@@ -80,6 +87,7 @@ def _insert_memory_direct(e2e_engines, content: str, heat: float) -> int:
         "content": content,
         "embedding": emb,
         "directory_context": e2e_engines["yadgar_dir"],
+        "project_id": _TEST_PROJECT,
         "heat": heat,
         "tags": ["e2e", "bc-vz1"],
         "last_accessed": now,
@@ -327,6 +335,11 @@ def _insert_memory_with_dir(e2e_engines, content: str, directory: str, heat: flo
         "content": content,
         "embedding": emb,
         "directory_context": directory,
+        # One project across every seeded DIRECTORY on purpose: BC-VZ2's subject
+        # is that viz search is NOT directory-scoped, so the directories must
+        # differ while the identity need not. C5/ADR-0227 only requires that one
+        # be named.
+        "project_id": _TEST_PROJECT,
         "heat": heat,
         "tags": ["e2e", "bc-vz2"],
         "last_accessed": now,

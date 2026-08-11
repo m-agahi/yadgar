@@ -34,6 +34,12 @@ pytestmark = pytest.mark.e2e
 # Sentinel token unique to this test file — never changes; used in assertion messages.
 _TOKEN = "xbccsw1e2e"
 
+#: The identity every seed in this file names. C5/ADR-0227 made ``project_id``
+#: mandatory at the storage write chokepoint, so an unnamed seed cannot be
+#: inserted. Nothing here reads by project — the subject is heat decay under a
+#: single writer — so one value is enough.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 def _insert_test_memory(e2e_engines, label: str, heat: float, hours_old: float) -> int:
     """Seed a memory that will survive purge but has old enough last_accessed to decay."""
@@ -50,6 +56,7 @@ def _insert_test_memory(e2e_engines, label: str, heat: float, hours_old: float) 
         "content": content,
         "embedding": emb,
         "directory_context": yadgar_dir,
+        "project_id": _TEST_PROJECT,
         "heat": heat,
         "tags": [],  # NOT auto-abstracted — survives purge
         "last_accessed": last_accessed,

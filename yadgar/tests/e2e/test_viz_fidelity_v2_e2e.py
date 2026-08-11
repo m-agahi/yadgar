@@ -31,6 +31,13 @@ pytestmark = pytest.mark.e2e
 # Seed helpers
 # ---------------------------------------------------------------------------
 
+#: The identity every seed in this file names. C5/ADR-0227 made ``project_id``
+#: mandatory at the storage write chokepoint, so a seed row that names no
+#: project cannot be inserted at all. One value suffices here: the viz is a
+#: god's-eye admin overlay with no project scoping on its read path, so this
+#: file's subject never depends on two identities being distinguishable.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 def _insert_mem(e2e_engines, content: str, heat: float = 0.5, slot_index=None) -> int:
     """Insert a memory row, optionally with slot_index. Returns integer id."""
@@ -44,6 +51,7 @@ def _insert_mem(e2e_engines, content: str, heat: float = 0.5, slot_index=None) -
         "content": content,
         "embedding": emb,
         "directory_context": e2e_engines["yadgar_dir"],
+        "project_id": _TEST_PROJECT,
         "heat": heat,
         "tags": ["e2e", "viz-fidelity-v2"],
         "last_accessed": now,

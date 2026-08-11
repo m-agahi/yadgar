@@ -24,6 +24,14 @@ pytestmark = pytest.mark.e2e
 # Canonical test project dir (must be a real absolute path)
 YADGAR_DIR = "/home/test/yadgar-project"
 
+#: The identity every seeded row in this file names. C5/ADR-0227 made
+#: ``project_id`` mandatory at the storage write chokepoint. It is deliberately
+#: CONSTANT while ``directory_context`` varies: BC-G10's subject is that
+#: ``wiki_set_metadata`` reaches every row sharing a slug INCLUDING the
+#: ``directory_context='global'`` straggler, so the two seeds must differ on
+#: ``directory_context`` and must not be split across identities as well.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 def _insert_wiki_page_direct(storage, slug: str, directory_context: str) -> int:
     """Seed a wiki_page row directly via storage (bypasses WikiStore add() de-dup).
@@ -42,6 +50,7 @@ def _insert_wiki_page_direct(storage, slug: str, directory_context: str) -> int:
             "source_memory_ids": [],
             "links": [],
             "directory_context": directory_context,
+            "project_id": _TEST_PROJECT,
         }
     )
 

@@ -193,7 +193,9 @@ class TestWritesSucceedWithoutBranchContext:
         storage = e2e_engines["storage"]
         token = "adr0215writepathactivework"
 
-        result = update_active_work(directory=PROJECT_DIR, content=f"active work {token}")
+        result = update_active_work(
+            directory=PROJECT_DIR, content=f"active work {token}", project=PROJECT_ID
+        )
         new_memory = result.get("new_memory")
         assert isinstance(new_memory, dict), (
             f"update_active_work must store a row with no branch context (ADR-0215); got {result}"
