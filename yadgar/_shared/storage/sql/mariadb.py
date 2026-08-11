@@ -632,6 +632,13 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         must ENUMERATE the projects it should interrogate the loader about,
         instead of being told which ones to look at.
 
+        THE ``'superseded'`` LITERAL IS INLINE ON PURPOSE. ``superseded.py``
+        defines a ``SUPERSEDED_STATUS`` constant for the loader; sharing it
+        here would couple the two sides of the comparison to one symbol and
+        collapse the independence this method exists to provide (and
+        ``_shared.storage`` must not import from ``backend.retrieval`` anyway).
+        Do not "fix" this into a shared constant.
+
         Returns:
             ``[{project_id, id, body_slug}, ...]`` — the three columns the
             invariant compares. ``body_slug`` is nullable; a superseded row

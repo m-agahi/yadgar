@@ -635,15 +635,18 @@ async def _check_superseded_for_project(
     (a) COVERAGE — ``adr.body_slug`` is ``nullable=True`` in migration 002. A
         superseded row with no slug CANNOT be excluded by a slug predicate; the
         exclusion silently does not apply to it. The fix is stamping the row.
-    (b) ROUND-TRIP — the params the PRODUCTION clause builder actually binds,
-        reached through ``RecallScope`` exactly as recall reaches it, must equal
-        this check's own slug set. This is what catches a dataclass hop that
-        drops ``excluded_slugs``: the loader can be perfect and the clause still
-        carry nothing. The fix is in the plumbing, not the data.
+    (b) ROUND-TRIP — the params the PRODUCTION path actually binds must equal
+        this check's own slug set. The scope is walked through the SAME two
+        re-construction hops recall walks (``Scope.to_recall_scope``, then
+        ``RecallScope.with_default_opt_in``) rather than being built here: a
+        check that constructed the ``RecallScope`` itself would agree with
+        itself while a hop silently dropped ``excluded_slugs``, which is the
+        one failure this whole car is written around. Verified by sabotage —
+        removing the field from ``to_recall_scope`` turns this red.
     (c) EMISSION — a non-empty set must produce a ``slug NOT IN`` fragment. The
         fix is restoring the arm a refactor deleted.
     """
-    from yadgar._shared.storage.directory import RecallScope  # noqa: PLC0415
+    from yadgar.backend.retrieval.providers.base import Scope  # noqa: PLC0415
     from yadgar.backend.retrieval.superseded import load_superseded_slugs  # noqa: PLC0415
 
     violations: list[str] = []
@@ -660,8 +663,19 @@ async def _check_superseded_for_project(
 
     loaded = await load_superseded_slugs(engine, project_id=project_id)
 
-    # (b) round-trip THROUGH the production clause builder.
-    sql, params = RecallScope(project_id=project_id, excluded_slugs=tuple(loaded)).clause()
+    # (b) round-trip THROUGH THE PRODUCTION HOPS, not around them.
+    #
+    #   Scope (what _fanout_recall builds)
+    #     → .to_recall_scope()      hop 2, shared with WikiProvider
+    #     → .with_default_opt_in()  hop 1, shared with WikiStore.query
+    #     → .clause()               the emitted WHERE
+    #
+    # The probe tag forces ``with_default_opt_in`` down its COPYING branch (it
+    # returns self early when there is nothing to default), so the hop is
+    # actually exercised rather than skipped. It is a name no policy declares
+    # as an opt-in key, so it cannot unlock a page_type and perturb (c).
+    provider_scope = Scope(project_id=project_id, excluded_slugs=tuple(loaded))
+    sql, params = provider_scope.to_recall_scope(None).with_default_opt_in(["_c8_probe"]).clause()
     bound: set[str] = set()
     for key, value in params.items():
         if key.endswith("_excl_slugs"):

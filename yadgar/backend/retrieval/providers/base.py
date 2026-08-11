@@ -21,6 +21,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from yadgar._shared.storage.directory import RecallScope
+
 
 @dataclass
 class Scope:
@@ -49,6 +51,31 @@ class Scope:
     min_heat: float = 0.0
     opt_in_tags: list[str] | None = None
     excluded_slugs: tuple[str, ...] | None = None
+
+    def to_recall_scope(self, opt_in: list[str] | None) -> RecallScope:
+        """Convert to the storage-layer ``RecallScope`` pushed into the WHERE.
+
+        Car C8 EXTRACTED THIS FROM ``WikiProvider.candidates`` ON PURPOSE. The
+        conversion is a field-by-field re-construction, and a field added to
+        both dataclasses but forgotten HERE is dropped SILENTLY: recall keeps
+        returning results, just without the exclusion. One shared conversion is
+        what lets the C8 nightly invariant traverse the SAME hop production
+        traverses — a check that re-built the scope itself would agree with
+        itself while this hop quietly dropped the field, which is precisely the
+        vacuous pass the cross-engine arm exists to eliminate.
+
+        Args:
+            opt_in: The caller's requested tags, already resolved by the
+                provider (its own ``tags`` when the scope carries none).
+
+        Returns:
+            The equivalent ``RecallScope``.
+        """
+        return RecallScope(
+            project_id=self.project_id or None,
+            opt_in_tags=opt_in,
+            excluded_slugs=self.excluded_slugs,
+        )
 
 
 @dataclass

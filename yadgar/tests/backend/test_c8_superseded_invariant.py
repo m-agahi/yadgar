@@ -155,6 +155,34 @@ class TestDisagreementFiresLoudly:
         assert "114" in out["message"], "the message must name the adr id to fix"
 
     @pytest.mark.asyncio
+    async def test_a_dropped_field_on_the_scope_hop_is_a_violation(self, monkeypatch):
+        """SABOTAGE TEST — the reason assertion (b) walks the real hops.
+
+        The first cut of this check re-built the ``RecallScope`` itself. With
+        ``excluded_slugs`` deleted from ``WikiProvider``'s conversion, the whole
+        invariant suite stayed GREEN while production excluded nothing — the
+        exact vacuous pass ADR-0195's arm exists to eliminate. The check now
+        walks ``Scope.to_recall_scope`` (the conversion the provider uses), so
+        breaking that conversion breaks this test.
+        """
+        from yadgar.backend.retrieval.providers.base import Scope
+
+        monkeypatch.setattr(
+            Scope,
+            "to_recall_scope",
+            lambda self, opt_in: __import__(
+                "yadgar._shared.storage.directory", fromlist=["RecallScope"]
+            ).RecallScope(project_id=self.project_id or None, opt_in_tags=opt_in),
+        )
+        rows = [_row(114, "yadgar_adr-0114")]
+        out = await ce.check_superseded_adr_exclusion(_FakeEngine(rows))
+        assert out["status"] == ce.STATUS_VIOLATION, (
+            "the Scope→RecallScope hop dropped excluded_slugs and the invariant "
+            "did not notice — it is comparing itself against itself again"
+        )
+        assert "yadgar_adr-0114" in out["message"]
+
+    @pytest.mark.asyncio
     async def test_a_deleted_where_arm_is_a_violation(self, monkeypatch):
         """(c) emission: a refactor that drops the arm must not pass silently."""
         from yadgar._shared.storage import directory as _dir
