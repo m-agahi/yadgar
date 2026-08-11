@@ -132,7 +132,10 @@ _NO_OWNER = (
 _ALLOWLIST: dict[str, str] = {
     # ── carve-out 3 — real filesystem paths ──────────────────────────────────
     "file_queue/queue.py::_find_terminal": _CARVE_3,
-    "restoration/transcript_parse.py::_list_worktrees": _CARVE_3,
+    # ``transcript_parse.py::_list_worktrees`` WAS here as carve-out 3. C10 took
+    # judgement site (b) and renamed its parameter to ``worktree_path`` — the
+    # carve-out is now expressed in the name, so the entry is stale and
+    # Direction 2 rejects it.
     "runtime/lifecycle.py::init_engines": _CARVE_3,
     "server_helpers/server_helpers.py::_resolve_project_root": _CARVE_3,
     "server_helpers/server_helpers.py::_worktree_root_from_path_heuristics": _CARVE_3,
@@ -156,10 +159,12 @@ _ALLOWLIST: dict[str, str] = {
     "wiki/store.py::read_by_directory": _CARVE_2,
     "wiki/store.py::find_similar_wiki_pages": _CARVE_2,
     "wiki/store.py::_collect_similar_candidates": _CARVE_2,
-    # ── plan §5 C10 judgement sites ──────────────────────────────────────────
-    "rules_engine/rules_engine.py::get_applicable_rules": _C10,
-    "rules_engine/rules_engine.py::apply_rules": _C10,
-    "restoration/transcript_parse.py::capture_in_flight": _C10,
+    # ── plan §5 C10 judgement sites — ALL THREE DISCHARGED, entries removed ──
+    # C9a deferred these to C10; C10 landed them (site (a) rules_engine, site
+    # (b) transcript_parse). Direction 2 hard-fails on an allowlist entry whose
+    # residue is gone, so the entries had to go WITH the sweep. This is the
+    # cross-car lint coupling C9c named: a sweep can strand a sibling car's
+    # allowlist, and neither car can see the other's tree. Checked at merge.
     # ── plan §5 C11 — no project_id column until migration 033 ───────────────
     "sensory_buffer/sensory_buffer.py::capture": _C11,
     "sensory_buffer/sensory_buffer.py::capture_action": _C11,
