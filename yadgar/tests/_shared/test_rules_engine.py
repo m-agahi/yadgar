@@ -12,6 +12,12 @@ from yadgar._shared.rules_engine import (
 )
 from yadgar.backend.retrieval import Retriever
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -82,6 +88,7 @@ def _insert_memory(storage, embeddings, content, directory="/project", tags=None
         "heat": 1.0,
         "is_stale": False,
         "embedding_model": embeddings.get_model_name(),
+        "project_id": _PROJECT,
     }
     mem.update(kwargs)
     return storage.insert_memory(mem)

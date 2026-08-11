@@ -10,6 +10,12 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.thermodynamics import MemoryThermodynamics
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 
 def _hours_ago(hours: float) -> str:
     return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
@@ -95,6 +101,7 @@ class TestMemoryAssignment:
             {
                 "content": "def process_items():\n    class DataHandler:\n        pass",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 1.0,
             }
         )
@@ -107,6 +114,7 @@ class TestMemoryAssignment:
             {
                 "content": "Got a TypeError exception when running the tests. Fixed the bug by checking types.",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 1.0,
             }
         )
@@ -119,6 +127,7 @@ class TestMemoryAssignment:
             {
                 "content": "We decided to use Redis instead of Memcached. Chose Redis for its data structures.",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 1.0,
             }
         )
@@ -131,6 +140,7 @@ class TestMemoryAssignment:
             {
                 "content": "pip install flask==2.0. Updated the package dependency for the web framework.",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 1.0,
             }
         )
@@ -143,6 +153,7 @@ class TestMemoryAssignment:
             {
                 "content": "The sky is blue today.",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 1.0,
             }
         )
@@ -157,6 +168,7 @@ class TestDomainConsolidation:
             {
                 "content": "def compute(): pass\nclass Handler: pass",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.8,
                 "last_accessed": _hours_ago(10),
             }
@@ -179,6 +191,7 @@ class TestDomainConsolidation:
             {
                 "content": "RuntimeError exception in handler. Bug crash failure.",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.9,
                 "last_accessed": _hours_ago(24),
             }
@@ -202,6 +215,7 @@ class TestDomainConsolidation:
             {
                 "content": "def helper(): pass\nfunction doStuff() {}",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.5,
             }
         )
@@ -220,6 +234,7 @@ class TestConsensusRetrieval:
             {
                 "content": "def process_data(): implemented data pipeline function",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.8,
             }
         )
@@ -237,6 +252,7 @@ class TestConsensusRetrieval:
             {
                 "content": "def fix_handler(): resolved TypeError exception in the function implementation",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.8,
             }
         )
@@ -259,6 +275,7 @@ class TestConsensusRetrieval:
             {
                 "content": "decided to use FastAPI framework for the API. Chose it over Flask.",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.9,
             }
         )
@@ -277,6 +294,7 @@ class TestCrossDomainMemory:
             {
                 "content": "pip install requests failed with ImportError exception. Package dependency broken.",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.9,
             }
         )
@@ -291,6 +309,7 @@ class TestCrossDomainMemory:
             {
                 "content": "pip install numpy failed with ModuleNotFoundError. Fix dependency issue.",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.8,
                 "last_accessed": _hours_ago(12),
             }
@@ -321,6 +340,7 @@ class TestProcessStats:
             {
                 "content": "def compute(): implementing a new function method",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.7,
             }
         )

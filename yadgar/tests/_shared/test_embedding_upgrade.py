@@ -6,6 +6,12 @@ import pytest
 from yadgar._shared.embeddings import MODEL_DIMENSIONS, EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 # Detect whether the model can actually be loaded
 _engine = EmbeddingEngine()
 try:
@@ -39,6 +45,7 @@ def _make_memory(content="test memory", directory="/tmp/project", **kwargs):
         "content": content,
         "directory_context": directory,
         "tags": ["test"],
+        "project_id": _PROJECT,
     }
     base.update(kwargs)
     return base

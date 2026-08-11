@@ -49,6 +49,12 @@ from yadgar._shared.wiki.wiki_meta import (
     PAGE_TYPE_AGENT_PROMPT_LEGACY,
 )
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 # ── Module-scoped storage fixture (matches test_storage.py pattern) ──────────
 
 
@@ -82,6 +88,7 @@ def _insert_wiki_page(
         "source_memory_ids": [],
         "links": [],
         "directory_context": directory_context,
+        "project_id": _PROJECT,
         "_sanctioned": True,
     }
     if page_type is not None:

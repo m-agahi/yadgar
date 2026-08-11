@@ -21,6 +21,12 @@ import pytest
 from yadgar._shared.wiki.contract import WikiAddOptions
 from yadgar.core import server
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 _REPO_DIR = "/home/max/git/yadgar"
 
 
@@ -54,6 +60,7 @@ class TestExplicitSlug:
             "## Purpose\nA module.\n## Exports\nfoo\n## Design\nX.",
             category="reference",
             opts=WikiAddOptions(
+                project_id=_PROJECT,
                 slug="proj-mod-foo",
                 upsert=True,
                 directory_context=_REPO_DIR,
@@ -74,6 +81,7 @@ class TestExplicitSlug:
             "## Purpose\nB.\n## Exports\nbar\n## Design\nY.",
             category="reference",
             opts=WikiAddOptions(
+                project_id=_PROJECT,
                 slug="proj-mod-bar",
                 upsert=True,
                 directory_context=_REPO_DIR,
@@ -92,13 +100,17 @@ class TestUpsertOverwrite:
             "Gen One",
             "## Purpose\nversion one.\n## Exports\ng\n## Design\nA.",
             category="reference",
-            opts=WikiAddOptions(slug="proj-mod-gen", upsert=True, directory_context=_REPO_DIR),
+            opts=WikiAddOptions(
+                project_id=_PROJECT, slug="proj-mod-gen", upsert=True, directory_context=_REPO_DIR
+            ),
         )
         _wiki().add(
             "Gen Two",
             "## Purpose\nversion two edited.\n## Exports\ng\n## Design\nB.",
             category="reference",
-            opts=WikiAddOptions(slug="proj-mod-gen", upsert=True, directory_context=_REPO_DIR),
+            opts=WikiAddOptions(
+                project_id=_PROJECT, slug="proj-mod-gen", upsert=True, directory_context=_REPO_DIR
+            ),
         )
         page = _storage().get_wiki_page_by_slug("proj-mod-gen")
         assert page is not None
@@ -112,7 +124,9 @@ class TestUpsertOverwrite:
             "Fresh Create",
             "## Purpose\nfresh.\n## Exports\nf\n## Design\nC.",
             category="reference",
-            opts=WikiAddOptions(slug="proj-mod-fresh", upsert=True, directory_context=_REPO_DIR),
+            opts=WikiAddOptions(
+                project_id=_PROJECT, slug="proj-mod-fresh", upsert=True, directory_context=_REPO_DIR
+            ),
         )
         assert result.get("slug") == "proj-mod-fresh"
         assert _storage().get_wiki_page_by_slug("proj-mod-fresh") is not None
@@ -128,13 +142,23 @@ class TestUpsertFalseRejects:
             "Collide First",
             "## Purpose\noriginal.\n## Exports\nc\n## Design\nD.",
             category="reference",
-            opts=WikiAddOptions(slug="proj-mod-collide", upsert=True, directory_context=_REPO_DIR),
+            opts=WikiAddOptions(
+                project_id=_PROJECT,
+                slug="proj-mod-collide",
+                upsert=True,
+                directory_context=_REPO_DIR,
+            ),
         )
         result = _wiki().add(
             "Collide Second",
             "## Purpose\nSHOULD NOT LAND.\n## Exports\nc\n## Design\nE.",
             category="reference",
-            opts=WikiAddOptions(slug="proj-mod-collide", upsert=False, directory_context=_REPO_DIR),
+            opts=WikiAddOptions(
+                project_id=_PROJECT,
+                slug="proj-mod-collide",
+                upsert=False,
+                directory_context=_REPO_DIR,
+            ),
         )
         assert result.get("stored") is False, "upsert=False collision should be rejected"
         assert result.get("reason") == "slug_exists"

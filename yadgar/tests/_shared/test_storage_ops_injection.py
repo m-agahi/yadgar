@@ -12,6 +12,12 @@ import pytest
 
 from yadgar._shared.storage import StorageEngine
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def storage(tmp_path):
@@ -27,6 +33,7 @@ def _sentinel_memory(storage, tag="sentinel"):
         {
             "content": "canary — must not be deleted",
             "directory_context": "/test",
+            "project_id": _PROJECT,
             "tags": [tag],
         }
     )
@@ -114,6 +121,7 @@ class TestEngramSlotInsertBind:
             {
                 "content": "Memory with $id and $content tokens — must not corrupt",
                 "directory_context": "/test",
+                "project_id": _PROJECT,
                 "tags": ["dollar-token-test"],
             }
         )
@@ -155,6 +163,7 @@ class TestMemoryContentInjection:
             {
                 "content": content,
                 "directory_context": "/test",
+                "project_id": _PROJECT,
                 "tags": ["injection-test"],
             }
         )
@@ -169,6 +178,7 @@ class TestMemoryContentInjection:
             {
                 "content": content,
                 "directory_context": "/test",
+                "project_id": _PROJECT,
                 "tags": ["injection-test"],
             }
         )
@@ -185,6 +195,7 @@ class TestMemoryContentInjection:
             {
                 "content": evil_content,
                 "directory_context": "/test",
+                "project_id": _PROJECT,
                 "tags": ["injection-test"],
             }
         )
@@ -203,6 +214,7 @@ class TestMemoryContentInjection:
             {
                 "content": content,
                 "directory_context": "/test",
+                "project_id": _PROJECT,
                 "tags": ["surrogate-pair-test"],
             }
         )
@@ -218,6 +230,7 @@ class TestMemoryContentInjection:
                 {
                     "content": f"canary {i}",
                     "directory_context": "/test",
+                    "project_id": _PROJECT,
                     "tags": ["canary"],
                 }
             )

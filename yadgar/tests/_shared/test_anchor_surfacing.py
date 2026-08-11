@@ -23,6 +23,12 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.restoration.checkpoint_restore import CheckpointRestore
 from yadgar._shared.storage import StorageEngine
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 # ── fixtures ────────────────────────────────────────────────────────────────
 
 
@@ -62,6 +68,7 @@ def _seed_anchor(
         "heat": heat,
         "is_protected": True,
         "is_stale": False,
+        "project_id": _PROJECT,
     }
     if valid_until is not None:
         data["valid_until"] = valid_until
