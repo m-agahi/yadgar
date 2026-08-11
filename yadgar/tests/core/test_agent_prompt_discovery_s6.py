@@ -298,6 +298,7 @@ class TestBC_S6_KillGate:
             type="wiki",
             tags=["agent-prompt"],
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         assert results == [] or all("agent-prompt" not in (r.get("tags") or []) for r in results), (
             f"flag-off tagged recall must be inert, got: {results}"
@@ -311,6 +312,7 @@ class TestBC_S6_KillGate:
             type="wiki",
             tags=["agent-prompt"],
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         assert results, "flag-on tagged recall must return the agent-prompt page"
         assert any("agent-prompt" in (r.get("tags") or []) for r in results)

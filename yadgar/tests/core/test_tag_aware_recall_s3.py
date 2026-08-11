@@ -18,6 +18,7 @@ import sys
 
 import pytest
 
+from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server  # noqa: E402
 from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
@@ -72,6 +73,7 @@ def _add_unrelated_pages(count: int = 40) -> None:
                 "covers indexing, partitioning, and query planning details."
             ),
             category="reference",
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
         )
 
 
@@ -301,6 +303,7 @@ class TestBC_S3_Noops:
             title="Normal reference page",
             content="This page documents the project architecture and module layout.",
             category="reference",
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
         )
 
         results = _recall_fn()(
@@ -325,6 +328,7 @@ class TestBC_S3_Noops:
             title="Normal reference page",
             content="This page documents the project architecture and module layout.",
             category="reference",
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
         )
 
         results = _recall_fn()(
