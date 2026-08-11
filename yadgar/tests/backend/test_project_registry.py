@@ -11,7 +11,8 @@ Tests pin four properties separately so a regression localises:
   * unknown project_id → error raised
   * known project_id → no raise, no DML issued
   * NEVER inserts into the ``project`` table (no INSERT/UPDATE/DELETE)
-  * SQL storage absent → guard is a no-op (registry table absent too)
+  * SQL storage absent → guard RAISES (C6 inverted this: a silent pass
+    made the guard a no-op on exactly the deployments that need it)
 """
 
 from __future__ import annotations
@@ -172,17 +173,43 @@ def test_ensure_project_exists_pulls_engine_from_live_slot(monkeypatch):
         _st._sql_storage = None
 
 
-def test_ensure_project_exists_no_op_when_sql_storage_absent():
-    """Engine #2 absent → the guard is a no-op (the registry doesn't exist yet).
+def test_ensure_project_exists_raises_when_sql_storage_absent():
+    """Engine #2 absent → the guard RAISES. It must never pass silently (C6).
 
-    Engine #2 is opt-in (ADR-0195). On hosts where MariaDB did not come
-    up, the registry table is absent too — and the write path that
-    calls this guard will fail later on its own terms (the FK on
-    ``task.project_id`` will reject the insert). The guard itself
-    cannot enforce a registry that does not exist, so it must pass
-    through rather than raise.
+    INVERTED by C6, deliberately. The previous expectation — pass through,
+    "the caller decides" — made the guard a no-op on exactly the deployments
+    that need it: with no engine, every project_id would clear a check that
+    never ran, and the first symptom would be a phantom namespace with no
+    trail back to the missing dependency.
+
+    Nothing regresses on a real deployment. The compose file composes engine
+    #2 unconditionally, and every ledger write path already refuses with
+    "engine #2 not composed" when the slot is empty — so a host reaching
+    this branch could not write a ``task`` or ``adr`` row anyway. The guard
+    had zero call sites before C6, so the flip breaks no existing caller.
     """
     _st._sql_storage = None
 
-    # Must NOT raise. The caller decides what to do without engine #2.
-    project_registry._ensure_project_exists_sync("m-agahi/yadgar", engine=None)
+    with pytest.raises(project_registry.ProjectRegistryUnavailableError) as caught:
+        project_registry._ensure_project_exists_sync("m-agahi/yadgar", engine=None)
+    assert caught.value.project_id == "m-agahi/yadgar"
+
+
+def test_registry_unavailable_is_not_reported_as_an_unknown_project():
+    """ "Cannot check" must not masquerade as "checked and rejected".
+
+    The two failures have different fixes — repair the deployment vs correct
+    the project_id — and only one of them is the caller's fault. A caller
+    catching ``UnknownProjectError`` to report a typo must not swallow a
+    missing engine.
+    """
+    _st._sql_storage = None
+
+    with pytest.raises(project_registry.ProjectRegistryUnavailableError):
+        project_registry._ensure_project_exists_sync("m-agahi/yadgar", engine=None)
+    try:
+        project_registry._ensure_project_exists_sync("m-agahi/yadgar", engine=None)
+    except project_registry.UnknownProjectError:  # pragma: no cover - the bug
+        pytest.fail("engine-absent was raised as UnknownProjectError")
+    except project_registry.ProjectRegistryUnavailableError:
+        pass

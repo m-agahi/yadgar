@@ -296,8 +296,19 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         ``id`` is the AUTO_INCREMENT PK (ADR-0197) and is the row's
         identifier — ``number`` is retired (§14.1). MySQL's
         ``LAST_INSERT_ID()`` returns it without a follow-up SELECT.
+
+        REGISTRY-GUARDED (C6). ``project_id`` is verified against the
+        ``project`` registry BEFORE the INSERT. The FK alone is not the
+        check: it fires as an opaque SQL error naming a constraint rather
+        than the offending value, and by then the caller has lost the
+        context in which the typo was made.
+
+        Raises:
+            UnknownProjectError: ``project_id`` is not a registered project.
         """
         from sqlalchemy import text  # noqa: PLC0415
+
+        await self.assert_project_registered(project_id)
 
         sql = text(
             "INSERT INTO task "
@@ -475,8 +486,19 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         tier: str | None = None,
         body_slug: str | None = None,
     ) -> dict:
-        """Insert one ``adr`` row, return the inserted PK + inserted fields."""
+        """Insert one ``adr`` row, return the inserted PK + inserted fields.
+
+        REGISTRY-GUARDED (C6) — see ``create_task_row`` for why the FK is not
+        the check. Guarding here rather than in the admin-op wrapper covers
+        ``adr_seed``, which calls this method directly rather than through
+        the ``/admin`` dispatch.
+
+        Raises:
+            UnknownProjectError: ``project_id`` is not a registered project.
+        """
         from sqlalchemy import text  # noqa: PLC0415
+
+        await self.assert_project_registered(project_id)
 
         sql = text(
             "INSERT INTO adr "

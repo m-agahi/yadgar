@@ -38,14 +38,32 @@ write path in Car A's ``_LedgerMixin`` is synchronous. The split:
     async impl under ``asyncio.run``. Use this when the caller has
     no running loop.
 
-ENGINE #2 ABSENT — NO-OP
-------------------------
+ENGINE #2 ABSENT — RAISES (C6)
+------------------------------
 
-When engine #2 is not composed (``_sql_storage is None``), the
-``project`` table does not exist either — so the registry check
-cannot fail, and we cannot tell "missing" from "present". The guard
-passes through silently; the caller decides what to do without
-engine #2 (carries its own consequences in the write path).
+This branch used to ``return`` silently, on the reasoning that with no
+engine there is no registry and therefore nothing to check. That made
+the guard a NO-OP even once wired: on any deployment without engine #2
+every project_id would pass a "check" that never ran, and the first
+symptom would be a phantom namespace nobody could trace back to a
+missing dependency.
+
+It now raises ``ProjectRegistryUnavailableError`` — a DIFFERENT class
+from ``UnknownProjectError``, because "could not check" and "checked and
+rejected" call for different fixes (repair the deployment vs correct the
+project_id) and only one of them is the caller's fault.
+
+Nothing regresses on a real deployment: the compose file composes engine
+#2 unconditionally, and every ledger write path already returns
+``{"ok": False, "error": "engine #2 not composed"}`` when the slot is
+empty (``admin_exec/ledger.py``), so a host reaching this branch was
+already unable to write a ``task`` or ``adr`` row. This function had
+ZERO call sites before C6, so flipping it breaks no existing caller.
+
+The IN-ENGINE half of the guard —
+``MariaStorageEngine.assert_project_registered`` — cannot reach this
+case at all: it is dispatched through ``self``, so an engine that does
+not exist cannot call it.
 """
 
 from __future__ import annotations
@@ -83,6 +101,9 @@ async def _ensure_project_exists_async(project_id: str, *, engine: Any = None) -
 
     Raises:
         UnknownProjectError: when no row matches ``project_id``.
+        ProjectRegistryUnavailableError: when engine #2 is not composed, so
+            the check could not run at all (see module docstring — this used
+            to return silently, which made the guard a no-op).
 
     MUST NOT issue any INSERT/UPDATE/DELETE — this guard is read-only by
     contract (see module docstring).
@@ -90,9 +111,10 @@ async def _ensure_project_exists_async(project_id: str, *, engine: Any = None) -
     if engine is None:
         engine = _live_engine()
     if engine is None:
-        # Engine #2 absent — guard cannot run. Pass through; the caller
-        # owns the consequences.
-        return
+        # Engine #2 absent — the guard CANNOT run. Raising rather than
+        # returning is the whole point: a silent pass here is a guard that
+        # protects nothing on exactly the deployments that need it most.
+        raise ProjectRegistryUnavailableError(project_id)
 
     present = await engine.row_exists(  # type: ignore[attr-defined]
         table="project", key_column="key", key_value=project_id

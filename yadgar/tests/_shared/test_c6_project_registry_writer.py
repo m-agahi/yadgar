@@ -237,7 +237,13 @@ class _FakeConn:
         if self.raise_on_execute is not None:
             raise self.raise_on_execute
         self.executed.append((str(sql), params))
-        return None
+        return _FakeResult()
+
+
+class _FakeResult:
+    """The one attribute the ledger INSERT paths read off a result."""
+
+    lastrowid = 1
 
 
 class _FakeEngine:
@@ -361,3 +367,56 @@ async def test_assert_project_registered_passes_for_a_known_key():
 
     engine.row_exists = _row_exists
     await engine.assert_project_registered("m-agahi/yadgar")
+
+
+# ── the guard is wired into every project_id-stamping write (C6) ─────────────
+
+
+@pytest.mark.parametrize("method", ["create_task_row", "create_adr_row"])
+@pytest.mark.asyncio
+async def test_stamping_writes_check_the_registry_before_inserting(method):
+    """An unregistered project_id is REJECTED before the INSERT is issued.
+
+    The FK alone is not the check: it fires as an opaque constraint error
+    naming neither the offending value nor the call site, and by then the
+    caller has lost the context in which the typo was made.
+
+    Guarding inside the engine method rather than in the admin-op wrapper is
+    what covers the two callers that reach the engine directly — ``adr_seed``
+    and ``seed`` — rather than through the ``/admin`` dispatch.
+    """
+    conn = _FakeConn()
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        return False
+
+    engine.row_exists = _row_exists
+
+    with pytest.raises(UnknownProjectError) as caught:
+        await getattr(engine, method)(project_id="m-agahi/typo", title="t")
+    assert caught.value.project_id == "m-agahi/typo"
+    assert conn.executed == [], "the INSERT was issued despite an unknown project_id"
+
+
+@pytest.mark.parametrize("method", ["create_task_row", "create_adr_row"])
+@pytest.mark.asyncio
+async def test_stamping_writes_proceed_for_a_registered_project(method):
+    """A registered project_id passes the guard and the INSERT runs.
+
+    The other half of "the guard cannot brick writes": once the registry is
+    seeded — which the runbook orders BEFORE any agent use — the guard is
+    invisible.
+    """
+    conn = _FakeConn()
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        return True
+
+    engine.row_exists = _row_exists
+
+    await getattr(engine, method)(project_id="m-agahi/yadgar", title="t")
+    assert len(conn.executed) == 1
