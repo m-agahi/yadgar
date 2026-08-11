@@ -1326,17 +1326,42 @@ def flush_queue():
     return _flush
 
 
-def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
+def _row_in_scope(row: dict, scope: str | None) -> bool:
+    """True when *row* belongs to the project the caller named.
+
+    C10 (f): the scope key on a memory row is ``project_id``. When the caller
+    named no project the row cannot be disambiguated by scope, so content alone
+    decides — the same latitude the old directory match gave a caller that
+    passed the directory it happened to be in.
+    """
+    if not scope:
+        return True
+    return row.get("project_id") == scope
+
+
+def memorize_sync(
+    content: str, context: str | None = None, tags: list | None = None, **kwargs
+) -> dict:
     """Call memorize(), flush the queue, then return the stored memory dict with 'id'.
 
     Drop-in replacement for tests that previously relied on memorize() returning
     the full memory dict synchronously. After v4.4 the fast path returns
     {stored, queued, queue_id}; this helper flushes the drainer and fetches
     the memory so callers get a dict with 'id', 'content', 'heat', etc.
+
+    C10 (f) (0047 PR#40 §5): the read-back used to match
+    ``row["directory_context"] == context``. That is no longer true of any row
+    memorize writes — ``directory_context`` is stamped from the resolved
+    ``project_id`` and ``context`` is an optional staleness path. Left as it
+    was, every scan fell through and the helper returned the queued envelope,
+    surfacing as ``KeyError: 'id'`` in ~20 behavioural tests. The match is now
+    content + the SCOPE key the caller named (``project=``), which is what
+    "the row this call wrote" actually means after the split.
     """
     from yadgar.core import server as _s
 
     result = _s.memorize(content, context, tags, **kwargs)
+    _scope = kwargs.get("project")
     # Early-reject paths return synchronously without queuing
     if not result.get("queued"):
         return result
@@ -1349,7 +1374,7 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
         for row in rows:
-            if row.get("content") == content and row.get("directory_context") == context:
+            if row.get("content") == content and _row_in_scope(row, _scope):
                 row.pop("embedding", None)
                 return row
     except Exception:
@@ -1359,7 +1384,7 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
         for row in recent:
-            if row.get("content") == content and row.get("directory_context") == context:
+            if row.get("content") == content and _row_in_scope(row, _scope):
                 row.pop("embedding", None)
                 return row
     except Exception:
@@ -1372,7 +1397,7 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
         for row in recent:
             stored = row.get("content", "")
-            if content in stored and row.get("directory_context") == context:
+            if content in stored and _row_in_scope(row, _scope):
                 row.pop("embedding", None)
                 return row
     except Exception:

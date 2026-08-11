@@ -147,8 +147,11 @@ def _validate_gate_and_policy(ctx: MemorizeContext) -> dict | None:
 
     # Write-path policy rules
     if _st._rules_engine is not None:
+        # C10 (f): the rules engine's context parameter is non-optional;
+        # ``ctx.context`` is optional now. Coerce rather than skip so a policy
+        # keyed on content or tags still fires for a context-less write.
         wp_blocked, wp_reason, wp_modified = _st._rules_engine.check_write_policy(
-            ctx.content, ctx.context, ctx.tags
+            ctx.content, ctx.context or "", ctx.tags
         )
         if wp_blocked:
             return {"stored": False, "reason": f"blocked_by_policy: {wp_reason}"}
