@@ -74,7 +74,9 @@ class _ApplyMixin:
 
             run_memorize_replay(
                 content=p["content"],
-                context=p["context"],
+                # C10 (f): ``context`` is optional now — a payload without one is
+                # valid, not malformed, so this must not KeyError.
+                context=p.get("context"),
                 tags=p.get("tags", []),
                 is_protected=p.get("is_protected", False),
                 provenance_agent=p.get("provenance_agent"),

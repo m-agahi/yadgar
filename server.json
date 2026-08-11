@@ -7,8 +7,8 @@
     "url": "https://github.com/m-agahi/yadgar",
     "source": "github"
   },
-  "version": "5.181.21",
-  "backend_version": "5.72.21",
+  "version": "5.181.24",
+  "backend_version": "5.72.24",
   "remotes": [
     {
       "type": "streamable-http",

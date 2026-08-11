@@ -33,8 +33,11 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
 
     # Predictive coding write gate — FIRST check before any storage
     if _st._write_gate is not None:
+        # C10 (f): ``should_store``/``would_reject_at``/``compute_surprise``
+        # all name this parameter ``project_id`` (C9b renamed them) while still
+        # being handed ``ctx.context``. Pass the scope key they ask for.
         should_store, surprisal, reason = _st._write_gate.should_store(
-            ctx.content, ctx.context, ctx.tags
+            ctx.content, ctx.project_id, ctx.tags
         )
         # Shadow mode: capture gate's surprisal (distinct from thermo ctx.surprise).
         # Pass the already-computed surprisal to would_reject_at() to avoid a second
@@ -42,7 +45,7 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
         ctx.gate_surprisal = surprisal
         ctx.would_reject = _st._write_gate.would_reject_at(
             ctx.content,
-            ctx.context,
+            ctx.project_id,
             ctx.tags,
             settings.WRITE_GATE_SHADOW_THRESHOLD,
             surprisal=surprisal,
@@ -67,8 +70,12 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
     # Generate contextual prefix for richer embedding semantics
     retriever = _st._retriever
     if retriever is not None and settings.CONTEXTUAL_PREFIX_ENABLED:
+        # C10 (f): this one really does want a PATH — it renders
+        # "[Project: <basename>] [Directory: <dir>]" into the embedding text.
+        # Fall back to the project_id only when no path was supplied, so an
+        # existing call's embedding text is byte-identical.
         ctx.contextual_prefix = retriever.generate_contextual_prefix(
-            ctx.content, ctx.context, ctx.tags, datetime.now(UTC)
+            ctx.content, ctx.context or ctx.project_id or "", ctx.tags, datetime.now(UTC)
         )
 
     # Embed with contextual prefix prepended if available
@@ -78,7 +85,7 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
     # Compute thermodynamic scores
     thermo = _st._thermo
     if thermo is not None:
-        ctx.surprise = thermo.compute_surprise(ctx.content, ctx.context)
+        ctx.surprise = thermo.compute_surprise(ctx.content, ctx.project_id)
         ctx.importance = thermo.compute_importance(ctx.content, ctx.tags)
         ctx.valence = thermo.compute_valence(ctx.content)
         ctx.initial_heat = thermo.apply_surprise_boost(1.0, ctx.surprise)

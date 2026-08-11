@@ -63,6 +63,9 @@ def _bump_cache_epoch(ctx: MemorizeContext) -> None:
     try:
         from yadgar._shared.server_helpers import _bump_epoch_for_context  # noqa: PLC0415
 
+        # C10 (f): the project_brief cache is keyed on the caller's DIRECTORY
+        # path, not on project_id, so this deliberately keeps passing the path.
+        # Absent path → nothing to invalidate (the helper is fully guarded).
         _bump_epoch_for_context(ctx.context)
     except Exception:  # pragma: no cover - must never break writes
         pass
@@ -81,9 +84,14 @@ def _run_prospective(ctx: MemorizeContext, storage) -> None:
     """Auto-create triggers and check existing triggers."""
     if _st._prospective is None:
         return
-    _st._prospective.auto_create_from_content(ctx.content, ctx.context)
+    # C10 (f): ``auto_create_from_content``'s second parameter is named
+    # ``project_id`` (C9b) and the trigger dict's key literally IS
+    # ``project_id`` — both were being fed ``ctx.context``. That mislabel is the
+    # clearest single instance of the two-keys-for-one-concept state this car
+    # deletes: the key said project_id, the value was a directory.
+    _st._prospective.auto_create_from_content(ctx.content, ctx.project_id)
     trigger_context = {
-        "project_id": ctx.context,
+        "project_id": ctx.project_id,
         "content": ctx.content,
         "entities": ctx.tags,
         "current_time": datetime.now(UTC),
@@ -117,7 +125,10 @@ def _run_zero_gap(ctx: MemorizeContext, storage, buffer, settings) -> None:
 def _zero_gap_1_write_gate(ctx: MemorizeContext) -> None:
     """Record store in write gate for task continuity tracking."""
     if _st._write_gate is not None:
-        _st._write_gate.record_stored(ctx.content, ctx.context, ctx.embedding)
+        # C10 (f): ``record_stored``'s parameter is named ``project_id`` (C9b);
+        # it must see the same key ``should_store`` was asked with in
+        # phase_embed, or the gate's continuity model splits across two keys.
+        _st._write_gate.record_stored(ctx.content, ctx.project_id, ctx.embedding)
 
 
 @observe(tier="stage")
@@ -161,7 +172,11 @@ def _zero_gap_4_micro_checkpoint(ctx: MemorizeContext, settings) -> None:
     )
     if should_micro:
         try:
-            _st._replay.create_micro_checkpoint(ctx.context, ctx.content, micro_reason)
+            # C10 (f): the ``checkpoint`` table has NO project_id column until
+            # C11, and ``restore(directory)`` reads it by path — so this keeps
+            # passing the path. Substituting the project_id here would mint a
+            # checkpoint row that restore can never find.
+            _st._replay.create_micro_checkpoint(ctx.context or "", ctx.content, micro_reason)
             logger.debug("Micro-checkpoint created: %s", micro_reason)
         except Exception:
             logger.debug("Micro-checkpoint failed")
@@ -172,7 +187,9 @@ def _zero_gap_5_action_stream(ctx: MemorizeContext, buffer) -> None:
     """Action stream: log this memorize operation."""
     if buffer is not None:
         summary = ctx.content[:150].replace("\n", " ")
-        buffer.capture_action("memorize", ctx.context, summary, ctx.curation_action)
+        # C10 (f): feeds ``action_log``, which gets its project_id column in
+        # C11 — path until then, same reasoning as the micro-checkpoint above.
+        buffer.capture_action("memorize", ctx.context or "", summary, ctx.curation_action)
 
 
 @observe(tier="stage")
@@ -242,7 +259,8 @@ def _build_response(ctx: MemorizeContext, storage, settings) -> dict:
                 "heat": memory.get("heat", ctx.initial_heat),
                 "content": ctx.content[:200],
                 "tags": ctx.tags,
-                "directory": ctx.context,
+                # C10 (f): a visualization payload field, not a scope key.
+                "directory": ctx.context or ctx.project_id,
             },
         }
     )

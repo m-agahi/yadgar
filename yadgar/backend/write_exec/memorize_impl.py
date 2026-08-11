@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 @observe(tier="boundary", metric="write_exec.memorize_replay")
 def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     content: str,
-    context: str,
-    tags: list[str],
+    context: str | None = None,
+    tags: list[str] | None = None,
     is_protected: bool = False,
     provenance_agent: str | None = None,
     tier: str | None = None,
@@ -50,6 +50,11 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     the MCP shell. Defaults to "" for backwards compatibility with payloads that
     don't carry it (non-semantic_immortal tiers never set it).
 
+    ``context`` (C10 (f), 0047 PR#40 §5) is an OPTIONAL REAL PATH used for
+    staleness hashing only — it is no longer the scope key and no longer
+    reaches ``directory_context``. A legacy payload that omits it replays
+    fine; it simply records no file hash.
+
     ``project_id`` (C4b, 0047 PR#40 §5) is the enqueue-time stamp resolved by
     the core ``memorize`` tool. It is carried onto ``MemorizeContext`` and
     reaches ``insert_memory`` as its ``caller_value`` through BOTH store
@@ -62,7 +67,7 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     ctx = MemorizeContext(
         content=content,
         context=context,
-        tags=list(tags),
+        tags=list(tags or []),
         is_protected=is_protected,
         provenance_agent=provenance_agent,
         tier=tier,

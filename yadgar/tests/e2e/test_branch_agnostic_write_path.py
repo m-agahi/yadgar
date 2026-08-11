@@ -122,7 +122,15 @@ class TestWritesSucceedWithoutBranchContext:
             f"memorize must have stored exactly one row for token {token!r}; got {rows}"
         )
         assert rows[0]["id"] is not None
-        assert rows[0]["directory_context"] == PROJECT_DIR
+        # C10 (f) (0047 PR#40 §5): the stamp is the PROJECT, not the path.
+        # ``context`` lost its scoping role — it is now an optional real path
+        # used only for staleness hashing — so ``directory_context`` is written
+        # from the resolved ``project_id``. Asserted as an equality against
+        # PROJECT_ID (not relaxed away) so this still fails if the stamp is
+        # dropped, and so a regression back to the path is caught here too.
+        # ``anchor`` below deliberately still stamps the path: its reader
+        # (``get_anchored_memories_scoped``) has not been re-keyed yet.
+        assert rows[0]["directory_context"] == PROJECT_ID
 
     def test_anchor_stores_a_row(self, e2e_engines, monkeypatch, _e2e_backend_drainer):
         """anchor() previously returned {"error": "missing_branch"} here."""

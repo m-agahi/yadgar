@@ -41,8 +41,8 @@ _VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 @_tool(always_load=True)
 def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
     content: str,
-    context: str,
-    tags: list[str],
+    context: str | None = None,
+    tags: list[str] | None = None,
     is_protected: bool = False,
     provenance_agent: str | None = None,
     tier: str | None = None,
@@ -55,19 +55,42 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
 ) -> dict:
     """Store a new memory with embedding.
 
-    context MUST be the actual working directory path (e.g., '/home/user/projects/myapp'),
-    NOT a description. project_brief() filters by directory path match —
-    descriptive strings will make memories unfindable by project.
+    project is the scope key. ``project`` (or the SessionStart identity) decides
+    which project the memory belongs to, and it is the ONLY thing the stored
+    ``directory_context`` is stamped from.
+
+    context is an OPTIONAL REAL FILE PATH, used for nothing but staleness
+    detection. Supply it when the memory is *about* a specific file and you want
+    the staleness detector to notice when that file changes; omit it otherwise.
+    Omitted (or not a readable file) → no hash is recorded, which is the
+    long-standing best-effort contract. **It is NOT a description and NOT a
+    scope key.**
+
+    C10 (f) (0047 PR#40 §5) split those two roles apart. ``context`` used to be
+    both — the stamp AND the hash input — and its own docstring used to insist
+    it "MUST be the actual working directory path". The live corpus shows that
+    instruction losing: 18 distinct ``directory_context`` values on ``memory``
+    are free-text prose rather than paths (``db_inspect``, 2026-08-10), e.g.
+    ``"debugging opsecrets nixos-quinyx"``. Callers were treating ``context`` as
+    a description because the parameter's name invites it. Splitting the roles
+    is what stops the class; a stricter docstring demonstrably did not. It also
+    removes the two-keys-for-one-concept state ADR-0225 exists to delete —
+    ``memorize`` no longer takes ``project`` AND a directory under another name.
 
     Car M (0047 §7, §16.6): the OPTIONAL ``project=`` parameter is the
     cross-project override. Precedence: ``project`` (override) >
-    ``session_project`` (Car E) > ``directory``-derived (Car A0) >
-    ``"global"`` fallback. When BOTH ``project`` and ``context`` are
-    supplied, ``project`` wins (``context`` stays in the payload as the
-    canonical directory_context — the project_id is the stamp, the path is
-    the directory hint). The non-string / empty guards fire at the type
-    level; the deep registry check lives at the backend write path
-    (`_ensure_project_exists_sync`, §15 / ADR-0078).
+    ``session_project`` (Car E) > raise (C5 deleted the derivation and the
+    ``"global"`` fallback). ``context`` is NOT and never was a resolution
+    source — see ``resolve_effective_project``, where it is accepted only so a
+    supplied-and-ignored path stays observable in the log. The non-string /
+    empty guards fire at the type level; the deep registry check lives at the
+    backend write path (`_ensure_project_exists_sync`, §15 / ADR-0078).
+
+    tags carries a ``None`` default purely as a consequence of ``context``
+    becoming optional in front of it: Python forbids a required parameter
+    behind a defaulted one, and reordering the frozen MCP signature would break
+    every positional caller. ``None`` is normalised to ``[]`` — the same value
+    an explicit empty list produces.
 
     C4b (0047 PR#40 §5): the RESOLVED project_id — override or not — is
     stamped on the enqueued payload (``payload["project_id"]``) on every
@@ -110,7 +133,7 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
     ctx = MemorizeContext(
         content=content,
         context=context,
-        tags=list(tags),
+        tags=list(tags or []),
         is_protected=is_protected,
         provenance_agent=provenance_agent,
         tier=tier,
@@ -131,15 +154,21 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
     # the SubagentStop footer path too (it calls this same tool).
     # ADR-0215: the branch half of the pair is discarded — nothing downstream
     # reads it any more.
-    ctx.context = normalize_write_context(ctx.context)
+    # C10 (f): guarded on truthiness now that ``context`` is optional. Behaviour
+    # for a supplied context is byte-identical; ``None`` skips the seam rather
+    # than pushing it through a normaliser that has nothing to normalise.
+    if ctx.context:
+        ctx.context = normalize_write_context(ctx.context)
 
     # Car M (0047 §7, §16.6): resolve the effective project_id BEFORE the
     # enqueue so the wire payload can carry it as ``project_id`` (drainer-side
-    # routing). The ``context`` (canonicalised directory path) stays as-is —
-    # the project_id is the namespace stamp, the directory is the file-system
-    # hint used for recall scoping. Type-level guard runs here so a malformed
-    # ``project=`` surfaces as InvalidProjectOverrideError, mapped to the
-    # tool's error envelope so the MCP boundary never raises.
+    # routing). Type-level guard runs here so a malformed ``project=`` surfaces
+    # as InvalidProjectOverrideError, mapped to the tool's error envelope so
+    # the MCP boundary never raises.
+    #
+    # C10 (f): ``directory=`` is still handed the context so that a caller who
+    # supplies BOTH gets the ignore logged — it is NOT a resolution tier (C5
+    # deleted that), so passing it confers no scoping role on ``context``.
     try:
         effective_project_id = resolve_effective_project(
             project=project,
