@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.core import server
 from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
@@ -131,7 +132,7 @@ def _run_backend_recall(query: str) -> list[dict]:
         query=query,
         max_results=5,
         min_heat=0.0,
-        project_id=TEST_PROJECT_ID,
+        recall_scope=RecallScope(project_id=TEST_PROJECT_ID),
         type_filter="all",
         tags=None,
         profile=None,

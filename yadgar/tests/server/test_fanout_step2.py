@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import yadgar._shared.runtime.state as _st
 import yadgar.core.server.tools.recall as _recall_symbol  # noqa: F401 — imported for side-effects
+from yadgar._shared.storage.directory import RecallScope
 
 _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
@@ -171,7 +172,7 @@ class TestFanoutRecall:
                 query=query,
                 max_results=max_results,
                 min_heat=0.0,
-                project_id="/tmp/test",
+                recall_scope=RecallScope(project_id="/tmp/test"),
                 **kw,
             )
 

@@ -15,6 +15,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from yadgar._shared.storage.directory import RecallScope
+
 _DIR = "/home/test/yadgar-project"
 
 
@@ -298,7 +300,7 @@ class TestPostmortemBoostInFanout:
             query="what happened during the deploy rollback",
             max_results=5,
             min_heat=0.0,
-            project_id=_DIR,
+            recall_scope=RecallScope(project_id=_DIR),
         )
 
         pm_result = next((r for r in results if r.get("id") == 2001), None)
@@ -348,7 +350,7 @@ class TestPostmortemBoostInFanout:
             query="what happened when we merge the deploy",
             max_results=5,
             min_heat=0.0,
-            project_id=_DIR,
+            recall_scope=RecallScope(project_id=_DIR),
         )
 
         r = next((x for x in results if x.get("id") == 2003), None)
@@ -380,7 +382,7 @@ class TestPostmortemBoostInFanout:
             query="show me architecture decisions about the database",
             max_results=5,
             min_heat=0.0,
-            project_id=_DIR,
+            recall_scope=RecallScope(project_id=_DIR),
         )
 
         r = next((x for x in results if x.get("id") == 2004), None)

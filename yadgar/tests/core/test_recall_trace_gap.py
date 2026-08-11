@@ -39,6 +39,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from yadgar._shared.storage.directory import RecallScope
+
 # ---------------------------------------------------------------------------
 # In-memory OTel harness (mirrors test_stage_spans.py::span_exporter)
 # ---------------------------------------------------------------------------
@@ -263,7 +265,7 @@ def test_fanout_fuse_span_emits_on_multi_provider(span_exporter):
             query="test",
             max_results=5,
             min_heat=0.0,
-            project_id="/tmp/test",
+            recall_scope=RecallScope(project_id="/tmp/test"),
         )
 
     _assert_child_of(span_exporter, "recall.fanout.fuse", "tool.recall")
@@ -300,7 +302,7 @@ def test_fanout_fuse_span_absent_on_single_provider(span_exporter):
             query="test",
             max_results=5,
             min_heat=0.0,
-            project_id="/tmp/test",
+            recall_scope=RecallScope(project_id="/tmp/test"),
         )
 
     assert "recall.fanout.fuse" not in _span_names(span_exporter)
