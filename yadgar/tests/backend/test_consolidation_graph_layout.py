@@ -16,6 +16,11 @@ from yadgar.backend.consolidation import ConsolidationScheduler
 # T2 Car E3: the layout precompute moved into the backend consolidation cycle.
 from yadgar.backend.consolidation.service import _maybe_precompute_graph_layout
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture(scope="module")
 def storage(module_storage):
@@ -43,10 +48,22 @@ def _settings(tmp_path, galaxy=True):
 def _seed_graph(storage):
     """A couple of memories so GraphAPI returns a non-empty node set."""
     storage.insert_memory(
-        {"content": "alpha node", "directory_context": "/p", "tags": ["t"], "heat": 1.0}
+        {
+            "project_id": _TEST_PROJECT,
+            "content": "alpha node",
+            "directory_context": "/p",
+            "tags": ["t"],
+            "heat": 1.0,
+        }
     )
     storage.insert_memory(
-        {"content": "beta node", "directory_context": "/p", "tags": ["t"], "heat": 0.9}
+        {
+            "project_id": _TEST_PROJECT,
+            "content": "beta node",
+            "directory_context": "/p",
+            "tags": ["t"],
+            "heat": 0.9,
+        }
     )
 
 
@@ -102,7 +119,13 @@ def test_signature_change_recomputes(tmp_path, storage):
     first = storage.get_graph_layout_cache()
     # Mutate the graph shape.
     storage.insert_memory(
-        {"content": "gamma node", "directory_context": "/p", "tags": ["t"], "heat": 0.8}
+        {
+            "project_id": _TEST_PROJECT,
+            "content": "gamma node",
+            "directory_context": "/p",
+            "tags": ["t"],
+            "heat": 0.8,
+        }
     )
     _maybe_precompute_graph_layout(storage, settings)
     second = storage.get_graph_layout_cache()

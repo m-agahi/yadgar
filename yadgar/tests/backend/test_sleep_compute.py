@@ -75,6 +75,7 @@ class TestDreamReplay:
         vec = _make_embedding(1.0)
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Python FastAPI web server implementation",
                 "embedding": vec,
                 "directory_context": "/project-a",
@@ -83,6 +84,7 @@ class TestDreamReplay:
         )
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Flask HTTP API endpoint design",
                 "embedding": vec,
                 "directory_context": "/project-b",
@@ -103,6 +105,7 @@ class TestDreamReplay:
         """Unrelated memories should not get connected."""
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Database optimization techniques",
                 "embedding": _make_embedding(1.0),
                 "directory_context": "/proj",
@@ -111,6 +114,7 @@ class TestDreamReplay:
         )
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Cooking recipe for pasta",
                 "embedding": _make_embedding(-1.0),
                 "directory_context": "/other",
@@ -132,6 +136,7 @@ class TestDreamReplay:
         vec = _make_embedding(1.0)
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "React component lifecycle hooks",
                 "embedding": vec,
                 "directory_context": "/frontend",
@@ -140,6 +145,7 @@ class TestDreamReplay:
         )
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Vue.js component lifecycle methods",
                 "embedding": vec,
                 "directory_context": "/other-frontend",
@@ -165,6 +171,7 @@ class TestDreamReplay:
         vec = _make_embedding(1.0)
         mid_a = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Memory A",
                 "embedding": vec,
                 "directory_context": "/proj",
@@ -173,6 +180,7 @@ class TestDreamReplay:
         )
         mid_b = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Memory B",
                 "embedding": vec,
                 "directory_context": "/proj",
@@ -275,6 +283,7 @@ class TestClusterSummarization:
         for i in range(5):
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"Memory about import fastapi and yadgar/server.py part {i}",
                     "embedding": vec,
                     "directory_context": "/project",
@@ -317,6 +326,7 @@ class TestReembedStale:
 
         mid1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Old embedding test",
                 "embedding": old_vec,
                 "directory_context": "/proj",
@@ -326,6 +336,7 @@ class TestReembedStale:
         )
         mid2 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Another old embedding",
                 "embedding": old_vec,
                 "directory_context": "/proj",
@@ -349,6 +360,7 @@ class TestReembedStale:
         vec = _make_embedding(1.0)
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Current model memory",
                 "embedding": vec,
                 "directory_context": "/proj",
@@ -373,6 +385,7 @@ class TestMemoryCompression:
         old_time = _old_timestamp(60)
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": long_content,
                 "embedding": _make_embedding(1.0),
                 "directory_context": "/proj",
@@ -393,6 +406,7 @@ class TestMemoryCompression:
         """Recent memories should not be compressed regardless of length."""
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "x " * 600,  # long but recent
                 "embedding": _make_embedding(1.0),
                 "directory_context": "/proj",
@@ -408,6 +422,7 @@ class TestMemoryCompression:
         old_time = _old_timestamp(60)
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Short memory",
                 "embedding": _make_embedding(1.0),
                 "directory_context": "/proj",
@@ -428,6 +443,7 @@ class TestFullSleepCycle:
         for i in range(3):
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"Memory {i} about testing sleep cycle",
                     "embedding": vec,
                     "directory_context": "/proj",
@@ -459,6 +475,11 @@ class TestFullSleepCycle:
 # ── detect_communities bulk-SQL perf tests (v4.4.10) ────────────────────────
 
 import time  # noqa: E402
+
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
 
 
 @pytest.fixture
@@ -578,6 +599,7 @@ def dream_replay_at_scale(tmp_path, settings):
     for i in range(n):
         mem_id = engine.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": f"memory content {i}",
                 "embedding": vec,
                 "tags": [],
@@ -630,6 +652,7 @@ def test_dream_replay_correctness_skips_connected(tmp_path, settings):
     vec = np.ones(384, dtype=np.float32).tobytes()
     mid_a = engine.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "alpha memory",
             "embedding": vec,
             "directory_context": "/proj",
@@ -640,6 +663,7 @@ def test_dream_replay_correctness_skips_connected(tmp_path, settings):
     )
     mid_b = engine.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": "beta memory",
             "embedding": vec,
             "directory_context": "/proj",
@@ -702,6 +726,7 @@ class TestDreamReplayTwoPhase:
         for i in range(n):
             engine.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"c3 test memory {i}",
                     "embedding": vec,
                     "directory_context": "/proj",
@@ -796,6 +821,7 @@ class TestDreamReplayTwoPhase:
         vec = np.ones(384, dtype=np.float32).tobytes()
         engine.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "C3 insight test memory alpha",
                 "embedding": vec,
                 "directory_context": "/proj",
@@ -804,6 +830,7 @@ class TestDreamReplayTwoPhase:
         )
         engine.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "C3 insight test memory beta",
                 "embedding": vec,
                 "directory_context": "/proj",

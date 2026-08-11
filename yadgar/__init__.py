@@ -18,4 +18,4 @@ except PackageNotFoundError:
 # __version__ = yadgar core (pip package version, set via importlib.metadata above).
 # BACKEND_VERSION = independent backend image track (docker.io/openfantasy/yadgar-backend).
 # Bumping either requires updating CHANGELOG + nix module sync (nix tracks both manually via release notes).
-BACKEND_VERSION = "5.72.12"  # C13 (0047 PR#40) — _shared test sweep for the flip.
+BACKEND_VERSION = "5.72.13"  # C5 (0047 PR#40) — fail-loud flip: no fallback identity.

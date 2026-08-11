@@ -15,12 +15,19 @@ each one separately:
   * CLI → **non-zero exit** carrying the actionable mint message.
   * migrations → derive **nothing**.
 
-Every writer here is additionally asserted against the mint: the classifier is
-patched to raise, and the write must neither raise nor land ``"global"`` /
-``"unresolved"`` / ``local/<basename>``. Both halves matter — tier 2 of
-``_resolve_project_id_for_write`` returns ``"global"`` for a sentinel
-``directory_context`` WITHOUT ever touching the mint, so a test asserting only
-"did not raise" passes green while the sentinel is still being written.
+Every writer here is additionally asserted against the mint: the write must
+neither raise nor land ``"global"`` / ``"unresolved"`` / ``local/<basename>``.
+Both halves matter — tier 2 of ``_resolve_project_id_for_write`` used to return
+``"global"`` for a sentinel ``directory_context`` WITHOUT ever touching the
+mint, so a test asserting only "did not raise" passes green while the sentinel
+is still being written.
+
+**C13: the container-side half of that guard changes shape.** C4 patched
+``derive_project_id`` to raise; C5 deleted the symbol, so the patch is an
+``AttributeError`` at ``__enter__``. ``identity_mint_absent()`` replaces it at
+the same lines with the stronger claim — the mint does not exist to be reached
+(``_mint_absent.py``). The HOST-side mint (``core/hooks/_identity_mint``)
+survives by design and is still patched directly, below.
 """
 
 from __future__ import annotations
@@ -30,8 +37,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.storage._project_id_writer import resolve_project_id_from_rows
 from yadgar.backend.consolidation import cleanup
+from yadgar.tests.backend._mint_absent import identity_mint_absent
 
 #: Values no writer may ever stamp as a project_id after C4 (§1.4 / ADR-0227).
 FORBIDDEN = ("global", "unresolved")
@@ -191,7 +200,7 @@ class TestProcessActionLogSkipAndCount:
         storage = _FakeStorage()
         rows = [_action_row(i, "m-agahi/yadgar") for i in (1, 2, 3)]
         obj = _build_cleanup(storage, rows)
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_mint):
+        with identity_mint_absent():
             obj._process_action_log()
         assert_not_a_sentinel(storage.inserts[0]["project_id"])
 
@@ -202,7 +211,7 @@ class TestTryStoreActionSummaryTakesAnExplicitValue:
     def test_explicit_project_id_is_stamped(self) -> None:
         storage = _FakeStorage()
         obj = _build_cleanup(storage, [])
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_mint):
+        with identity_mint_absent():
             assert (
                 obj._try_store_action_summary(
                     content="summary content",
@@ -297,7 +306,7 @@ class TestClsPromotionSkipsUnnameableClusters:
             {"id": 2, "directory_context": "/home/max/git/yadgar", "project_id": "m-agahi/yadgar"},
         ]
         obj, storage = self._build(cluster)
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_mint):
+        with identity_mint_absent():
             assert obj._promote_pattern({"memories": cluster}) is True
         assert storage.inserts[0]["project_id"] == "m-agahi/yadgar"
         assert_not_a_sentinel(storage.inserts[0]["project_id"])
@@ -308,7 +317,7 @@ class TestClsPromotionSkipsUnnameableClusters:
             {"id": 2, "directory_context": "/b", "project_id": "m-agahi/other"},
         ]
         obj, storage = self._build(cluster)
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_mint):
+        with identity_mint_absent():
             assert obj._promote_pattern({"memories": cluster}) is False
         assert storage.inserts == [], "a cross-project cluster was collapsed to a sentinel"
 
@@ -328,7 +337,7 @@ class TestMemifyDeriveSkipsUnnameablePairs:
         embeddings.encode.return_value = b""
         stats = {"derived": 0}
         entity_map = {10: {"id": 10, "name": "alpha"}, 11: {"id": 11, "name": "beta"}}
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_mint):
+        with identity_mint_absent():
             out = _collect_derive_inserts(
                 storage, embeddings, stats, entity_map, set(), source_mems
             )
@@ -374,7 +383,7 @@ class TestDreamInsightSkipsUnnameablePairs:
         obj, storage = self._build()
         a = {"id": 1, "content": "a" * 20, "project_id": "m-agahi/yadgar"}
         b = {"id": 2, "content": "b" * 20, "project_id": "m-agahi/yadgar"}
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_mint):
+        with identity_mint_absent():
             obj._create_dream_insight(a, b)
         assert storage.inserts[0]["project_id"] == "m-agahi/yadgar"
         assert_not_a_sentinel(storage.inserts[0]["project_id"])
@@ -383,7 +392,7 @@ class TestDreamInsightSkipsUnnameablePairs:
         obj, storage = self._build()
         a = {"id": 1, "content": "a" * 20, "project_id": "m-agahi/yadgar"}
         b = {"id": 2, "content": "b" * 20, "project_id": "m-agahi/other"}
-        with patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_mint):
+        with identity_mint_absent():
             obj._create_dream_insight(a, b)
         assert storage.inserts == []
 
@@ -427,18 +436,22 @@ class TestDrainerRejectsMissingProjectId:
         record = _wiki_record(project_id=sentinel)
         assert (_DLQMixin()._validate_wiki_add(record) or "").startswith("missing_project_id")
 
-    def test_global_is_still_accepted_until_c5(self) -> None:
-        """``"global"`` is a LIVE scope value, not yet a forbidden sentinel.
+    def test_global_is_rejected_now_that_c5_landed(self) -> None:
+        """C5 flipped this one: ``"global"`` is a forbidden sentinel, not a scope.
 
-        ``wiki_add(directory="global")`` is supported today and
-        ``resolve_effective_project`` answers it with ``GLOBAL_FALLBACK``.
-        Rejecting it here would DLQ every global-scoped page write a full car
-        before C5 deletes the tier that produces it. C5 adds it to
-        ``_SENTINEL_PROJECT_IDS`` in the same edit as that deletion.
+        Was ``test_global_is_still_accepted_until_c5``, asserting ``is None``.
+        C4 left the value accepted DELIBERATELY and said so: while
+        ``resolve_effective_project`` still answered every unresolvable tree
+        with ``GLOBAL_FALLBACK``, rejecting it here would have DLQ'd every
+        legitimate global-scoped write a full car early. C5 deleted the tier
+        that produced it and added ``"global"`` to ``_SENTINEL_PROJECT_IDS`` in
+        the same edit — the two changes are a matched pair, and this assertion
+        is where doing one without the other would show up.
         """
         from yadgar.backend.queue_drainer.dlq import _DLQMixin
 
-        assert _DLQMixin()._validate_wiki_add(_wiki_record(project_id="global")) is None
+        reason = _DLQMixin()._validate_wiki_add(_wiki_record(project_id="global"))
+        assert (reason or "").startswith("missing_project_id")
 
     def test_adr_body_page_carries_the_ledger_project_id(self) -> None:
         """The ADR branch pre-stamps, so the two engines agree on one key.
@@ -479,8 +492,31 @@ class TestDrainerRejectsMissingProjectId:
         assert captured["project_id"] == "m-agahi/yadgar"
         assert_not_a_sentinel(captured["project_id"])
 
+    def _canonical_payload(self, **over: Any) -> dict:
+        payload = {
+            "page_type": "task_list",
+            "slug": "s",
+            "title": "t",
+            "content": "c",
+            "category": "reference",
+            "wiki_schema_version": 2,
+            "directory_context": "/home/max/git/yadgar",
+        }
+        payload.update(over)
+        return payload
+
     def test_the_canonical_writers_stamp_so_internal_is_not_a_hole(self) -> None:
-        """``_internal=True`` does not exempt project_id — the writers stamp instead."""
+        """``_internal=True`` does not exempt project_id — the writers stamp instead.
+
+        **C13: where the stamp COMES FROM moved, so the double moved with it.**
+        C4 let ``_wiki_write_canonical`` resolve the value itself, and this test
+        patched ``resolve_effective_project`` to supply it. C5 deleted that
+        resolve: with no derivation tier there is nothing left to resolve from,
+        so the sanctioned caller must arrive with the stamp already on the
+        payload. The property under test — an ``_internal`` payload still
+        satisfies the drainer's gate — is unchanged and still asserted; only the
+        source of the value differs.
+        """
         from yadgar.core.server.tools import wiki as wiki_tools
 
         enqueued: dict = {}
@@ -490,20 +526,9 @@ class TestDrainerRejectsMissingProjectId:
                 enqueued.update(payload)
                 return "id"
 
-        with (
-            patch.object(wiki_tools, "_get_file_queue", return_value=_FQ()),
-            patch.object(wiki_tools, "resolve_effective_project", return_value="m-agahi/yadgar"),
-        ):
+        with patch.object(wiki_tools, "_get_file_queue", return_value=_FQ()):
             wiki_tools._wiki_write_canonical(
-                {
-                    "page_type": "task_list",
-                    "slug": "s",
-                    "title": "t",
-                    "content": "c",
-                    "category": "reference",
-                    "wiki_schema_version": 2,
-                    "directory_context": "/home/max/git/yadgar",
-                },
+                self._canonical_payload(project_id="m-agahi/yadgar"),
                 wait=False,
             )
         assert enqueued["_internal"] is True
@@ -512,6 +537,31 @@ class TestDrainerRejectsMissingProjectId:
         from yadgar.backend.queue_drainer.dlq import _DLQMixin
 
         assert _DLQMixin()._validate_wiki_add({"op": "wiki_add", "payload": enqueued}) is None
+
+    def test_the_canonical_writer_refuses_an_unstamped_payload(self) -> None:
+        """The other half: C5 made the missing stamp a raise, not a resolve.
+
+        Without this, the test above would pass against a
+        ``_wiki_write_canonical`` that quietly re-introduced a fallback — the
+        exact regression ADR-0227 exists to prevent. Nothing is enqueued.
+        """
+        from yadgar.core.server.tools import wiki as wiki_tools
+
+        enqueued: list[dict] = []
+
+        class _FQ:
+            def enqueue(self, op: str, payload: dict) -> str:  # noqa: ARG002
+                enqueued.append(payload)
+                return "id"
+
+        with (
+            patch.object(wiki_tools, "_get_file_queue", return_value=_FQ()),
+            pytest.raises(UnresolvedProjectError) as exc,
+        ):
+            wiki_tools._wiki_write_canonical(self._canonical_payload(), wait=False)
+
+        assert exc.value.payload["error"] == "unresolved_project"
+        assert enqueued == []
 
     def test_reason_maps_to_the_taxonomy_entry(self) -> None:
         from yadgar.backend.queue_drainer import QueueDrainer
@@ -544,7 +594,7 @@ class TestApplyDoesNotMint:
                 side_effect=lambda p: captured.update(p),
                 create=True,
             ),
-            patch("yadgar.core.identity.derive_project_id", side_effect=_exploding_mint),
+            identity_mint_absent(),
         ):
             apply_obj._apply_inner(  # type: ignore[attr-defined]
                 {

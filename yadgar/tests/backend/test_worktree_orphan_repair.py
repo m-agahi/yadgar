@@ -19,6 +19,11 @@ import pytest
 from yadgar.backend.admin_exec.invariants import _run_check_invariants
 from yadgar.core import server
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 _MARKER = "/.claude/worktrees/"
 
 
@@ -33,7 +38,11 @@ def _engines(tmp_path):
 def _insert(directory_context: str, branch: str | None) -> int:
     storage = server._get_storage()
     return storage.insert_memory(
-        {"content": f"orphan test row {directory_context}", "directory_context": directory_context},
+        {
+            "project_id": _TEST_PROJECT,
+            "content": f"orphan test row {directory_context}",
+            "directory_context": directory_context,
+        },
         branch=branch,
     )
 

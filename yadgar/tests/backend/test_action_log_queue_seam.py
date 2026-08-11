@@ -17,6 +17,10 @@ from unittest.mock import MagicMock
 from yadgar._shared.file_queue.queue import FileQueue
 from yadgar.backend.queue_drainer import QueueDrainer
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 # ---------------------------------------------------------------------------
 # Backend replay impl
 # ---------------------------------------------------------------------------
@@ -37,15 +41,20 @@ class TestRunActionLogReplay:
                 "directory": "/proj/dir",
                 "session_id": "sess-1",
                 "timestamp": "2026-07-10T00:00:00+00:00",
+                "project_id": _TEST_PROJECT,
             }
         )
 
+        # C13: ``project_id`` joins the kwargs the replay forwards. C4 made it
+        # part of the row and this exact-call assertion is the seam's contract,
+        # so it names the value rather than letting the default "" slip past.
         storage.insert_action_log.assert_called_once_with(
             tool_name="Write",
             tool_input_summary="edited file",
             directory="/proj/dir",
             session_id="sess-1",
             timestamp="2026-07-10T00:00:00+00:00",
+            project_id=_TEST_PROJECT,
         )
 
     def test_missing_timestamp_defaults_to_now(self, monkeypatch):
@@ -85,6 +94,7 @@ class TestDrainerActionLogOp:
                 "directory": "/proj",
                 "session_id": "s-9",
                 "timestamp": "2026-07-10T01:02:03+00:00",
+                "project_id": _TEST_PROJECT,
             },
         )
 
@@ -110,6 +120,7 @@ class TestCmdCaptureEnqueues:
             "summary": "some summary",
             "directory": "/tmp/proj",
             "session": "sess-123",
+            "project": _TEST_PROJECT,
             "db_path": None,
         }
         base.update(over)
@@ -133,6 +144,9 @@ class TestCmdCaptureEnqueues:
         assert record["payload"]["summary"] == "ran tests"
         assert record["payload"]["directory"] == "/tmp/proj"
         assert record["payload"]["session_id"] == "sess-123"
+        # C4/C13: the CLI is host-side, so it resolves the identity itself and
+        # stamps it — the backend replay forwards but never mints one.
+        assert record["payload"]["project_id"] == _TEST_PROJECT
 
     def test_no_direct_storage_engine_use(self):
         """The capture CLI must not open a StorageEngine (raw DB write path)."""

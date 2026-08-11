@@ -19,6 +19,11 @@ import pytest
 from yadgar._shared.config import Settings
 from yadgar.core.staleness import StalenessDetector
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture(scope="module")
 def storage(module_storage):
@@ -47,6 +52,7 @@ def detector(storage, settings):
 def _mem(storage, directory, file_hash, heat=0.8, content="m"):
     return storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": content,
             "directory_context": directory,
             "tags": ["test"],

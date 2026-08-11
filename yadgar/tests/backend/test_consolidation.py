@@ -10,6 +10,11 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.consolidation import ConsolidationScheduler
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture(scope="module")
 def storage(module_storage):
@@ -48,6 +53,7 @@ class TestDecayApplication:
     def test_memory_heat_decreases(self, engine, storage):
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "decay test",
                 "directory_context": "/proj",
                 "heat": 1.0,
@@ -79,6 +85,7 @@ class TestDecayApplication:
     def test_recent_memory_barely_decays(self, engine, storage):
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "fresh memory",
                 "directory_context": "/proj",
                 "heat": 1.0,
@@ -95,6 +102,7 @@ class TestColdArchival:
         # 0.1 * 0.95^60 ≈ 0.0046, well below 0.05
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "old memory",
                 "directory_context": "/proj",
                 "heat": 0.1,
@@ -122,6 +130,7 @@ class TestColdArchival:
     def test_hot_memory_not_archived(self, engine, storage):
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "hot memory",
                 "directory_context": "/proj",
                 "heat": 0.9,
@@ -148,6 +157,7 @@ class TestColdArchival:
 
         action_mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "Session activity [Bash(3)]: 3 tool calls",
                 "directory_context": "/proj",
                 "tags": ["_action_stream", "_auto"],
@@ -157,6 +167,7 @@ class TestColdArchival:
         )
         normal_mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "important architectural decision",
                 "directory_context": "/proj",
                 "heat": 0.08,
@@ -185,6 +196,7 @@ class TestColdArchival:
 
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "rarely accessed fact",
                 "directory_context": "/proj",
                 "heat": 0.01,
@@ -421,6 +433,7 @@ class TestDuplicateMerge:
 
         id_a = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "how to configure the database",
                 "embedding": vec_a,
                 "directory_context": "/proj",
@@ -429,6 +442,7 @@ class TestDuplicateMerge:
         )
         id_b = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "how to configure the database connection",
                 "embedding": vec_b,
                 "directory_context": "/proj",
@@ -458,6 +472,7 @@ class TestDuplicateMerge:
 
         id_a = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "database configuration",
                 "embedding": vec_a,
                 "directory_context": "/proj",
@@ -466,6 +481,7 @@ class TestDuplicateMerge:
         )
         id_b = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "hiking trail map",
                 "embedding": vec_b,
                 "directory_context": "/proj",
@@ -630,6 +646,7 @@ def _make_merge_duplicates_storage(tmp_path, n: int, high_sim_pairs: int = 5):
         vec = vec / np.linalg.norm(vec)
         engine.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": f"memory content {i}",
                 "embedding": vec.tobytes(),
                 "directory_context": "/proj",
@@ -696,6 +713,7 @@ def test_merge_duplicates_correctness_near_dup_pairs_deleted(tmp_path, settings)
         content_b = f"dup pair {i} B"
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content_a,
                 "embedding": base.tobytes(),
                 "directory_context": "/proj",
@@ -704,6 +722,7 @@ def test_merge_duplicates_correctness_near_dup_pairs_deleted(tmp_path, settings)
         )
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content_b,
                 "embedding": vec_b.tobytes(),
                 "directory_context": "/proj",
@@ -720,6 +739,7 @@ def test_merge_duplicates_correctness_near_dup_pairs_deleted(tmp_path, settings)
         content = f"singleton {i}"
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content,
                 "embedding": v.tobytes(),
                 "directory_context": "/proj",
@@ -769,6 +789,7 @@ class TestSimilarityLinkDegreeCap:
         for i in range(8):
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"identical-embedding memory {i}",
                     "embedding": vec,
                     "directory_context": "/proj",
@@ -827,6 +848,7 @@ class TestIncrementalSimilarityLinking:
             old_ids.append(
                 storage.insert_memory(
                     {
+                        "project_id": _TEST_PROJECT,
                         "content": f"old {i}",
                         "embedding": _cluster_vec(cl, i),
                         "directory_context": "/proj",
@@ -843,6 +865,7 @@ class TestIncrementalSimilarityLinking:
         for j, cl in enumerate(self._NEW_CLUSTERS):
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"new {j}",
                     "embedding": _cluster_vec(cl, 100 + j),
                     "directory_context": "/proj",
@@ -922,6 +945,7 @@ class TestIncrementalSimilarityLinking:
         sched = ConsolidationScheduler(store, emb, settings)
         old_id = store.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "old c0",
                 "embedding": _cluster_vec(0, 0),
                 "directory_context": "/proj",
@@ -931,6 +955,7 @@ class TestIncrementalSimilarityLinking:
         )
         new_id = store.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "new c0",
                 "embedding": _cluster_vec(0, 1),
                 "directory_context": "/proj",
@@ -958,6 +983,7 @@ class TestIncrementalSimilarityLinking:
         sched = ConsolidationScheduler(store, emb, settings)
         store.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "lonely new",
                 "embedding": _cluster_vec(0, 0),
                 "directory_context": "/proj",
@@ -990,6 +1016,7 @@ class TestSimilarityLinkingDispatch:
         for i in range(3):
             store.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"m{i}",
                     "embedding": _cluster_vec(0, i),
                     "directory_context": "/proj",
@@ -1010,6 +1037,7 @@ class TestSimilarityLinkingDispatch:
         for i in range(3):
             store.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"m{i}",
                     "embedding": _cluster_vec(0, i),
                     "directory_context": "/proj",
@@ -1087,6 +1115,7 @@ class TestSimilarityLinkingDispatch:
         # Two OLD memories in DIFFERENT clusters → initially NOT linked.
         a = store.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "old A",
                 "embedding": _cluster_vec(0, 0),
                 "directory_context": "/proj",
@@ -1096,6 +1125,7 @@ class TestSimilarityLinkingDispatch:
         )
         b = store.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "old B",
                 "embedding": _cluster_vec(1, 0),
                 "directory_context": "/proj",
@@ -1149,6 +1179,7 @@ class TestSimilarityMatrixCandidateCap:
             vec /= np.linalg.norm(vec)
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"cap test memory {i}",
                     "embedding": vec.tobytes(),
                     "directory_context": "/proj",
@@ -1193,6 +1224,7 @@ class TestSimilarityMatrixCandidateCap:
             vec /= np.linalg.norm(vec)
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"merge cap test memory {i}",
                     "embedding": vec.tobytes(),
                     "directory_context": "/proj",

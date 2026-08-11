@@ -8,6 +8,11 @@ from yadgar._shared.storage import StorageEngine
 from yadgar.backend.predictive_coding import WriteGate
 from yadgar.backend.retrieval import Retriever
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -44,6 +49,7 @@ def _make_memory(storage, embeddings, content, directory="/tmp/project", tags=No
     """Helper to insert a memory with real embedding."""
     embedding = embeddings.encode(content)
     mem = {
+        "project_id": _TEST_PROJECT,
         "content": content,
         "embedding": embedding,
         "tags": tags or ["test"],
@@ -437,6 +443,7 @@ class TestWriteGateIntegration:
                     content="Using Redis for caching with TTL-based expiration",
                     context="/tmp/integration-test",
                     tags=["redis", "caching"],
+                    project=_TEST_PROJECT,
                 )
                 # First memory in a new directory should always be stored
                 assert "id" in result1
@@ -446,6 +453,7 @@ class TestWriteGateIntegration:
                     content="PostgreSQL database with connection pooling via pgbouncer",
                     context="/tmp/integration-test",
                     tags=["postgres", "database"],
+                    project=_TEST_PROJECT,
                 )
 
                 # Now try to store a near-duplicate — may be blocked by write gate
@@ -454,6 +462,7 @@ class TestWriteGateIntegration:
                     content="Using Redis for caching with TTL-based expiration policy",
                     context="/tmp/integration-test",
                     tags=["redis"],
+                    project=_TEST_PROJECT,
                 )
                 # This may be blocked or may be merged by curator.
                 # v4.4: gate fires during drain — caller gets DB row (id present) or
@@ -479,6 +488,7 @@ class TestSurprisalReturnedInResponse:
                 content="Implementing a brand new quantum error correction algorithm",
                 context="/tmp/surprisal-test",
                 tags=["quantum"],
+                project=_TEST_PROJECT,
             )
             # v4.4 async path: surprisal is internal to the drainer, not in the
             # caller response. Verify the memory was stored successfully.
@@ -512,6 +522,7 @@ class TestSurprisalReturnedInResponse:
                 content=base_content,
                 context="/tmp/surprisal-block-test",
                 tags=["flask"],
+                project=_TEST_PROJECT,
             )
             assert r1.get("id") is not None or r1.get("stored") is True
 

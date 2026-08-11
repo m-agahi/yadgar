@@ -10,6 +10,11 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.cls_store import DualStoreCLS
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -62,6 +67,7 @@ def _make_memory(
         )
 
     mem = {
+        "project_id": _TEST_PROJECT,
         "content": content,
         "embedding": embedding,
         "tags": tags or ["test"],
@@ -667,6 +673,7 @@ def cls_consolidation_at_scale(tmp_path):
         )
         engine.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content,
                 "embedding": vec,
                 "tags": ["episodic"],
@@ -723,6 +730,7 @@ def test_consolidation_cycle_derived_from_links_created(tmp_path):
         )
         engine.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content,
                 "embedding": vec,
                 "tags": ["episodic"],
@@ -773,6 +781,7 @@ class TestClsPatternCandidateCap:
             vec /= np.linalg.norm(vec)
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"cls cap test memory {i}",
                     "embedding": vec.tobytes(),
                     "directory_context": "/proj",
@@ -841,6 +850,7 @@ class TestActionStreamNotPromoted:
             )
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": clean_content,
                     "embedding": vec,
                     "tags": ["episodic"],
@@ -858,6 +868,7 @@ class TestActionStreamNotPromoted:
         )
         mid5 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": tagged_content,
                 "embedding": vec,
                 "tags": ["_action_stream"],
@@ -922,6 +933,7 @@ class TestActionStreamNotPromoted:
             )
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": clean_content,
                     "embedding": vec,
                     "tags": ["episodic"],
@@ -939,6 +951,7 @@ class TestActionStreamNotPromoted:
         )
         mid5 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": tagged_content,
                 "embedding": vec,
                 "tags": ["semantic", "auto-abstracted"],
@@ -1309,6 +1322,7 @@ class TestDegeneratePatternNotEmitted:
             )
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": content,
                     "embedding": vec,
                     "tags": ["episodic"],
@@ -1361,6 +1375,7 @@ class TestDegeneratePatternNotEmitted:
             )
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": content,
                     "embedding": vec,
                     "tags": ["episodic"],

@@ -17,9 +17,15 @@ stamped.** Car L had both paths call ``derive_project_id(directory)``
 inside the backend container — which has no git binary and no host project
 mounts, so the call could only ever manufacture ``local/<basename>``
 (ADR-0227 §1.1). Both now receive an explicit value from the caller that
-can see the session, and the assertions below pin that: the classifier is
-patched to EXPLODE, so any surviving derivation fails the test loudly
-instead of quietly returning a plausible-looking key.
+can see the session, and the assertions below pin that.
+
+**C13: the guard is re-pointed, not dropped.** These tests patched the
+classifier to EXPLODE so a surviving derivation would fail loudly. C5 deleted
+``derive_project_id``, so there is nothing left to patch — ``patch()`` resolves
+its target at ``__enter__`` and raises ``AttributeError`` on an absent
+attribute. ``identity_mint_absent()`` stands in its place at the same lines and
+asserts the stronger fact: the mint cannot be reached because it does not
+exist. See ``yadgar/tests/backend/_mint_absent.py``.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from yadgar.backend.consolidation import cleanup
+from yadgar.tests.backend._mint_absent import identity_mint_absent
 
 
 class _FakeStorage:
@@ -39,11 +46,6 @@ class _FakeStorage:
     def insert_memory(self, memory: dict, **_: Any) -> int:
         self.inserts.append(dict(memory))
         return len(self.inserts)
-
-
-def _exploding_classifier(*_a: Any, **_kw: Any) -> tuple[str, str]:
-    """C4: reaching the container-side classifier is the bug these tests catch."""
-    raise AssertionError("a Car L write path reached the identity mint")
 
 
 class TestCleanupTryStoreActionSummaryStampsProjectId:
@@ -64,10 +66,7 @@ class TestCleanupTryStoreActionSummaryStampsProjectId:
     def test_action_summary_has_project_id(self) -> None:
         storage = _FakeStorage()
         obj = self._build_cleanup(storage)
-        with patch(
-            "yadgar.core.identity.derive_project_id",
-            side_effect=_exploding_classifier,
-        ):
+        with identity_mint_absent():
             result = obj._try_store_action_summary(
                 content="summary content",
                 directory="/home/max/git/yadgar",
@@ -84,10 +83,7 @@ class TestCleanupTryStoreActionSummaryStampsProjectId:
         """A non-git tree gets the caller's value too — nothing is derived here."""
         storage = _FakeStorage()
         obj = self._build_cleanup(storage)
-        with patch(
-            "yadgar.core.identity.derive_project_id",
-            side_effect=_exploding_classifier,
-        ):
+        with identity_mint_absent():
             obj._try_store_action_summary(
                 content="summary",
                 directory="/home/user/projects/standalone",
@@ -128,10 +124,7 @@ class TestApplyWikiAddReplaysStampsProjectId:
             side_effect=_fake_replay,
             create=True,
         ):
-            with patch(
-                "yadgar.core.identity.derive_project_id",
-                side_effect=_exploding_classifier,
-            ):
+            with identity_mint_absent():
                 apply_obj._apply_inner(  # type: ignore[attr-defined]
                     {
                         "op": "wiki_add",
