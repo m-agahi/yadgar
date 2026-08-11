@@ -83,7 +83,7 @@ def _run_prospective(ctx: MemorizeContext, storage) -> None:
         return
     _st._prospective.auto_create_from_content(ctx.content, ctx.context)
     trigger_context = {
-        "directory": ctx.context,
+        "project_id": ctx.context,
         "content": ctx.content,
         "entities": ctx.tags,
         "current_time": datetime.now(UTC),

@@ -17,7 +17,7 @@ class _ClusteringMixin:
 
     @observe(tier="stage", metric="consolidation.cls.find_patterns")
     def find_recurring_patterns(
-        self, directory: str = None, min_occurrences: int = 3
+        self, project_id: str = None, min_occurrences: int = 3
     ) -> list[dict]:
         """Find clusters of similar episodic memories that recur across sessions.
 
@@ -27,10 +27,10 @@ class _ClusteringMixin:
            using vectorised numpy matmul — O(N·D) instead of O(N²) Python calls
         3. For each cluster with >= min_occurrences members:
            - Check session diversity (>= 2 different sessions)
-           - Check generalizability (>= 2 directories OR same directory)
+           - Check generalizability (>= 2 projects OR same project)
         4. Return qualifying clusters
         """
-        memories = self._fetch_episodic_candidates(directory)
+        memories = self._fetch_episodic_candidates(project_id)
         if len(memories) < min_occurrences:
             return []
 
@@ -51,12 +51,12 @@ class _ClusteringMixin:
     # ── Pattern Detection Helpers ─────────────────────────────────────────
 
     @observe(tier="stage", metric="consolidation.cls.fetch_episodic_candidates")
-    def _fetch_episodic_candidates(self, directory: str | None) -> list[dict]:
+    def _fetch_episodic_candidates(self, project_id: str | None) -> list[dict]:
         """Fetch episodic memories capped at CLS_PATTERN_MAX_CANDIDATES."""
         cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
-        if directory:
+        if project_id:
             return self._storage.get_memories_by_store_type(
-                "episodic", directory=directory, limit=cap
+                "episodic", directory=project_id, limit=cap
             )
         return self._storage.get_memories_by_store_type("episodic", limit=cap)
 
@@ -170,7 +170,7 @@ class _ClusteringMixin:
         query: str,
         query_embedding: bytes,
         store_type: str,
-        directory: str,
+        project_id: str,
     ) -> list[tuple[dict, float]]:
         """Search a specific store (episodic or semantic) by embedding similarity.
 
@@ -180,9 +180,9 @@ class _ClusteringMixin:
         implemented here to keep the change surgical.
         """
         cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
-        if directory:
+        if project_id:
             memories = self._storage.get_memories_by_store_type(
-                store_type, directory=directory, limit=cap
+                store_type, directory=project_id, limit=cap
             )
         else:
             memories = self._storage.get_memories_by_store_type(store_type, limit=cap)

@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 def _fetch_filtered_episodes(
     storage: StorageEngine,
     cutoff_iso: str,
-    directory: str | None,
+    project_id: str | None,
 ) -> list[dict]:
-    """Return episodes since cutoff, sorted by timestamp, optionally filtered by directory."""
+    """Return episodes since cutoff, sorted by timestamp, optionally filtered by project_id."""
     all_episodes = storage.get_episodes_since(0)
     episodes = [e for e in all_episodes if e.get("timestamp", "") >= cutoff_iso]
     episodes.sort(key=lambda e: e.get("timestamp", ""))
-    if directory:
-        episodes = [e for e in episodes if e["directory"] == directory]
+    if project_id:
+        episodes = [e for e in episodes if e["directory"] == project_id]
     return episodes
 
 
@@ -104,7 +104,7 @@ def _fill_event_matrix(
 def build_event_matrix(
     storage: StorageEngine,
     settings: Settings,
-    directory: str | None = None,
+    project_id: str | None = None,
     hours: int = 168,
 ) -> tuple[np.ndarray, list[str], list[str]]:
     """Build a time-aligned binary event matrix from recent activity.
@@ -119,7 +119,7 @@ def build_event_matrix(
     cutoff_iso = cutoff.isoformat()
 
     all_entities = storage.get_all_entities(min_heat=0.0, include_archived=True)
-    episodes = _fetch_filtered_episodes(storage, cutoff_iso, directory)
+    episodes = _fetch_filtered_episodes(storage, cutoff_iso, project_id)
 
     if not episodes:
         return np.zeros((0, 0)), [], []

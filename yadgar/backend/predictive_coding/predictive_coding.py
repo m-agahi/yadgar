@@ -2,7 +2,7 @@
 
 The brain maintains a generative model and only encodes prediction errors —
 information that violates expectations. For Yadgar, the "generative model"
-is the aggregate of existing memories for a directory context. New observations
+is the aggregate of existing memories for a project. New observations
 that are EXPECTED (low surprisal) are skipped. Only SURPRISING observations
 are stored.
 
@@ -36,7 +36,7 @@ class WriteGate(_SignalsMixin):
     """Write gate that filters incoming memories by surprisal.
 
     Only stores prediction errors — information that violates the existing
-    generative model for a directory context. Boilerplate code changes
+    generative model for a project. Boilerplate code changes
     (low surprise) are skipped; novel architectural decisions, unusual bugs,
     and unexpected failures (high surprise) are stored.
     """
@@ -90,7 +90,7 @@ class WriteGate(_SignalsMixin):
 
     # ── Task Continuity ──────────────────────────────────────────────────
 
-    def record_stored(self, content: str, directory: str, embedding) -> None:
+    def record_stored(self, content: str, project_id: str, embedding) -> None:
         """Record a successfully stored memory for task continuity tracking.
 
         Called after a memory passes the gate and is stored. Builds up the
@@ -99,14 +99,14 @@ class WriteGate(_SignalsMixin):
         """
         self._recent_stores.append(
             {
-                "directory": directory,
+                "project_id": project_id,
                 "embedding": embedding,
                 "timestamp": datetime.now(UTC),
             }
         )
 
     @observe(tier="stage", metric="write.compute_task_continuity")
-    def _compute_task_continuity(self, content: str, directory: str) -> float:
+    def _compute_task_continuity(self, content: str, project_id: str) -> float:
         """How task-continuous is this content with recent stores?
 
         Returns 0.0 (no continuity) to 1.0 (strong continuity).
@@ -125,7 +125,7 @@ class WriteGate(_SignalsMixin):
         n = len(self._recent_stores)
 
         # Signal 1: Directory match
-        dir_matches = sum(1 for s in self._recent_stores if s["directory"] == directory)
+        dir_matches = sum(1 for s in self._recent_stores if s["project_id"] == project_id)
         dir_continuity = dir_matches / n
 
         # Signal 2: Temporal proximity (within last hour)
@@ -155,8 +155,8 @@ class WriteGate(_SignalsMixin):
     # ── Core: Surprisal Computation ──────────────────────────────────────
 
     @observe(tier="boundary", metric="write.surprisal")
-    def compute_surprisal(self, content: str, directory: str, tags: list[str]) -> float:
-        """Compute how surprising content is relative to the directory's generative model.
+    def compute_surprisal(self, content: str, project_id: str, tags: list[str]) -> float:
+        """Compute how surprising content is relative to the project's generative model.
 
         Combines four signals:
           Signal 1 — Embedding novelty (weight 0.4)
@@ -166,27 +166,27 @@ class WriteGate(_SignalsMixin):
 
         Returns a float in [0.0, 1.0] where 1.0 = maximally surprising.
         """
-        # Build generative model for this directory
-        recent_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
+        # Build generative model for this project
+        recent_memories = self._storage.get_memories_for_directory(project_id, min_heat=0.0)
         # Sort by created_at descending, take last 50
         recent_memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
         recent_memories = recent_memories[:50]
 
         if not recent_memories:
-            # New directory = somewhat surprising
+            # New project = somewhat surprising
             return 0.8
 
         # Signal 1: Embedding novelty (weight 0.4)
         embedding_novelty = self._compute_embedding_novelty(content)
 
         # Signal 2: Entity novelty (weight 0.25)
-        entity_novelty = self._compute_entity_novelty(content, directory)
+        entity_novelty = self._compute_entity_novelty(content, project_id)
 
         # Signal 3: Temporal novelty (weight 0.2)
-        temporal_novelty = self._compute_temporal_novelty(content, directory)
+        temporal_novelty = self._compute_temporal_novelty(content, project_id)
 
         # Signal 4: Structural novelty (weight 0.15)
-        structural_novelty = self._compute_structural_novelty(content, directory)
+        structural_novelty = self._compute_structural_novelty(content, project_id)
 
         # Weighted sum
         surprisal = (
@@ -202,7 +202,7 @@ class WriteGate(_SignalsMixin):
 
     @observe(tier="boundary", metric="write.gate")
     def should_store(
-        self, content: str, directory: str, tags: list[str]
+        self, content: str, project_id: str, tags: list[str]
     ) -> tuple[bool, float, str]:
         """Decide whether to store a memory based on surprisal.
 
@@ -221,21 +221,21 @@ class WriteGate(_SignalsMixin):
         # Check bypass conditions FIRST
         bypass = _bypass_reason(content_lower, tags)
         if bypass is not None:
-            surprisal = self.compute_surprisal(content, directory, tags)
+            surprisal = self.compute_surprisal(content, project_id, tags)
             logger.debug(
                 "Write gate BYPASS (%s): surprisal=%.3f dir=%s",
                 bypass,
                 surprisal,
-                directory,
+                project_id,
             )
             return (True, surprisal, bypass)
 
         # Compute surprisal for gating decision
-        surprisal = self.compute_surprisal(content, directory, tags)
+        surprisal = self.compute_surprisal(content, project_id, tags)
 
         # Adaptive threshold: lower it when working on the same task
         # This prevents the gate from blocking incremental progress
-        continuity = self._compute_task_continuity(content, directory)
+        continuity = self._compute_task_continuity(content, project_id)
         discount = continuity * self._settings.WRITE_GATE_CONTINUITY_DISCOUNT
         effective_threshold = max(0.1, self._threshold - discount)
 
@@ -248,7 +248,7 @@ class WriteGate(_SignalsMixin):
                 self._threshold,
                 continuity,
                 discount,
-                directory,
+                project_id,
             )
             reason = "high_surprisal"
             if discount > 0:
@@ -262,7 +262,7 @@ class WriteGate(_SignalsMixin):
                 effective_threshold,
                 self._threshold,
                 continuity,
-                directory,
+                project_id,
             )
             return (False, surprisal, f"below_threshold (effective={effective_threshold:.2f})")
 
@@ -270,7 +270,7 @@ class WriteGate(_SignalsMixin):
     def would_reject_at(
         self,
         content: str,
-        directory: str,
+        project_id: str,
         tags: list[str],
         threshold: float,
         surprisal: float | None = None,
@@ -287,7 +287,7 @@ class WriteGate(_SignalsMixin):
 
         Args:
             content:   Memory content.
-            directory: Directory context (same as passed to should_store).
+            project_id: Project identity (same as passed to should_store).
             tags:      Memory tags.
             threshold: Shadow base threshold to evaluate against (typically
                        settings.WRITE_GATE_SHADOW_THRESHOLD).
@@ -308,8 +308,8 @@ class WriteGate(_SignalsMixin):
             return False
 
         if surprisal is None:
-            surprisal = self.compute_surprisal(content, directory, tags)
-        continuity = self._compute_task_continuity(content, directory)
+            surprisal = self.compute_surprisal(content, project_id, tags)
+        continuity = self._compute_task_continuity(content, project_id)
         discount = continuity * self._settings.WRITE_GATE_CONTINUITY_DISCOUNT
         effective_threshold = max(0.1, threshold - discount)
         return surprisal < effective_threshold
@@ -394,18 +394,18 @@ class WriteGate(_SignalsMixin):
         return centroid.tobytes()
 
     @observe(tier="stage", metric="write.get_directory_model")
-    def get_directory_model(self, directory: str) -> dict:
-        """Build summary of what Yadgar 'knows' about a directory.
+    def get_directory_model(self, project_id: str) -> dict:
+        """Build summary of what Yadgar 'knows' about a project.
 
         Returns a dict with:
-          - memory_count: number of memories for this directory
+          - memory_count: number of memories for this project
           - entity_count: number of unique entities mentioned
-          - avg_heat: average heat of directory memories
+          - avg_heat: average heat of the project's memories
           - common_tags: most frequent tags
           - recent_topics: recent entity names
-          - centroid_embedding: mean of all directory memory embeddings (bytes or None)
+          - centroid_embedding: mean of all the project's memory embeddings (bytes or None)
         """
-        memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
+        memories = self._storage.get_memories_for_directory(project_id, min_heat=0.0)
 
         if not memories:
             return {

@@ -125,8 +125,8 @@ class TestBuildEventMatrix:
             }
         )
 
-        data1, names1, _ = cd.build_event_matrix(directory="/proj1", hours=24)
-        data2, names2, _ = cd.build_event_matrix(directory="/proj2", hours=24)
+        data1, names1, _ = cd.build_event_matrix(project_id="/proj1", hours=24)
+        data2, names2, _ = cd.build_event_matrix(project_id="/proj2", hours=24)
 
         # Both should find the entity but from different episodes
         assert len(names1) >= 1

@@ -77,7 +77,7 @@ class ProspectiveMemoryEngine:
         """Check all active triggers against the given context.
 
         context keys:
-          - directory (str)
+          - project_id (str)
           - content (str)
           - entities (list[str])
           - current_time (datetime)
@@ -88,13 +88,13 @@ class ProspectiveMemoryEngine:
         active = self._storage.get_active_prospective_memories()
         triggered = []
 
-        directory = context.get("directory", "")
+        project_id = context.get("project_id", "")
         content = context.get("content", "")
         entities = context.get("entities", [])
         current_time = context.get("current_time", datetime.now(UTC))
 
         for pm in active:
-            if self._matches(pm, directory, content, entities, current_time):
+            if self._matches(pm, project_id, content, entities, current_time):
                 self._storage.trigger_prospective_memory(pm["id"])
 
                 # Re-read to get updated count
@@ -109,7 +109,7 @@ class ProspectiveMemoryEngine:
         return triggered
 
     @observe(tier="stage")
-    def auto_create_from_content(self, content: str, directory: str) -> list[int]:
+    def auto_create_from_content(self, content: str, project_id: str) -> list[int]:
         """Scan content for future-oriented phrases and auto-create triggers.
 
         Returns list of created prospective memory IDs.
@@ -135,7 +135,7 @@ class ProspectiveMemoryEngine:
                     content=actionable,
                     trigger_condition=keywords,
                     trigger_type=default_type,
-                    target_directory=directory,
+                    target_directory=project_id,
                 )
                 created_ids.append(pm_id)
 
@@ -145,7 +145,7 @@ class ProspectiveMemoryEngine:
     def _matches(
         self,
         pm: dict,
-        directory: str,
+        project_id: str,
         content: str,
         entities: list[str],
         current_time: datetime,
@@ -156,7 +156,7 @@ class ProspectiveMemoryEngine:
 
         if trigger_type == "directory_match":
             target_dir = pm.get("target_directory") or condition
-            return target_dir != "" and target_dir in directory
+            return target_dir != "" and target_dir in project_id
 
         elif trigger_type == "keyword_match":
             keywords = condition.lower().split()
