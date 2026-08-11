@@ -182,12 +182,23 @@ class TestRecallRequestAcceptsProjectId:
 class TestResolveEffectiveProjectSignatureUnchanged:
     """C3 is additive: the resolver keeps its C2-era tiers."""
 
-    def test_resolver_still_takes_three_keyword_args(self) -> None:
+    def test_resolver_signature_gained_only_the_error_label(self) -> None:
+        """C5 added ``tool=`` — the label the structured raise names.
+
+        The three resolution inputs are unchanged; the fourth argument carries
+        no scope, only the name the ``UnresolvedProjectError`` payload reports,
+        because an error that does not say WHICH call failed is only marginally
+        more useful to an agent than the fallback it replaced.
+        """
         from yadgar.core.server.tools._project_param import resolve_effective_project
 
         params = inspect.signature(resolve_effective_project).parameters
-        assert set(params) == {"project", "directory", "session_project"}
+        assert set(params) == {"project", "directory", "session_project", "tool"}
         assert all(p.kind == inspect.Parameter.KEYWORD_ONLY for p in params.values())
+        # The three that decide the answer stay required; only the label defaults.
+        assert params["tool"].default != inspect.Parameter.empty
+        for name in ("project", "directory", "session_project"):
+            assert params[name].default is inspect.Parameter.empty, name
 
 
 class TestAcceptProjectParamIsNotDecorative:
@@ -223,19 +234,24 @@ class TestAcceptProjectParamIsNotDecorative:
         with pytest.raises(InvalidProjectOverrideError):
             accept_project_param(17, "/home/max/git/yadgar")  # type: ignore[arg-type]
 
-    def test_absent_override_never_touches_the_classifier(self, monkeypatch) -> None:
-        """``project=None`` must NOT pay for a derivation nothing reads yet.
+    def test_absent_override_returns_none_without_resolving(self, monkeypatch) -> None:
+        """``project=None`` short-circuits before the resolver.
 
-        ``derive_project_id`` shells out to git twice and is uncached; running
-        it on every call of every scoped tool to compute a value with no sink
-        would be a straight latency regression (see the helper's docstring).
+        C3 asserted this against ``derive_project_id`` — the classifier that
+        shelled out to git twice per call. C5 deleted it, so the test is
+        re-pointed at ``resolve_effective_project`` itself, which now RAISES
+        for a bare directory. That makes this assertion stronger than it was:
+        it used to guard a latency regression, and it now guards a live
+        breakage — routing the 42 no-sink tools through the resolver would
+        fail every call whose scope key is still ``directory`` until C7
+        re-keys it.
         """
         from yadgar.core.server.tools import _project_param as pp
 
-        def _explode(*_a: object, **_kw: object) -> tuple[str, str]:
-            raise AssertionError("derive_project_id must not be called when project is None")
+        def _explode(*_a: object, **_kw: object) -> str:
+            raise AssertionError("resolve_effective_project must not run when project is None")
 
-        monkeypatch.setattr(pp, "derive_project_id", _explode)
+        monkeypatch.setattr(pp, "resolve_effective_project", _explode)
         assert pp.accept_project_param(None, "/home/max/git/yadgar") is None
 
     def test_every_scoped_tool_rejects_an_empty_project(self) -> None:
