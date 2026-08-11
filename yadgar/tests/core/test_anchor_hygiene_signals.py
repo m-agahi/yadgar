@@ -1032,7 +1032,7 @@ class TestSignalAuditParity:
             "_DIR_PARITY_OTHER — cross-directory scope leak in expired count predicate"
         )
         # Sanity-check: audit for the TARGET dir agrees (empty)
-        dry = audit_anchors(directory=_DIR_PARITY, dry_run=True)
+        dry = audit_anchors(directory=_DIR_PARITY, dry_run=True, project=TEST_PROJECT_ID)
         non_skipped = [a for a in dry["actions"] if not a.get("skipped")]
         assert non_skipped == [], (
             "audit_anchors(dry_run=True) has non-skipped actions for _DIR_PARITY, "
@@ -1056,7 +1056,7 @@ class TestSignalAuditParity:
         assert "audit_anchors" in action_names, (
             "audit_anchors must fire when expired non-grace anchor exists in the target dir"
         )
-        dry = audit_anchors(directory=_DIR_PARITY, dry_run=True)
+        dry = audit_anchors(directory=_DIR_PARITY, dry_run=True, project=TEST_PROJECT_ID)
         non_skipped = [a for a in dry["actions"] if not a.get("skipped")]
         assert non_skipped, (
             "audit_anchors(dry_run=True) returned no non-skipped actions, "

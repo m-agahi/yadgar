@@ -53,7 +53,7 @@ def _add(*args, **kwargs):
     reaches past this helper to the store directly still reds, which is the
     property an autouse fixture would have destroyed.
     """
-    opts = kwargs.pop("opts", None) or WikiAddOptions()
+    opts = kwargs.pop("opts", None) or WikiAddOptions(project_id=TEST_PROJECT_ID)
     return _wiki().add(*args, opts=replace(opts, project_id=TEST_PROJECT_ID), **kwargs)
 
 
@@ -189,14 +189,34 @@ class TestUpsert:
         assert "tag-b" in page["tags"]
 
     def test_upsert_keeps_higher_confidence(self):
-        _add("Conf Test", "Content.", "reference", opts=WikiAddOptions(confidence="high"))
-        _add("Conf Test", "New content.", "reference", opts=WikiAddOptions(confidence="low"))
+        _add(
+            "Conf Test",
+            "Content.",
+            "reference",
+            opts=WikiAddOptions(confidence="high", project_id=TEST_PROJECT_ID),
+        )
+        _add(
+            "Conf Test",
+            "New content.",
+            "reference",
+            opts=WikiAddOptions(confidence="low", project_id=TEST_PROJECT_ID),
+        )
         page = _wiki().read("conf-test")
         assert page["confidence"] == "high"
 
     def test_upsert_merges_source_memory_ids(self):
-        _add("Source Test", "C1.", "reference", opts=WikiAddOptions(source_memory_ids=[1, 2]))
-        _add("Source Test", "C2.", "reference", opts=WikiAddOptions(source_memory_ids=[3]))
+        _add(
+            "Source Test",
+            "C1.",
+            "reference",
+            opts=WikiAddOptions(source_memory_ids=[1, 2], project_id=TEST_PROJECT_ID),
+        )
+        _add(
+            "Source Test",
+            "C2.",
+            "reference",
+            opts=WikiAddOptions(source_memory_ids=[3], project_id=TEST_PROJECT_ID),
+        )
         page = _wiki().read("source-test")
         assert 1 in page["source_memory_ids"]
         assert 3 in page["source_memory_ids"]
@@ -352,7 +372,12 @@ class TestLint:
         assert report["stats"]["broken_ref_count"] >= 1
 
     def test_lint_detects_low_confidence(self):
-        _add("Low Conf Page", "Uncertain info.", "reference", opts=WikiAddOptions(confidence="low"))
+        _add(
+            "Low Conf Page",
+            "Uncertain info.",
+            "reference",
+            opts=WikiAddOptions(confidence="low", project_id=TEST_PROJECT_ID),
+        )
         report = _wiki().lint()
         low = [i for i in report["issues"] if i["type"] == "low_confidence"]
         assert any(i["page"] == "low-conf-page" for i in low)
@@ -380,7 +405,10 @@ class TestValidation:
 
     def test_invalid_confidence_defaults_to_medium(self):
         result = _add(
-            "Bad Conf", "Content.", "reference", opts=WikiAddOptions(confidence="invalid")
+            "Bad Conf",
+            "Content.",
+            "reference",
+            opts=WikiAddOptions(confidence="invalid", project_id=TEST_PROJECT_ID),
         )
         assert result["confidence"] == "medium"
 
@@ -397,7 +425,7 @@ class TestRecallIntegration:
             "Yadgar is a biologically-inspired memory engine with WRRF retrieval.",
             "architecture",
             ["core"],
-            opts=WikiAddOptions(confidence="high"),
+            opts=WikiAddOptions(confidence="high", project_id=TEST_PROJECT_ID),
         )
         # Also store a memory so recall has something to blend with
         server.memorize(
@@ -697,13 +725,17 @@ class TestAutolink:
             "Recall Pipeline",
             "scoring details",
             "reference",
-            opts=WikiAddOptions(directory_context="/home/max/git/projectA"),
+            opts=WikiAddOptions(
+                directory_context="/home/max/git/projectA", project_id=TEST_PROJECT_ID
+            ),
         )
         _add(
             "Memorize Path",
             "The Recall Pipeline ranks memories.",
             "reference",
-            opts=WikiAddOptions(directory_context="/home/max/git/projectB"),
+            opts=WikiAddOptions(
+                directory_context="/home/max/git/projectB", project_id=TEST_PROJECT_ID
+            ),
         )
         result = _wiki().autolink(
             directory="/home/max/git/projectB", dry_run=False, similarity_threshold=0.0

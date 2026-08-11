@@ -21,8 +21,11 @@ For drainer async-path tests, see test_wiki_sim_gate_drainer.py.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
+from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server
 from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
@@ -44,8 +47,14 @@ def _wiki():
 
 
 def _add(title: str, content: str, **kwargs) -> dict:
-    """Direct WikiStore.add — bypasses async queue."""
-    return _wiki().add(title, content, **kwargs)
+    """Direct WikiStore.add with this file's project NAMED — bypasses async queue.
+
+    C5/ADR-0227: add() derives nothing, so an unstamped insert raises. Naming
+    is centralised here rather than repeated per call; a test that reaches past
+    this helper to the store still reds.
+    """
+    opts = kwargs.pop("opts", None) or WikiAddOptions()
+    return _wiki().add(title, content, opts=replace(opts, project_id=TEST_PROJECT_ID), **kwargs)
 
 
 # ---------------------------------------------------------------------------

@@ -182,6 +182,7 @@ class TestWikiAddStorageScopeEnforcement:
             opts=WikiAddOptions(
                 directory_context="/tmp/some-project",
                 page_type="agent_prompt",
+                project_id=TEST_PROJECT_ID,
             ),
         )
         slug = result.get("slug")
@@ -208,6 +209,7 @@ class TestWikiAddStorageScopeEnforcement:
             opts=WikiAddOptions(
                 directory_context=project_dir,
                 page_type=None,
+                project_id=TEST_PROJECT_ID,
             ),
         )
         slug = result.get("slug")
@@ -235,6 +237,7 @@ class TestWikiAddStorageScopeEnforcement:
             opts=WikiAddOptions(
                 directory_context=project_dir,
                 page_type="some_unregistered_type",
+                project_id=TEST_PROJECT_ID,
             ),
         )
         slug = result.get("slug")

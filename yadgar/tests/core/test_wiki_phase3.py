@@ -6,14 +6,15 @@ Covers:
   - Bidirectional memory↔wiki linking (wiki_refs on memories)
 """
 
+from dataclasses import replace
+
 import pytest
 
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server
 from yadgar.core.server import _is_episodic_query
-from yadgar.tests.conftest import memorize_sync
-from yadgar.tests.core.conftest import TEST_PROJECT_ID
+from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,18 @@ def _storage() -> StorageEngine:
 
 def _wiki():
     return server._wiki
+
+
+def _add(*args, **kwargs):
+    """``WikiStore.add`` with this file's project NAMED (C5/ADR-0227)."""
+    opts = kwargs.pop("opts", None) or WikiAddOptions()
+    return _wiki().add(*args, opts=replace(opts, project_id=TEST_PROJECT_ID), **kwargs)
+
+
+def _ingest(*args, **kwargs):
+    """``WikiStore.ingest`` with this file's project named — same reason."""
+    kwargs.setdefault("project_id", TEST_PROJECT_ID)
+    return _wiki().ingest(*args, **kwargs)
 
 
 # ── A. Episodic query detection ───────────────────────────────────────────────
@@ -75,7 +88,7 @@ class TestIsEpisodicQuery:
 class TestWikiBlendingThreshold:
     def test_episodic_query_skips_wiki(self, recall_backend_bypass):
         """Temporal/episodic queries must NOT blend wiki results."""
-        _wiki().add("Architecture Overview", "Core design of the system.", "architecture")
+        _add("Architecture Overview", "Core design of the system.", "architecture")
         server.memorize(
             content="Fixed a bug yesterday.", context="/tmp", tags=[], project=TEST_PROJECT_ID
         )
@@ -90,11 +103,11 @@ class TestWikiBlendingThreshold:
 
     def test_relevant_wiki_appears_in_results(self, flush_queue, recall_backend_bypass):
         """A wiki page with sufficient relevance should surface in recall."""
-        _wiki().add(
+        _add(
             "Storage Engine Design",
             "The storage engine uses SurrealDB for persistence and WRRF for retrieval.",
             "architecture",
-            opts=WikiAddOptions(confidence="high"),
+            opts=WikiAddOptions(confidence="high", project_id=TEST_PROJECT_ID),
         )
         server.memorize(
             content="Storage engine handles all persistence operations.",
@@ -112,9 +125,7 @@ class TestWikiBlendingThreshold:
 
     def test_results_sorted_by_score(self, recall_backend_bypass):
         """Blended results must be sorted by _retrieval_score descending."""
-        _wiki().add(
-            "Test Architecture", "Key design decisions for the test system.", "architecture"
-        )
+        _add("Test Architecture", "Key design decisions for the test system.", "architecture")
         server.memorize(
             content="Test system architecture notes.",
             context="/tmp",
@@ -131,7 +142,7 @@ class TestWikiBlendingThreshold:
     def test_blended_total_respects_max_results(self, recall_backend_bypass):
         """Output length must never exceed max_results."""
         for i in range(3):
-            _wiki().add(
+            _add(
                 f"Wiki Page {i}",
                 f"Content about topic {i} with detailed technical information.",
                 "reference",
@@ -155,7 +166,7 @@ class TestWikiBlendingThreshold:
 class TestBidirectionalLinking:
     def test_add_links_source_memories(self):
         """wiki_add with source_memory_ids should update wiki_refs on each memory."""
-        mem_result = memorize_sync(
+        mem_result = memorize_scoped(
             content="Designed the storage engine using SurrealDB.",
             context="/tmp",
             tags=[],
@@ -163,11 +174,11 @@ class TestBidirectionalLinking:
         mid = mem_result.get("id")
         assert mid is not None
 
-        _wiki().add(
+        _add(
             "Storage Design",
             "The storage engine uses SurrealDB.",
             "architecture",
-            opts=WikiAddOptions(source_memory_ids=[mid]),
+            opts=WikiAddOptions(source_memory_ids=[mid], project_id=TEST_PROJECT_ID),
         )
 
         mem = _storage().get_memory(mid)
@@ -176,45 +187,69 @@ class TestBidirectionalLinking:
 
     def test_upsert_merges_source_memories_and_links(self):
         """Upserting a wiki page with new memory IDs links those memories too."""
-        m1 = memorize_sync(content="First design note.", context="/tmp", tags=[])["id"]
-        m2 = memorize_sync(content="Second design note.", context="/tmp", tags=[])["id"]
+        m1 = memorize_scoped(content="First design note.", context="/tmp", tags=[])["id"]
+        m2 = memorize_scoped(content="Second design note.", context="/tmp", tags=[])["id"]
 
-        _wiki().add("Design Notes", "Initial design.", opts=WikiAddOptions(source_memory_ids=[m1]))
-        _wiki().add("Design Notes", "Updated design.", opts=WikiAddOptions(source_memory_ids=[m2]))
+        _add(
+            "Design Notes",
+            "Initial design.",
+            opts=WikiAddOptions(source_memory_ids=[m1], project_id=TEST_PROJECT_ID),
+        )
+        _add(
+            "Design Notes",
+            "Updated design.",
+            opts=WikiAddOptions(source_memory_ids=[m2], project_id=TEST_PROJECT_ID),
+        )
 
         mem2 = _storage().get_memory(m2)
         assert "design-notes" in (mem2.get("wiki_refs") or [])
 
     def test_ingest_links_source_memories_new_page(self):
         """wiki_ingest on a new page should link source memories."""
-        mid = memorize_sync(content="Wrote the ingestion module.", context="/tmp", tags=[])["id"]
-        _wiki().ingest("Notes about ingestion.", title="Ingestion Notes", source_memory_ids=[mid])
+        mid = memorize_scoped(content="Wrote the ingestion module.", context="/tmp", tags=[])["id"]
+        _ingest("Notes about ingestion.", title="Ingestion Notes", source_memory_ids=[mid])
         mem = _storage().get_memory(mid)
         assert "ingestion-notes" in (mem.get("wiki_refs") or [])
 
     def test_ingest_links_source_memories_existing_page(self):
         """wiki_ingest on an existing page should also link new source memories."""
-        _wiki().add("Existing Page", "Initial content.")
-        mid = memorize_sync(content="Added to existing page.", context="/tmp", tags=[])["id"]
-        _wiki().ingest("Update content.", title="Existing Page", source_memory_ids=[mid])
+        _add("Existing Page", "Initial content.")
+        mid = memorize_scoped(content="Added to existing page.", context="/tmp", tags=[])["id"]
+        _ingest("Update content.", title="Existing Page", source_memory_ids=[mid])
         mem = _storage().get_memory(mid)
         assert "existing-page" in (mem.get("wiki_refs") or [])
 
     def test_no_duplicate_refs(self):
         """Adding the same page twice should not duplicate wiki_refs."""
-        mid = memorize_sync(content="Original note.", context="/tmp", tags=[])["id"]
-        _wiki().add("My Page", "Content.", opts=WikiAddOptions(source_memory_ids=[mid]))
-        _wiki().add("My Page", "Updated content.", opts=WikiAddOptions(source_memory_ids=[mid]))
+        mid = memorize_scoped(content="Original note.", context="/tmp", tags=[])["id"]
+        _add(
+            "My Page",
+            "Content.",
+            opts=WikiAddOptions(source_memory_ids=[mid], project_id=TEST_PROJECT_ID),
+        )
+        _add(
+            "My Page",
+            "Updated content.",
+            opts=WikiAddOptions(source_memory_ids=[mid], project_id=TEST_PROJECT_ID),
+        )
         mem = _storage().get_memory(mid)
         refs = mem.get("wiki_refs") or []
         assert refs.count("my-page") == 1
 
     def test_nonexistent_memory_id_skipped(self):
         """Linking to a nonexistent memory ID must not raise."""
-        _wiki().add("Safe Page", "Content.", opts=WikiAddOptions(source_memory_ids=[99999]))
+        _add(
+            "Safe Page",
+            "Content.",
+            opts=WikiAddOptions(source_memory_ids=[99999], project_id=TEST_PROJECT_ID),
+        )
         # No exception = pass
 
     def test_empty_source_memory_ids_no_error(self):
         """wiki_add with empty source_memory_ids must not raise."""
-        _wiki().add("Standalone Page", "Content.", opts=WikiAddOptions(source_memory_ids=[]))
+        _add(
+            "Standalone Page",
+            "Content.",
+            opts=WikiAddOptions(source_memory_ids=[], project_id=TEST_PROJECT_ID),
+        )
         # No exception = pass
