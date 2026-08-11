@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 MIN_WIKI_SCHEMA = 2
 
@@ -55,6 +56,10 @@ def _make_wiki_op(
         "category": category,
         "tags": tags or [],
         "directory_context": _DEFAULT_DIR_CTX,
+        # C5/ADR-0227: the drainer's gate rejects a payload with no usable
+        # project_id for EVERY op type, so a hand-built job needs the stamp the
+        # core tool would have added at enqueue time.
+        "project_id": TEST_PROJECT_ID,
     }
     if branch is not None:
         payload["branch"] = branch
@@ -176,6 +181,7 @@ def test_missing_required_field_goes_to_dlq(queue_and_drainer, missing_field, tm
         "wiki_schema_version": 2,
         "directory_context": "/test/sandbox",
         "branch": "feat/test",
+        "project_id": TEST_PROJECT_ID,
     }
     del payload[missing_field]
     # Use a unique slug (or no slug) so we can check absence

@@ -27,6 +27,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
 # ---------------------------------------------------------------------------
@@ -69,6 +71,7 @@ def _call_recall_with_wiki(
     directory: str | None,
     wiki_results: list[dict],
     max_results: int = 10,
+    project: str | None = TEST_PROJECT_ID,
 ) -> list[dict]:
     """Call recall() with controlled wiki mock and directory scoping.
 
@@ -93,7 +96,7 @@ def _call_recall_with_wiki(
         patch.object(_st, "_wiki", mock_wiki),
         patch.object(_st, "_last_recalled_ids", {}),
     ):
-        return recall_fn(query=query, max_results=max_results, directory=directory)
+        return recall_fn(query=query, max_results=max_results, directory=directory, project=project)
 
 
 # ---------------------------------------------------------------------------
@@ -180,22 +183,52 @@ class TestRecallWikiDirectoryScoping:
             f"'global' directory_context is always eligible."
         )
 
-    def test_directory_none_raises_value_error(self):
-        """v5.65 Fix D: directory=None is no longer silently allowed — must raise ValueError.
+    def test_naming_neither_directory_nor_project_fails_loud(self):
+        """v5.65 Fix D, as amended by C3: a call that names NEITHER scope raises.
 
-        Previous legacy mode (no-filter) is removed: callers MUST supply a directory.
+        The legacy no-filter mode is still gone. What changed is which argument
+        satisfies the guard: ``project=`` now does, so ``directory=None`` alone
+        is a legitimate cross-project call rather than the programming error
+        this test was written to catch. Both are passed as ``None`` here, which
+        is the case that is still a defect — and the case that reds if the
+        guard is ever loosened to accept a call naming no scope at all.
+
+        The EXCEPTION TYPE changed with it, and that is the load-bearing detail:
+        C5 put ``resolve_effective_project`` ahead of recall's own
+        ``directory is required`` ValueError, so with both arguments absent the
+        structured ``UnresolvedProjectError`` fires first and the ValueError
+        branch below it is now unreachable on this path. Asserting the raise
+        that ACTUALLY fires is what keeps this test honest; asserting the older
+        one would pass only by never running the guard it names.
         """
         import pytest
+
+        from yadgar._shared.errors import UnresolvedProjectError
 
         aws_wiki = _make_aws_wiki()
         yadgar_wiki = _make_yadgar_wiki()
 
-        with pytest.raises(ValueError, match="directory is required"):
+        with pytest.raises(UnresolvedProjectError) as ei:
             _call_recall_with_wiki(
                 query=_QUERY,
                 directory=None,
                 wiki_results=[aws_wiki, yadgar_wiki],
+                project=None,
             )
+        assert ei.value.payload["tool"] == "recall"
+
+    def test_project_alone_satisfies_the_scope_guard(self):
+        """The other half of the amended guard: ``project=`` is a scope too.
+
+        Pinned so the inversion above cannot be read as "directory became
+        optional and nothing replaced it".
+        """
+        results = _call_recall_with_wiki(
+            query=_QUERY,
+            directory=None,
+            wiki_results=[_make_aws_wiki()],
+        )
+        assert isinstance(results, list)
 
     def test_caller_dir_wiki_survives_directory_filter(self):
         """Wiki stamped with the exact caller dir must remain in results.

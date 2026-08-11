@@ -257,6 +257,7 @@ class TestAdrAddTierSubsystem:
 
         valid_params = dict(
             directory=project_dir,
+            project=TEST_PROJECT_ID,
             title="Tiered ADR",
             status="accepted",
             date="2026-08-09",
@@ -317,6 +318,7 @@ class TestAdrAddTierSubsystem:
 
         valid_params = dict(
             directory=project_dir,
+            project=TEST_PROJECT_ID,
             title="Mixed-case subsystem",
             status="accepted",
             date="2026-08-09",
@@ -376,6 +378,7 @@ class TestAdrAddTierSubsystem:
 
         valid_params = dict(
             directory=project_dir,
+            project=TEST_PROJECT_ID,
             title="Empty subsystem",
             status="accepted",
             date="2026-08-09",
@@ -431,6 +434,7 @@ class TestAdrAddTierSubsystem:
 
         valid_params = dict(
             directory=project_dir,
+            project=TEST_PROJECT_ID,
             title="No tier/subsystem",
             status="accepted",
             date="2026-08-09",
