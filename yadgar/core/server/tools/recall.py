@@ -140,11 +140,17 @@ def _resolve_project_for_recall(
 
     _dir_stripped = (directory or "").strip().rstrip("/") if directory else ""
     # BC-B3: a usable directory OR an explicit project override MUST be supplied.
-    # Car M made resolve_effective_project() fall back to "global" when neither is
-    # given, but the recall() call-site contract is unchanged — the caller is
-    # responsible for naming the project, even if the resolved id ends up being
-    # "global" downstream. Empty directory AND empty project is a programming
-    # error that the previous guard already rejected; this preserves that.
+    #
+    # C13 — READ THE ORDERING BEFORE TRUSTING THIS GUARD. The sentence that
+    # stood here said "Car M made resolve_effective_project() fall back to
+    # 'global' when neither is given". C5 deleted that tier: the resolver above
+    # now RAISES ``UnresolvedProjectError``, and it runs FIRST. So on the
+    # ``project is None`` path this ValueError is unreachable — the structured
+    # raise wins, which is the better error anyway (it names the tool and the
+    # fix). The branch is retained rather than deleted because C7 re-keys this
+    # tool's scope and will decide the guard's shape; what is fixed here is the
+    # comment, since a reader who trusted it would conclude the deleted
+    # fallback still exists.
     if not _dir_stripped and not project:
         raise ValueError(
             "recall: directory is required (caller must supply project dir; "

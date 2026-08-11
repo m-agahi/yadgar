@@ -221,14 +221,24 @@ class TestRecallWikiDirectoryScoping:
         """The other half of the amended guard: ``project=`` is a scope too.
 
         Pinned so the inversion above cannot be read as "directory became
-        optional and nothing replaced it".
+        optional and nothing replaced it". Asserts on the RESULT ROWS rather
+        than on a list merely coming back: an empty list is also what a
+        still-raising path produces, so the mocked memory row has to arrive to
+        prove the call ran end-to-end under a project-only scope. (The wiki row
+        is deliberately NOT expected — its directory_context names another
+        project, and the eligibility filter is the subject of the tests above.)
         """
         results = _call_recall_with_wiki(
             query=_QUERY,
             directory=None,
             wiki_results=[_make_aws_wiki()],
         )
-        assert isinstance(results, list)
+        assert 1 in [r.get("id") for r in results], (
+            f"project-only scope must complete the call and return its rows; got {results}"
+        )
+        assert 100 not in [r.get("id") for r in results], (
+            "the other project's wiki row must still be filtered out"
+        )
 
     def test_caller_dir_wiki_survives_directory_filter(self):
         """Wiki stamped with the exact caller dir must remain in results.
