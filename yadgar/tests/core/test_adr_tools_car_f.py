@@ -58,6 +58,9 @@ _ADR_LIST_ROW_KEYS: frozenset[str] = frozenset(
 # the body_slug link. The `_resolve_project_root` patch is reused from
 # test_adr.py's pattern.
 _VALID_ADR_PARAMS = dict(
+    # C5/ADR-0227: adr_add resolves an identity or returns the
+    # unresolved_project envelope — the base params name one.
+    project=TEST_PROJECT_ID,
     directory=_TEST_DIR,
     title="Use ledger-backed ADR rows for metadata",
     status="accepted",

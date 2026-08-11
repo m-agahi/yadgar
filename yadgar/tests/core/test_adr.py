@@ -163,6 +163,10 @@ def _engines(tmp_path_factory):
 # Minimal valid ADR call params (excludes directory which is passed separately)
 _VALID_ADR_PARAMS = dict(
     directory=_TEST_DIR,
+    # C5/ADR-0227: adr_add resolves an identity or returns the unresolved_project
+    # envelope. The base params carry one so the validation tests below still
+    # exercise the FIELD checks they are named for rather than tripping on scope.
+    project=TEST_PROJECT_ID,
     title="Use SurrealDB for persistent storage",
     status="accepted",
     date="2026-06-25",

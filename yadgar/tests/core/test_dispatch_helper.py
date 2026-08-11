@@ -3,7 +3,9 @@
 Covers:
 1. Returns prelude with yadgar contract section.
 2. Includes latest agent_prompt if pattern exists.
-3. Pattern with no prompts → graceful empty section.
+3. Pattern with no prompts → RAISES (C5 inverted this; it used to be a
+   graceful empty section, which the caller read as "no pattern exists for
+   this task-shape" and which therefore licensed a bespoke dispatch).
 4. Returns string under 2000 chars (orchestrator budget).
 """
 
@@ -33,12 +35,28 @@ def storage(module_storage):
     _st._storage = _prev
 
 
+def _seeded(storage, pattern: str, body: str = "Body text for the prelude.") -> str:
+    """Save *pattern* and return it, so the prelude has a prompt to assemble.
+
+    C5 made an ABSENT pattern raise ``UnresolvedPatternError``. The tests below
+    are about the CONTRACT text and the size budget, not about absence — they
+    used to lean on the deleted graceful-empty path to get a prelude without
+    seeding one. Seeding is what keeps their assertions about what they say
+    they are about; the absence case is pinned on its own, below.
+    """
+    from yadgar.core.server.tools.agent_prompts import agent_prompt_save
+
+    agent_prompt_save(pattern, body, storage=storage, directory="global", project=TEST_PROJECT_ID)
+    return pattern
+
+
 class TestDispatchHelperContract:
     """agent_dispatch_prelude always includes the Yadgar protocol contract."""
 
     def test_prelude_contains_contract_section(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
+        _seeded(storage, "dispatch-fix-bug")
         prelude = agent_dispatch_prelude(
             "dispatch-fix-bug", "vacuum regression", storage=storage, project=TEST_PROJECT_ID
         )
@@ -47,6 +65,7 @@ class TestDispatchHelperContract:
     def test_prelude_contains_recall_directive(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
+        _seeded(storage, "any-pattern")
         prelude = agent_dispatch_prelude(
             "any-pattern", "some topic", storage=storage, project=TEST_PROJECT_ID
         )
@@ -56,6 +75,7 @@ class TestDispatchHelperContract:
     def test_prelude_contains_findings_directive(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
+        _seeded(storage, "any-pattern")
         prelude = agent_dispatch_prelude(
             "any-pattern", "some topic", storage=storage, project=TEST_PROJECT_ID
         )
@@ -65,6 +85,7 @@ class TestDispatchHelperContract:
     def test_prelude_mentions_no_memorize(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
+        _seeded(storage, "any-pattern")
         prelude = agent_dispatch_prelude(
             "any-pattern", "some topic", storage=storage, project=TEST_PROJECT_ID
         )
@@ -117,17 +138,24 @@ class TestDispatchHelperAgentPrompt:
         # Should reference v2 (latest)
         assert "v2" in prelude
 
-    def test_pattern_not_found_graceful(self, storage):
+    def test_pattern_not_found_raises_naming_the_slug(self, storage):
+        """INVERTED by C5: an absent pattern is a raise, not a quiet prelude.
+
+        The old contract returned contract + recall hint and NO prompt, which
+        the caller reads as "no pattern exists for this task-shape" — and which
+        therefore licenses a bespoke dispatch. The raise has to name the SLUG,
+        because the remedy is reading the TOC for the right one.
+        """
+        from yadgar._shared.errors import UnresolvedPatternError
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         # No prompt saved for this pattern
-        prelude = agent_dispatch_prelude(
-            "nonexistent-xyz-pattern", "some task", storage=storage, project=TEST_PROJECT_ID
-        )
-        # Should still return a valid prelude (just without agent-prompt section)
-        assert "## Yadgar subagent contract" in prelude
-        assert isinstance(prelude, str)
-        assert len(prelude) > 0
+        with pytest.raises(UnresolvedPatternError) as ei:
+            agent_dispatch_prelude(
+                "nonexistent-xyz-pattern", "some task", storage=storage, project=TEST_PROJECT_ID
+            )
+        assert "agent-prompt-nonexistent-xyz-pattern" in str(ei.value)
+        assert ei.value.payload["fix"], "the raise must carry an actionable fix"
 
 
 class TestDispatchHelperNoPatternsGraceful:
@@ -158,6 +186,7 @@ class TestDispatchHelperSizeBudget:
     def test_short_prelude_under_budget(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
+        _seeded(storage, "short-pattern")
         prelude = agent_dispatch_prelude(
             "short-pattern", "short topic", storage=storage, project=TEST_PROJECT_ID
         )
@@ -185,5 +214,6 @@ class TestDispatchHelperSizeBudget:
     def test_returns_string(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
+        _seeded(storage, "any")
         result = agent_dispatch_prelude("any", "any", storage=storage, project=TEST_PROJECT_ID)
         assert isinstance(result, str)
