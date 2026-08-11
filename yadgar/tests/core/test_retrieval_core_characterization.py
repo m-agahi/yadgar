@@ -40,6 +40,7 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.retrieval.core import Retriever
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "retrieval_core_expected.json"
 REGEN = os.environ.get("YADGAR_REGEN_FIXTURES", "").lower() in {"1", "true", "yes"}
@@ -190,6 +191,7 @@ def _build_corpus(storage: StorageEngine, embeddings: DeterministicEmbeddings) -
                 "embedding": emb,
                 "tags": [],
                 "directory_context": "/characterization",
+                "project_id": TEST_PROJECT_ID,
                 "heat": 1.0,
                 "is_stale": False,
                 "file_hash": None,

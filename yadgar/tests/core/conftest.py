@@ -29,10 +29,6 @@ import pytest
 #: Tests asserting cross-project behaviour name their own values instead.
 TEST_PROJECT_ID = "test-owner/test-repo"
 
-#: A second, distinct identity for tests that must show two projects do not
-#: see each other's rows.
-OTHER_PROJECT_ID = "other-owner/other-repo"
-
 
 def memorize_scoped(*args, **kwargs):
     """``memorize_sync`` with a project NAMED (C13, ADR-0227).

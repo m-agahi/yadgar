@@ -147,12 +147,12 @@ class _WikiMixin:
             page_set += ", page_type = $page_type, wiki_schema_version = $wiki_schema_version"
             params["page_type"] = page_copy["page_type"]
             params["wiki_schema_version"] = page_copy.get("wiki_schema_version", 1)
-        # Car L (0047 §16.9): project_id alongside directory_context. The
-        # page_copy may already carry a project_id (the reslug op, the
-        # wiki_add replay branch, and the live write paths all stamp it).
-        # When the caller did not provide one, fall back to the lazy
-        # classifier — same seam as the migration; failure falls back to
-        # 'unresolved' so the write never blocks on a path-resolution error.
+        # Car L (0047 §16.9): project_id alongside directory_context. C13: the
+        # "falls back to the lazy classifier, then to 'unresolved', so the write
+        # never blocks" sentence that stood here described what C5 DELETED — an
+        # unstamped page raises, and blocking the write is the point (ADR-0227).
+        # ``directory_context`` above keeps its ``or "global"`` on purpose: it is
+        # REACH on a column alive until C11, the one axis where that is an answer.
         project_id = _resolve_project_id_for_write(
             caller_value=page_copy.get("project_id"),
             directory_context=directory_context,
