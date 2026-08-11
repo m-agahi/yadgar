@@ -40,6 +40,7 @@ from yadgar.backend.admin_exec import (
     memory,
     nightly_sweep,
     project,
+    project_backfill,
     reslug,
     restoration,
     restore_sql,
@@ -150,6 +151,10 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # two ops are deliberately NOT registry-guarded: they are the bootstrap.
     "create_project_row": ledger.create_project_row,
     "list_project_rows": ledger.list_project_rows,
+    # C6: the operator-invoked project_id backfill (T2). Dry-run by default —
+    # it returns a manifest and writes nothing until the operator re-runs with
+    # dry_run=False AND acknowledges the unmapped bucket and the deletes.
+    "project_id_backfill": project_backfill.project_id_backfill,
     "list_task_rows": ledger.list_task_rows,
     "get_task_row": ledger.get_task_row,
     "list_task_rows_all_projects": ledger.list_task_rows_all_projects,

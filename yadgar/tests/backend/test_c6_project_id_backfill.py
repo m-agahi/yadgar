@@ -1,0 +1,528 @@
+"""C6 — the operator-invoked ``project_id`` backfill op.
+
+Modelled on ``reslug_adr_pages``: build a manifest, return it UN-APPLIED,
+operator reviews, re-runs with ``dry_run=False``. The op derives NOTHING — it
+takes a host-resolved ``directory_context → project_id`` mapping produced by
+the C2 mint running host-side, because neither image installs git nor mounts a
+host project directory (ADR-0227).
+
+The measured corpus (live ``db_inspect``, 2026-08-10) is why the manifest is
+REVIEWED rather than derived: 1,033 of 5,349 rows — ~19% — carry a sentinel
+``directory_context`` (``global`` / ``system``) that no path mapping covers,
+and 18 more distinct values are free-text prose. A backfill that reported
+success while silently bucketing 19% is exactly the ADR-0222 failure mode.
+
+The two REFUSALS are the mechanism that makes "reviewed" real, and they are
+what these tests spend most of their assertions on:
+
+  * an apply with a non-empty ``unmapped`` bucket REFUSES unless the operator
+    passes ``quarantine_unmapped=True``;
+  * an apply that would DELETE rows REFUSES unless the operator passes
+    ``confirm_deletes=True``.
+
+Without those, the manifest is decorative.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from yadgar.backend.admin_exec.project_backfill import (
+    MEMIFY_CONTENT_MARKER,
+    project_id_backfill,
+)
+
+# ── fake storage ────────────────────────────────────────────────────────────
+
+_YADGAR = "/home/max/git/yadgar"
+_QWFM = "/home/max/quinyx/qwfm"
+_PROSE = "Hard rule from Max set 2026-05-07 — must survive compaction"
+
+
+class _FakeStorage:
+    """In-memory double for the SurrealDB half.
+
+    Answers the two discovery SELECTs the op issues and RECORDS every
+    statement, so a test can assert that a dry run issued no mutation at all
+    — the property the whole op design rests on.
+    """
+
+    def __init__(self, memory: list[dict], wiki: list[dict]) -> None:
+        self.memory = memory
+        self.wiki = wiki
+        self.statements: list[tuple[str, dict | None]] = []
+
+    def _q(self, query: str, params: dict | None = None) -> list[dict]:
+        self.statements.append((query, params))
+        upper = query.strip().upper()
+        if upper.startswith("SELECT"):
+            table = "memory" if " FROM MEMORY" in upper else "wiki_page"
+            rows = self.memory if table == "memory" else self.wiki
+            return [dict(r) for r in rows]
+        return []
+
+    @property
+    def mutations(self) -> list[tuple[str, dict | None]]:
+        """Every non-SELECT statement issued."""
+        return [(q, p) for q, p in self.statements if not q.strip().upper().startswith("SELECT")]
+
+    def _extract_id(self, raw: Any) -> int:
+        return int(str(raw).split(":")[-1])
+
+
+class _FakeSql:
+    """Registry half — answers ``list_project_rows`` with the known keys."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys
+
+    async def list_project_rows(self) -> list[dict]:
+        return [{"key": k, "kind": "git"} for k in self.keys]
+
+
+def _memify_row(rid: int, dc: str) -> dict:
+    """A ``_memify_derive`` co-occurrence row — the D4 producer signature."""
+    return {
+        "id": f"memory:{rid}",
+        "directory_context": dc,
+        "tags": ["derived", "auto-generated"],
+        "content": f"foo.py and bar.py {MEMIFY_CONTENT_MARKER}",
+    }
+
+
+def _corpus() -> tuple[list[dict], list[dict]]:
+    """A miniature of the measured corpus: every class present, small counts."""
+    memory = [
+        # real paths with a mapping
+        {"id": "memory:1", "directory_context": _YADGAR, "tags": ["a"], "content": "x"},
+        {"id": "memory:2", "directory_context": _QWFM, "tags": ["b"], "content": "y"},
+        # a row that already carries the `global` reach tag on a REAL dir —
+        # the visibility-change class (measured live: 4 of 7).
+        {
+            "id": "memory:3",
+            "directory_context": _YADGAR,
+            "tags": ["global"],
+            "content": "z",
+        },
+        # `system` — D3, deleted
+        {"id": "memory:4", "directory_context": "system", "tags": ["derived"], "content": "s"},
+        # `global` — the D4 cohort (deleted) and a genuine global (kept)
+        _memify_row(5, "global"),
+        {"id": "memory:6", "directory_context": "global", "tags": ["c"], "content": "keep me"},
+        # free-text prose — the genuine quarantine set
+        {"id": "memory:7", "directory_context": _PROSE, "tags": [], "content": "p"},
+        # same producer at a REAL dir — D4 says KEEP and migrate normally
+        _memify_row(8, _YADGAR),
+    ]
+    wiki = [
+        {"id": "wiki_page:1", "directory_context": _YADGAR, "tags": ["adr"], "content": "w"},
+        {"id": "wiki_page:2", "directory_context": "global", "tags": [], "content": "g"},
+    ]
+    return memory, wiki
+
+
+_MAPPING = {
+    _YADGAR: "m-agahi/yadgar",
+    _QWFM: "quinyx/qwfm",
+    "global": "local/aws-work",
+}
+_REGISTERED = ["m-agahi/yadgar", "quinyx/qwfm", "local/aws-work"]
+
+
+@pytest.fixture
+def fakes(monkeypatch):
+    """Install the two storage doubles and hand them back."""
+    memory, wiki = _corpus()
+    storage = _FakeStorage(memory, wiki)
+    sql = _FakeSql(_REGISTERED)
+    import yadgar.backend.admin_exec.project_backfill as mod
+
+    monkeypatch.setattr(mod, "_get_storage", lambda: storage)
+    monkeypatch.setattr(mod, "_get_sql_storage", lambda: sql)
+    return storage, sql
+
+
+def _payload(**over) -> dict:
+    base = {"mapping": dict(_MAPPING)}
+    base.update(over)
+    return base
+
+
+# ── dry run is the default, and it cannot write ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dry_run_is_the_default(fakes):
+    """Omitting ``dry_run`` must NOT apply. The safe value is the default one.
+
+    An operator op whose default mutates is one typo away from an unreviewed
+    corpus rewrite.
+    """
+    storage, _ = fakes
+    result = await project_id_backfill(_payload())
+    assert result["dry_run"] is True
+    assert result["applied"] is False
+    assert storage.mutations == [], f"dry run issued writes: {storage.mutations}"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_returns_the_full_manifest_unapplied(fakes):
+    """The manifest is complete on a dry run — nothing is withheld until apply.
+
+    The operator reviews THIS structure and then re-runs; a manifest that
+    only materialised on apply would make the review impossible.
+    """
+    _, _ = fakes
+    result = await project_id_backfill(_payload())
+    for key in ("updates", "deletes", "quarantine", "unmapped", "visibility_changes", "totals"):
+        assert key in result, f"manifest missing {key!r}"
+
+
+@pytest.mark.asyncio
+async def test_dry_run_classifies_every_row_exactly_once(fakes):
+    """Every row lands in exactly one class — the anti-ADR-0222 arithmetic.
+
+    The failure this pins is a backfill reporting success while some rows
+    fell through every branch: seen must equal updated + deleted +
+    quarantined + unmapped.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    t = r["totals"]
+    assert t["rows_seen"] == (
+        t["rows_updated"] + t["rows_deleted"] + t["rows_quarantined"] + t["rows_unmapped"]
+    ), t
+
+
+# ── the mapping is host-resolved; the op derives nothing ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_missing_mapping_is_refused(fakes):
+    """No mapping → no run. The op must never invent one (ADR-0227).
+
+    The pre-C6 migration derived ``local/<basename>`` inside a container that
+    installs no git and mounts no project directory — a well-formed key that
+    is indistinguishable at read time from a correct one.
+    """
+    storage, _ = fakes
+    result = await project_id_backfill({"dry_run": False})
+    assert result["ok"] is False
+    assert result["reason"] == "missing_mapping"
+    assert storage.mutations == []
+
+
+@pytest.mark.asyncio
+async def test_mapped_directories_get_their_host_resolved_project_id(fakes):
+    """Each mapped ``directory_context`` becomes its mapped project_id."""
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    by_key = {(u["table"], u["directory_context"]): u for u in r["updates"]}
+    assert by_key[("memory", _YADGAR)]["project_id"] == "m-agahi/yadgar"
+    assert by_key[("wiki_page", _YADGAR)]["project_id"] == "m-agahi/yadgar"
+    assert by_key[("memory", _QWFM)]["project_id"] == "quinyx/qwfm"
+
+
+@pytest.mark.asyncio
+async def test_global_rows_get_an_owner_and_keep_their_reach(fakes):
+    """Decision G: ``global`` gets a project_id owner PLUS the ``global`` tag.
+
+    Owner and reach are recorded separately (§1.4). Dropping the tag would
+    silently narrow 429 rows from every-project to one-project visibility;
+    dropping the owner would leave them unscoped.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    entry = next(
+        u for u in r["updates"] if u["table"] == "memory" and u["directory_context"] == "global"
+    )
+    assert entry["project_id"] == "local/aws-work"
+    assert entry["add_global_tag"] is True
+    # A real-path update must NOT gain the reach tag.
+    real = next(
+        u for u in r["updates"] if u["table"] == "memory" and u["directory_context"] == _YADGAR
+    )
+    assert real["add_global_tag"] is False
+
+
+@pytest.mark.asyncio
+async def test_unknown_registry_targets_are_surfaced(fakes):
+    """A mapping target that is not a registered project is named, not used.
+
+    ADR-0223 makes registry enforcement FAIL LOUD. Discovering an
+    unregistered target as a per-row FK error halfway through the apply is
+    the failure this check exists to prevent.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload(mapping={_YADGAR: "m-agahi/typo"}))
+    assert r["registry"]["unknown_targets"] == ["m-agahi/typo"]
+
+
+# ── the two refusals ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_while_rows_are_unmapped(fakes):
+    """THE gate. An unreviewed bucket blocks the apply and writes nothing.
+
+    Without this the op silently quarantines whatever the host mapping
+    missed and reports success — ADR-0222 rebuilt with extra steps.
+    """
+    storage, _ = fakes
+    r = await project_id_backfill(_payload(dry_run=False, confirm_deletes=True))
+    assert r["ok"] is False
+    assert r["reason"] == "unreviewed_directory_contexts"
+    assert any(u["directory_context"] == _PROSE for u in r["unmapped"])
+    assert storage.mutations == [], "a refused apply must write nothing"
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_unconfirmed_deletes(fakes):
+    """Deletes need their own acknowledgement — D4 destroys readable rows."""
+    storage, _ = fakes
+    r = await project_id_backfill(_payload(dry_run=False, quarantine_unmapped=True))
+    assert r["ok"] is False
+    assert r["reason"] == "unconfirmed_deletes"
+    assert storage.mutations == []
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_an_unregistered_target(fakes):
+    """A bad mapping target blocks the apply outright."""
+    storage, _ = fakes
+    r = await project_id_backfill(
+        _payload(
+            mapping={_YADGAR: "m-agahi/typo"},
+            dry_run=False,
+            quarantine_unmapped=True,
+            confirm_deletes=True,
+        )
+    )
+    assert r["ok"] is False
+    assert r["reason"] == "unknown_registry_targets"
+    assert storage.mutations == []
+
+
+# ── the delete cohorts ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_system_cohort_is_deleted_and_marked_already_unreadable(fakes):
+    """D3: the 604 ``system`` rows go. Deletion changes NO observable behaviour.
+
+    ``'system'`` was removed from ``_ALWAYS_ELIGIBLE`` in v5.65, so the rows
+    are already unreadable — the manifest records that so a reviewer can tell
+    this cohort apart from D4's.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    system = next(d for d in r["deletes"] if d["cohort"] == "system")
+    assert system["table"] == "memory"
+    assert system["currently_readable"] is False
+    assert system["rows"] == 1
+    assert system["ids"] == ["memory:4"]
+
+
+@pytest.mark.asyncio
+async def test_memify_cohort_is_marked_as_a_real_behaviour_change(fakes):
+    """D4: unlike D3 these rows ARE currently readable. Say so in the manifest.
+
+    "Already unreadable" and "readable, and being deleted" are different
+    decisions for a reviewer; collapsing them into one ``deletes`` list with
+    no distinction is how the second one gets waved through.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    cohort = next(d for d in r["deletes"] if d["cohort"] == "memify_global")
+    assert cohort["currently_readable"] is True
+    assert cohort["ids"] == ["memory:5"]
+
+
+@pytest.mark.asyncio
+async def test_memify_cohort_keeps_the_same_producer_at_a_real_directory(fakes):
+    """D4 KEEPS the ~113 same-producer rows that carry a real project dir.
+
+    The single-project ones are the ones the ``dominant_directory`` vote got
+    right; they migrate normally.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    cohort = next(d for d in r["deletes"] if d["cohort"] == "memify_global")
+    assert "memory:8" not in cohort["ids"], "a real-dir row of the same producer was deleted"
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        # missing the `derived` tag
+        {
+            "id": "memory:90",
+            "directory_context": "global",
+            "tags": ["auto-generated"],
+            "content": f"a and b {MEMIFY_CONTENT_MARKER}",
+        },
+        # missing the `auto-generated` tag
+        {
+            "id": "memory:91",
+            "directory_context": "global",
+            "tags": ["derived"],
+            "content": f"a and b {MEMIFY_CONTENT_MARKER}",
+        },
+        # missing the content marker
+        {
+            "id": "memory:92",
+            "directory_context": "global",
+            "tags": ["derived", "auto-generated"],
+            "content": "a genuinely global note",
+        },
+        # missing the directory_context
+        {
+            "id": "memory:93",
+            "directory_context": _YADGAR,
+            "tags": ["derived", "auto-generated"],
+            "content": f"a and b {MEMIFY_CONTENT_MARKER}",
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_three_of_four_conjuncts_is_not_enough_to_delete(row, monkeypatch):
+    """The D4 signature is a FOUR-way conjunction — any three must SURVIVE.
+
+    Implementing it as ``directory_context='global' AND content LIKE
+    '%frequently modified together%'`` over-deletes; dropping either tag
+    condition over-deletes differently. Each parametrised row is missing
+    exactly one conjunct.
+    """
+    import yadgar.backend.admin_exec.project_backfill as mod
+
+    storage = _FakeStorage([row], [])
+    monkeypatch.setattr(mod, "_get_storage", lambda: storage)
+    monkeypatch.setattr(mod, "_get_sql_storage", lambda: _FakeSql(_REGISTERED))
+
+    r = await project_id_backfill(_payload())
+    deleted_ids = [i for d in r["deletes"] for i in d["ids"]]
+    assert row["id"] not in deleted_ids, "a row missing one conjunct was scheduled for deletion"
+
+
+# ── quarantine (``legacy_directory``) ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_unmapped_prose_is_quarantined_not_guessed(fakes):
+    """Free-text prose has no derivable owner — it goes to ``legacy_directory``.
+
+    ``memorize(context=)`` used as a description is what its own docstring
+    forbids; the original value is preserved for human adjudication rather
+    than dropped or heuristically basenamed.
+    """
+    storage, _ = fakes
+    r = await project_id_backfill(
+        _payload(dry_run=False, quarantine_unmapped=True, confirm_deletes=True)
+    )
+    assert r["ok"] is True
+    assert any(q["directory_context"] == _PROSE for q in r["quarantine"])
+    quarantine_writes = [(q, p) for q, p in storage.mutations if "legacy_directory" in q.lower()]
+    assert quarantine_writes, "quarantine wrote no legacy_directory"
+    assert all("project_id" not in q for q, _ in quarantine_writes), (
+        "a quarantined row must NOT be stamped with a guessed project_id"
+    )
+
+
+# ── the apply path ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_apply_writes_exactly_the_dry_run_manifest(fakes, monkeypatch):
+    """``dry_run=False`` applies EXACTLY what ``dry_run=True`` reported.
+
+    Compared entry-for-entry against a dry run over the same corpus: the
+    review is worthless if the apply can do something the manifest did not
+    describe.
+    """
+    _, _ = fakes
+    ack = {"quarantine_unmapped": True, "confirm_deletes": True}
+    preview = await project_id_backfill(_payload(**ack))
+
+    # Fresh doubles so the apply sees the same corpus the preview did.
+    import yadgar.backend.admin_exec.project_backfill as mod
+
+    memory, wiki = _corpus()
+    storage2 = _FakeStorage(memory, wiki)
+    monkeypatch.setattr(mod, "_get_storage", lambda: storage2)
+    monkeypatch.setattr(mod, "_get_sql_storage", lambda: _FakeSql(_REGISTERED))
+    applied = await project_id_backfill(_payload(dry_run=False, **ack))
+
+    assert applied["ok"] is True
+    assert applied["applied"] is True
+    for key in ("updates", "deletes", "quarantine"):
+        assert applied[key] == preview[key], f"{key} diverged between preview and apply"
+
+
+@pytest.mark.asyncio
+async def test_apply_deletes_before_it_stamps_the_global_cohort(fakes):
+    """Ordering is load-bearing: the D4 cohort is a SUBSET of ``global``.
+
+    Stamping first would write a project_id onto rows about to be deleted,
+    and — worse — the manifest's ``global`` row count would describe a set
+    larger than the one that survives.
+    """
+    storage, _ = fakes
+    await project_id_backfill(
+        _payload(dry_run=False, quarantine_unmapped=True, confirm_deletes=True)
+    )
+    kinds = [
+        "DELETE" if q.strip().upper().startswith("DELETE") else "UPDATE"
+        for q, _ in storage.mutations
+    ]
+    assert "DELETE" in kinds and "UPDATE" in kinds
+    assert kinds.index("DELETE") < kinds.index("UPDATE"), f"updates ran before deletes: {kinds}"
+
+
+@pytest.mark.asyncio
+async def test_global_update_count_excludes_the_rows_being_deleted(fakes):
+    """The manifest's ``global`` count is the SURVIVORS, not the whole class.
+
+    349 measured ``global`` memory rows minus D4's 238 leaves ~111. A count
+    that reported 349 would tell the reviewer the wrong thing about what the
+    stamp actually touches.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    entry = next(
+        u for u in r["updates"] if u["table"] == "memory" and u["directory_context"] == "global"
+    )
+    assert entry["rows"] == 1, "expected only the surviving genuine-global row"
+
+
+# ── the visibility-change review list (D2) ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_rows_that_already_carry_a_global_tag_are_listed_for_review(fakes):
+    """D2: a row with a real dir AND a ``global`` tag becomes globally visible.
+
+    The reach tag is SELF-GRANTED — it lives in the free-text ``tags`` array
+    any agent writes. Measured live: 4 of 7 tagged memory rows have a real
+    project directory, so they flip from project-scoped to globally visible
+    the moment C7's predicate switches. That is a visibility change, not a
+    migration detail, and it gets eyeball approval.
+    """
+    _, _ = fakes
+    r = await project_id_backfill(_payload())
+    ids = {v["id"] for v in r["visibility_changes"]}
+    assert "memory:3" in ids
+    # A row whose directory_context IS the sentinel is not a CHANGE — it was
+    # already globally visible.
+    assert "memory:6" not in ids
+
+
+# ── registration ────────────────────────────────────────────────────────────
+
+
+def test_backfill_op_is_registered_on_the_admin_dispatch():
+    """The op must be reachable over ``/admin`` — it is the operator surface."""
+    from yadgar.backend.admin_exec import admin_ops
+
+    assert "project_id_backfill" in admin_ops()

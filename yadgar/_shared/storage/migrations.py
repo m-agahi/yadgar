@@ -1485,15 +1485,26 @@ def _migration_031_project_id_backfill(storage) -> None:
     (including none) until the operator runs the C6 backfill op with a
     host-resolved project_id.
 
-    C6: the operator-invoked backfill lands as an admin op that takes the
-    project_id as an explicit parameter. Until it does, rows written before
-    Car L simply carry no project_id — which readers treat as unscoped rather
-    than as a phantom project.
+    **C6 (0047 PR#40 §5) shipped that backfill** as
+    ``admin_exec/project_backfill.project_id_backfill`` — an operator-invoked
+    admin op that takes a host-resolved ``directory_context → project_id``
+    mapping, returns a manifest UN-APPLIED, and writes only when re-run with
+    ``dry_run=False``. Rows written before it runs carry no project_id, which
+    readers treat as unscoped rather than as a phantom project.
 
     Schema (unchanged):
       - ``project_id TYPE option<string>`` — nullable through the transition.
-      - ``legacy_directory TYPE option<string>`` — set only by the C6 op on
-        rows whose directory no longer resolves.
+      - ``legacy_directory TYPE option<string>`` — the QUARANTINE column. Set
+        by the C6 op on rows whose ``directory_context`` the host mapping
+        cannot resolve: the free-text-prose class (18 distinct values,
+        ``memorize(context=)`` used as a description, which its own docstring
+        forbids). Those rows have no derivable owner, so the original value is
+        preserved for human adjudication and ``project_id`` is deliberately
+        LEFT UNSET — a quarantined row must never carry a guessed identity.
+        Until C6 the column had no writer at all and this paragraph described
+        a behaviour the code did not have; the choice made was to implement
+        the arm rather than delete the column, because the prose class is real
+        and measured and needs somewhere to land.
 
     Idempotent: every statement is ``IF NOT EXISTS``, so a re-run is a no-op.
     """
