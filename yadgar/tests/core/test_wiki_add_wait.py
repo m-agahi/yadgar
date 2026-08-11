@@ -407,3 +407,44 @@ class TestWaitComposesWithOtherParams:
         )
         assert result.get("stored") is True
         assert result.get("committed") is True
+
+
+class TestAppendOnNewSlugCarriesTheProject:
+    """C13 regression: the THIRD write path in ``run_wiki_add_replay``.
+
+    C3 threaded the enqueue-time ``project_id`` into the two ``WikiAddOptions``
+    it could see and left the ``append`` branch alone — that branch reaches
+    ``WikiStore.add`` indirectly through ``WikiStore.ingest``, which had no
+    ``project_id`` parameter at all. On a slug that does not exist yet, ingest
+    takes its CREATE branch, and after C5 an unstamped insert raises. So a
+    caller that supplied ``project=`` still lost its write.
+
+    Pinned end-to-end through the drainer rather than at ``ingest``'s signature:
+    a signature test passes the moment the parameter exists, whether or not
+    ``run_wiki_add_replay`` actually passes it.
+    """
+
+    def test_append_creating_a_new_page_commits_with_the_caller_project(self):
+        _apply_migration()
+        title = _make_unique_title("Append Creates Page")
+
+        result = server.wiki_add(
+            title=title,
+            content="first body, via the append branch",
+            append=True,
+            wait=True,
+            tags=["append-create"],
+            directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
+        )
+        assert result.get("stored") is True, f"append-create must commit, got: {result}"
+        assert result.get("committed") is True
+
+        slug = result.get("slug")
+        assert slug is not None
+        page = server._get_storage().get_wiki_page_by_slug(slug)
+        assert page is not None, "append on a new slug must have created the page"
+        assert page.get("project_id") == TEST_PROJECT_ID, (
+            "the append branch must carry the caller's project_id, not a derived "
+            f"or absent one; got {page.get('project_id')!r}"
+        )
