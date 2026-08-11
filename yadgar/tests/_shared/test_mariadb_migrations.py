@@ -258,21 +258,27 @@ def test_002_creates_all_seven_tables(upgrade_sql):
 
 
 def test_task_and_adr_carry_project_id_without_fk(upgrade_sql):
-    """``project_id`` ships as a plain VARCHAR(255) NOT NULL on task/adr.
+    """``project_id`` ships as a plain VARCHAR(256) NOT NULL on task/adr.
 
     No FK on 002 — car A0's ``003_project_registry`` creates the ``project``
     table and adds the FKs. Asserted via the regex of the rendered DDL (the
     alembic offline render is the only artefact available without a DB).
     The CREATE TABLE body is matched via a balanced-paren walk so nested
     parens in column type declarations do not truncate the match.
+
+    C6 (#17) widened 255 → 256 in place on this unreleased revision: the FK
+    target ``project.key`` must agree with the two referencing columns, and
+    256 is ADR-0202's slug cap, which the ``body_slug`` columns carry. The
+    number is asserted rather than left free because a silent disagreement
+    between the FK's two sides is a truncation bug nothing else catches.
     """
     for table in ("task", "adr"):
         body = _create_table_body(upgrade_sql, table)
         assert re.search(
-            r"`?project_id`?\s+VARCHAR\(255\)\s+NOT NULL",
+            r"`?project_id`?\s+VARCHAR\(256\)\s+NOT NULL",
             body,
             re.IGNORECASE,
-        ), f"{table} missing project_id VARCHAR(255) NOT NULL"
+        ), f"{table} missing project_id VARCHAR(256) NOT NULL"
         assert "FOREIGN KEY" not in body.upper(), (
             f"{table} must NOT carry a FOREIGN KEY in 002 — 003_project_registry adds it"
         )

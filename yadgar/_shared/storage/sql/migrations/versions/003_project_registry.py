@@ -51,7 +51,10 @@ def upgrade() -> None:
     """
     op.create_table(
         TABLE_NAME,
-        sa.Column("key", sa.String(length=255), nullable=False),
+        # VARCHAR(256), matching ``002_ledger_tables._PROJECT_ID``. The two
+        # MUST agree: a FK across mismatched VARCHAR widths is a latent
+        # truncation bug (see 002's comment for why 256 rather than 255).
+        sa.Column("key", sa.String(length=256), nullable=False),
         sa.Column("display_name", sa.String(length=64), nullable=True),
         sa.Column(
             "kind",

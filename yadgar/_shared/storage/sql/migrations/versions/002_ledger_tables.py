@@ -75,9 +75,31 @@ depends_on: str | Sequence[str] | None = None
 
 # ── column type constants (one source of truth for tests + DDL) ─────────────
 
-# ``project_id`` is a plain VARCHAR(255) NOT NULL — no FK on this revision
+# ``project_id`` is a plain VARCHAR(256) NOT NULL — no FK on this revision
 # (car A0's 003 adds the FK after ``project`` exists).
-_PROJECT_ID = sa.String(length=255)
+#
+# WHY 256 AND NOT 255 (C6 / #17). Two DIFFERENT invariants land on the same
+# number and it is worth keeping them apart:
+#
+#   * ``_SLUG`` below holds a slug, and ADR-0202 caps slugs at 256 chars with
+#     a hash suffix on overflow (``reslug.cap_slug``). 256 is that cap; the
+#     two must move together or an over-long slug turns into an INSERT
+#     failure instead of a hashed one.
+#   * ``_PROJECT_ID`` holds a project_id, which ADR-0202 gives NO cap. The
+#     constraint on it is only that ``project.key`` (003) and the two
+#     referencing columns AGREE — a FK across mismatched VARCHAR widths is a
+#     latent truncation bug. 256 is chosen so the identity columns and the
+#     slug columns carry one number rather than two adjacent ones that a
+#     later reader would try to reconcile.
+#
+# The 255 → 256 change is made IN PLACE on this unreleased revision rather
+# than as a follow-up ALTER, the same licence C14 takes for its own 002
+# changes (§5.C14). InnoDB's index-prefix limit is not in play: utf8mb4 at
+# 255 chars is already 1020 bytes, so if 255 fits, 256 does.
+_PROJECT_ID = sa.String(length=256)
+
+# Slug columns (``body_slug``). Sized to ADR-0202's slug cap — see above.
+_SLUG = sa.String(length=256)
 
 # ``content_hash`` and ``baseline_hash`` are CHAR(64) — sha256 hex shape,
 # fixed width so MySQL's row format does not depend on the actual value
@@ -136,7 +158,7 @@ def upgrade() -> None:
         sa.Column("state", sa.String(length=32), nullable=True),
         sa.Column("active_form", sa.String(length=512), nullable=True),
         sa.Column("plan_path", sa.String(length=512), nullable=True),
-        sa.Column("body_slug", sa.String(length=255), nullable=True),
+        sa.Column("body_slug", _SLUG, nullable=True),
         created_at,
         updated_at,
         sa.PrimaryKeyConstraint("id"),
@@ -154,7 +176,7 @@ def upgrade() -> None:
         sa.Column("decided_on", sa.Date(), nullable=True),
         sa.Column("subsystem", sa.String(length=128), nullable=True),
         sa.Column("tier", sa.String(length=32), nullable=True),
-        sa.Column("body_slug", sa.String(length=255), nullable=True),
+        sa.Column("body_slug", _SLUG, nullable=True),
         created_at,
         updated_at,
         sa.PrimaryKeyConstraint("id"),
@@ -167,7 +189,7 @@ def upgrade() -> None:
         "agent_pattern",
         sa.Column("id", _ID, nullable=False, autoincrement=True),
         sa.Column("name", sa.String(length=128), nullable=False),
-        sa.Column("body_slug", sa.String(length=255), nullable=False),
+        sa.Column("body_slug", _SLUG, nullable=False),
         sa.Column("purpose", sa.String(length=512), nullable=True),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="active"),
         sa.Column("baseline_hash", _HEX_64, nullable=True),
@@ -185,7 +207,7 @@ def upgrade() -> None:
         "agent_discipline",
         sa.Column("id", _ID, nullable=False, autoincrement=True),
         sa.Column("name", sa.String(length=128), nullable=False),
-        sa.Column("body_slug", sa.String(length=255), nullable=False),
+        sa.Column("body_slug", _SLUG, nullable=False),
         sa.Column("purpose", sa.String(length=512), nullable=True),
         sa.Column("always_applied", sa.Boolean(), nullable=False, server_default=sa.text("0")),
         sa.Column("position", sa.Integer(), nullable=False, server_default="0"),

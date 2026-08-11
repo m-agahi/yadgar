@@ -34,6 +34,7 @@ as ``NEW_SLUG_TEMPLATE``. The sync MariaStorageEngine bridge
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -48,6 +49,56 @@ logger = logging.getLogger("yadgar.backend.admin_exec.reslug")
 #: Old-format ADR slug regex — captures the numeric suffix.
 ADR_BODY_RE = re.compile(r"^yadgar-adr-(\d+)$")
 
+#: ADR-0202's slug cap: *"cap at 256 chars with a hash suffix on overflow"*.
+#: Every slug this module EMITS is capped here. The ledger's slug columns
+#: (``task.body_slug`` / ``adr.body_slug`` / the agent tables') are sized to
+#: this same number in alembic revision ``002_ledger_tables`` — the two must
+#: move together, or an overflowing slug becomes an INSERT failure instead of
+#: a hashed one.
+SLUG_MAX_CHARS = 256
+
+#: Length of the hex digest kept in the overflow suffix. 16 hex chars = 64
+#: bits: at the scale of one user's project set, a birthday collision is not
+#: a real risk, and a shorter suffix leaves more of the readable head intact.
+_HASH_HEX_CHARS = 16
+
+#: Marker that introduces the overflow hash. Chosen so a capped slug is
+#: recognisable by eye and cannot be confused with the ``_adr-NNNN`` tail of
+#: an un-capped one.
+_HASH_MARKER = "-h"
+
+
+@observe(tier="hot", span=False)
+def cap_slug(slug: str) -> str:
+    """Return *slug* capped to :data:`SLUG_MAX_CHARS`, hashing on overflow.
+
+    ADR-0202: slugs are capped at 256 chars *with a hash suffix on overflow*.
+    A bare truncation would be catastrophic rather than merely lossy — every
+    long slug sharing a 256-char prefix would collapse onto one value, and
+    because the two DB-wide slug lookups (``get_wiki_page_by_slug`` and the
+    ``wiki_bookmark_slug_idx`` UNIQUE index) are slug-only, that collapse is
+    a SILENT WRONG READ. The suffix is what keeps distinct inputs distinct.
+
+    The digest is taken over the WHOLE pre-cap string, so two inputs that
+    differ anywhere — including past the truncation point, and including in
+    the ``_adr-NNNN`` tail that truncation removes — produce different
+    suffixes.
+
+    Idempotent: a value already within the cap is returned unchanged, so
+    re-capping an emitted slug is a no-op.
+
+    This is the SINGLE capping layer. ``_project_id_to_slug`` deliberately
+    does not cap (see its docstring); any future caller that emits a slug of
+    its own — C10(d)'s ``adr_seed`` is the next one — routes it through here
+    rather than adding a second layer, because a hash over a hash is
+    injective but unreadable from either end.
+    """
+    if len(slug) <= SLUG_MAX_CHARS:
+        return slug
+    digest = hashlib.sha256(slug.encode("utf-8")).hexdigest()[:_HASH_HEX_CHARS]
+    suffix = f"{_HASH_MARKER}{digest}"
+    return slug[: SLUG_MAX_CHARS - len(suffix)] + suffix
+
 
 def _project_id_to_slug(project_id: str) -> str:
     """Replace ``/`` with ``_`` in a project_id for use in a wiki slug.
@@ -56,6 +107,10 @@ def _project_id_to_slug(project_id: str) -> str:
     mapping is mechanical: ``owner/repo`` → ``owner_repo``. The exposed
     ``NEW_SLUG_TEMPLATE`` calls this internally so the caller passes the
     un-mangled ``owner/repo`` project_id.
+
+    NOT a capping function — it is a pure separator swap. The cap
+    (:func:`cap_slug`) is applied once, at the point the finished slug is
+    emitted, because that is the only place the total length is known.
     """
     return project_id.replace("/", "_")
 
@@ -76,6 +131,14 @@ class _SlugTemplate(str):
     call. Overriding ``format`` on a ``str`` subclass keeps the API
     identical to a plain template-string ``.format()`` call while
     inserting the substitution at the seam.
+
+    THE CAP (#17, ADR-0202) IS APPLIED HERE, on the finished string. This is
+    the module's emit point: it is the last place before the value becomes a
+    slug, and the only place the total length — project part plus the
+    ``_adr-NNNN`` tail — is known. In the overflow case the readable tail is
+    truncated away; that is acceptable on ADR-0202's own terms (*"the slug is
+    OPAQUE: never parsed"*), and the digest covers the tail so two ADRs of
+    one overflowing project still differ.
     """
 
     _PATTERN = "{project_id_safe}_adr-{n:04d}"
@@ -86,7 +149,7 @@ class _SlugTemplate(str):
         # ``project_id_safe`` (the template field). Other kwargs pass through.
         if "project_id" in kwargs and "project_id_safe" not in kwargs:
             kwargs["project_id_safe"] = _project_id_to_slug(kwargs["project_id"])
-        return str.format(self._PATTERN, *args, **kwargs)
+        return cap_slug(str.format(self._PATTERN, *args, **kwargs))
 
 
 #: New-format slug template. ``{project_id}`` substitutes ``/`` with ``_``

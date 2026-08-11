@@ -215,7 +215,7 @@ def test_project_table_has_required_columns():
     """The ``project`` table must carry the §16.5 columns.
 
     Columns (per the master plan):
-      key            VARCHAR(255) PRIMARY KEY
+      key            VARCHAR(256) PRIMARY KEY
       display_name   VARCHAR(64)  NULL
       kind           ENUM('git','local') NOT NULL
       remote_url     VARCHAR(512) NULL
@@ -285,3 +285,33 @@ def test_downgrade_drops_fk_then_table():
         assert last_constraint_idx < drop_table_idx, (
             f"downgrade() must drop constraints BEFORE the table; order: {drop_order}"
         )
+
+
+# ── C6 (#17): the FK's two sides must agree on width ──────────────────────
+
+
+def test_project_key_width_matches_the_referencing_columns():
+    """``project.key`` and ``task/adr.project_id`` must be the SAME width.
+
+    A FK across mismatched VARCHAR widths is a latent truncation bug that no
+    other test catches: MySQL accepts the constraint, and the disagreement
+    only surfaces when a key long enough to be truncated on one side is
+    written. C6 (#17) set both to 256 — ADR-0202's slug cap, reused for the
+    identity columns so the schema carries one number rather than two
+    adjacent ones a later reader would try to reconcile.
+
+    Read from the SOURCE of both revisions rather than from a rendered DDL,
+    because the assertion is about the two files agreeing with each other.
+    """
+    registry_src = _load_module_source("003_project_registry")
+    ledger_src = _load_module_source("002_ledger_tables")
+
+    assert 'sa.Column("key", sa.String(length=256)' in registry_src, (
+        "003 must size project.key at VARCHAR(256)"
+    )
+    assert "_PROJECT_ID = sa.String(length=256)" in ledger_src, (
+        "002 must size task/adr.project_id at VARCHAR(256) to match project.key"
+    )
+    assert "_SLUG = sa.String(length=256)" in ledger_src, (
+        "002 must size the body_slug columns at ADR-0202's 256-char slug cap"
+    )
