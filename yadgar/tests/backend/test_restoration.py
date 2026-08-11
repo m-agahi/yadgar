@@ -14,6 +14,10 @@ from yadgar._shared.restoration.contract import CheckpointContext
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.restoration.checkpoint_restore import CheckpointRestore
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def temp_db(tmp_path):
@@ -80,6 +84,7 @@ class TestAnchor:
             context="/test/project",
             tags=["database", "decision"],
             reason="Architecture decision",
+            project_id=_TEST_PROJECT,
         )
         assert mid > 0
 
@@ -94,6 +99,7 @@ class TestAnchor:
             content="Critical fact",
             context="/test",
             tags=[],
+            project_id=_TEST_PROJECT,
         )
         mem = storage.get_memory(mid)
         assert mem["heat"] == 1.0
@@ -151,6 +157,7 @@ class TestRestore:
             context="/test",
             tags=["framework"],
             reason="Team decision",
+            project_id=_TEST_PROJECT,
         )
         result = replay.restore("/test")
         assert result["anchored_memories"] >= 1
@@ -171,6 +178,7 @@ class TestRestore:
             content="API key stored in .env",
             context="/test",
             tags=["security"],
+            project_id=_TEST_PROJECT,
         )
 
         # Simulate compaction

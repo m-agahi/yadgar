@@ -21,6 +21,11 @@ import pytest
 from yadgar.backend.queue_drainer import FileQueue, QueueDrainer
 from yadgar.core import server
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: wiki_add without it comes back as an unresolved_project envelope.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 # ── Content for sim gate tests ────────────────────────────────────────────────
 
 _ROADMAP_CONTENT_A = """# Yadgar Roadmap: Future Improvements
@@ -90,6 +95,7 @@ def _write_sync(title: str, content: str, **kwargs) -> dict:
     import yadgar.backend.queue_drainer._locals as _loc
 
     _loc._drain_local.active = True
+    kwargs.setdefault("project", _TEST_PROJECT)
     try:
         return server.wiki_add(title=title, content=content, **kwargs)
     finally:
@@ -207,6 +213,7 @@ class TestDrainerReroutesRejectionToDLQ:
             content=_ROADMAP_CONTENT_B,
             wait=False,
             directory="/home/max/git/yadgar",
+            project=_TEST_PROJECT,
         )
         assert len(fq.pending()) == 1
 
@@ -243,6 +250,7 @@ class TestDrainerReroutesRejectionToDLQ:
             content=_ROADMAP_CONTENT_B,
             wait=True,
             directory="/home/max/git/yadgar",
+            project=_TEST_PROJECT,
         )
         # Either committed (gate didn't fire) or rejected
         if result.get("stored") is False:
@@ -274,6 +282,7 @@ class TestDrainerReroutesRejectionToDLQ:
             content=_ROADMAP_CONTENT_B,
             wait=False,
             directory="/home/max/git/yadgar",
+            project=_TEST_PROJECT,
         )
         drainer.drain_now()
 
@@ -291,6 +300,7 @@ class TestDrainerReroutesRejectionToDLQ:
             force=True,
             wait=False,
             directory="/home/max/git/yadgar",
+            project=_TEST_PROJECT,
         )
         assert len(fq.pending()) == 1
 

@@ -17,6 +17,10 @@ import pytest
 from yadgar._shared.config import Settings
 from yadgar._shared.thermodynamics import MemoryThermodynamics
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture(scope="module")
 def storage(module_storage):
@@ -69,6 +73,7 @@ class TestSeedStoreOp:
                     },
                 ],
                 "init_content": "# seedproj\ninit content",
+                "project_id": _TEST_PROJECT,
             }
         )
 
@@ -96,6 +101,7 @@ class TestSeedStoreOp:
                 {"content": "old overview", "context": root, "tags": ["_seed"], "base_heat": 0.9}
             ],
             "init_content": "",
+            "project_id": _TEST_PROJECT,
         }
         seed_store(first)
         assert len(_seed_rows(storage, root)) == 1
@@ -107,6 +113,7 @@ class TestSeedStoreOp:
                 {"content": "new component", "context": root, "tags": ["_seed"], "base_heat": 0.5},
             ],
             "init_content": "",
+            "project_id": _TEST_PROJECT,
         }
         result = seed_store(second)
 
