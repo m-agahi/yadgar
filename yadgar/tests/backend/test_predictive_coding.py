@@ -443,6 +443,7 @@ class TestWriteGateIntegration:
                     content="Using Redis for caching with TTL-based expiration",
                     context="/tmp/integration-test",
                     tags=["redis", "caching"],
+                    project=_TEST_PROJECT,
                 )
                 # First memory in a new directory should always be stored
                 assert "id" in result1
@@ -452,6 +453,7 @@ class TestWriteGateIntegration:
                     content="PostgreSQL database with connection pooling via pgbouncer",
                     context="/tmp/integration-test",
                     tags=["postgres", "database"],
+                    project=_TEST_PROJECT,
                 )
 
                 # Now try to store a near-duplicate — may be blocked by write gate
@@ -460,6 +462,7 @@ class TestWriteGateIntegration:
                     content="Using Redis for caching with TTL-based expiration policy",
                     context="/tmp/integration-test",
                     tags=["redis"],
+                    project=_TEST_PROJECT,
                 )
                 # This may be blocked or may be merged by curator.
                 # v4.4: gate fires during drain — caller gets DB row (id present) or
@@ -485,6 +488,7 @@ class TestSurprisalReturnedInResponse:
                 content="Implementing a brand new quantum error correction algorithm",
                 context="/tmp/surprisal-test",
                 tags=["quantum"],
+                project=_TEST_PROJECT,
             )
             # v4.4 async path: surprisal is internal to the drainer, not in the
             # caller response. Verify the memory was stored successfully.
@@ -518,6 +522,7 @@ class TestSurprisalReturnedInResponse:
                 content=base_content,
                 context="/tmp/surprisal-block-test",
                 tags=["flask"],
+                project=_TEST_PROJECT,
             )
             assert r1.get("id") is not None or r1.get("stored") is True
 
