@@ -1,23 +1,25 @@
 """Tests for migration_031 — add ``project_id`` + ``legacy_directory`` to wiki_page + memory.
 
-Car L (0047 §7 D32 ①). One-shot offline backfill: per-row ``project_id``
-derivation from the existing ``directory_context`` column, with
-``legacy_directory`` set on rows whose directory_context no longer maps
-to a live project (quarantine).
+Car L (0047 §7 D32 ①) shipped this as a one-shot offline backfill that derived
+a per-row ``project_id`` from ``directory_context``. **C4 removed the backfill
+and C5 removed the classifier it called** (ADR-0227): the migration executes
+inside a container with no git binary and no host project mounts, so every
+derived value it could produce would be manufactured. What 031 does now is
+declare the two columns plus their indexes and touch no row; the real backfill
+is an operator-invoked path carrying a host-resolved value (C6 owns it).
 
-Coverage here is the LOGIC + the IDEMPOTENCY contract. Driven by an
-in-memory fake storage that records every ``_q`` call (the migration
-shells out to ``derive_project_id`` for the classification phase, so
-the fake also stubs that seam).
+Coverage here is therefore the SCHEMA statements and the derives-nothing
+contract, driven by an in-memory fake storage that records every ``_q`` call.
+There is no classifier seam to stub any more — its absence is itself asserted
+(``test_the_classifier_seam_no_longer_exists``).
 
-Why idempotency matters: re-running after Car L's live-write code paths
-stamp ``project_id`` MUST be a no-op (rows already classified → skip).
+Idempotency still matters: re-running after the live write paths stamp
+``project_id`` MUST be a no-op.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import patch
 
 from yadgar._shared.storage.migrations import (
     _MIGRATIONS,
@@ -99,35 +101,6 @@ class _FakeStorage:
         return [dict(r) for r in self.mem_rows]
 
 
-# A trivial classifier — used to keep the migration test independent of
-# git/subprocess. The real ``derive_project_id`` is exercised by its own
-# test suite; the migration's job is to drive the classifier over the
-# corpus and stamp results.
-def _fake_classifier(directory_context: str) -> tuple[str, str | None]:
-    """In-process classifier: global sentinel → 'global', else parse path.
-
-    Returns ``(project_id, legacy_directory_or_None)``. Pure: no git,
-    no subprocess. The migration test mocks ``yadgar._shared.storage.migrations._classify_directory_context``
-    (or whichever seam ships) — this is the test-side mapping.
-    """
-    if directory_context in ("", "global"):
-        return ("global", None)
-    if directory_context.startswith("/home/max/git/yadgar"):
-        return ("m-agahi/yadgar", None)
-    if directory_context.startswith("/tmp/old-deleted-proj"):
-        return ("unresolved", "/tmp/old-deleted-proj")
-    if directory_context.startswith("/home/user/projects/standalone"):
-        return ("local/standalone", None)
-    # Default: classify as local with basename
-    base = directory_context.rstrip("/").rsplit("/", 1)[-1]
-    return (f"local/{base}", None)
-
-
-def _patched_classifier(d: str) -> tuple[str, str | None]:
-    """Wrapper the test patches in via ``patch``."""
-    return _fake_classifier(d)
-
-
 class TestMigration031Registration:
     """Migration 031 is registered in _MIGRATIONS list."""
 
@@ -152,11 +125,7 @@ class TestMigration031SchemaStatements:
 
     def test_defines_project_id_on_wiki_page(self) -> None:
         storage = _FakeStorage()
-        with patch(
-            "yadgar._shared.storage.migrations._classify_directory_for_migration",
-            side_effect=_patched_classifier,
-        ):
-            _migration_031_project_id_backfill(storage)
+        _migration_031_project_id_backfill(storage)
         schema_stmts = [
             sql
             for kind, sql in storage.statements
@@ -166,11 +135,7 @@ class TestMigration031SchemaStatements:
 
     def test_defines_legacy_directory_on_wiki_page(self) -> None:
         storage = _FakeStorage()
-        with patch(
-            "yadgar._shared.storage.migrations._classify_directory_for_migration",
-            side_effect=_patched_classifier,
-        ):
-            _migration_031_project_id_backfill(storage)
+        _migration_031_project_id_backfill(storage)
         schema_stmts = [
             sql
             for kind, sql in storage.statements
@@ -180,11 +145,7 @@ class TestMigration031SchemaStatements:
 
     def test_defines_project_id_on_memory(self) -> None:
         storage = _FakeStorage()
-        with patch(
-            "yadgar._shared.storage.migrations._classify_directory_for_migration",
-            side_effect=_patched_classifier,
-        ):
-            _migration_031_project_id_backfill(storage)
+        _migration_031_project_id_backfill(storage)
         schema_stmts = [
             sql
             for kind, sql in storage.statements
@@ -194,11 +155,7 @@ class TestMigration031SchemaStatements:
 
     def test_creates_project_id_index(self) -> None:
         storage = _FakeStorage()
-        with patch(
-            "yadgar._shared.storage.migrations._classify_directory_for_migration",
-            side_effect=_patched_classifier,
-        ):
-            _migration_031_project_id_backfill(storage)
+        _migration_031_project_id_backfill(storage)
         index_stmts = [
             sql
             for kind, sql in storage.statements
@@ -263,20 +220,32 @@ class TestMigration031DerivesNothing:
         for row in storage.get_wiki():
             assert row.get("project_id") is None
 
-    def test_the_classifier_is_never_called(self) -> None:
-        """Not merely unused — unreachable. The seam itself explodes if touched."""
+    def test_the_classifier_seam_no_longer_exists(self) -> None:
+        """Not merely uncalled — absent. C5 deleted the seam, not just its callers.
 
-        def _explode(_d: str) -> tuple[str, str | None]:
-            raise AssertionError("migration 031 reached the identity classifier")
+        C4 asserted this by patching ``_classify_directory_for_migration`` with a
+        function that raised if reached. C5 (ADR-0227) deleted the classifier and
+        that seam along with it, so the patch target itself is gone — which makes
+        the old test error on ``AttributeError`` from ``patch`` rather than pass.
+        Re-pointed rather than deleted, and strictly stronger: a mocked seam only
+        proves *this* migration did not call it, while an absent one proves no
+        future edit can. A migration runs inside a container with no git binary
+        and no host project mounts, so a re-introduced classifier could only ever
+        return a manufactured key for every row of the corpus.
+        """
+        from yadgar._shared.storage import migrations as _m
 
-        with patch(
-            "yadgar._shared.storage.migrations._classify_directory_for_migration",
-            side_effect=_explode,
-        ):
-            self._run(
-                wiki_rows=[{"id": 1, "directory_context": "/home/max/git/yadgar"}],
-                mem_rows=[{"id": 2, "directory_context": "/tmp/gone"}],
-            )
+        assert not hasattr(_m, "_classify_directory_for_migration")
+        assert not hasattr(_m, "derive_project_id")
+
+    def test_the_migration_still_runs_without_any_classifier(self) -> None:
+        """The absence is not merely tolerated — 031 completes and stamps nothing."""
+        storage = self._run(
+            wiki_rows=[{"id": 1, "directory_context": "/home/max/git/yadgar"}],
+            mem_rows=[{"id": 2, "directory_context": "/tmp/gone"}],
+        )
+        assert all(r.get("project_id") is None for r in storage.get_wiki())
+        assert all(r.get("project_id") is None for r in storage.get_mem())
 
     def test_no_row_read_is_issued_either(self) -> None:
         """A migration that derives nothing has no reason to scan the corpus."""

@@ -318,13 +318,48 @@ class TestCmdSeedAnchors:
 
 class TestCmdSeedProjectMode:
     def _args(self, directory, **kw):
+        """Parsed-args double for ``cmd_seed``.
+
+        ``project`` is explicit: ``tmp_path`` is not a git tree, and since C5
+        (ADR-0227) ``resolve_cli_project`` has no derivation tier left, so an
+        args double without it exits 2 before ``seed_project`` is ever reached.
+        ``register()`` puts the real ``--project`` flag on the subparser.
+        """
         defaults = {
             "anchors": None,
             "db_path": None,
             "dry_run": False,
+            "project": "owner/repo",
         }
         defaults.update(kw)
         return SimpleNamespace(directory=directory, **defaults)
+
+    def test_resolved_project_id_reaches_seed_project(self, tmp_path):
+        """C4: the host-resolved identity is handed to the backend seed, not re-derived."""
+        args = self._args(str(tmp_path), project="acme/widget")
+        mock_result = {
+            "project": "p",
+            "memories_generated": 0,
+            "created": 0,
+            "replaced": 0,
+            "memories": [],
+        }
+        with patch("yadgar.core.seed.seed_project", return_value=mock_result) as sp:
+            cmd_seed(args)
+        assert sp.call_args.kwargs["project_id"] == "acme/widget"
+
+    def test_unresolvable_tree_exits_two_without_seeding(self, tmp_path):
+        """C5/ADR-0227: no ``--project`` and no identity in the tree is fatal.
+
+        The load-bearing half is that ``seed_project`` is never called — a seed
+        run must not write a whole corpus into a guessed namespace.
+        """
+        args = self._args(str(tmp_path), project=None)
+        with patch("yadgar.core.seed.seed_project") as sp:
+            with pytest.raises(SystemExit) as exc_info:
+                cmd_seed(args)
+        assert exc_info.value.code == 2
+        sp.assert_not_called()
 
     def test_dry_run_prints_would_create(self, tmp_path, capsys):
         args = self._args(str(tmp_path), dry_run=True)
