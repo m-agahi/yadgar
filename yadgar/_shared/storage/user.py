@@ -17,6 +17,34 @@ from yadgar._shared.observability.tracing import trace_span
 _log = logging.getLogger(__name__)
 
 
+# ── C11 (0047 PR#40 §5): the profile supersession key stays on directory_context
+#
+# C13f left this call open and C11 closed it as a DEFERRAL, with the reason
+# recorded here rather than in ``insert_profile``'s docstring (the I13 HARD
+# fn_loc cap).
+#
+# ``insert_profile``'s currently-valid lookup keys on
+# ``(entity_name, attribute_type, attribute_key, directory_context)``, so two
+# projects writing the same profile key under ONE directory (a worktree, a
+# second clone) supersede each other. Migration 033 declared
+# ``user_profile.project_id``, so condition 1 of the two-condition rename rule
+# is now met — but this predicate is not a filter, it is the SUPERSESSION key,
+# and changing it changes which row gets INVALIDATED. Both candidate shapes are
+# wrong today, in opposite directions:
+#
+#   * ``AND project_id = $pid`` hides every pre-C13f row (which carries none)
+#     from the check, so the next write creates a SECOND currently-valid row for
+#     the same key and breaks the application-enforced uniqueness invariant this
+#     query exists to hold.
+#   * The transitional two-arm form C11 uses elsewhere
+#     (``project_id = $pid OR <legacy> = $dc``) would match — and then
+#     invalidate — another project's row in the same directory: the very
+#     collision the change was meant to prevent.
+#
+# So this needs the backfill, not a predicate edit. It is resolved in the drop
+# PR, where ``directory_context`` leaves the key entirely.
+
+
 class _UserMixin:
     """User profiles and thermodynamics — mixed into StorageEngine."""
 
@@ -126,6 +154,10 @@ class _UserMixin:
         ``project_id`` and are correctly invisible to a scoped read, which is the
         same degraded-window trade C7 already made for ``memory``/``wiki_page``
         (ADR-0227: zero rows beats a guessed identity).
+
+        C11 (0047 PR#40 §5) deliberately did NOT add ``project_id`` to the
+        supersession key — see ``_C11_PROFILE_KEY_DEFERRAL`` above this class
+        for why both candidate shapes are unsafe until the rows carry one.
         """
         now = self._now_iso()
         delta = float(os.environ.get("PROFILE_BITEMPORAL_VERSION_DELTA", "0.05"))

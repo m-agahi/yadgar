@@ -100,6 +100,16 @@ _C11_LEGACY_COLUMN_WRITE = (
     "action-log row's ``directory`` as the summary memory's "
     "``directory_context``. Dies with the column, in the drop PR."
 )
+_C11_DEFERRED_NEEDS_ENVELOPE = (
+    "C11 (plan §5) considered this and deferred it ON PURPOSE. The table does "
+    "carry ``project_id`` and the predicate could move — but both callers reach "
+    "it without a resolved identity, and resolving one means calling "
+    "``resolve_effective_project``, which RAISES. ``project_brief`` has no error "
+    "envelope and runs on the session-start hook path, so the promotion would "
+    "trade an empty bucket for a hard failure on every session start. The "
+    "two-condition rule is rename-with-callers or neither; this is neither, "
+    "and it unblocks when ``project_brief`` gets an envelope."
+)
 _C11_SCHEMA_ONLY = (
     "C11 (plan §5) declared the COLUMN here and deliberately stopped. The "
     "two-condition rename rule needs BOTH a ``project_id`` column and a caller "
@@ -237,7 +247,17 @@ _ALLOWLIST: dict[str, str] = {
     # ``::get_anchored_memories_scoped`` are GONE from this dict: C10g renamed
     # both onto ``project_id`` together with the writers and callers that made
     # them safe to move. Pinned in ``_SWEPT`` below instead.
-    "storage/memory.py::get_recent_memories_since": _C9C_C10_CALLER,
+    # C11 looked at this one and DEFERRED it deliberately — the reason is no
+    # longer "C10's callers are mid-flight" (they landed), it is the error
+    # envelope. Both callers (``core/server/tools/admin_other.py::recent_memories``
+    # and ``core/server/tools/project.py::project_brief._build_recent_writes``)
+    # would have to resolve a project to pass one, and ``resolve_effective_project``
+    # RAISES. ``project_brief`` has no error envelope and runs on the
+    # session-start hook path, so promoting this trades one empty bucket for a
+    # hard failure on every session start. The rule is rename-with-callers or
+    # neither; giving project_brief an envelope first is a separate change with
+    # its own blast radius, so this car chose neither and said so.
+    "storage/memory.py::get_recent_memories_since": _C11_DEFERRED_NEEDS_ENVELOPE,
     "storage/wiki.py::list_wiki_pages": _C9C_C10_CALLER,
     "storage/wiki.py::list_wiki_catalog": _C9C_C10_CALLER,
     "wiki/store.py::list_pages": _C9C_C10_CALLER,
