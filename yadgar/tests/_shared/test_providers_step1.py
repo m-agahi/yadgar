@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.backend.retrieval.providers.base import Candidate, Scope, SourceProvider
 from yadgar.backend.retrieval.providers.memory import MemoryProvider
 from yadgar.backend.retrieval.providers.wiki import WikiProvider
@@ -272,8 +273,7 @@ class TestWikiProvider:
             max_results=5,
             include_tag=None,
             exclude_tags=None,
-            project_id="/home/user/project",
-            opt_in_tags=None,
+            scope=RecallScope(project_id="/home/user/project", opt_in_tags=None),
         )
 
     def test_candidates_returns_candidate_objects(self, mock_wiki, default_scope):

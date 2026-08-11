@@ -204,8 +204,8 @@ def _wire_fake_query(monkeypatch, results):
 
     Car C7 (0047 §5 C7): ``wiki_query`` no longer applies any Python-side
     directory/project eligibility post-filter — scoping is pushed into
-    ``WikiStore.query()``'s stage-1 SQL WHERE (``project_id=`` /
-    ``opt_in_tags=`` kwargs, both new). The old
+    ``WikiStore.query()``'s stage-1 SQL WHERE (the ``scope=`` kwarg, a
+    ``RecallScope`` carrying project_id + opt_in_tags). The old
     ``monkeypatch.setattr(wtool, "is_directory_eligible", lambda dc, d: True)``
     line patched a module attribute that no longer exists (deleted along with
     the function itself) — this file's tests are about the CACHE (hit/miss,
@@ -220,7 +220,7 @@ def _wire_fake_query(monkeypatch, results):
         def __init__(self):
             self.calls = 0
 
-        def query(self, query, tags, category, k, project_id=None, opt_in_tags=None):
+        def query(self, query, tags, category, k, scope=None):
             self.calls += 1
             return [dict(r) for r in results]
 

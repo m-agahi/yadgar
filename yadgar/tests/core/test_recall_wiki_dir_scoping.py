@@ -101,7 +101,7 @@ def _call_recall_with_wiki(
     wiki.py``: only ``is_recall_visible`` — the page_type policy gate —
     survives as a Python-side check). A ``MagicMock`` that returns
     ``wiki_results`` unconditionally, ignoring the ``project_id`` /
-    ``opt_in_tags`` kwargs it was called with, would silently stop exercising
+    ``scope`` kwarg it was called with, would silently stop exercising
     the scoping this test suite is FOR: every row would "leak" regardless of
     fixture intent, and the assertions below would have nothing real to
     catch. ``mock_wiki.query`` is therefore a ``side_effect`` that filters
@@ -117,7 +117,8 @@ def _call_recall_with_wiki(
     mock_storage = _make_mock_storage()
     mock_wiki = MagicMock()
 
-    def _fake_wiki_query(*args, project_id=None, **kwargs):
+    def _fake_wiki_query(*args, scope=None, **kwargs):
+        project_id = getattr(scope, "project_id", None)
         return [
             r
             for r in wiki_results
