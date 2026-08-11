@@ -420,7 +420,7 @@ class _FusionMixin:
     def _search_profiles_and_beliefs(
         self,
         query: str,
-        directory: str | None,
+        project_id: str | None,
         max_results: int,
     ) -> list[dict]:
         """Search structured profiles and derived beliefs."""

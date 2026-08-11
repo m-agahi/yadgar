@@ -125,7 +125,7 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
     # ── Dual-Store Query ──────────────────────────────────────────────────
 
     @observe(tier="stage", metric="consolidation.cls.query_dual")
-    def query_dual(self, query: str, directory: str, prefer: str = "auto") -> list[dict]:
+    def query_dual(self, query: str, project_id: str, prefer: str = "auto") -> list[dict]:
         """Query both episodic and semantic stores, merge results.
 
         prefer: "auto" (query analysis), "episodic", or "semantic"
@@ -145,8 +145,8 @@ class DualStoreCLS(_ClusteringMixin, _PatternsMixin, _PromotionMixin):
             return []
 
         # Search both stores
-        episodic_results = self._search_store(query, query_embedding, "episodic", directory)
-        semantic_results = self._search_store(query, query_embedding, "semantic", directory)
+        episodic_results = self._search_store(query, query_embedding, "episodic", project_id)
+        semantic_results = self._search_store(query, query_embedding, "semantic", project_id)
 
         # Score and merge
         scored: dict[int, dict] = {}

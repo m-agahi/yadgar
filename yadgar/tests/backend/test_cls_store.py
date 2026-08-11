@@ -229,7 +229,7 @@ class TestFindRecurringPatterns:
             session_id="session-004",
         )
 
-        patterns = cls.find_recurring_patterns(directory="/tmp/frontend", min_occurrences=3)
+        patterns = cls.find_recurring_patterns(project_id="/tmp/frontend", min_occurrences=3)
         # Should find pattern in frontend, not backend
         if patterns:
             for p in patterns:
@@ -530,7 +530,7 @@ class TestQueryDual:
             store_type="semantic",
         )
 
-        results = cls.query_dual("error in src/auth/login.py", directory="", prefer="auto")
+        results = cls.query_dual("error in src/auth/login.py", project_id="", prefer="auto")
         assert isinstance(results, list)
         # The specific episodic memory should appear in results
         if results:
@@ -552,7 +552,9 @@ class TestQueryDual:
             store_type="semantic",
         )
 
-        results = cls.query_dual("what architecture pattern do we use", directory="", prefer="auto")
+        results = cls.query_dual(
+            "what architecture pattern do we use", project_id="", prefer="auto"
+        )
         assert isinstance(results, list)
 
     def test_query_dual_prefer_episodic(self, cls, storage, embeddings):
@@ -570,7 +572,7 @@ class TestQueryDual:
             store_type="semantic",
         )
 
-        results = cls.query_dual("authentication", directory="", prefer="episodic")
+        results = cls.query_dual("authentication", project_id="", prefer="episodic")
         assert isinstance(results, list)
 
     def test_query_dual_prefer_semantic(self, cls, storage, embeddings):
@@ -588,7 +590,7 @@ class TestQueryDual:
             store_type="semantic",
         )
 
-        results = cls.query_dual("authentication", directory="", prefer="semantic")
+        results = cls.query_dual("authentication", project_id="", prefer="semantic")
         assert isinstance(results, list)
 
     def test_query_dual_directory_filter(self, cls, storage, embeddings):
@@ -608,7 +610,7 @@ class TestQueryDual:
             store_type="episodic",
         )
 
-        results = cls.query_dual("state management", directory="/tmp/frontend", prefer="auto")
+        results = cls.query_dual("state management", project_id="/tmp/frontend", prefer="auto")
         for r in results:
             assert r.get("directory_context") == "/tmp/frontend"
 
@@ -619,7 +621,7 @@ class TestQueryDual:
         bad_embeddings._unavailable = True
         bad_cls = DualStoreCLS(storage, bad_embeddings, Settings(DB_PATH=str(tmp_path / "bad.db")))
 
-        results = bad_cls.query_dual("test query", directory="", prefer="auto")
+        results = bad_cls.query_dual("test query", project_id="", prefer="auto")
         assert results == []
 
 
