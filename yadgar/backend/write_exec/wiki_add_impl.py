@@ -74,9 +74,11 @@ def run_wiki_add_replay(payload: dict) -> dict:
     # C3 (0047 PR#40 §5.C3): the enqueue-time project_id stamped by the core
     # tool (the only process that can see the session). Carried to
     # WikiAddOptions on BOTH construction sites below — the replace_slug branch
-    # is a real write path — so ``insert_wiki_page`` receives it as
-    # ``caller_value`` and never reaches the classifier this container cannot
-    # run (§1.1). None only for a legacy payload enqueued before this car.
+    # is a real write path — AND (C13) into ``ingest``, the append branch that
+    # reaches ``WikiStore.add`` indirectly and was missed when this comment was
+    # written. So ``insert_wiki_page`` receives it as ``caller_value`` and never
+    # reaches the classifier this container cannot run (§1.1). None only for a
+    # legacy payload enqueued before this car.
     project_id = payload.get("project_id")
 
     # replace_slug: overwrite a named existing page (gate already bypassed)
@@ -117,7 +119,14 @@ def run_wiki_add_replay(payload: dict) -> dict:
             return result
 
     if append:
-        result = _st._wiki.ingest(content, title, tags, source_memory_ids)
+        # C13 (0047 PR#40 §5): the THIRD write path, missed when C3 threaded
+        # "both construction sites". ``ingest`` had no project_id parameter at
+        # all, so an ``append=True`` write whose slug did not exist yet fell
+        # through to ``WikiStore.add`` unstamped — and after C5 deleted the
+        # derivation, that is a hard ``UnresolvedProjectError`` on a call whose
+        # caller supplied ``project=``. The value is held right here; dropping
+        # it was the defect.
+        result = _st._wiki.ingest(content, title, tags, source_memory_ids, project_id=project_id)
     else:
         result = _st._wiki.add(
             title,
