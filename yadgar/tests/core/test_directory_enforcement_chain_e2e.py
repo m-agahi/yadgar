@@ -89,15 +89,21 @@ def test_nongit_directory_still_stores(tmp_path, monkeypatch, _unit_backend_harn
     assert result.get("stored") is True, result
 
 
-def test_empty_directory_rejected_when_enforcement_on(monkeypatch, _unit_backend_harness):
-    """An EMPTY directory is REJECTED ``missing_directory`` with enforcement ON.
+def test_empty_directory_rejected_with_the_structured_error(monkeypatch, _unit_backend_harness):
+    """An EMPTY directory is still REJECTED — under C5's error shape.
 
-    The other half of the ADR-0217 proof: enforcement is live, so the passing
-    non-git case above is a real answer and not a disabled gate.
+    INVERTED by C5 in two ways at once. ``YADGAR_DIRECTORY_ENFORCEMENT`` is
+    DELETED (a knob whose OFF position disables a scoping guarantee cannot
+    coexist with a fail-loud identity contract), so setting it proves nothing;
+    and ``_missing_directory_error`` went with it, so the rejection is now the
+    same structured ``unresolved_project`` payload every other boundary
+    returns — one shape of answer and one remedy sentence for the agent that
+    has to correct its own call.
+
+    The REJECTION itself is what this test exists to prove, and it is
+    unchanged: the other half of the ADR-0217 proof still holds.
     """
     from yadgar.core import server
-
-    monkeypatch.setenv("YADGAR_DIRECTORY_ENFORCEMENT", "true")
 
     result = server.wiki_add(
         title="directory chain page empty",
@@ -106,6 +112,10 @@ def test_empty_directory_rejected_when_enforcement_on(monkeypatch, _unit_backend
         directory="",
         project=TEST_PROJECT_ID,
     )
-    assert result.get("stored") is False, result
-    assert result.get("error") == "missing_directory", result
-    assert result.get("field") == "directory", result
+    assert result.get("stored") is not True, result
+    assert result.get("error") == "unresolved_project", result
+    assert result.get("fix"), "the rejection must carry an actionable fix"
+    # ``field="directory"`` was _missing_directory_error's discriminator. C5's
+    # payload names the TOOL instead — same job (say which call was rejected),
+    # one shape shared with every other boundary.
+    assert result.get("tool") == "wiki_add", result

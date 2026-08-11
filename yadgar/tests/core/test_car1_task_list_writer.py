@@ -58,10 +58,14 @@ class TestGatedWrite:
         drainer = _unit_backend_harness
         from yadgar.core import server
 
-        server.wiki_write_task_list(project="demo", content=_PAGE, directory=_DIR)
+        server.wiki_write_task_list(
+            project="demo", content=_PAGE, directory=_DIR, project_id=TEST_PROJECT_ID
+        )
         drainer.drain_now()
         updated = _PAGE.replace("in_progress", "completed")
-        server.wiki_write_task_list(project="demo", content=updated, directory=_DIR)
+        server.wiki_write_task_list(
+            project="demo", content=updated, directory=_DIR, project_id=TEST_PROJECT_ID
+        )
         drainer.drain_now()
 
         page = _get_page("demo-task-list")
@@ -75,7 +79,9 @@ class TestGatedWrite:
         drainer = _unit_backend_harness
         from yadgar.core import server
 
-        server.wiki_write_task_list(project="demo", content=_PAGE, directory=_DIR)
+        server.wiki_write_task_list(
+            project="demo", content=_PAGE, directory=_DIR, project_id=TEST_PROJECT_ID
+        )
         drainer.drain_now()
 
         read = server.wiki_read("demo-task-list", directory=_DIR, project=TEST_PROJECT_ID)
