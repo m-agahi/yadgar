@@ -38,6 +38,11 @@ def _make_memory_dict(mid: int = 1, score: float = 0.8, content: str | None = No
         "tags": [],
         "branch": None,
         "_source": "memory",
+        # Car C7: MemoryProvider applies an is_project_eligible residual guard
+        # keyed on project_id (not directory_context) — matches the
+        # project_id="/tmp/test" scope every _call_fanout() call in this file
+        # uses, so these rows stay eligible.
+        "project_id": "/tmp/test",
     }
 
 
@@ -166,7 +171,7 @@ class TestFanoutRecall:
                 query=query,
                 max_results=max_results,
                 min_heat=0.0,
-                directory="/tmp/test",
+                project_id="/tmp/test",
                 **kw,
             )
 

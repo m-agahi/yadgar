@@ -6,8 +6,10 @@ No entry-point code calls these yet (wired in Step 2 behind UNIFIED_RECALL_ENABL
 Design notes:
   - Candidate carries all fields needed for downstream fusion/reranking steps
     (Steps 3–4) without surfacing them before those steps ship.
-  - scope.directory is carried so Step 3 (DB-level
-    DirectoryFilter) can be wired without a signature change.
+  - Car C7 (0047 §5 C7) re-keyed ``Scope`` and ``Candidate`` off
+    ``directory``/``directory_context`` and onto ``project_id``. The scope is no
+    longer a hint the provider post-filters with — it is pushed into the
+    stage-1 SQL ``WHERE``.
   - ``raw`` holds the provider's native dict for lossless pass-through; the
     fan-out orchestrator (Step 2) returns raw dicts, not Candidates, so
     existing recall callers see no schema change.
@@ -25,15 +27,21 @@ class Scope:
     """Query scope passed to every SourceProvider.
 
     Attributes:
-        directory: Caller's working directory (required — mirrors v5.65 Fix D).
-            Used in Step 3 for DB-level DirectoryFilter; carried here so the
-            provider signature is stable.
+        project_id: Caller's resolved project id (required). Car C7 re-keyed
+            this from ``directory``: it is pushed into the stage-1 ``WHERE``
+            clause (``project_id = $p OR 'global' IN tags``) rather than being
+            applied as a Python post-filter after the query spent its LIMIT.
+        opt_in_tags: Tags the caller explicitly requested. Feeds the
+            ``POLICY_BY_TYPE``-derived ``page_type`` exclusion so
+            ``recall(type="wiki", tags=["agent-prompt"])`` still reaches the
+            agent-prompt library (ADR-0007).
         min_heat: Minimum heat threshold forwarded to the memory provider.
             Wiki candidates have no heat; this field is ignored by WikiProvider.
     """
 
-    directory: str
+    project_id: str
     min_heat: float = 0.0
+    opt_in_tags: list[str] | None = None
 
 
 @dataclass
@@ -51,7 +59,9 @@ class Candidate:
         native_score: Provider's own relevance signal (retrieval score,
             heat-weighted WRRF, BM25+vector blend). Used as a prior in
             Step 4 fusion; NOT the final ranking key.
-        directory_context: Directory the item was stored under, or None.
+        project_id: Project the item is owned by, or None when unstamped
+            (C6 made the column ``option<string>``; an un-backfilled row reads
+            as ``None``, NOT as ``"global"``).
         raw: Original provider dict, preserved for lossless pass-through.
             Step 2 returns raw dicts (not Candidates) to avoid breaking the
             existing recall return type.
@@ -62,7 +72,7 @@ class Candidate:
     title: str | None
     content: str
     native_score: float
-    directory_context: str | None
+    project_id: str | None
     raw: dict = field(default_factory=dict)
 
 

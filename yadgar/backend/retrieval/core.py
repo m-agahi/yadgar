@@ -13,6 +13,7 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage import StorageEngine
+from yadgar._shared.storage.directory import build_recall_scope_clause
 from yadgar.backend.retrieval.entities import _extract_query_entities
 from yadgar.backend.retrieval.fusion import PROFILES, _FusionMixin
 from yadgar.backend.retrieval.graph_helpers import _GraphHelpersMixin
@@ -514,13 +515,14 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         return w_temporal, _deadline_passed(deadline)
 
     @observe(tier="boundary", metric="retrieval.recall")
-    def recall(
+    def recall(  # noqa: PLR0913
         self,
         query: str,
         max_results: int = 5,
         min_heat: float = 0.1,
         profile: str | None = None,
         deadline: float | None = None,
+        project_id: str | None = None,
     ) -> list[dict]:
         """Combine retrieval signals via Weighted Reciprocal Rank Fusion (WRRF).
 
@@ -535,6 +537,21 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
                 collection stages: once exceeded, remaining collections and the
                 rerank pipeline are skipped and the partial fusion result is
                 returned. None (default) = no deadline, full pipeline.
+            project_id: Car C7 (0047 §5 C7) — the caller's resolved project. Built
+                into a stage-1 ``WHERE`` predicate (``project_id = $p OR 'global'
+                IN tags``) and pushed into the FTS and vector arms, so those
+                signals spend their ``candidate_k`` on in-scope rows instead of
+                being post-filtered afterwards.
+
+                SCOPE LIMIT, STATED RATHER THAN IMPLIED: the predicate covers the
+                two SQL-driven signals. The PPR graph walk and spreading
+                activation traverse EDGES and return memory ids the clause never
+                saw, so they can still surface out-of-scope rows.
+                ``MemoryProvider`` therefore keeps a residual row guard
+                (``is_project_eligible``) for exactly those. That guard is not
+                the retired post-filter in new clothes — it agrees with the SQL
+                arm by construction (same two arms, same treatment of unstamped
+                rows) rather than carrying a wider sentinel set.
         """
         # P11: set dynamic span attributes on the active retrieval.recall span.
         try:
@@ -579,6 +596,9 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         vector_memory_ids: list = []
         query_embedding = None
         w_temporal = 0.0
+        # Car C7: ONE predicate, built once, pushed into both SQL signals.
+        # ``page_types=False`` — the ``memory`` table has no ``page_type`` column.
+        _scope_sql, _scope_params = build_recall_scope_clause(project_id, page_types=False)
         fts_params = FTSParams(
             query=query,
             enabled_signals=enabled_signals,
@@ -586,6 +606,8 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             open_domain_mode=open_domain_mode,
             candidate_k=candidate_k,
             min_heat=min_heat,
+            scope_sql=_scope_sql,
+            scope_params=_scope_params,
         )
         _deadline_hit = _deadline_passed(deadline)
 
@@ -603,6 +625,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
                 open_domain_subqueries,
                 candidate_k,
                 min_heat,
+                (_scope_sql, _scope_params),
             )
             _deadline_hit = _deadline_passed(deadline)
 
@@ -636,5 +659,6 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             open_domain_mode=open_domain_mode,
             use_cross_encoder=use_cross_encoder,
             max_results=max_results,
+            project_id=project_id,
         )
         return self._apply_rerank_pipeline(result_memories, seen_ids, ctx)

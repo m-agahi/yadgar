@@ -28,13 +28,13 @@ def _make_candidate(content, score=0.5, cand_type="memory"):
         title=None if cand_type == "memory" else content[:20],
         content=content,
         native_score=score,
-        directory_context=_DIR,
+        project_id=_DIR,
         raw={
             "id": mid,
             "content": content,
             "_retrieval_score": score,
             "heat": score,
-            "directory_context": _DIR,
+            "project_id": _DIR,
             "tags": [],
         },
     )
@@ -49,12 +49,12 @@ def _make_wiki_candidate(content, score=0.4):
         title=content[:20],
         content=content,
         native_score=score,
-        directory_context=_DIR,
+        project_id=_DIR,
         raw={
             "slug": "test-wiki",
             "content": content,
             "_retrieval_score": score,
-            "directory_context": _DIR,
+            "project_id": _DIR,
         },
     )
 
@@ -83,7 +83,6 @@ class TestFusionCEGate:
             RECALL_WIKI_QUOTA=5,
             RECALL_MEMORY_PRIOR_WEIGHT=0.1,
             RECALL_WIKI_PRIOR_WEIGHT=0.1,
-            RECALL_DOWNWEIGHT_FACTOR=1.0,  # Car C2: tests don't exercise downweight; factor=1.0 = no-op
         )
 
         fuse_candidates(
@@ -121,7 +120,6 @@ class TestFusionCEGate:
             RECALL_WIKI_QUOTA=5,
             RECALL_MEMORY_PRIOR_WEIGHT=0.1,
             RECALL_WIKI_PRIOR_WEIGHT=0.1,
-            RECALL_DOWNWEIGHT_FACTOR=1.0,  # Car C2: tests don't exercise downweight; factor=1.0 = no-op
         )
 
         fuse_candidates(
@@ -157,7 +155,6 @@ class TestFusionCEGate:
             RECALL_WIKI_QUOTA=5,
             RECALL_MEMORY_PRIOR_WEIGHT=0.1,
             RECALL_WIKI_PRIOR_WEIGHT=0.1,
-            RECALL_DOWNWEIGHT_FACTOR=1.0,  # Car C2: tests don't exercise downweight; factor=1.0 = no-op
         )
 
         fuse_candidates(
@@ -191,7 +188,6 @@ class TestFusionCEGate:
             RECALL_WIKI_QUOTA=5,
             RECALL_MEMORY_PRIOR_WEIGHT=0.1,
             RECALL_WIKI_PRIOR_WEIGHT=0.1,
-            RECALL_DOWNWEIGHT_FACTOR=1.0,  # Car C2: tests don't exercise downweight; factor=1.0 = no-op
         )
 
         result = fuse_candidates(
@@ -224,7 +220,7 @@ class TestMemoryProviderProfileThreading:
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
         provider = MemoryProvider(mock_retriever, profile="fast")
-        scope = Scope(directory=_DIR, min_heat=0.0)
+        scope = Scope(project_id=_DIR, min_heat=0.0)
         provider.candidates("test query", scope, limit=10)
         mock_retriever.recall.assert_called_once()
         call_kw = mock_retriever.recall.call_args.kwargs
@@ -250,7 +246,7 @@ class TestMemoryProviderProfileThreading:
         mock_retriever = MagicMock()
         mock_retriever.recall.return_value = []
         provider = MemoryProvider(mock_retriever, profile=None)
-        scope = Scope(directory=_DIR, min_heat=0.0)
+        scope = Scope(project_id=_DIR, min_heat=0.0)
         provider.candidates("test query", scope, limit=10)
         # profile=None is fine to pass explicitly, but must not cause errors
         # (Retriever.recall accepts profile kwarg — None is the default)
@@ -271,6 +267,7 @@ class TestPostmortemBoostInFanout:
             "_retrieval_score": base_score,
             "heat": base_score,
             "directory_context": _DIR,
+            "project_id": _DIR,
             "branch": "master",
             "tags": ["_postmortem"],
         }
@@ -280,6 +277,7 @@ class TestPostmortemBoostInFanout:
             "_retrieval_score": base_score,
             "heat": base_score,
             "directory_context": _DIR,
+            "project_id": _DIR,
             "branch": "master",
             "tags": [],
         }
@@ -300,7 +298,7 @@ class TestPostmortemBoostInFanout:
             query="what happened during the deploy rollback",
             max_results=5,
             min_heat=0.0,
-            directory=_DIR,
+            project_id=_DIR,
         )
 
         pm_result = next((r for r in results if r.get("id") == 2001), None)
@@ -329,6 +327,7 @@ class TestPostmortemBoostInFanout:
             "_retrieval_score": base_score,
             "heat": base_score,
             "directory_context": _DIR,
+            "project_id": _DIR,
             "branch": "master",
             "tags": ["_incident"],
         }
@@ -349,7 +348,7 @@ class TestPostmortemBoostInFanout:
             query="what happened when we merge the deploy",
             max_results=5,
             min_heat=0.0,
-            directory=_DIR,
+            project_id=_DIR,
         )
 
         r = next((x for x in results if x.get("id") == 2003), None)
@@ -366,6 +365,7 @@ class TestPostmortemBoostInFanout:
             "_retrieval_score": base_score,
             "heat": base_score,
             "directory_context": _DIR,
+            "project_id": _DIR,
             "branch": "master",
             "tags": ["_postmortem"],
         }
@@ -380,7 +380,7 @@ class TestPostmortemBoostInFanout:
             query="show me architecture decisions about the database",
             max_results=5,
             min_heat=0.0,
-            directory=_DIR,
+            project_id=_DIR,
         )
 
         r = next((x for x in results if x.get("id") == 2004), None)
@@ -436,7 +436,12 @@ class TestBackend400sRemoved:
                 async with httpx.AsyncClient(transport=transport, base_url="http://backend") as c:
                     return await c.post(
                         "/recall",
-                        json={"query": "test landscape", "directory": _DIR, "mode": "landscape"},
+                        json={
+                            "query": "test landscape",
+                            "directory": _DIR,
+                            "project_id": "t/r",
+                            "mode": "landscape",
+                        },
                         headers={},
                     )
 
@@ -445,8 +450,13 @@ class TestBackend400sRemoved:
             _os.environ["YADGAR_ALLOW_ROOT"] = _orig_root
             _svc._recall_engines_ready = original_ready
 
-        assert resp.status_code != 400, (
-            f"POST /recall mode='landscape' still 400s: {resp.status_code} {resp.text[:200]}"
+        # Car C7: RecallRequest.project_id is required (extra="forbid"). A body
+        # missing it now 422s BEFORE reaching the route body this test exists
+        # to exercise — `!= 400` alone would pass on that unrelated 422 without
+        # ever proving the landscape route itself stopped 400ing. project_id is
+        # supplied above so a real 400 from the route body still fails this.
+        assert resp.status_code == 200, (
+            f"POST /recall mode='landscape' did not reach 200: {resp.status_code} {resp.text[:200]}"
         )
 
     def test_profile_param_no_longer_400s(self, monkeypatch):
@@ -486,7 +496,12 @@ class TestBackend400sRemoved:
                 async with httpx.AsyncClient(transport=transport, base_url="http://backend") as c:
                     return await c.post(
                         "/recall",
-                        json={"query": "test fast", "directory": _DIR, "profile": "fast"},
+                        json={
+                            "query": "test fast",
+                            "directory": _DIR,
+                            "project_id": "t/r",
+                            "profile": "fast",
+                        },
                         headers={},
                     )
 
@@ -495,8 +510,11 @@ class TestBackend400sRemoved:
             _os.environ["YADGAR_ALLOW_ROOT"] = _orig_root
             _svc._recall_engines_ready = original_ready
 
-        assert resp.status_code != 400, (
-            f"POST /recall profile='fast' still 400s: {resp.status_code} {resp.text[:200]}"
+        # Car C7: same vacuous-pass fix as the landscape test above — project_id
+        # is now required, so `!= 400` alone would pass on an unrelated 422
+        # without ever reaching the route body. Tightened to == 200.
+        assert resp.status_code == 200, (
+            f"POST /recall profile='fast' did not reach 200: {resp.status_code} {resp.text[:200]}"
         )
 
 

@@ -1210,18 +1210,6 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "unified_recall",
     },
-    "recall_downweight_factor": {
-        "desc": (
-            "Car C2 (0047 §7 3b): ranking-score multiplier applied to wiki candidates "
-            "whose page_type resolves to recall_disposition='downweight' (D22 'task → downweight', "
-            "e.g. task_list pages). A value in (0, 1) sinks the downweighted page below "
-            "include pages of comparable relevance without removing it. The penalty hits "
-            "placement_score in fuse_candidates and _retrieval_score in wiki_query — both paths "
-            "read the factor live so runtime tuning takes effect on the next call. "
-            "Default 0.5 = half-score penalty. Set to 1.0 to disable (no re-sort cost in wiki_query)."
-        ),
-        "section": "unified_recall",
-    },
     # ── v5.89 #67: FIELD_META backfill — drain the I25 Tier-2 grandfathered ───
     # backlog. Descriptions sourced from docs/reference/configuration.md + config.py
     # inline comments. Each entry also gets a _REGISTRY ConfigEntry so the I25

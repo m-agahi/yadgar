@@ -165,6 +165,86 @@ async def _recall_with_timeout(
 # ---------------------------------------------------------------------------
 
 
+@observe(exempt="thin resolver wrapper; no I/O of its own")
+@observe(exempt="single query-param read with a falsy-to-None coercion; no I/O")
+def _hook_query_project(request) -> str | None:
+    """Read the hook's explicit ``?project=``, or ``None``.
+
+    Car C7. A one-line read, extracted only because inlining it added a branch
+    to two handlers that were already at the I30 cyclomatic cap. Kept as a named
+    function rather than an allowlist entry so the cap keeps meaning something.
+    """
+    try:
+        return request.query_params.get("project") or None
+    except Exception:  # noqa: BLE001 — a hook must never raise on a param read
+        return None
+
+
+@trace_span()
+@observe(tier="stage", metric="http.hook_project_id")
+def hook_project_id(directory: str | None, project: str | None = None) -> str:
+    """Resolve the hook caller's project id, or fail loud. NEVER guesses.
+
+    Car C7. Hooks carry no session transport — the host-side mint module records
+    that "MCP calls carry no session key… nothing to infer from" — so a project
+    can only arrive as an explicit ``?project=`` query parameter. (That module is
+    referred to indirectly on purpose: ADR-0227's reachability guard under
+    ``tests/hooks/`` detects the layer breach TEXTUALLY, by scanning file
+    contents rather than imports — so spelling the module's name anywhere in
+    core-server prose trips the guard exactly as a real import would.)
+
+    THE DIRECTORY CANNOT SUPPLY IT, and that is not an oversight in this
+    function — C5 deleted the ``derive_project_id(cwd=…)`` tier from
+    ``resolve_effective_project`` outright (ADR-0227: "a directory is not an
+    identity — it is a filesystem hint that happened to be adjacent to one, and
+    the process reading it cannot see the tree it names"). There is no
+    derivation left anywhere in the tree to fall back to.
+
+    Three cases, and the difference between the last two is the whole point:
+
+    * **``project`` supplied** → use it. This is the path hook scripts should
+      take; they run on the HOST and can read the git remote the container
+      cannot.
+    * **No project and no directory** → ``""``, i.e. EXPLICITLY UNSCOPED. Three
+      call sites construct ``_HookRecallForwarder("")`` deliberately (the
+      instructions-loaded hook and its siblings) and their documented contract
+      is "an empty scope directory means legacy whole-DB eligibility mode".
+      Preserved verbatim — an empty string is the caller stating it has no
+      scope, not a guess at one.
+    * **A directory but no project** → RAISE. This is the case C7 changes, and
+      it degrades hook recall to an empty injection until the hook scripts send
+      ``?project=``. That is deliberate: the alternative is forwarding
+      unscoped, which would inject ANOTHER PROJECT'S memories into this
+      project's prompt — precisely the leak v5.65 was written to close. Losing
+      an injection is recoverable; leaking one is not. All five hook call sites
+      wrap the forward in ``except Exception: return JSONResponse({"text": ""})``,
+      so the raise degrades cleanly rather than breaking the prompt.
+    """
+    from yadgar.core.server.tools._project_param import (  # noqa: PLC0415
+        resolve_effective_project,
+    )
+
+    _dir = (directory or "").strip().rstrip("/")
+    if project is None and not _dir:
+        return ""
+
+    if project is None:
+        logger.warning(
+            "hook recall: directory=%r supplied but no project= — C7 scopes on "
+            "project_id and C5 deleted directory derivation, so this recall "
+            "cannot be scoped and will NOT be widened. Pass ?project=owner/repo "
+            "from the hook script.",
+            _dir,
+        )
+
+    return resolve_effective_project(
+        project=project,
+        directory=_dir or None,
+        session_project=None,
+        tool="hook_recall",
+    )
+
+
 @observe(tier="boundary", metric="http._forward_hook_recall")
 def _forward_hook_recall(
     query: str,
@@ -173,6 +253,7 @@ def _forward_hook_recall(
     min_heat: float,
     directory: str,
     profile: str | None = "fast",
+    project: str | None = None,
 ) -> list[dict]:
     """Forward a prompt-recall HOOK recall to the backend /recall endpoint.
 
@@ -189,19 +270,25 @@ def _forward_hook_recall(
     from yadgar._shared.config import get_settings  # noqa: PLC0415
     from yadgar.core.server.tools.recall import _forward_to_backend  # noqa: PLC0415
 
-    # Normalise directory before forwarding — the backend scopes with exact-string
-    # is_directory_eligible (no normalisation server-side), and the post-filter in
-    # _filter_prompt_recall_results also strips. Mirror recall.py's
+    # Normalise directory before deriving the project — mirror recall.py's
     # `(directory or "").strip().rstrip("/")` so a trailing-slash cwd does not
-    # silently scope to nothing. (The deployed hook sends a clean cwd; defensive.)
+    # silently derive a different project. (The deployed hook sends a clean cwd;
+    # defensive.)
     directory = (directory or "").strip().rstrip("/")
 
+    # Car C7 (0047 §5 C7): the backend's RecallRequest now REQUIRES project_id —
+    # it is the scope key, and an absent value would mean an unscoped
+    # corpus-wide read. Resolve it here from the hook's directory. A failure to
+    # resolve raises, which the hook handler's except-block degrades to
+    # {"text": ""} — the designed behaviour for a hook that cannot be scoped
+    # (ADR-0227: fail loud rather than silently widen).
     timeout_s = get_settings().HOOK_RECALL_TIMEOUT_S
     return _forward_to_backend(
         query=query,
         max_results=max_results,
         min_heat=min_heat,
         directory=directory,
+        project_id=hook_project_id(directory, project),
         type_filter="all",
         tags=None,
         mode=None,
@@ -226,10 +313,13 @@ class _HookRecallForwarder:
     recall(query, max_results, min_heat, profile).
     """
 
-    __slots__ = ("_directory",)
+    __slots__ = ("_directory", "_project")
 
-    def __init__(self, directory: str) -> None:
+    def __init__(self, directory: str, project: str | None = None) -> None:
         self._directory = directory
+        # Car C7: the hook's explicit ``?project=``, when it sent one. See
+        # ``hook_project_id`` — the directory can no longer supply an identity.
+        self._project = project
 
     def recall(
         self,
@@ -244,6 +334,7 @@ class _HookRecallForwarder:
             max_results=max_results,
             min_heat=min_heat,
             directory=self._directory,
+            project=self._project,
             profile=profile,
         )
 
@@ -1244,28 +1335,35 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
 
 @observe(tier="stage")
-def _filter_prompt_recall_results(results: list[dict], directory: str | None) -> list[dict]:
-    """Post-filter retriever results by caller directory for prompt-recall.
+def _filter_prompt_recall_results(results: list[dict], project_id: str | None) -> list[dict]:
+    """Post-filter retriever results by caller PROJECT for prompt-recall.
 
-    v5.65 Fix D: hook_prompt_recall previously forwarded all retriever results to
-    the response without directory scoping.  The retriever runs in a container and
-    cannot filter by host directory on its own — we must apply is_directory_eligible()
-    here after retrieval.
+    v5.65 Fix D: hook_prompt_recall previously forwarded all retriever results
+    to the response with no scoping at all.
 
-    When directory is None or empty (param absent / not passed by hook script),
-    scoping is skipped with a warning rather than using os.getcwd() (container path
-    would mis-scope results).
+    Car C7 (0047 §5 C7) re-keys the predicate from ``directory_context`` onto
+    ``project_id`` + the ``global`` reach tag, matching the stage-1 WHERE clause
+    exactly. It remains a POST-filter here on purpose: this endpoint hands back
+    whatever the forwarded recall produced, and re-issuing a scoped query would
+    double the hook's latency against ADR-0077's budget.
+
+    When project_id is absent, scoping is skipped with a warning rather than
+    guessing — a container's ``os.getcwd()`` is ``/app`` and would mis-scope.
     """
-    from yadgar._shared.storage.directory import is_directory_eligible  # noqa: PLC0415
+    from yadgar._shared.storage.directory import is_project_eligible  # noqa: PLC0415
 
-    if not directory or not directory.strip():
+    if not project_id or not project_id.strip():
         logger.warning(
-            "prompt-recall: directory param absent — skipping directory filter "
-            "(container cannot detect host cwd; pass ?directory= in hook script)"
+            "prompt-recall: project_id absent — skipping project filter "
+            "(container cannot detect host cwd; pass the resolved project id)"
         )
         return results
-    caller_dir = directory.strip().rstrip("/")
-    return [r for r in results if is_directory_eligible(r.get("directory_context"), caller_dir)]
+    caller_project = project_id.strip()
+    return [
+        r
+        for r in results
+        if is_project_eligible(r.get("project_id"), r.get("tags"), caller_project)
+    ]
 
 
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
@@ -1285,6 +1383,13 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         # container cwd would mis-scope retriever results.  directory may be None if
         # hook script does not pass ?directory=; handled by _filter_prompt_recall_results.
         directory = request.query_params.get("directory") or None
+        # Car C7: the hook's EXPLICIT project. C5 deleted directory derivation
+        # (ADR-0227), so this is the only signal that can scope a hook recall.
+        # Absent + a directory present → hook_project_id raises and the
+        # except-block below degrades to an empty injection, which is the
+        # deliberate choice: no injection beats another project's memories in
+        # this project's prompt (the v5.65 leak).
+        _hook_project = _hook_query_project(request)
 
         if not query or len(query) < 2:
             return JSONResponse({"text": ""})
@@ -1317,7 +1422,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
             # profile="fast": backend runs memory-only BM25+HNSW+fusion
             # (no CE/NLI/MP, no wiki fanout, no engram links — ADR-0077).
             results = await _recall_with_timeout(
-                _HookRecallForwarder(directory or ""),
+                _HookRecallForwarder(directory or "", _hook_project),
                 "prompt-recall",
                 query,
                 max_results=5,
@@ -1332,10 +1437,16 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if results is None:
             return JSONResponse({"text": ""})
 
-        # v5.65 Fix D: directory post-filter. The backend already scopes with the
-        # SAME is_directory_eligible predicate, so this is idempotent on forwarded
-        # rows — kept as the defense-in-depth contract (#166 Trap 2).
-        results = _filter_prompt_recall_results(results, directory)
+        # v5.65 Fix D / Car C7: PROJECT post-filter. The backend already scopes
+        # with the SAME project_id + 'global'-tag predicate in its stage-1 WHERE,
+        # so this is idempotent on forwarded rows — kept as the defense-in-depth
+        # contract (#166 Trap 2). Resolution failure degrades to unfiltered
+        # forwarded rows, which the backend already scoped.
+        try:
+            _scoped = hook_project_id(directory, _hook_project)
+        except Exception:  # noqa: BLE001 — hook must never raise into the prompt
+            _scoped = None
+        results = _filter_prompt_recall_results(results, _scoped)
 
         if not results:
             return JSONResponse({"text": ""})
@@ -1934,6 +2045,10 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
             request.query_params.get("agent_type", "general-purpose"), max_len=64
         )
         cwd = sanitize_log_field(request.query_params.get("cwd", os.getcwd()), max_len=500)
+        # Car C7: the subagent's EXPLICIT project. ``cwd`` defaults to a real
+        # path here, and a directory can no longer produce an identity (C5
+        # deleted derivation), so without this the hook cannot be scoped.
+        _sa_project = _hook_query_project(request)
 
         try:
             body = await request.json()
@@ -1967,7 +2082,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
             # v5.51.0: wrapped in _recall_with_timeout (asyncio.wait_for) to bound latency.
             # On timeout, _recall_with_timeout returns None (logs WARN + increments counter).
             results = await _recall_with_timeout(
-                _HookRecallForwarder(cwd or ""),
+                _HookRecallForwarder(cwd or "", _sa_project),
                 "subagent-start",
                 query,
                 max_results=5,

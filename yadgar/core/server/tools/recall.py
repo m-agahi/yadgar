@@ -139,23 +139,20 @@ def _resolve_project_for_recall(
         raise ValueError(f"recall: {exc}") from exc
 
     _dir_stripped = (directory or "").strip().rstrip("/") if directory else ""
-    # BC-B3: a usable directory OR an explicit project override MUST be supplied.
+    # Car C7 — THE GUARD IS DELETED, and this is the re-key C13d flagged.
     #
-    # C13 — READ THE ORDERING BEFORE TRUSTING THIS GUARD. The sentence that
-    # stood here said "Car M made resolve_effective_project() fall back to
-    # 'global' when neither is given". C5 deleted that tier: the resolver above
-    # now RAISES ``UnresolvedProjectError``, and it runs FIRST. So on the
-    # ``project is None`` path this ValueError is unreachable — the structured
-    # raise wins, which is the better error anyway (it names the tool and the
-    # fix). The branch is retained rather than deleted because C7 re-keys this
-    # tool's scope and will decide the guard's shape; what is fixed here is the
-    # comment, since a reader who trusted it would conclude the deleted
-    # fallback still exists.
-    if not _dir_stripped and not project:
-        raise ValueError(
-            "recall: directory is required (caller must supply project dir; "
-            "container cannot detect it via os.getcwd())"
-        )
+    # C13d measured the old ``if not _dir_stripped and not project`` branch as
+    # DEAD both ways round: with ``project`` absent the resolver above raises
+    # ``UnresolvedProjectError`` first (C5), and with ``project`` present the
+    # second condition is false. It was retained pending C7's decision on this
+    # tool's scope. That decision is made: the scope key is ``project_id``, the
+    # resolver is its single chokepoint, and it already fails loud. A second
+    # guard restating a weaker version of the same rule — in terms of the
+    # DIRECTORY, which no longer scopes anything — could only ever be dead code
+    # or a contradiction, so it goes.
+    #
+    # The directory sentinel below stays: the backend still carries ``directory``
+    # as the caller's physical path (non-scoping), and it must be non-empty.
     if not _dir_stripped:
         _dir_stripped = effective_project_id
     return effective_project_id, _dir_stripped
@@ -523,14 +520,19 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
             _st._consolidation.record_activity()
 
         # Phase 2a: forward-only — raise loud on backend error (no in-core fallback).
-        # Car M: forward the resolved project_id so the backend can scope by
-        # project_id (post-L semantics). The None fall-through path (no
-        # project=, no session, no usable directory → "global") is omitted
-        # from the wire payload; older backends stay wire-compatible
-        # (RecallRequest is extra="forbid").
-        _project_payload = (
-            effective_project_id if effective_project_id and project is not None else None
-        )
+        #
+        # Car C7 (0047 §5 C7) — THE RESOLVED PROJECT IS ALWAYS SENT NOW.
+        # Car M shipped it only when the caller passed an explicit ``project=``
+        # override (``... if effective_project_id and project is not None else
+        # None``). That was survivable while the backend still scoped on
+        # ``directory``; it is not survivable now that ``project_id`` IS the
+        # scope key and ``RecallRequest`` requires it. Under the old condition
+        # every ordinary ``recall(directory=…)`` — which is nearly all of them,
+        # since only a cross-project lookup passes ``project=`` — would omit the
+        # field and come back HTTP 422 against an ``extra="forbid"`` model.
+        # The resolver above already raises ``UnresolvedProjectError`` when it
+        # cannot produce a value (C5), so there is nothing left to guard.
+        _project_payload = effective_project_id
         merged = _forward_to_backend(
             query=query,
             max_results=max_results,

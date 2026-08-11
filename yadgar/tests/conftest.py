@@ -1436,9 +1436,20 @@ def recall_backend_bypass(monkeypatch):
         tags,
         mode=None,
         profile=None,
+        project_id=None,
         **kwargs,
     ):
-        """Direct _fanout_recall call — bypasses HTTP, same _st engines."""
+        """Direct _fanout_recall call — bypasses HTTP, same _st engines.
+
+        Car C7 (0047 §5 C7): ``_fanout_recall`` re-keyed its scope parameter
+        from ``directory`` to a REQUIRED ``project_id``. The real
+        ``recall()`` → ``_forward_to_backend`` call site (recall.py) now
+        always sends ``project_id`` alongside ``directory`` — this bypass
+        mirrors that: ``directory`` is still accepted (kept for API parity
+        with ``_forward_to_backend``'s real signature and any caller that
+        inspects it), but the value forwarded into ``_fanout_recall`` is
+        ``project_id``, not ``directory``.
+        """
         if mode is not None and mode != "landscape":
             # Unknown mode — return empty (forward-only would have 400'd)
             return []
@@ -1452,7 +1463,7 @@ def recall_backend_bypass(monkeypatch):
             query=query,
             max_results=max_results,
             min_heat=min_heat,
-            directory=directory,
+            project_id=project_id,
             type_filter=type_filter,
             tags=tags,
             profile=profile,

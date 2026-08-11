@@ -82,7 +82,7 @@ _require_admin_token = _es._require_admin_token
 
 
 @observe(tier="stage", metric="backend.recall.landscape")
-def _run_landscape_backend(query: str, max_results: int, directory: str, storage) -> list[dict]:
+def _run_landscape_backend(query: str, max_results: int, project_id: str, storage) -> list[dict]:
     """Backend-side landscape recall via AstrocytePool.consensus_retrieve.
 
     Phase 1 §5.1/§3.2: mirrors core _landscape_recall (recall.py:45-91) but runs
@@ -91,17 +91,22 @@ def _run_landscape_backend(query: str, max_results: int, directory: str, storage
     this function is called when req.mode=="landscape".
 
     Returns [] gracefully when _pool is None (pool unavailable / disabled).
-    Directory post-filter via is_directory_eligible (same predicate as fanout path).
+
+    Car C7 (0047 §5 C7): the post-filter is re-keyed onto ``project_id`` + the
+    ``global`` reach tag. It stays a POST-filter here — and that is correct, not
+    an oversight: ``consensus_retrieve`` is an astrocyte-domain consensus walk,
+    not a single SQL query, so there is no one ``WHERE`` to push a predicate
+    into. The guard is the same predicate the SQL arms use, so the two agree.
     """
     import yadgar._shared.runtime.state as _st  # noqa: PLC0415
-    from yadgar._shared.storage.directory import is_directory_eligible  # noqa: PLC0415
+    from yadgar._shared.storage.directory import is_project_eligible  # noqa: PLC0415
 
     if _st._pool is None:
         logger.debug("landscape_backend: pool unavailable — returning []")
         return []
 
     raw = _st._pool.consensus_retrieve(query, top_k=max_results)
-    scoped = [r for r in raw if is_directory_eligible(r.get("directory_context"), directory)]
+    scoped = [r for r in raw if is_project_eligible(r.get("project_id"), r.get("tags"), project_id)]
     return scoped[:max_results]
 
 
@@ -185,7 +190,7 @@ async def recall_route(
             merged = _run_landscape_backend(
                 query=req.query,
                 max_results=req.max_results,
-                directory=req.directory,
+                project_id=req.project_id,
                 storage=storage,
             )
         else:
@@ -194,7 +199,7 @@ async def recall_route(
                 query=req.query,
                 max_results=req.max_results,
                 min_heat=req.min_heat,
-                directory=req.directory,
+                project_id=req.project_id,
                 type_filter=req.type,
                 tags=req.tags,
                 profile=req.profile,

@@ -200,6 +200,19 @@ def test_wiki_read_deep_copy_isolation(monkeypatch):
 
 
 def _wire_fake_query(monkeypatch, results):
+    """Wire a fake WikiStore into ``wiki_query``'s cache-key/epoch machinery.
+
+    Car C7 (0047 §5 C7): ``wiki_query`` no longer applies any Python-side
+    directory/project eligibility post-filter — scoping is pushed into
+    ``WikiStore.query()``'s stage-1 SQL WHERE (``project_id=`` /
+    ``opt_in_tags=`` kwargs, both new). The old
+    ``monkeypatch.setattr(wtool, "is_directory_eligible", lambda dc, d: True)``
+    line patched a module attribute that no longer exists (deleted along with
+    the function itself) — this file's tests are about the CACHE (hit/miss,
+    deep-copy isolation, epoch busting), not eligibility, so "keep all rows"
+    is now simply the fake store's default behaviour: it returns every row
+    unconditionally, same as before, just without a symbol to patch.
+    """
     import yadgar._shared.runtime.state as _state
     from yadgar.core.server.tools import wiki as wtool
 
@@ -207,14 +220,12 @@ def _wire_fake_query(monkeypatch, results):
         def __init__(self):
             self.calls = 0
 
-        def query(self, query, tags, category, k):
+        def query(self, query, tags, category, k, project_id=None, opt_in_tags=None):
             self.calls += 1
             return [dict(r) for r in results]
 
     store = _QStore()
     monkeypatch.setattr(_state, "_wiki", store)
-    # is_directory_eligible: keep all rows.
-    monkeypatch.setattr(wtool, "is_directory_eligible", lambda dc, d: True)
     return store, wtool
 
 

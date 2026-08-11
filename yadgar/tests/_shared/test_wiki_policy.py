@@ -224,68 +224,109 @@ class TestAgentPageTypeSplit:
         assert PAGE_TYPES[page_type] == ["Purpose", "Prompt"]
 
 
-# ── F. Car C2 — downweight disposition (D22) ──────────────────────────────────
+# ── F. Car C7 — "downweight" disposition RETIRED; task_list is now "exclude" ──
 
 
 class TestDownweightDisposition:
-    """Car C2 (0047 §7 3b): third recall_disposition value "downweight".
+    """Car C7 (0047 §5 C7) retired the "downweight" recall_disposition (D22/C2).
 
-    A ``task_list`` page stays recall-visible (``is_recall_visible`` returns
-    True — exclusion still drops only ``"exclude"``) but its ranking score is
-    multiplied by ``RECALL_DOWNWEIGHT_FACTOR`` (< 1.0) at the scoring stage
-    so it sinks below ``"include"`` pages of comparable relevance.
+    C2's ``task_list`` policy stayed recall-visible but scored its ranking
+    down via a multiply on ``placement_score``. That multiply was a VERIFIED
+    SIGN BUG: ``placement_score = ce + wiki_prior_weight * native_score`` is
+    commonly negative (``ce`` is a raw cross-encoder logit), and multiplying a
+    negative value by a sub-1.0 factor moves it TOWARD ZERO — an INCREASE
+    under "higher ranks first", i.e. the penalty promoted exactly the pages it
+    was meant to sink. See ``yadgar/backend/retrieval/providers/fusion.py``
+    and the ``PAGE_TYPE_TASK_LIST`` entry in ``POLICY_BY_TYPE`` for the full
+    account.
 
-    The helper ``downweight_multiplier(page, factor)`` is the single source of
-    truth for the penalty — called from both fusion (unified recall) and
-    ``wiki_query`` (the legacy search tool).
+    C7's fix: ``task_list`` is now ``recall_disposition="exclude"`` (dropped
+    from search entirely, in the stage-1 SQL WHERE, before it can consume a
+    pool slot) and the disposition set is CLOSED at ``{"include", "exclude"}``
+    — ``downweight_multiplier`` is deleted, not just unused. These tests pin
+    that closure and the concrete task_list flip; renamed from
+    ``TestDownweightDisposition``'s original "penalty survives" assertions
+    (all of which are now the OPPOSITE of the current contract).
     """
 
-    def test_task_list_resolves_to_downweight(self):
-        """``task_list`` page type resolves to ``recall_disposition="downweight"``."""
+    def test_task_list_resolves_to_exclude_not_downweight(self):
+        """``task_list`` now resolves to ``recall_disposition="exclude"``.
+
+        Was: asserted ``"downweight"``. C7 retired that value outright — the
+        page is now dropped from search, not ranked-down within it.
+        """
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
 
-        assert get_policy(PAGE_TYPE_TASK_LIST).recall_disposition == "downweight"
+        assert get_policy(PAGE_TYPE_TASK_LIST).recall_disposition == "exclude"
 
     def test_task_list_differs_from_default(self):
-        """``task_list`` policy must differ from DEFAULT (single source assertion)."""
+        """``task_list`` policy must differ from DEFAULT (single source assertion).
+
+        Unchanged invariant — only the REASON it differs moved (gate_mode +
+        recall_disposition both diverge from DEFAULT_POLICY now, previously
+        recall_disposition alone did under the retired "downweight" value).
+        """
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
 
         assert get_policy(PAGE_TYPE_TASK_LIST) != DEFAULT_POLICY
 
-    def test_downweight_multiplier_returns_factor_for_task_list(self):
-        """A downweight-disposition page returns *factor* from the helper."""
-        from yadgar._shared.wiki.policy import downweight_multiplier
+    def test_downweight_multiplier_helper_is_deleted(self):
+        """``downweight_multiplier`` no longer exists on the policy module.
+
+        Was: ``downweight_multiplier({"page_type": PAGE_TYPE_TASK_LIST}, 0.5)
+        == 0.5``. The helper — and every call site in fusion.py and
+        wiki_query — is deleted along with the disposition value it served.
+        This pins the deletion so a future "quick fix" cannot silently
+        reintroduce a multiply-based penalty (the sign-bug-prone shape).
+        """
+        import yadgar._shared.wiki.policy as policy_mod
+
+        assert not hasattr(policy_mod, "downweight_multiplier")
+
+    def test_recall_disposition_set_is_closed_at_include_exclude(self):
+        """Every registered policy's ``recall_disposition`` is include or exclude.
+
+        Was: ``downweight_multiplier({"page_type": None}, 0.5) == 1.0`` (an
+        include-disposition page is unaffected by the penalty helper). That
+        helper is gone; the more valuable invariant it protected — the
+        disposition set never grows a third silent value — is asserted
+        directly across the whole registry plus DEFAULT_POLICY.
+        """
+        from yadgar._shared.wiki.policy import DEFAULT_POLICY, POLICY_BY_TYPE
+
+        all_dispositions = {p.recall_disposition for p in POLICY_BY_TYPE.values()} | {
+            DEFAULT_POLICY.recall_disposition
+        }
+        assert all_dispositions <= {"include", "exclude"}, (
+            f"recall_disposition set must stay closed at "
+            f"{{'include', 'exclude'}}; found {all_dispositions}"
+        )
+
+    def test_task_list_gate_mode_is_identity(self):
+        """``task_list``'s gate_mode is "identity" (Car C3, unrelated to C2/C7).
+
+        Was: ``downweight_multiplier({"page_type": PAGE_TYPE_AGENT_PATTERN},
+        0.5) == 1.0`` — an exclude-disposition page (agent_pattern) is
+        unaffected by the deleted helper. Re-pointed to a still-live axis of
+        the SAME policy object under test (task_list): the slug-is-identity
+        gate that lets canonical task-list writers upsert without tripping
+        the content-similarity gate.
+        """
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
 
-        assert downweight_multiplier({"page_type": PAGE_TYPE_TASK_LIST}, 0.5) == 0.5
+        assert get_policy(PAGE_TYPE_TASK_LIST).gate_mode == "identity"
 
-    def test_downweight_multiplier_returns_one_for_include(self):
-        """An include-disposition page returns 1.0 from the helper."""
-        from yadgar._shared.wiki.policy import downweight_multiplier
+    def test_is_recall_visible_now_drops_task_list(self):
+        """A task_list page is DROPPED by the visibility filter — the opposite of before.
 
-        assert downweight_multiplier({"page_type": None}, 0.5) == 1.0
-
-    def test_downweight_multiplier_returns_one_for_exclude(self):
-        """An exclude-disposition page returns 1.0 from the helper.
-
-        The penalty is for the SCORING stage; exclusion happens earlier
-        (``is_recall_visible``) — an excluded page never reaches the scorer,
-        so its multiplier is irrelevant. Returning 1.0 keeps the helper
-        composable: it can be applied unconditionally without leaking
-        penalty to excluded pages that happen to slip through.
-        """
-        from yadgar._shared.wiki.policy import downweight_multiplier
-
-        assert downweight_multiplier({"page_type": PAGE_TYPE_AGENT_PATTERN}, 0.5) == 1.0
-
-    def test_is_recall_visible_passes_downweight(self):
-        """A downweight page survives the visibility filter (it is NOT excluded).
-
-        Downweight is a RANKING penalty, not an exclusion — the page must
-        remain visible to the search paths so the penalty can reorder it
-        below include-disposition pages.
+        Was: ``is_recall_visible({"page_type": PAGE_TYPE_TASK_LIST}) is True``
+        ("downweight is a ranking penalty, not an exclusion — must remain
+        visible"). Under ``recall_disposition="exclude"`` with
+        ``opt_in_tag=None`` (unconditional), the SAME call must now return
+        False: the page is excluded outright, not ranked down within a
+        visible result set.
         """
         from yadgar._shared.wiki.policy import is_recall_visible
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
 
-        assert is_recall_visible({"page_type": PAGE_TYPE_TASK_LIST}) is True
+        assert is_recall_visible({"page_type": PAGE_TYPE_TASK_LIST}) is False

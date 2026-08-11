@@ -447,7 +447,7 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
     query: str,
     max_results: int,
     min_heat: float,
-    directory: str,
+    project_id: str,
     type_filter: str = "all",
     tags: list[str] | None = None,
     profile: str | None = None,
@@ -460,9 +460,13 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
     ``UNIFIED_RECALL_ENABLED``-gated entry with a "legacy body below"; the flag
     has been default-on since v5.80 and no legacy body exists.)
 
-    Step 3 additions (directory scoping):
-      - MemoryProvider applies Python-side is_directory_eligible filter.
-      - WikiProvider applies Python-side is_directory_eligible filter.
+    Car C7 (0047 §5 C7) — SCOPING MOVED INTO THE QUERY:
+      - The scope is the caller's ``project_id``, not their directory.
+      - Both providers push ``project_id = $p OR 'global' IN tags`` (plus, for
+        wiki, the ``POLICY_BY_TYPE``-derived ``page_type`` exclusion) into the
+        stage-1 ``WHERE``. Before C7 both applied a Python post-filter AFTER the
+        query had already spent its LIMIT, so a scoped recall over a
+        minority-share project could return zero rows while the DB held plenty.
 
     Step 4 additions (cross-type fusion):
       - Per-type quotas (RECALL_MEMORY_QUOTA / RECALL_WIKI_QUOTA) applied
@@ -487,7 +491,8 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
         query: Search query.
         max_results: Maximum results to return.
         min_heat: Minimum heat threshold forwarded to MemoryProvider.
-        directory: Caller directory (required, validated upstream).
+        project_id: Caller's resolved project id (required, validated upstream).
+            Car C7 re-keyed this parameter from ``directory``.
         type_filter: One of {"all", "memory", "wiki"}. Selects provider subset.
         tags: Tag include filter for wiki retrieval. When set, triggers SQL pre-filter
               (search_wiki_vectors_tagged) and suppresses the default agent-prompt exclude.
@@ -500,9 +505,15 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
         List of raw memory/wiki dicts from providers, fused by CE rerank,
         deduped by content, trimmed to max_results.
     """
+    # Car C7 (0047 §5 C7): the scope is now the PROJECT, not the directory, and
+    # it is pushed into the stage-1 WHERE rather than post-filtered. ``tags``
+    # rides along as ``opt_in_tags`` so the policy-derived ``page_type``
+    # exclusion can be relaxed per request — without that,
+    # ``recall(type="wiki", tags=["agent-prompt"])`` returns nothing.
     scope = Scope(
-        directory=directory,
+        project_id=project_id or "",
         min_heat=min_heat,
+        opt_in_tags=tags,
     )
 
     # Candidate pool size: ask for more than max_results so fusion + dedup

@@ -793,14 +793,26 @@ class _MemoryMixin:
         query: str,
         min_heat: float = 0.1,
         limit: int = 50,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> list[tuple[int, float]]:
-        """FTS search returning (memory_id, bm25_score) tuples. Higher = better."""
+        """FTS search returning (memory_id, bm25_score) tuples. Higher = better.
+
+        Car C7: ``scope_sql`` carries the project predicate + ``global`` reach
+        tag. The FTS arm composes safely — ``LIMIT`` is applied AFTER the
+        ``WHERE``, so the limit is spent on in-scope rows.
+        """
         fts_query = self._preprocess_fts_query(query)
         params: dict = {"q": fts_query, "min": min_heat, "lim": limit}
+        where = "content @1@ $q AND heat >= $min"
+        if scope_sql:
+            where = f"{where} AND ({scope_sql})"
+            params.update(scope_params or {})
         rows = self._q(
-            "SELECT id, heat, search::score(1) AS score "
-            "FROM memory WHERE content @1@ $q AND heat >= $min "
-            "ORDER BY score DESC LIMIT $lim",
+            f"SELECT id, heat, search::score(1) AS score "
+            f"FROM memory WHERE {where} "
+            f"ORDER BY score DESC LIMIT $lim",
             params,
         )
         results = []

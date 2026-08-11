@@ -187,6 +187,7 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         tags,
         mode=None,
         profile=None,
+        project_id=None,
         **kwargs,
     ):
         if os.environ.get("YADGAR_EMBED_URL"):
@@ -199,6 +200,7 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
                 tags,
                 mode=mode,
                 profile=profile,
+                project_id=project_id,
                 **kwargs,
             )
         if mode is not None:
@@ -207,11 +209,13 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         # T2 Car E2: compose the backend retriever lazily against the test's
         # live engines (idempotent; the shared root no longer builds it).
         ensure_retrieval_engine()
+        # Car C7 (0047 §5 C7): _fanout_recall's scope param is project_id
+        # (required), not directory — mirrors conftest.py's recall_backend_bypass.
         return _fanout_recall(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
-            directory=directory,
+            project_id=project_id,
             type_filter=type_filter,
             tags=tags,
             profile=profile,

@@ -61,15 +61,21 @@ class RecallRequest(BaseModel):
     """Request body for POST /recall."""
 
     query: str
-    directory: str
-    # C3 (0047 PR#40 remediation §5.C3): the read path's project key. The core
-    # forwarder (``core/server/tools/recall.py:_forward_to_backend``) has been
-    # sending ``project_id`` since Car M while this model was ``extra="forbid"``
-    # WITHOUT the field — so every ``recall(project=…)`` came back HTTP 422 and
-    # cross-project recall has never worked on any branch. Optional here: C3 is
-    # additive and the pipeline still scopes on ``directory``; C7 re-keys the
-    # WHERE clause onto this field and retires ``directory``.
-    project_id: str | None = None
+    # C7 (0047 §5 C7): ``project_id`` is now THE read-path scope key and is
+    # REQUIRED. C3 added it as optional while the pipeline still scoped on
+    # ``directory``; the WHERE clause is now keyed on it, so an absent value
+    # would mean an unscoped corpus-wide read — the exact silent fallback
+    # ADR-0227 exists to delete.
+    #
+    # ``extra="forbid"`` means an old client sending ``directory`` breaks
+    # LOUDLY (HTTP 422) rather than silently reading the whole corpus. That is
+    # correct under ADR-0227 — and it means THE CORE AND BACKEND IMAGES MUST
+    # DEPLOY TOGETHER. The runbook records it.
+    project_id: str
+    # Retained as OPTIONAL, and deliberately NOT deleted: the directory is still
+    # the caller's physical working path, which several response-side consumers
+    # and the action-log correlation still key on. It no longer scopes anything.
+    directory: str | None = None
     max_results: int = 5
     min_heat: float = 0.0
     type: str = "all"  # noqa: A003 — matches MCP schema convention

@@ -291,7 +291,17 @@ def test_hook_subagent_start_failure_counter_on_exception():
 
     mock_request = MagicMock()
     mock_request.query_params = MagicMock()
-    mock_request.query_params.get = MagicMock(side_effect=lambda k, d="": d)
+    # Car C7 (0047 §5 C7): supply ``project``. This handler defaults ``cwd`` to
+    # ``os.getcwd()``, i.e. a REAL non-empty directory, and C5 deleted
+    # ``derive_project_id`` — so a directory without a project now raises
+    # ``UnresolvedProjectError`` before the recall is ever attempted. That would
+    # make this test green for the WRONG reason inverted: the hook would fail,
+    # but under a different ``reason`` label, so the RuntimeError counter this
+    # test exists to pin would never move. Supplying the project keeps the
+    # injected RuntimeError the thing that actually fails.
+    mock_request.query_params.get = MagicMock(
+        side_effect=lambda k, d="": "m-agahi/yadgar" if k == "project" else d
+    )
     mock_request.json = AsyncMock(return_value={"description": "test task"})
 
     with patch.object(_st, "_retriever", mock_retriever):

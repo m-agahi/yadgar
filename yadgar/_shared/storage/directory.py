@@ -1,82 +1,232 @@
-"""Directory-aware predicate helpers.
+"""Project-aware predicate helpers for the recall read path.
 
-Used by memory/wiki query methods to restrict results to the caller's project
-directory, plus always-eligible sentinels (global, empty, None).
+Car C7 (0047 §5 C7) re-keyed this module from ``directory_context`` onto
+``project_id``. The mechanism also MOVED: v5.62–v6 filtered in Python AFTER the
+query returned (``is_directory_eligible``), which spent the query's LIMIT before
+filtering — a scoped recall over a 15%-share project could come back empty
+because the top-N was entirely out of scope. Filtering now happens in the
+stage-1 ``WHERE``; this module builds that clause.
 
-Kept separate from the full StorageEngine so retrieval.core can import
-DirectoryFilter without pulling the engine in.
+The predicate has two arms and BOTH are load-bearing:
 
-v5.62.0: Python-side post-filter only.  The SurrealQL-level DirectoryFilter
-(pushed into WHERE clauses as an injected SQL fragment) is deferred to the
-unified-scoped-recall rebuild so it is built once, not twice.
-See docs/plans/recall-scoping-restamp.md §B note on DB-level filter.
+  ``project_id = $p``   the caller's project.
+  ``'global' IN tags``  the cross-project REACH tag. C6's backfill adds it to
+                        every row that used to live at
+                        ``directory_context='global'``. Dropping this arm
+                        silently narrows ~429 rows down to one project — the
+                        failure looks like "recall got worse", not like a bug.
+
+An UNSTAMPED row (``project_id`` absent — the column is ``option<string>``, so
+it reads as ``None``, NOT as ``"global"``) matches NEITHER arm unless it carries
+the reach tag. That is deliberate. See ``build_project_scope_clause``.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from yadgar._shared.observability.observe import observe
 
 
-class DirectoryFilter:
-    """Carry directory context for eligibility checks.
+@dataclass(frozen=True)
+class RecallScope:
+    """The caller's read scope, as ONE value.
+
+    Car C7. Bundled rather than passed as two loose parameters because the two
+    always travel together and several signatures on the path were already at
+    the I30 parameter cap — and, more to the point, because splitting them is
+    how the opt-in arm gets dropped: a caller that threads ``project_id`` and
+    forgets ``opt_in_tags`` silently loses the agent-prompt library, with no
+    error and no obviously-wrong result.
 
     Attributes:
-        caller_dir: Absolute project path of the calling session, or None for
-            legacy/daemon-internal contexts.
-
-    Eligible set for Python post-filters (always_eligible_sentinels):
-        {caller_dir, 'global', '', None}
-
-    NOTE — 'system' was the mis-stamp sink prior to v5.64.0.  As of v5.64.0
-    the three write sites (curation/strengthen.py, cls_store/promotion.py,
-    sleep_compute/dream.py) NO LONGER stamp 'system' — they stamp the
-    originating project dir or 'global' via dominant_directory().  As of
-    v5.65.0 'system' is REMOVED from the eligible set: existing system-stamped
-    rows are treated as mis-stamps (noise) and will no longer surface in
-    directory-scoped recall / wiki_query / project_brief.  This is safe
-    post-v5.64 because no production code path creates new 'system' rows.
+        project_id: Resolved project id, or ``None``/empty for an explicitly
+            unscoped read (legacy whole-corpus mode).
+        opt_in_tags: Tags the caller explicitly requested; relaxes the
+            policy-derived ``page_type`` exclusion for the types that declare
+            them.
     """
 
-    __slots__ = ("caller_dir",)
+    project_id: str | None = None
+    opt_in_tags: list[str] | None = field(default=None)
 
-    def __init__(self, caller_dir: str | None) -> None:
-        self.caller_dir = caller_dir
+    @observe(exempt="pure dataclass copy; no I/O, no branching beyond one guard")
+    def with_default_opt_in(self, tags: list[str] | None) -> RecallScope:
+        """Return self, or a copy defaulting ``opt_in_tags`` to *tags*.
 
-    def __repr__(self) -> str:
-        return f"DirectoryFilter(caller_dir={self.caller_dir!r})"
+        Car C7. A caller that only set ``tags=`` still means "I asked for these"
+        — the row-level ``is_recall_visible`` has always read it that way — so
+        the derived exclusion must see them too, or the same request reaches the
+        agent-prompt library through one gate and not the other.
+        """
+        if self.opt_in_tags is not None or not tags:
+            return self
+        return RecallScope(project_id=self.project_id, opt_in_tags=tags)
+
+    @observe(exempt="thin delegation to build_recall_scope_clause; no I/O")
+    def clause(self, *, page_types: bool = True, prefix: str = "sc") -> tuple[str, dict]:
+        """Build this scope's stage-1 ``WHERE`` fragment."""
+        return build_recall_scope_clause(
+            self.project_id,
+            opt_in_tags=self.opt_in_tags,
+            page_types=page_types,
+            prefix=prefix,
+        )
 
 
-# Always-eligible sentinels — rows with these directory_context values are
-# included regardless of caller_dir.  'system' removed in v5.65 (mis-stamp sink;
-# v5.64 stopped new system writes; existing rows are noise, not signal).
-_ALWAYS_ELIGIBLE: frozenset[str | None] = frozenset({"global", "", None})
+# Car C7: the reach tag. A row carrying it is visible from EVERY project.
+# C6's backfill adds it to rows leaving ``directory_context='global'``.
+GLOBAL_REACH_TAG = "global"
 
 
 @observe(tier="hot")
-def is_directory_eligible(directory_context: str | None, caller_dir: str | None) -> bool:
-    """Return True when a row is eligible for the given caller directory.
+def build_project_scope_clause(
+    project_id: str | None,
+    *,
+    prefix: str = "sc",
+) -> tuple[str, dict]:
+    """Return ``(sql_fragment, params)`` scoping rows to *project_id*.
 
-    Always eligible: global, '', system, None (sentinel rows).
-    Eligible when caller_dir matches: exact string equality after normalisation.
+    Car C7. This is the half of the WHERE clause that EARNS the change: it
+    KEEPS a minority (yadgar = 358 of 2,343 wiki pages = 15.3% measured
+    2026-08-10), so a Python post-filter discards ~85% of everything it paid to
+    fetch — and, on the HNSW arm, may discard 100% of a top-K that never
+    contained an in-scope row.
 
-    When caller_dir is None (legacy / no-filter mode): all rows are eligible.
+    UNSTAMPED ROWS (``project_id`` IS NONE) DO NOT MATCH — the decision, stated:
+
+        C6 made ``project_id`` an ``option<string>``, so a row the backfill has
+        not reached reads as ``None``, not as ``"global"``. Admitting
+        ``project_id IS NONE`` as a sentinel — the shape the old
+        ``_ALWAYS_ELIGIBLE = {"global", "", None}`` had — would rebuild exactly
+        the permissive fallback ADR-0227 exists to delete: every unattributed
+        row would leak into every project's recall, forever, and it would look
+        like it was working.
+
+        The cost is bounded and sanctioned: in the window between boot and the
+        operator running C6's backfill (§8 step 5b), a project-scoped recall
+        over an un-backfilled corpus returns ZERO ROWS rather than raising.
+        §8 step 5b names zero-results as an acceptable outcome for that window
+        (a degraded window, not a maintenance one); the runbook records it.
+
+        ``legacy_directory`` rows carry no ``project_id`` BY DESIGN (C6
+        quarantine). They correctly stay invisible here — that is the
+        quarantine working, not a backfill gap to close.
+
+    An empty/None *project_id* yields ``("", {})`` — no filtering. Callers that
+    must not fall back silently resolve their project upstream, where the
+    resolver raises ``UnresolvedProjectError`` (C5).
 
     Args:
-        directory_context: The ``directory_context`` field from the memory/wiki row.
-        caller_dir: Normalised caller project path (trailing slash stripped),
-            or None for legacy no-filter mode.
+        project_id: The caller's resolved project id (e.g. ``"m-agahi/yadgar"``).
+        prefix: Bind-parameter prefix so this fragment can be AND-ed with
+            others without a param-name collision.
 
     Returns:
-        True if the row should be included in results.
+        ``(sql_fragment, params_dict)``.
     """
-    if caller_dir is None:
-        # Legacy mode — no directory filter; all rows pass.
-        return True
+    if not project_id:
+        return "", {}
+    key = f"{prefix}_pid"
+    tag_key = f"{prefix}_reach"
+    clause = f"(project_id = ${key} OR ${tag_key} IN tags)"
+    return clause, {key: project_id, tag_key: GLOBAL_REACH_TAG}
 
-    if directory_context in _ALWAYS_ELIGIBLE:
-        return True
 
-    return directory_context == caller_dir
+@observe(tier="hot")
+def build_recall_scope_clause(
+    project_id: str | None,
+    *,
+    opt_in_tags=None,
+    page_types: bool = True,
+    prefix: str = "sc",
+) -> tuple[str, dict]:
+    """Return the ONE stage-1 recall WHERE clause: project + reach + page_type.
+
+    Car C7. Three things, one clause, one place:
+
+      1. ``project_id = $p``      the project predicate
+      2. ``'global' IN tags``     the cross-project reach tag
+      3. ``page_type NOT IN …``   the policy exclusion, DERIVED from
+                                  ``POLICY_BY_TYPE`` — never a second
+                                  hand-maintained list (see
+                                  ``policy.excluded_page_types``)
+
+    Arm 3 is wiki-only: the ``memory`` table has no ``page_type`` column, so
+    memory callers pass ``page_types=False``. Arms 1–2 apply to both tables —
+    both carry ``project_id`` and ``tags``.
+
+    The ``opt_in_tags`` pass-through is what keeps
+    ``recall(type="wiki", tags=["agent-prompt"])`` working: without it the
+    derived exclusion would hide the entire agent-prompt library from its own
+    documented lookup.
+
+    Args:
+        project_id: Caller's resolved project id. Falsy → arms 1–2 omitted.
+        opt_in_tags: Tags the caller explicitly requested.
+        page_types: Include arm 3 (wiki tables only).
+        prefix: Bind-parameter prefix.
+
+    Returns:
+        ``(sql_fragment, params_dict)``; ``("", {})`` when nothing to filter.
+    """
+    fragments: list[str] = []
+    params: dict = {}
+
+    proj_sql, proj_params = build_project_scope_clause(project_id, prefix=prefix)
+    if proj_sql:
+        fragments.append(proj_sql)
+        params.update(proj_params)
+
+    if page_types:
+        # Local import: keeps the module-level layering one-directional
+        # (``_shared.wiki`` already imports ``_shared.storage``).
+        from yadgar._shared.wiki.policy import (  # noqa: PLC0415
+            build_page_type_exclusion_clause,
+        )
+
+        pt_sql, pt_params = build_page_type_exclusion_clause(opt_in_tags, prefix=prefix)
+        if pt_sql:
+            fragments.append(pt_sql)
+            params.update(pt_params)
+
+    if not fragments:
+        return "", {}
+    return " AND ".join(fragments), params
+
+
+@observe(tier="hot")
+def is_project_eligible(
+    row_project_id: str | None,
+    row_tags,
+    caller_project_id: str | None,
+) -> bool:
+    """Row-level mirror of ``build_project_scope_clause``, for non-SQL signals.
+
+    Car C7. The WHERE clause covers the vector + FTS arms, which is where the
+    limit was being spent. It CANNOT cover candidates that arrive from the
+    graph walks (PPR, spreading activation) — those traverse edges and hand
+    back memory ids the scope clause never saw. This function is the residual
+    guard for exactly those, and it is NOT the old post-filter in new clothes:
+    it agrees with the SQL arm by construction (same two arms, same treatment
+    of unstamped rows) instead of implementing a wider sentinel set.
+
+    ``caller_project_id`` of ``None`` means no filtering (daemon-internal /
+    legacy callers), matching the clause builder's empty-fragment case.
+
+    Args:
+        row_project_id: The row's ``project_id`` (``None`` when unstamped).
+        row_tags: The row's ``tags`` sequence (``None``/absent tolerated).
+        caller_project_id: The caller's resolved project id.
+
+    Returns:
+        True when the row is in scope for the caller.
+    """
+    if not caller_project_id:
+        return True
+    if row_project_id == caller_project_id:
+        return True
+    return GLOBAL_REACH_TAG in (row_tags or ())
 
 
 @observe(tier="hot")
@@ -102,42 +252,3 @@ def dominant_directory(candidates: list[str | None]) -> str:
         return next(iter(real_dirs))
     # 0 or ≥2 distinct real dirs → global (cross-cutting or unknown)
     return "global"
-
-
-@observe(tier="hot")
-def _build_directory_clause(
-    directory_filter: DirectoryFilter | None,
-) -> tuple[str, dict]:
-    """Return (sql_fragment, params_dict) for a directory WHERE predicate.
-
-    NOTE: This function is defined for structural parity with branch.py and
-    for use in the unified-scoped-recall rebuild (deferred — that feature will
-    push the directory clause into SurrealQL).  It is NOT wired into any
-    SurrealQL query in v5.62.0.  Python-side post-filtering via
-    ``is_directory_eligible`` is the active mechanism this release.
-
-    When directory_filter is None: returns ('', {}) — no filtering.
-    When caller_dir is set: generates a clause that allows sentinel rows
-    (directory_context IS NONE, = '', = 'global') plus the caller directory.
-    NOTE: 'system' removed from sentinels in v5.65 (mis-stamp sink).
-
-    Args:
-        directory_filter: DirectoryFilter instance, or None for no filtering.
-
-    Returns:
-        Tuple of (sql_fragment, params_dict).  sql_fragment is '' when no
-        filtering is needed (caller_dir is None or directory_filter is None).
-    """
-    if directory_filter is None or directory_filter.caller_dir is None:
-        return "", {}
-
-    params: dict = {
-        "df_caller": directory_filter.caller_dir,
-    }
-    clause = (
-        "(directory_context IS NONE"
-        " OR directory_context = ''"
-        " OR directory_context = 'global'"
-        " OR directory_context = $df_caller)"
-    )
-    return clause, params

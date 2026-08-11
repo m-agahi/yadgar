@@ -50,6 +50,11 @@ class FTSParams:
     open_domain_mode: bool
     candidate_k: int
     min_heat: float
+    # Car C7 (0047 §5 C7): the stage-1 project predicate + ``global`` reach tag,
+    # pre-built by ``Retriever.recall`` and pushed into every FTS arm below so
+    # the LIMIT is spent on in-scope rows. Empty string = unscoped.
+    scope_sql: str = ""
+    scope_params: dict | None = None
 
 
 def _normalize_fts_hits(
@@ -88,6 +93,8 @@ class _ScoringMixin:
                     _build_boosted_fts_query(fts_query),
                     min_heat=params.min_heat,
                     limit=params.candidate_k,
+                    scope_sql=params.scope_sql,
+                    scope_params=params.scope_params,
                 )
                 if hits:
                     _normalize_fts_hits(hits, scores, strength)
@@ -111,6 +118,8 @@ class _ScoringMixin:
                 " ".join(entity_names),
                 min_heat=params.min_heat,
                 limit=params.candidate_k,
+                scope_sql=params.scope_sql,
+                scope_params=params.scope_params,
             )
             if hits:
                 strength = 0.7 if params.open_domain_mode else 0.5
@@ -131,6 +140,8 @@ class _ScoringMixin:
                 " ".join(comet_terms[:6]),
                 min_heat=params.min_heat,
                 limit=params.candidate_k,
+                scope_sql=params.scope_sql,
+                scope_params=params.scope_params,
             )
             if hits:
                 _normalize_fts_hits(hits, scores, 0.6)
@@ -180,7 +191,7 @@ class _ScoringMixin:
         return encoded, _enc_elapsed, embed_query_observed
 
     @observe(tier="stage", metric="retrieval.vector")
-    def _collect_vector_scores(
+    def _collect_vector_scores(  # noqa: PLR0913
         self,
         query: str,
         scores: dict,
@@ -188,8 +199,13 @@ class _ScoringMixin:
         open_domain_subqueries: list,
         candidate_k: int,
         min_heat: float,
+        scope: tuple[str, dict | None] = ("", None),
     ) -> tuple[list[int], object]:
         """Collect vector KNN scores into scores. Returns (vector_memory_ids, query_embedding)."""
+        # Car C7: the stage-1 project predicate, as ONE parameter — the two
+        # halves always travel together and this signature was already at the
+        # I30 parameter cap.
+        scope_sql, scope_params = scope
         vector_memory_ids: list[int] = []
         query_embedding = None
         if enabled_signals is not None and "vector" not in enabled_signals:
@@ -219,6 +235,8 @@ class _ScoringMixin:
                 encoded,
                 top_k=candidate_k,
                 min_heat=min_heat,
+                scope_sql=scope_sql,
+                scope_params=scope_params,
             )
             _hnsw_total_ms += (_time.perf_counter() - _hnsw_t0) * 1000
             for mid, distance in vec_hits:

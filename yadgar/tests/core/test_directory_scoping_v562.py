@@ -33,115 +33,164 @@ from yadgar.tests.core.conftest import TEST_PROJECT_ID
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
 # ---------------------------------------------------------------------------
-# Part A — DirectoryFilter / is_directory_eligible / _build_directory_clause
+# Part A — is_project_eligible / build_project_scope_clause (Car C7, 0047 §5 C7)
+#
+# Car C7 DELETED ``is_directory_eligible``, ``DirectoryFilter``, and
+# ``_build_directory_clause`` outright — the mechanism moved from a Python
+# post-filter (applied AFTER the query already spent its LIMIT) into a
+# stage-1 SQL WHERE clause built from ``build_project_scope_clause`` /
+# ``build_recall_scope_clause``, with ``is_project_eligible`` as the residual
+# row-level guard for candidates that never went through SQL (graph walks).
+# See ``yadgar/_shared/storage/directory.py`` for the full account, including
+# the ADR-0227 decision that an UNSTAMPED row (``project_id is None``) no
+# longer passes by default — the old ``{'global', '', None}`` permissive
+# sentinel set is gone; only an explicit ``project_id`` match or the
+# ``'global'`` REACH TAG in ``tags`` admits a row now.
+#
+# The classes below are renamed accordingly. Test COUNT and coverage is
+# preserved or increased (see per-class docstrings for the old → new
+# assertion mapping); nothing is deleted, only re-pointed onto the surviving
+# contract.
 # ---------------------------------------------------------------------------
 
 
-class TestIsDirectoryEligible:
-    """Unit tests for storage.directory.is_directory_eligible."""
+class TestIsProjectEligible:
+    """Unit tests for ``storage.directory.is_project_eligible`` (was ``TestIsDirectoryEligible``).
+
+    Signature changed shape, not just name: ``is_directory_eligible(row_value,
+    caller_dir)`` compared two directory strings directly; ``is_project_eligible
+    (row_project_id, row_tags, caller_project_id)`` takes the row's project_id
+    AND its tags (for the 'global' reach-tag arm) against the caller's
+    resolved project.
+    """
 
     def setup_method(self):
-        from yadgar._shared.storage.directory import is_directory_eligible
+        from yadgar._shared.storage.directory import is_project_eligible
 
-        self.elig = is_directory_eligible
+        self.elig = is_project_eligible
 
-    # Caller-dir match
-    def test_caller_dir_match(self):
-        assert self.elig("/home/max/git/yadgar", "/home/max/git/yadgar")
+    # Caller-project match / mismatch
+    def test_caller_project_match(self):
+        assert self.elig("test-owner/test-repo", [], "test-owner/test-repo")
 
-    def test_caller_dir_mismatch(self):
-        assert not self.elig("/home/max/aws-work", "/home/max/git/yadgar")
+    def test_caller_project_mismatch(self):
+        assert not self.elig("other-owner/other-repo", [], "test-owner/test-repo")
 
-    def test_caller_dir_trailing_slash_not_equal(self):
-        # Caller dir is already stripped by the tool layer; this tests raw equality.
-        assert not self.elig("/home/max/git/yadgar/", "/home/max/git/yadgar")
+    # The 'global' REACH TAG is the new "always eligible" signal — replaces
+    # the old directory_context="global" sentinel VALUE.
+    def test_global_reach_tag_passes(self):
+        assert self.elig("other-owner/other-repo", ["global"], "test-owner/test-repo")
 
-    # Sentinels always pass
-    def test_sentinel_global(self):
-        assert self.elig("global", "/home/max/git/yadgar")
+    # ADR-0227: an unstamped row (project_id=None) does NOT pass by default
+    # anymore — this is the OPPOSITE of the deleted is_directory_eligible's
+    # ``None`` sentinel, which always passed. This is the single most
+    # important behavioural flip Car C7 makes at this layer.
+    def test_unstamped_row_excluded(self):
+        assert not self.elig(None, [], "test-owner/test-repo")
 
-    def test_sentinel_empty_string(self):
-        assert self.elig("", "/home/max/git/yadgar")
+    def test_unstamped_row_with_reach_tag_passes(self):
+        assert self.elig(None, ["global"], "test-owner/test-repo")
 
-    def test_sentinel_none(self):
-        assert self.elig(None, "/home/max/git/yadgar")
+    # Empty-string project_id is likewise no longer a magic pass-through
+    # sentinel (the old is_directory_eligible treated "" as always-eligible).
+    def test_empty_string_project_no_longer_sentinel(self):
+        assert not self.elig("", [], "test-owner/test-repo")
 
-    def test_sentinel_system(self):
-        # v5.65: 'system' dropped from eligible set (mis-stamp sink; v5.64 stopped new writes).
-        assert not self.elig("system", "/home/max/git/yadgar")
-
-    # Legacy mode (caller_dir=None)
+    # Legacy mode (caller_project_id=None): unchanged semantics — no filtering.
     def test_legacy_mode_all_pass(self):
-        assert self.elig("/home/max/aws-work", None)
-        assert self.elig("global", None)
-        assert self.elig("system", None)
-        assert self.elig(None, None)
+        assert self.elig("other-owner/other-repo", [], None)
+        assert self.elig(None, [], None)
+        assert self.elig("", [], None)
+        assert self.elig("test-owner/test-repo", [], None)
 
     def test_other_project_excluded(self):
-        assert not self.elig("/home/max/quinyx/meridian", "/home/max/git/yadgar")
-        assert not self.elig("/home/max/aws-work", "/home/max/git/yadgar")
+        assert not self.elig("quinyx/meridian", [], "test-owner/test-repo")
+        assert not self.elig("other-owner/aws-work", [], "test-owner/test-repo")
+
+    # "system" is no longer a magic sentinel value on either side — it is
+    # just an ordinary project_id string, ordinarily compared.
+    def test_system_value_no_longer_magic(self):
+        assert not self.elig("system", [], "test-owner/test-repo")
 
 
-class TestDirectoryFilter:
-    """Unit tests for DirectoryFilter dataclass."""
+class TestProjectScopeClauseDeletionPins:
+    """``DirectoryFilter`` is deleted outright (was ``TestDirectoryFilter``).
 
-    def test_repr(self):
-        from yadgar._shared.storage.directory import DirectoryFilter
+    There is no dataclass wrapper in the new API — ``build_project_scope_clause``
+    takes a plain ``project_id: str | None`` — so the old repr/slots/attribute
+    tests have nothing left to exercise on that axis. These pins cover the
+    deletion itself (so a future "quick fix" cannot silently resurrect the
+    dataclass) plus ``build_project_scope_clause``'s own empty-input behaviour,
+    which is the direct replacement for ``DirectoryFilter(None)``'s role.
+    """
 
-        df = DirectoryFilter("/home/max/git/yadgar")
-        assert "caller_dir" in repr(df)
-        assert "/home/max/git/yadgar" in repr(df)
+    def test_directory_filter_class_removed(self):
+        import yadgar._shared.storage.directory as directory_mod
 
-    def test_slots(self):
-        from yadgar._shared.storage.directory import DirectoryFilter
+        assert not hasattr(directory_mod, "DirectoryFilter")
 
-        df = DirectoryFilter(None)
-        assert not hasattr(df, "__dict__")
+    def test_build_project_scope_clause_empty_for_none(self):
+        from yadgar._shared.storage.directory import build_project_scope_clause
 
-    def test_none_caller_dir(self):
-        from yadgar._shared.storage.directory import DirectoryFilter
+        sql, params = build_project_scope_clause(None)
+        assert sql == ""
+        assert params == {}
 
-        df = DirectoryFilter(None)
-        assert df.caller_dir is None
+    def test_build_project_scope_clause_empty_for_empty_string(self):
+        from yadgar._shared.storage.directory import build_project_scope_clause
+
+        sql, params = build_project_scope_clause("")
+        assert sql == ""
+        assert params == {}
 
 
-class TestBuildDirectoryClause:
-    """Unit tests for _build_directory_clause (structural / deferred SurrealQL helper)."""
+class TestBuildProjectScopeClause:
+    """Unit tests for ``build_project_scope_clause`` (was ``TestBuildDirectoryClause``
+    / ``_build_directory_clause``).
+
+    The replacement function takes a plain ``project_id`` string (no
+    ``DirectoryFilter`` wrapper) and emits a TWO-armed clause: project_id
+    equality OR the ``'global'`` reach tag in ``tags`` — versus the deleted
+    function's directory-string-equality-plus-sentinels shape.
+    """
 
     def setup_method(self):
-        from yadgar._shared.storage.directory import DirectoryFilter, _build_directory_clause
+        from yadgar._shared.storage.directory import build_project_scope_clause
 
-        self.build = _build_directory_clause
-        self.DF = DirectoryFilter
+        self.build = build_project_scope_clause
 
-    def test_none_filter_returns_empty(self):
+    def test_none_project_returns_empty(self):
         sql, params = self.build(None)
         assert sql == ""
         assert params == {}
 
-    def test_none_caller_returns_empty(self):
-        sql, params = self.build(self.DF(None))
-        assert sql == ""
-        assert params == {}
+    def test_project_id_injects_param(self):
+        sql, params = self.build("/home/max/git/yadgar")
+        assert "sc_pid" in params
+        assert params["sc_pid"] == "/home/max/git/yadgar"
 
-    def test_caller_dir_injects_param(self):
-        sql, params = self.build(self.DF("/home/max/git/yadgar"))
-        assert "df_caller" in params
-        assert params["df_caller"] == "/home/max/git/yadgar"
+    def test_clause_contains_reach_tag(self):
+        from yadgar._shared.storage.directory import GLOBAL_REACH_TAG
 
-    def test_clause_contains_sentinels(self):
-        # v5.65: 'system' removed from _build_directory_clause (mis-stamp sink).
-        # dominant_directory._SENTINELS still contains 'system' (exclusion set for
-        # the directory vote — opposite semantics; intentionally unchanged).
-        sql, _ = self.build(self.DF("/home/max/git/yadgar"))
-        assert "global" in sql
-        assert "system" not in sql
-        assert "df_caller" in sql
+        sql, params = self.build("/home/max/git/yadgar")
+        assert "sc_reach" in params
+        assert params["sc_reach"] == GLOBAL_REACH_TAG
+        assert "tags" in sql
 
-    def test_clause_is_string(self):
-        sql, params = self.build(self.DF("/tmp/proj"))
+    def test_clause_uses_custom_prefix(self):
+        sql, params = self.build("/tmp/proj", prefix="custom")
+        assert "custom_pid" in params
+        assert "custom_reach" in params
+
+    def test_clause_is_string_and_dict(self):
+        sql, params = self.build("/tmp/proj")
         assert isinstance(sql, str)
         assert isinstance(params, dict)
+
+    def test_clause_or_semantics_pinned(self):
+        sql, _ = self.build("/tmp/proj")
+        assert " OR " in sql
+        assert "project_id" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +447,17 @@ class TestDirectoryScopingIntegration:
 
         v5.65 Fix D: directory=None no longer works (raises ValueError).
         Proof technique changed: compare YADGAR_DIR vs AWS_DIR scoping.
+
+        NOTE (Car C7 triage): this test's failure on this branch is NOT a C7
+        regression — confirmed by running it, unmodified, against the parent
+        commit (pre-C7): it fails there IDENTICALLY (empty result set for
+        this combined-topic query, in an environment where
+        ``sentence-transformers`` is not installed and vector search / GTE
+        rerank are unavailable, leaving FTS-only ranking that does not
+        surface either row for this particular multi-topic query string).
+        Left un-modified and reported as a pre-existing failure per the car's
+        instructions — the only import/signature surface this test touches
+        (``server.recall``, ``_insert_mem``) is unaffected by C7's renames.
         """
         from yadgar.core import server
 
@@ -553,11 +613,24 @@ class TestQualityFloorBehavioral:
 
 
 class TestWikiQueryDirectoryScoping:
-    """wiki_query directory predicate is now is_directory_eligible (v5.62.0)."""
+    """wiki_query's scope predicate is now ``is_project_eligible`` (Car C7, was v5.62.0's
+    ``is_directory_eligible``).
+    """
 
     def test_wiki_query_uses_directory_eligible(self, monkeypatch):
-        """wiki_query with directory= excludes other-project pages."""
+        """wiki_query with project= excludes other-project pages.
+
+        Car C7 re-keyed eligibility from ``directory_context`` onto
+        ``project_id``. The original fixture stamped BOTH pages with the same
+        ``project_id=TEST_PROJECT_ID`` and varied only ``directory_context`` —
+        which no longer distinguishes anything, since both pages are the same
+        project. Re-pointed: the aws page now carries a DIFFERENT
+        ``project_id`` so the caller's ``project=TEST_PROJECT_ID`` actually
+        excludes it.
+        """
         from yadgar.core import server
+
+        AWS_PROJECT_ID = "other-owner/aws-work"
 
         wiki = server._wiki
         assert wiki is not None
@@ -595,7 +668,7 @@ class TestWikiQueryDirectoryScoping:
                 "source_memory_ids": [],
                 "confidence": "medium",
                 "directory_context": AWS_DIR,
-                "project_id": TEST_PROJECT_ID,
+                "project_id": AWS_PROJECT_ID,
             }
         )
 
@@ -607,20 +680,31 @@ class TestWikiQueryDirectoryScoping:
         )
         slugs = {r.get("slug") for r in results}
         assert slug_yadgar in slugs or True, "yadgar page should be eligible"
-        assert slug_aws not in slugs, "aws-work page must be excluded when directory=yadgar"
+        assert slug_aws not in slugs, "aws-work page must be excluded when project=TEST_PROJECT_ID"
 
     def test_wiki_query_system_sentinel_not_eligible(self, monkeypatch):
-        """v5.65: 'system' removed from eligible set — system-stamped pages no longer surface.
+        """Car C7: ``is_directory_eligible`` (and its "system" sentinel exclusion) is
+        deleted, replaced by ``is_project_eligible`` keyed on ``project_id`` + the
+        ``'global'`` reach tag.
 
-        Legacy mode (caller_dir=None) still passes everything — that assertion stays True.
+        "system" is no longer a MAGIC value with special-case exclusion — it is
+        just an ordinary ``project_id`` string that either matches the caller's
+        project or does not, like any other mismatching value. These
+        assertions pin the invariants that replaced the old ones: a
+        mismatching ``project_id`` (including one that happens to spell
+        "system") is excluded under a real caller project, and legacy mode
+        (``caller_project_id=None``) still passes everything, unconditionally.
         """
-        from yadgar._shared.storage.directory import is_directory_eligible
+        from yadgar._shared.storage.directory import is_project_eligible
 
-        # With a real caller dir, system must NOT be eligible
-        assert not is_directory_eligible("system", YADGAR_DIR)
-        assert not is_directory_eligible("system", AWS_DIR)
-        # Legacy/no-dir mode still passes everything
-        assert is_directory_eligible("system", None)
+        # A row whose project_id is literally "system" is excluded like any
+        # other mismatching project — no special-case sentinel handling
+        # remains (contrast with the deleted is_directory_eligible, where
+        # "system" got custom treatment regardless of what it was compared to).
+        assert not is_project_eligible("system", [], TEST_PROJECT_ID)
+        assert not is_project_eligible("system", [], "other-owner/aws-work")
+        # Legacy/no-caller-project mode still passes everything, regardless of value.
+        assert is_project_eligible("system", [], None)
 
 
 class TestProjectBriefWikiScoping:

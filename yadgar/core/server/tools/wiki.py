@@ -10,7 +10,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.server_helpers import _has_unpaired_surrogate, _push_event
-from yadgar._shared.storage.directory import is_directory_eligible
+from yadgar._shared.storage.directory import RecallScope
 from yadgar._shared.wiki.policy import is_recall_visible
 from yadgar.core.forward import _forward_admin
 
@@ -700,51 +700,33 @@ def _resolve_wiki_read_project(*, project: str | None, directory: str | None) ->
         raise ValueError(f"wiki_read: {exc}") from exc
 
 
-@observe(tier="stage", metric="tools.wiki._scope_and_downweight_wiki_results")
-def _scope_and_downweight_wiki_results(
+@observe(tier="stage", metric="tools.wiki._scope_wiki_results")
+def _scope_wiki_results(
     results: list[dict],
     *,
-    directory: str,
     tags: list[str] | None,
     max_results: int,
 ) -> list[dict]:
-    """Apply Car C2 downweight + directory-eligibility filter + trim to ``max_results``.
+    """Apply the row-level recall-visibility guard + trim to ``max_results``.
 
-    Pulled out of ``wiki_query`` for complexity governance (fn_loc cap) — the
-    block has its own substrate (downweight policy + is_directory_eligible +
-    re-sort) and no tool-boundary state, so extraction is safe.
+    Car C7 (0047 §5 C7) removed TWO things this helper used to do:
+
+    * the ``is_directory_eligible`` post-filter — ``WikiStore.query`` now takes
+      ``project_id`` and pushes the predicate into the stage-1 ``WHERE``, so the
+      rows this dropped are no longer fetched (and no longer eat the LIMIT);
+    * the C2 downweight multiply — retired outright. It scaled
+      ``_retrieval_score`` by a factor in (0, 1) for ``task_list`` pages, whose
+      disposition is now ``exclude``; and the identical multiply on the fusion
+      path carried a sign bug (a negative cross-encoder logit is RAISED by a
+      sub-1.0 factor). Nothing survives that used it.
+
+    ``is_recall_visible`` stays. It is idempotent with the WHERE — both read
+    ``recall_disposition`` + ``opt_in_tag`` from the same policy — and it is the
+    guard for rows reaching this path any other way.
     """
     # Task 0134: wiki_query is a SEARCH path and used to bypass
     # recall_disposition entirely. See is_recall_visible for the shared rule.
     results = [r for r in results if is_recall_visible(r, tags)]
-
-    # v5.43.0 / v5.62.0: directory scoping — scope to caller directory.
-    # v5.62.0: replaces hand-rolled predicate with is_directory_eligible() from
-    # storage/directory.py — single source of truth for the eligible-set rule.
-    # Applied as Python-side post-filter (mirrors recall directory filter from v5.42.5).
-    results = [r for r in results if is_directory_eligible(r.get("directory_context"), directory)]
-
-    # Car C2 (0047 §7 3b): downweight penalty — a ``task_list`` page (D22
-    # `task → downweight`) sinks below include-disposition pages of
-    # comparable relevance without being filtered out. The legacy
-    # ``wiki_query`` path has no fusion / CE — ``_retrieval_score`` IS
-    # the ranking key. Apply the multiplier IN PLACE and re-sort BEFORE
-    # the cache so the reordering takes effect on this call AND on any
-    # cache hit (the cached copy holds the post-penalty scores; the
-    # penalty is deterministic per ``page_type`` so this is correct).
-    # Guarded on factor < 1.0 to skip the re-sort cost when the
-    # operator has disabled the penalty.
-    from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
-    from yadgar._shared.wiki.policy import downweight_multiplier  # noqa: PLC0415
-
-    _dw_factor = float(_get_settings().RECALL_DOWNWEIGHT_FACTOR)
-    if _dw_factor < 1.0:
-        for r in results:
-            r["_retrieval_score"] = float(r.get("_retrieval_score", 0.0)) * downweight_multiplier(
-                r, _dw_factor
-            )
-        results.sort(key=lambda r: r.get("_retrieval_score", 0.0), reverse=True)
-
     return results[:max_results]
 
 
@@ -840,18 +822,20 @@ def wiki_query(
             return _q_hit
 
         assert _st._wiki is not None, "WikiStore not initialized"
-        # Fetch extra results before the directory filter so we still return
-        # max_results after pruning.
-        results = _st._wiki.query(query, tags, category, max_results * 3)
-
-        # Car C2 downweight + v5.62 directory scoping + trim — extracted for
-        # complexity governance (fn_loc cap).
-        results = _scope_and_downweight_wiki_results(
-            results,
-            directory=_dir_stripped,
-            tags=tags,
-            max_results=max_results,
+        # Car C7: the project scope + the policy-derived page_type exclusion now
+        # ride in the query's WHERE clause, so the over-fetch that existed to
+        # survive a post-filter is no longer needed — every row that comes back
+        # is already in scope. The 3x is kept only as headroom for the row-level
+        # visibility guard below.
+        results = _st._wiki.query(
+            query,
+            tags,
+            category,
+            max_results * 3,
+            scope=RecallScope(project_id=_effective_project_id, opt_in_tags=tags),
         )
+
+        results = _scope_wiki_results(results, tags=tags, max_results=max_results)
 
         for r in results:
             r.pop("embedding", None)

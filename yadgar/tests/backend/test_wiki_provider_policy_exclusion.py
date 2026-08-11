@@ -51,7 +51,7 @@ def _page(slug: str, page_type: str | None, tags: list[str] | None = None) -> di
 
 
 def _scope() -> Scope:
-    return Scope(directory=_DIR)
+    return Scope(project_id=_DIR)
 
 
 def _slugs(provider: WikiProvider) -> list[str]:
@@ -177,30 +177,32 @@ class TestExclusionWithTags:
         ]
 
 
-# ── F. Car C2 — downweight penalty at the provider is NOT applied ──────────────
+# ── F. Car C7 — task_list flipped from downweight to exclude at the provider ──
 
 
-class TestDownweightPenalty:
-    """Car C2 (0047 §7 3b): a downweight page survives the visibility filter.
+class TestTaskListExcludedAtProvider:
+    """Car C7 (0047 §5 C7) retired the "downweight" disposition (was Car C2).
 
-    The penalty is applied DOWNSTREAM (in ``fuse_candidates`` and in
-    ``wiki_query``), NOT in the provider — the provider's ``native_score`` is
-    the raw retrieval observation and must stay score-agnostic to avoid
-    double-penalization (provider + fusion) and to keep the provider simple.
-
-    This file pins that contract: ``WikiProvider.candidates`` returns a
-    downweight-disposition page UNCHANGED in ``native_score`` and with no
-    field carrying the multiplier — the penalty is the SCORING stage's job.
-    The behavioural reordering is asserted in ``test_fusion_tiebreak.py``
-    (fusion path) and ``test_wiki_query_policy_exclusion.py`` (legacy search).
+    The prior contract this class pinned ("a downweight page survives the
+    visibility filter, penalty applied downstream") is the OPPOSITE of the
+    current one: ``task_list``'s ``recall_disposition`` flipped to
+    ``"exclude"`` because the downstream multiply it relied on was a VERIFIED
+    SIGN BUG (a negative cross-encoder logit times a sub-1.0 factor moves
+    toward zero — a RAISE, not a penalty; see fusion.py / policy.py for the
+    full account). There is no scoring-stage penalty left to pin as
+    "unapplied at the provider" — the page never reaches the provider's
+    output at all. These tests are re-pointed onto that exclusion, plus the
+    provider-stays-score-agnostic invariant that DOES still hold (for
+    whatever page_types remain visible).
     """
 
-    def test_task_list_page_survives_visibility_filter(self):
-        """A task_list page is NOT excluded — downweight is a ranking penalty.
+    def test_task_list_page_dropped_not_downweighted(self):
+        """A task_list page is EXCLUDED from provider output — not ranked down.
 
-        ``is_recall_visible`` returns True for ``recall_disposition="downweight"``,
-        so the provider returns the page. Its ``native_score`` is the raw
-        retrieval score, UNMODIFIED by any policy-aware multiplier.
+        Was: ``is_recall_visible`` returns True for
+        ``recall_disposition="downweight"``, so the page survived alongside
+        ``plain-page``. Now ``recall_disposition="exclude"`` drops it: only
+        ``plain-page`` survives ``WikiProvider.candidates``.
         """
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
 
@@ -209,42 +211,47 @@ class TestDownweightPenalty:
             _page("open-tasks", PAGE_TYPE_TASK_LIST, []),
             _page("plain-page", None, []),
         ]
-        assert _slugs(WikiProvider(wiki)) == ["open-tasks", "plain-page"]
+        assert _slugs(WikiProvider(wiki)) == ["plain-page"]
 
-    def test_task_list_native_score_unchanged_in_provider(self):
-        """``Candidate.native_score`` is the raw retrieval score, not penalized.
+    def test_task_list_unlockable_by_no_tag(self):
+        """``task_list`` declares ``opt_in_tag=None`` — no caller tag unlocks it.
 
-        The penalty is applied at the ranking-decision point (fusion's
-        ``placement_score`` and wiki_query's ``_retrieval_score``); the
-        provider returns observations, not rankings. Double-penalization
-        (provider + fusion) is the failure mode this pins against.
+        Was: ``test_task_list_raw_carries_page_type_for_fusion`` (the raw dict
+        carries ``page_type`` so the downstream multiplier had what it
+        needed). That downstream consumer is deleted, so the more valuable
+        invariant to pin is exclusion's OWN opt-in rule: unlike
+        ``agent_pattern`` (opt_in_tag="agent-prompt"), a task_list page is
+        unconditionally excluded — not even a caller who explicitly asks for
+        "task_list"-flavoured tags can unlock it, mirroring the TOC
+        (``agent_index``, also opt_in_tag=None).
         """
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
 
+        task_page = _page("open-tasks", PAGE_TYPE_TASK_LIST, ["task_list"])
+        for tags in [None, ["agent-prompt"], ["task_list"]]:
+            wiki = MagicMock()
+            wiki.query.return_value = [task_page, _page("plain-page", None, [])]
+            provider = WikiProvider(wiki, tags=tags) if tags else WikiProvider(wiki)
+            assert _slugs(provider) == ["plain-page"], (
+                f"task_list must stay excluded under tags={tags!r}"
+            )
+
+    def test_surviving_page_native_score_unchanged_by_provider(self):
+        """``Candidate.native_score`` is the raw retrieval score — provider stays score-agnostic.
+
+        This part of the original contract is UNCHANGED by C7: the provider
+        never massages scores by page_type for whichever pages DO survive the
+        visibility filter (there is no scoring-stage penalty anywhere anymore,
+        upstream or downstream — see ``test_fusion_downweight.py``). Uses
+        ``plain-page`` since ``task_list`` no longer reaches the provider's
+        output to assert on (see the exclusion test above).
+        """
         wiki = MagicMock()
-        wiki.query.return_value = [_page("open-tasks", PAGE_TYPE_TASK_LIST, [])]
+        wiki.query.return_value = [_page("plain-page", None, [])]
         provider = WikiProvider(wiki)
         cands = provider.candidates("q", _scope(), limit=10)
         assert len(cands) == 1
-        # The retrieval score was 0.5 in _page(...); the provider must NOT
-        # have applied any downweight factor.
         assert cands[0].native_score == 0.5, (
-            f"Provider must not apply downweight penalty; got native_score="
+            f"Provider must not apply any score multiplier; got native_score="
             f"{cands[0].native_score} (expected 0.5, the raw retrieval score)"
         )
-
-    def test_task_list_raw_carries_page_type_for_fusion(self):
-        """The Candidate's ``raw`` dict carries ``page_type`` for downstream.
-
-        ``downweight_multiplier`` reads ``page.get("page_type")`` — the
-        provider's ``raw`` dict must carry it through (set at
-        ``providers/wiki.py:104``: ``raw = dict(page)``). This pins that
-        contract so the fusion penalty has the data it needs without
-        re-querying.
-        """
-        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
-
-        wiki = MagicMock()
-        wiki.query.return_value = [_page("open-tasks", PAGE_TYPE_TASK_LIST, [])]
-        cands = WikiProvider(wiki).candidates("q", _scope(), limit=10)
-        assert cands[0].raw.get("page_type") == PAGE_TYPE_TASK_LIST

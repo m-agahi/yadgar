@@ -18,4 +18,4 @@ except PackageNotFoundError:
 # __version__ = yadgar core (pip package version, set via importlib.metadata above).
 # BACKEND_VERSION = independent backend image track (docker.io/openfantasy/yadgar-backend).
 # Bumping either requires updating CHANGELOG + nix module sync (nix tracks both manually via release notes).
-BACKEND_VERSION = "5.72.17"  # C6 (0047 PR#40) — registry rows, guard, backfill op.
+BACKEND_VERSION = "5.72.18"  # C7 (0047 PR#40) — the stage-1 recall WHERE clause.

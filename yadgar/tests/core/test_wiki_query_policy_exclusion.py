@@ -11,13 +11,15 @@ Car C1 (0047) narrows the tag-opt-in to the TYPE's declared ``opt_in_tag``
 ``opt_in_tag=None`` (unconditional exclusion); ``agent_pattern`` declares
 ``"agent-prompt"``.
 
-Car C2 (0047 §7 3b) — ``downweight`` disposition. The task_list page type
-resolves to ``recall_disposition="downweight"`` (D22): the page stays
-recall-visible (the visibility filter still drops only ``"exclude"``) but
-its ranking score is multiplied by ``RECALL_DOWNWEIGHT_FACTOR`` (< 1.0) at
-the scoring stage so it sinks below ``"include"`` pages of comparable
-relevance. ``wiki_query`` re-sorts the result list AFTER the penalty so the
-reordering takes effect within one call (the cache folds subsequent calls).
+Car C7 (0047 §5 C7) RETIRED Car C2's ``downweight`` disposition. task_list
+used to resolve to ``recall_disposition="downweight"`` (D22): visible but
+ranking-penalized via a multiply on ``_retrieval_score``. That multiply was a
+VERIFIED SIGN BUG — a raw cross-encoder-adjacent score is commonly negative,
+and multiplying by a sub-1.0 factor moves it TOWARD ZERO, an INCREASE under
+"higher ranks first" — so the penalty promoted exactly the pages it meant to
+sink. task_list is now ``recall_disposition="exclude"``: dropped from
+``wiki_query`` results outright, in the stage-1 SQL WHERE, before any ranking
+happens. ``TestWikiQueryDownweight`` below is re-pointed onto that exclusion.
 """
 
 from __future__ import annotations
@@ -50,11 +52,10 @@ def _engines(tmp_path_factory):
 def _corpus():
     """Four pages that all match the query text; only their type/tags differ.
 
-    The ``task_list`` page is added in Car C2 (0047 §7 3b) — it resolves to
-    ``recall_disposition="downweight"`` (D22) so the visibility filter still
-    passes it but the ranking score is multiplied by ``RECALL_DOWNWEIGHT_FACTOR``.
-    The fixture gives every page identical content so their pre-penalty scores
-    are equal — the reordering test below then proves the penalty actually fires.
+    The ``task_list`` page was added in Car C2 (0047 §7 3b) to exercise the
+    (now-retired) downweight penalty. Car C7 flipped it to
+    ``recall_disposition="exclude"`` — it stays in this fixture because the
+    exclusion tests below need a task_list row to prove drops.
     """
     import yadgar._shared.runtime.state as _st
 
@@ -120,14 +121,14 @@ class TestWikiQueryHonoursExclusion:
         ``"agent-prompt"`` for ``agent_pattern`` and ``None`` (unconditional)
         for ``agent_index`` — so a non-opt-in tag no longer unlocks them.
 
-        Car C2: ``task_list`` (recall_disposition="downweight") also surfaces
-        — downweight is a RANKING penalty, not an exclusion, so the page
-        stays visible. The penalty only reorders it BELOW plain-quokka-page;
-        that reordering is asserted in TestWikiQueryDownweight below.
+        Car C7: ``task_list`` (recall_disposition="exclude", opt_in_tag=None)
+        no longer surfaces even under its own content tag ``"quokka"`` — the
+        C2 "downweight" value that stayed visible-but-penalized is retired.
+        See ``TestWikiQueryDownweight`` below for the exclusion pin.
         """
         got = _slugs(max_results=20, tags=["quokka"])
         assert "plain-quokka-page" in got
-        assert "task-list-quokka" in got  # Car C2: visible (downweight, not exclude)
+        assert "task-list-quokka" not in got  # Car C7: excluded (was: visible/downweighted)
         assert "agent-prompt-quokka" not in got
         assert "agent-prompt-toc-quokka" not in got
 
@@ -151,65 +152,62 @@ class TestWikiQueryHonoursExclusion:
             )
 
 
-# ── G. Car C2 (0047 §7 3b) — downweight disposition in wiki_query ─────────────
+# ── G. Car C7 (0047 §5 C7) — task_list is excluded, not downweighted ──────────
 
 
 class TestWikiQueryDownweight:
-    """A task_list page survives the visibility filter but ranks BELOW
-    include-disposition pages of comparable relevance.
+    """RE-POINTED (was "TestWikiQueryDownweight" pinning Car C2's penalty).
 
-    The legacy ``wiki_query`` path has no fusion / CE — ``_retrieval_score``
-    IS the ranking key. The penalty multiplies it in place and re-sorts
-    before the cache + truncate so the reordering takes effect on this call
-    AND on any cache hit.
+    Car C7 retired the "downweight" disposition; task_list now resolves to
+    ``recall_disposition="exclude"``. The class name is kept (renaming a test
+    is fine; the file's method/class-count discipline is what matters) but
+    every assertion below pins the OPPOSITE of the old contract: the page is
+    dropped from ``wiki_query`` output entirely, in the stage-1 SQL WHERE,
+    before the legacy ``_retrieval_score``-based ranking even runs — there is
+    no reordering left to assert on, because there is no penalty left to fire.
     """
 
-    def test_task_list_page_visible_in_wiki_query(self):
-        """The task_list page is NOT dropped — downweight is a ranking penalty.
+    def test_task_list_page_excluded_from_wiki_query(self):
+        """The task_list page is DROPPED from ``wiki_query`` results.
 
-        ``is_recall_visible`` returns True for ``recall_disposition="downweight"``
-        (the visibility filter still drops only ``"exclude"``). The page must
-        remain in the result set so the penalty can reorder it.
+        Was: ``is_recall_visible`` returns True for
+        ``recall_disposition="downweight"`` — the page had to survive so a
+        penalty could reorder it. Now ``recall_disposition="exclude"`` (with
+        ``opt_in_tag=None``) drops it outright.
         """
         got = _slugs(max_results=20)
-        assert "task-list-quokka" in got, (
-            f"task_list page should be visible (downweight is a penalty, "
-            f"not an exclusion); got {got}"
+        assert "task-list-quokka" not in got, (
+            f"task_list page must be excluded from wiki_query (Car C7 flipped "
+            f"task_list to recall_disposition='exclude'); got {got}"
         )
 
-    def test_task_list_page_ranks_below_include_page(self):
-        """The plain page ranks ABOVE the task_list page (penalty + re-sort).
+    def test_task_list_excluded_regardless_of_tags(self):
+        """``opt_in_tag=None`` means NO tag unlocks task_list — not even its own.
 
-        Both pages carry identical content so their pre-penalty
-        ``_retrieval_score`` is equal; the penalty halves the task_list score
-        so it sinks below the plain page. The re-sort happens between the
-        visibility filter and the truncate, so the ordering visible to the
-        caller reflects the post-penalty order.
-
-        Tight RED-first assertion: the post-penalty scores must DIFFER
-        (factor 0.5 on task_list) AND plain-page must rank above task-list.
-        Pre-fix: both scores are equal (no penalty applied) — the
-        pytest.fail() catches the missing penalty even if a coincidence in
-        FTS tie-break order happens to put plain first.
+        Was: ``test_task_list_page_ranks_below_include_page`` (bare query,
+        penalty reorders it below plain-quokka-page). Re-pointed to the
+        stronger and now-only-meaningful claim: unlike ``agent_pattern``
+        (opt_in_tag="agent-prompt"), no caller tag — not even the content tag
+        every fixture page in this corpus carries ("quokka") — reaches a
+        task_list page through search.
         """
-        from yadgar.core.server.tools.wiki import wiki_query
-
-        results = wiki_query(
-            "quokka marsupial", directory=_DIR, project=TEST_PROJECT_ID, max_results=20
-        )
-        order = [r["slug"] for r in results]
-        scores = {r["slug"]: r.get("_retrieval_score") for r in results}
-        assert "plain-quokka-page" in order
-        assert "task-list-quokka" in order
-        if scores.get("task-list-quokka") == scores.get("plain-quokka-page"):
-            pytest.fail(
-                f"RED: downweight penalty not applied — task-list-quokka score "
-                f"({scores.get('task-list-quokka')}) == plain-quokka-page score "
-                f"({scores.get('plain-quokka-page')}). Expected task-list score "
-                f"to be < plain score (factor < 1.0)."
+        for tags in [None, ["quokka"], ["agent-prompt"]]:
+            got = _slugs(max_results=20, tags=tags) if tags else _slugs(max_results=20)
+            assert "task-list-quokka" not in got, (
+                f"task_list must stay excluded under tags={tags!r}; got {got}"
             )
-        plain_idx = order.index("plain-quokka-page")
-        task_idx = order.index("task-list-quokka")
-        assert plain_idx < task_idx, (
-            f"plain page must rank above task_list page (penalty must reorder); got order={order}"
-        )
+
+    def test_task_list_reachable_by_exact_slug_despite_exclusion(self):
+        """Exclusion is a SEARCH-only filter — ``wiki_read`` bypasses it entirely.
+
+        New assertion (the module docstring's claim was previously untested
+        for task_list specifically): ``wiki_read``/``wiki_get``/``wiki_list``
+        never apply ``recall_disposition`` — only search paths
+        (``wiki_query``, unified recall fanout) do. Confirms the exclusion
+        tested above is a ranking/discovery gate, not a data-loss bug.
+        """
+        from yadgar.core.server.tools.wiki import wiki_read
+
+        page = wiki_read("task-list-quokka", directory=_DIR, project=TEST_PROJECT_ID)
+        assert page is not None
+        assert page.get("slug") == "task-list-quokka"

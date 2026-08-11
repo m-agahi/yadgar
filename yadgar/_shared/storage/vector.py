@@ -46,19 +46,38 @@ class _VectorMixin:
         query_embedding: bytes,
         top_k: int = 10,
         min_heat: float = 0.1,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> list[tuple[int, float]]:
-        """KNN search via HNSW index, filtered by min_heat.
+        """Vector search over memory embeddings, filtered by min_heat.
 
         Returns list of (memory_id, distance) tuples sorted by ascending distance.
-        SurrealDB v3: KNN operator requires <|K, EF|> — single-param <|K|> is broken.
+
+        Car C7 — TWO SHAPES, same correctness argument as the wiki arm
+        (``_shared/storage/wiki.py::search_wiki_vectors``):
+
+        * **No scope** → HNSW KNN. SurrealDB v3 requires ``<|K, EF|>`` —
+          single-param ``<|K|>`` is broken.
+        * **Scoped** → BRUTE-FORCE cosine with the predicate in the ``WHERE``.
+          The KNN operator picks its ``fetch_k`` neighbours FIRST, so an added
+          ``AND project_id = $p`` would filter what KNN already chose — a silent
+          under-return, not a slowdown. Pre-filtering is the only shape that
+          cannot starve a scoped recall.
         """
-        fetch_k = min(top_k * 4, 4096)
         floats = self._bytes_to_floats(query_embedding)
-        params = {"qv": floats}
+        params: dict = {"qv": floats}
+        if scope_sql:
+            where = f"embedding IS NOT NONE AND heat >= $minh AND ({scope_sql})"
+            tail = "ORDER BY sim DESC LIMIT $lim"
+            params.update({"minh": min_heat, "lim": top_k, **(scope_params or {})})
+        else:
+            fetch_k = min(top_k * 4, 4096)
+            where = f"embedding <|{fetch_k}, 40|> $qv"
+            tail = "ORDER BY sim DESC"
         rows = self._q(
             f"SELECT id, heat, vector::similarity::cosine(embedding, $qv) AS sim "
-            f"FROM memory WHERE embedding <|{fetch_k}, 40|> $qv "
-            f"ORDER BY sim DESC",
+            f"FROM memory WHERE {where} {tail}",
             params,
         )
         results = []

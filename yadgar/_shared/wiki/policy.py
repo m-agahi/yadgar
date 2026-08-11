@@ -34,17 +34,13 @@ recall_disposition
                         in by tag — see ``is_recall_visible``. Always reachable
                         by exact key: ``wiki_read`` / ``wiki_get`` /
                         ``wiki_list`` never apply the filter.
-    ``"downweight"`` — pages appear in normal fanout recall BUT their ranking
-                        score is multiplied by ``RECALL_DOWNWEIGHT_FACTOR``
-                        (a value in (0, 1) — default 0.5) at the scoring
-                        stage. A downweighted page is still recall-visible
-                        (``is_recall_visible`` returns True — exclusion still
-                        drops only ``"exclude"``) but sinks below
-                        ``"include"`` pages of comparable relevance. Used for
-                        ``task_list`` pages (D22: task → downweight); the
-                        penalty is applied via ``downweight_multiplier`` at
-                        both the unified-recall fusion stage and the legacy
-                        ``wiki_query`` search stage.
+    Car C7 (0047) RETIRED the third value, ``"downweight"``. It existed only
+    for ``task_list`` and was applied as a MULTIPLY on the fused placement
+    score — a verified sign bug, because that score is ``ce + w*native`` and a
+    raw cross-encoder logit is commonly negative, so ``× 0.5`` RAISED it. The
+    penalty promoted exactly what it meant to sink. ``task_list`` is now
+    ``exclude``; the disposition set is closed at {include, exclude}. A future
+    genuine soft sink must SUBTRACT or CLAMP, never multiply.
 
 dir_scope
     ``"strict"``     — gate and retrieval scoped to ``directory_context``.
@@ -120,7 +116,11 @@ class WikiPolicy:
     """``"similarity"`` or ``"identity"``."""
 
     recall_disposition: str
-    """``"include"``, ``"exclude"``, or ``"downweight"``."""
+    """``"include"`` or ``"exclude"``.
+
+    Car C7 retired ``"downweight"`` — see the module docstring for why (the
+    multiply inverted on negative cross-encoder logits).
+    """
 
     dir_scope: str
     """``"strict"`` or ``"global"``."""
@@ -289,24 +289,35 @@ POLICY_BY_TYPE: dict[str, WikiPolicy] = {
     # lookup. See PAGE_TYPE_AGENT_INDEX's docstring for why it gets no lint
     # schema.
     PAGE_TYPE_AGENT_INDEX: _AGENT_INDEX_POLICY,
-    # Car C2 (0047 §7 3b): task_list → downweight (D22). The task list stays
-    # recall-visible (the user may legitimately ask "what tasks are open?")
-    # but sinks below knowledge pages of comparable relevance. The penalty
-    # is applied via `downweight_multiplier` at the scoring stage (fusion +
-    # wiki_query), NOT at the visibility filter.
+    # Car C7 (0047 §5 C7, absorbing C8 item 4): task_list → EXCLUDE.
     #
-    # Car C3 (0047 §7 D21): task_list → identity gate (replacing
-    # gate_mode="similarity" from C2). The downweight disposition is
-    # orthogonal — the gate decides pass/reject, the disposition decides
-    # recall visibility + ranking penalty. Both coexist. The C2 entry's
-    # inline WikiPolicy is collapsed onto the shared ``_TASK_LIST_POLICY``
-    # above so task_list routing lives in one place.
+    # C2 made this "downweight" — recall-visible but score-multiplied by
+    # RECALL_DOWNWEIGHT_FACTOR at the scoring stage. That is retired for two
+    # independent reasons:
+    #
+    #  1. The multiply was a VERIFIED SIGN BUG. fusion.py computed
+    #     ``placement_score = ce + wiki_prior_weight * native_score`` and then
+    #     ``*= factor``. ``ce`` is a raw cross-encoder logit and is commonly
+    #     NEGATIVE, so multiplying by 0.5 RAISES a negative score — the penalty
+    #     inverted into a promotion for exactly the pages it was meant to sink.
+    #     A genuine soft sink has to SUBTRACT or CLAMP, never multiply.
+    #  2. C7 moves filtering into the stage-1 WHERE clause. An excluded type is
+    #     never fetched, so it cannot consume a pool slot — which is the whole
+    #     thesis of this car. A downweighted type still costs a slot.
+    #
+    # ``exclude`` with ``opt_in_tag=None``: the task list stays reachable by
+    # exact key (wiki_read / wiki_get / wiki_list, and the session-start restore
+    # nudge reads it by slug) — exclusion only ever applies to SEARCH.
+    #
+    # Car C3 (0047 §7 D21): gate_mode="identity" — the slug IS the identity for
+    # this deterministic-slug type, so a re-write is an update, not a duplicate.
     PAGE_TYPE_TASK_LIST: WikiPolicy(
         gate_mode="identity",
-        recall_disposition="downweight",
+        recall_disposition="exclude",
         dir_scope="strict",
         merge="allow",
         storage_scope="project",
+        opt_in_tag=None,
     ),
     # Car C3 (0047 §7 D21): adr canonical pages get the identity gate.
     # ``_canonical_adr_payload`` (called from ``adr_add``) used to set
@@ -397,34 +408,80 @@ def is_recall_visible(page: dict, opt_in_tags: Sequence[str] | None = None) -> b
     return policy.opt_in_tag in set(opt_in_tags)
 
 
+# ── Car C7 (0047 §5 C7) — the STAGE-1 page_type exclusion, DERIVED ────────────
+
+
 @observe(tier="hot")
-def downweight_multiplier(page: dict, factor: float) -> float:
-    """Return the ranking-score multiplier for *page*.
+def excluded_page_types(opt_in_tags: Sequence[str] | None = None) -> frozenset[str]:
+    """Return the page_types a recall must exclude, DERIVED from ``POLICY_BY_TYPE``.
 
-    Car C2 (0047 §7 3b): a downweighted page passes ``is_recall_visible``
-    (visibility is unchanged — exclusion still drops only ``"exclude"``) but
-    its ranking score is multiplied by *factor* so it sinks below
-    ``"include"`` pages of comparable relevance. Returns *factor* (a value
-    in (0, 1)) when the page's ``page_type`` resolves to
-    ``recall_disposition="downweight"``; ``1.0`` otherwise.
+    Car C7: this is the single source of truth the stage-1 SQL ``WHERE`` clause
+    is built from. There is deliberately NO second, hand-maintained list —
+    a disposition flip in ``POLICY_BY_TYPE`` above changes the emitted SQL with
+    no other edit. ``tests/_shared/test_c7_recall_scope_clause.py`` pins that
+    (the anti-drift test): it mutates a policy entry and asserts the SQL moves.
 
-    Single source of truth for the penalty — called from
-    ``yadgar.backend.retrieval.providers.fusion`` (unified recall) and
-    ``yadgar.core.server.tools.wiki.wiki_query`` (the legacy search tool).
-    The *factor* is passed in (not read from settings inside the helper) so
-    the helper is testable without a Settings instance and stays in
-    ``_shared`` (no config import — ``_shared`` policy stays config-agnostic).
+    THE OPT-IN ARM IS LOAD-BEARING, NOT AN OPTIMISATION. Emitting
+    ``page_type NOT IN (<every exclude type>)`` unconditionally would make
+    ``recall(type="wiki", tags=["agent-prompt"])`` return NOTHING — that is the
+    documented targeted lookup for the whole agent-prompt library (ADR-0007) and
+    the read side of the dispatch discipline. So the set is computed PER
+    REQUEST: excluded types MINUS the types whose declared ``opt_in_tag`` the
+    caller actually asked for.
 
-    An excluded page (``recall_disposition="exclude"``) returns ``1.0``
-    here on purpose — exclusion is enforced earlier in the pipeline
-    (``is_recall_visible`` drops ``exclude`` rows before scoring) so a
-    non-1.0 return value can never leak penalty to an excluded row. The
-    helper is composable: callers can apply it unconditionally without
-    second-guessing the disposition.
+    A type declaring ``opt_in_tag=None`` is excluded UNCONDITIONALLY and can
+    never be subtracted — ``agent_index`` (the TOC) relies on this (§1.4), and
+    it must survive even when the caller passes ``"agent-prompt"``, because the
+    TOC sits under a different policy object in the same tag family.
+
+    Mirrors ``is_recall_visible``'s rule exactly, one stage earlier: that
+    function stays the row-level guard for the non-SQL paths, and the two agree
+    by construction because both read ``recall_disposition`` + ``opt_in_tag``.
+
+    Args:
+        opt_in_tags: Tags the caller explicitly asked for, if any.
+
+    Returns:
+        Frozenset of page_type strings to exclude from search results.
     """
-    if get_policy(page.get("page_type")).recall_disposition == "downweight":
-        return float(factor)
-    return 1.0
+    requested = set(opt_in_tags or ())
+    excluded: set[str] = set()
+    for page_type, policy in POLICY_BY_TYPE.items():
+        if policy.recall_disposition != "exclude":
+            continue
+        # opt_in_tag=None → unconditional; never unlocked by any caller tag.
+        if policy.opt_in_tag is not None and policy.opt_in_tag in requested:
+            continue
+        excluded.add(page_type)
+    return frozenset(excluded)
+
+
+@observe(tier="hot")
+def build_page_type_exclusion_clause(
+    opt_in_tags: Sequence[str] | None = None,
+    *,
+    prefix: str = "sc",
+) -> tuple[str, dict]:
+    """Return ``(sql_fragment, params)`` excluding policy-excluded page_types.
+
+    Car C7. The fragment keeps rows whose ``page_type`` is absent/NONE — an
+    untyped page resolves to ``DEFAULT_POLICY`` (``include``), so dropping it
+    would silently narrow the corpus to typed pages only.
+
+    Args:
+        opt_in_tags: Tags the caller explicitly asked for (see
+            ``excluded_page_types`` — this is what makes the library reachable).
+        prefix: Bind-parameter prefix, so the fragment can be AND-ed with other
+            clauses without a param-name collision.
+
+    Returns:
+        ``("", {})`` when nothing is excluded, else the fragment + its params.
+    """
+    excluded = sorted(excluded_page_types(opt_in_tags))
+    if not excluded:
+        return "", {}
+    key = f"{prefix}_excl_types"
+    return (f"(page_type IS NONE OR page_type NOT IN ${key})", {key: excluded})
 
 
 # ── Car J (0047 §7 D25/D26) — mutability resolver ─────────────────────────────
@@ -485,7 +542,8 @@ __all__ = [  # noqa: F401 — module-level re-export
     "MUTABILITY_VALUES",
     "POLICY_BY_TYPE",
     "WikiPolicy",
-    "downweight_multiplier",
+    "build_page_type_exclusion_clause",
+    "excluded_page_types",
     "get_effective_mutability",
     "get_policy",
     "is_recall_visible",

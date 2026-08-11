@@ -630,14 +630,25 @@ class _WikiMixin:
     # ------------------------------------------------------------------ Wiki Search
 
     @trace_span()
-    def search_wiki_fts_scored(self, query: str, limit: int = 10) -> list[tuple[int, float]]:
-        """BM25 search returning (page_id, score) tuples."""
-        fts_query = self._preprocess_fts_query(query)
+    def search_wiki_fts_scored(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
+    ) -> list[tuple[int, float]]:
+        """BM25 search returning (page_id, score) tuples.
+
+        Car C7 — the FTS arm is UNAFFECTED by dilution: ``LIMIT`` applies AFTER
+        the ``WHERE``, so an added ``AND`` composes. Unlike the vector arm."""
+        params = {"q": self._preprocess_fts_query(query), "lim": limit}
+        where = "content @1@ $q" + (f" AND ({scope_sql})" if scope_sql else "")
+        params.update(scope_params or {})
         rows = self._q(
-            "SELECT id, search::score(1) AS score FROM wiki_page "
-            "WHERE content @1@ $q "
-            "ORDER BY score DESC LIMIT $lim",
-            {"q": fts_query, "lim": limit},
+            f"SELECT id, search::score(1) AS score FROM wiki_page "
+            f"WHERE {where} ORDER BY score DESC LIMIT $lim",
+            params,
         )
         results = []
         for row in rows:
@@ -648,16 +659,32 @@ class _WikiMixin:
 
     @trace_span()
     def search_wiki_vectors(
-        self, query_embedding: bytes, top_k: int = 5
+        self,
+        query_embedding: bytes,
+        top_k: int = 5,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> list[tuple[int, float]]:
-        """KNN search on wiki page embeddings. Returns (page_id, distance)."""
-        fetch_k = min(top_k * 4, 4096)
+        """Vector search on wiki page embeddings. Returns (page_id, distance).
+
+        Car C7 — TWO SHAPES. Unscoped → HNSW KNN. Scoped → BRUTE-FORCE cosine:
+        ``AND project_id = $p`` on the KNN form is NOT a pre-filter (KNN picks
+        neighbours FIRST) so it under-returns. See ``storage/directory.py``.
+        """
         floats = self._bytes_to_floats(query_embedding)
+        params: dict = {"qv": floats}
+        if scope_sql:
+            where = f"embedding IS NOT NONE AND ({scope_sql})"
+            tail = "ORDER BY sim DESC LIMIT $lim"
+            params.update({"lim": top_k, **(scope_params or {})})
+        else:
+            where = f"embedding <|{min(top_k * 4, 4096)}, 40|> $qv"
+            tail = "ORDER BY sim DESC"
         rows = self._q(
             f"SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
-            f"FROM wiki_page WHERE embedding <|{fetch_k}, 40|> $qv "
-            f"ORDER BY sim DESC",
-            {"qv": floats},
+            f"FROM wiki_page WHERE {where} {tail}",
+            params,
         )
         results = []
         for row in rows:
@@ -670,18 +697,28 @@ class _WikiMixin:
 
     @trace_span()
     def search_wiki_vectors_tagged(
-        self, query_embedding: bytes, include_tag: str, top_k: int = 5
+        self,
+        query_embedding: bytes,
+        include_tag: str,
+        top_k: int = 5,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> list[tuple[int, float]]:
-        """Brute-force cosine over ``tags CONTAINS $tag`` rows. Returns (page_id, similarity).
-        Tag-scoped brute-force vector search (any tag). No HNSW — avoids dilution.
-        Returns similarity NOT distance — accumulate directly, skip 1/(1+distance).
+        """Brute-force cosine over ``tags CONTAINS $tag`` rows → (page_id, similarity).
+        No HNSW — avoids dilution. Similarity NOT distance: accumulate directly.
         """
         floats = self._bytes_to_floats(query_embedding)
+        where = "tags CONTAINS $tag AND embedding IS NOT NONE"
+        params = {"qv": floats, "tag": include_tag, "lim": top_k}
+        # Car C7: this path already skipped HNSW, so the scope composes for free.
+        where = where + (f" AND ({scope_sql})" if scope_sql else "")
+        params.update(scope_params or {})
         rows = self._q(
-            "SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
-            "FROM wiki_page WHERE tags CONTAINS $tag AND embedding IS NOT NONE "
-            "ORDER BY sim DESC LIMIT $lim",
-            {"qv": floats, "tag": include_tag, "lim": top_k},
+            f"SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
+            f"FROM wiki_page WHERE {where} "
+            f"ORDER BY sim DESC LIMIT $lim",
+            params,
         )
         results: list[tuple[int, float]] = []
         for row in rows:

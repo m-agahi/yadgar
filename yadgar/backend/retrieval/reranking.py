@@ -54,6 +54,13 @@ class RerankContext:
     open_domain_mode: bool
     use_cross_encoder: bool
     max_results: int
+    # Car C7 (0047 §5 C7, plan item 10): the CALLER's project. Two stages below
+    # used to read their scope from the FIRST RESULT's own row — see
+    # ``_rerank_rules`` / ``_rerank_profile_belief_merge``. Defaulted so the
+    # second construction site (stages/ce_rerank.py, whose RetrievalState
+    # carries no project) keeps working with the pre-C7 "no scope" behaviour
+    # rather than silently inheriting a wrong one.
+    project_id: str | None = None
 
 
 class Reranker(
@@ -198,15 +205,18 @@ class _RerankingMixin:
     def _rerank_profile_belief_merge(
         self, result_memories: list[dict], ctx: RerankContext
     ) -> list[dict]:
-        """Merge structured knowledge from profile and belief search after CE reranking."""
-        directory = ""
-        for mem in result_memories:
-            if mem.get("directory_context"):
-                directory = mem["directory_context"]
-                break
+        """Merge structured knowledge from profile and belief search after CE reranking.
+
+        Car C7 (plan item 10) — MIS-WIRING FIXED. This took its scope from the
+        FIRST RESULT's own ``directory_context``, not from the caller: whichever
+        row happened to rank first decided which project's profiles and beliefs
+        got merged in. Re-keying the read path without fixing this would have
+        preserved the bug in new clothes, so the caller's project is threaded
+        through ``RerankContext`` instead.
+        """
         profile_belief_results = self._search_profiles_and_beliefs(
             ctx.query,
-            directory,
+            ctx.project_id,
             ctx.max_results,
         )
         if profile_belief_results:
@@ -248,15 +258,16 @@ class _RerankingMixin:
 
     @observe(tier="stage", metric="retrieval.rerank.rules")
     def _rerank_rules(self, result_memories: list[dict], ctx: RerankContext) -> list[dict]:
-        """Apply neuro-symbolic rules."""
+        """Apply neuro-symbolic rules.
+
+        Car C7 (plan item 10) — MIS-WIRING FIXED, same shape as
+        ``_rerank_profile_belief_merge`` above: the rule scope came from the
+        first result's own row rather than from the caller, so a single
+        out-of-scope row ranking first selected another project's rules.
+        """
         if self._rules_engine is None or not result_memories:
             return result_memories
-        directory = ""
-        for mem in result_memories:
-            if mem.get("directory_context"):
-                directory = mem["directory_context"]
-                break
-        result_memories = self._rules_engine.apply_rules(result_memories, directory)
+        result_memories = self._rules_engine.apply_rules(result_memories, ctx.project_id or "")
         return result_memories[: ctx.max_results]
 
     @observe(tier="stage", metric="retrieval.rerank.engram_links")

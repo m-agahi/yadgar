@@ -402,18 +402,14 @@ class Settings(BaseSettings):
     RECALL_MEMORY_PRIOR_WEIGHT: float = 0.1
     RECALL_WIKI_PRIOR_WEIGHT: float = 0.1
 
-    # Car C2 (0047 §7 3b): ranking-score multiplier applied to wiki
-    # candidates whose ``page_type`` resolves to ``recall_disposition="downweight"``
-    # (D22). A value in (0, 1) sinks the downweighted page below include pages
-    # of comparable relevance without removing it from the result set (the
-    # visibility filter still drops only ``"exclude"``). The factor is read
-    # live from settings on each fusion + wiki_query call (no caching), so a
-    # runtime change takes effect on the next call. 0.5 = half-score; tunable
-    # via ``YADGAR_RECALL_DOWNWEIGHT_FACTOR`` (registered in
-    # ``config_registry.py``). Set to 1.0 to disable the penalty (no re-sort
-    # cost in wiki_query). The penalty is applied to ``placement_score`` in
-    # fusion and to ``_retrieval_score`` in wiki_query.
-    RECALL_DOWNWEIGHT_FACTOR: float = 0.5
+    # Car C7 (0047, absorbing C8 item 5) DELETED ``RECALL_DOWNWEIGHT_FACTOR``.
+    # It tuned a penalty that never worked: both call sites MULTIPLIED a score
+    # of the form ``ce + w * native``, and ``ce`` is a raw cross-encoder logit
+    # that is commonly negative — so a factor below 1.0 RAISED the score and
+    # promoted the pages it was meant to sink. Its only user (``task_list``) is
+    # now ``recall_disposition="exclude"`` and no disposition resolves to
+    # ``"downweight"`` any more, so there is nothing left to tune. A future soft
+    # sink must SUBTRACT or CLAMP, never multiply — and must not reuse this name.
 
     # task:0085: recall() output-size bounds (presentation-only, applied in
     # core/server/tools/recall.py AFTER retrieval — ranking is untouched).

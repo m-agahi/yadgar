@@ -234,6 +234,7 @@ def test_fanout_fuse_span_emits_on_multi_provider(span_exporter):
         "heat": 0.6,
         "_retrieval_score": 0.9,
         "directory_context": "/tmp/test",
+        "project_id": "/tmp/test",
         "branch": "master",
         "tags": [],
     }
@@ -262,7 +263,7 @@ def test_fanout_fuse_span_emits_on_multi_provider(span_exporter):
             query="test",
             max_results=5,
             min_heat=0.0,
-            directory="/tmp/test",
+            project_id="/tmp/test",
         )
 
     _assert_child_of(span_exporter, "recall.fanout.fuse", "tool.recall")
@@ -283,6 +284,7 @@ def test_fanout_fuse_span_absent_on_single_provider(span_exporter):
         "heat": 0.6,
         "_retrieval_score": 0.9,
         "directory_context": "/tmp/test",
+        "project_id": "/tmp/test",
         "branch": "master",
         "tags": [],
     }
@@ -298,7 +300,7 @@ def test_fanout_fuse_span_absent_on_single_provider(span_exporter):
             query="test",
             max_results=5,
             min_heat=0.0,
-            directory="/tmp/test",
+            project_id="/tmp/test",
         )
 
     assert "recall.fanout.fuse" not in _span_names(span_exporter)
