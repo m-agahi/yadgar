@@ -105,12 +105,12 @@ def test_wiki_delete_busts_wiki_read_cache(monkeypatch, admin_backend_bypass):
     fake, _storage, wtool = _wire_fake_wiki(monkeypatch)
     fake.pages["mypage"] = {"slug": "mypage", "title": "T", "content": "v1"}
 
-    first = wtool.wiki_read("mypage", directory="/repo")
+    first = wtool.wiki_read("mypage", directory="/repo", project=TEST_PROJECT_ID)
     assert first["content"] == "v1"  # miss → computed + cached
 
     # A second identical read is served from cache (no epoch change yet).
     assert wtool._wiki_read_cache.stats()["hits"] == 0
-    _ = wtool.wiki_read("mypage", directory="/repo")
+    _ = wtool.wiki_read("mypage", directory="/repo", project=TEST_PROJECT_ID)
     assert wtool._wiki_read_cache.stats()["hits"] == 1, "identical read should hit cache"
 
     # Now DELETE via the tool — real storage hook bumps the global epoch.
@@ -118,7 +118,7 @@ def test_wiki_delete_busts_wiki_read_cache(monkeypatch, admin_backend_bypass):
     assert del_res["deleted"] is True
 
     # The cached entry is now unreachable (epoch moved). Read must reflect deletion.
-    after = wtool.wiki_read("mypage", directory="/repo")
+    after = wtool.wiki_read("mypage", directory="/repo", project=TEST_PROJECT_ID)
     assert "error" in after, (
         "wiki_read served a STALE cached page after wiki_delete — the wiki-write-"
         "busts-read invalidation is broken"
@@ -131,13 +131,15 @@ def test_wiki_update_busts_wiki_read_cache(monkeypatch):
     fake, storage, wtool = _wire_fake_wiki(monkeypatch)
     fake.pages["p"] = {"slug": "p", "title": "T", "content": "old"}
 
-    assert wtool.wiki_read("p", directory="/repo")["content"] == "old"  # cached
+    assert (
+        wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)["content"] == "old"
+    )  # cached
 
     # Simulate an in-place content edit + the real epoch bump the edit path fires.
     fake.pages["p"]["content"] = "new"
     storage.update_wiki_page(page_id=1, updates={"content": "new"})
 
-    assert wtool.wiki_read("p", directory="/repo")["content"] == "new", (
+    assert wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)["content"] == "new", (
         "wiki_read served stale content after an update-path epoch bump"
     )
 
@@ -148,12 +150,14 @@ def test_wiki_set_metadata_busts_wiki_read_cache(monkeypatch):
     fake, storage, wtool = _wire_fake_wiki(monkeypatch)
     fake.pages["p"] = {"slug": "p", "title": "T", "content": "c", "category": "old"}
 
-    assert wtool.wiki_read("p", directory="/repo")["category"] == "old"  # cached
+    assert (
+        wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)["category"] == "old"
+    )  # cached
 
     fake.pages["p"]["category"] = "new"
     storage.set_wiki_page_metadata(page_id=1, field="category", value="new")
 
-    assert wtool.wiki_read("p", directory="/repo")["category"] == "new", (
+    assert wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)["category"] == "new", (
         "metadata-path write did not bust the wiki_read cache"
     )
 
@@ -173,8 +177,8 @@ def test_wiki_read_hit_skips_store(monkeypatch):
     monkeypatch.setattr(fake, "read_by_directory", counting_read)
     fake.pages["p"] = {"slug": "p", "title": "T", "content": "c"}
 
-    wtool.wiki_read("p", directory="/repo")
-    wtool.wiki_read("p", directory="/repo")
+    wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)
+    wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)
     assert len(calls) == 1, "second identical read must be served from cache"
 
 
@@ -183,11 +187,11 @@ def test_wiki_read_deep_copy_isolation(monkeypatch):
     fake, _storage, wtool = _wire_fake_wiki(monkeypatch)
     fake.pages["p"] = {"slug": "p", "title": "T", "content": "c"}
 
-    first = wtool.wiki_read("p", directory="/repo")
+    first = wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)
     first["content"] = "MUTATED"
     first["injected"] = True
 
-    second = wtool.wiki_read("p", directory="/repo")  # cache hit
+    second = wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)  # cache hit
     assert second["content"] == "c"
     assert "injected" not in second
 
@@ -218,8 +222,8 @@ def test_wiki_query_hit_skips_store(monkeypatch):
     store, wtool = _wire_fake_query(
         monkeypatch, [{"slug": "a", "branch": None, "_retrieval_score": 0.5}]
     )
-    wtool.wiki_query("q", directory="/repo")
-    wtool.wiki_query("q", directory="/repo")
+    wtool.wiki_query("q", directory="/repo", project=TEST_PROJECT_ID)
+    wtool.wiki_query("q", directory="/repo", project=TEST_PROJECT_ID)
     assert store.calls == 1, "identical wiki_query must hit the cache (1 store call)"
 
 
@@ -227,10 +231,10 @@ def test_wiki_query_deep_copy_isolation(monkeypatch):
     store, wtool = _wire_fake_query(
         monkeypatch, [{"slug": "a", "branch": None, "_retrieval_score": 0.5}]
     )
-    first = wtool.wiki_query("q", directory="/repo")
+    first = wtool.wiki_query("q", directory="/repo", project=TEST_PROJECT_ID)
     first[0]["_retrieval_score"] = 999
     first.append({"slug": "injected"})
-    second = wtool.wiki_query("q", directory="/repo")  # hit
+    second = wtool.wiki_query("q", directory="/repo", project=TEST_PROJECT_ID)  # hit
     assert store.calls == 1
     assert second[0]["_retrieval_score"] == 0.5
     assert len(second) == 1
@@ -242,9 +246,9 @@ def test_wiki_query_epoch_bump_busts(monkeypatch):
     store, wtool = _wire_fake_query(
         monkeypatch, [{"slug": "a", "branch": None, "_retrieval_score": 0.5}]
     )
-    wtool.wiki_query("q", directory="/repo")  # miss → compute
+    wtool.wiki_query("q", directory="/repo", project=TEST_PROJECT_ID)  # miss → compute
     _recall_shadow.bump_epoch(None)  # a wiki write
-    wtool.wiki_query("q", directory="/repo")  # epoch moved → recompute
+    wtool.wiki_query("q", directory="/repo", project=TEST_PROJECT_ID)  # epoch moved → recompute
     assert store.calls == 2, "wiki write epoch bump must bust the wiki_query cache"
 
 
@@ -252,9 +256,9 @@ def test_wiki_query_distinct_keys(monkeypatch):
     store, wtool = _wire_fake_query(
         monkeypatch, [{"slug": "a", "branch": None, "_retrieval_score": 0.5}]
     )
-    wtool.wiki_query("q1", directory="/repo")
-    wtool.wiki_query("q2", directory="/repo")
-    wtool.wiki_query("q1", directory="/repo", category="c")
+    wtool.wiki_query("q1", directory="/repo", project=TEST_PROJECT_ID)
+    wtool.wiki_query("q2", directory="/repo", project=TEST_PROJECT_ID)
+    wtool.wiki_query("q1", directory="/repo", category="c", project=TEST_PROJECT_ID)
     assert store.calls == 3, "query text and category are distinct keys"
 
 
@@ -451,7 +455,7 @@ def test_wiki_caches_emit_cold_tier_metrics(monkeypatch):
     fake, _storage, wtool = _wire_fake_wiki(monkeypatch)
     fake.pages["p"] = {"slug": "p", "title": "T", "content": "c"}
 
-    wtool.wiki_read("p", directory="/repo")  # miss
-    wtool.wiki_read("p", directory="/repo")  # hit
+    wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)  # miss
+    wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)  # hit
     assert "wiki_read" in misses
     assert "wiki_read" in hits

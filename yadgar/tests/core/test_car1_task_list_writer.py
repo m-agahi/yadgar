@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
 _DIR = "/home/user/car1-proj"
@@ -76,7 +78,7 @@ class TestGatedWrite:
         server.wiki_write_task_list(project="demo", content=_PAGE, directory=_DIR)
         drainer.drain_now()
 
-        read = server.wiki_read("demo-task-list", directory=_DIR)
+        read = server.wiki_read("demo-task-list", directory=_DIR, project=TEST_PROJECT_ID)
         assert read.get("slug") == "demo-task-list", read
         assert "task:0001" in read.get("content", "")
 

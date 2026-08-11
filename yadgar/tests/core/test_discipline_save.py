@@ -191,7 +191,7 @@ class TestSeederStillCreateIfAbsent:
             purpose="custom override",
             project=TEST_PROJECT_ID,
         )
-        seed_agent_prompts(storage=storage)
+        seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
 
         page = _read_agent_prompt("agent-discipline-recall-first", storage=storage)
         assert page is not None

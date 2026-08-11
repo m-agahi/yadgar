@@ -52,8 +52,8 @@ def _seed_all(storage):
         _seed_discipline_pages,
     )
 
-    _seed_contract_page(storage=storage)
-    _seed_discipline_pages(storage=storage)
+    _seed_contract_page(storage=storage, project=TEST_PROJECT_ID)
+    _seed_discipline_pages(storage=storage, project=TEST_PROJECT_ID)
 
 
 def _save_pattern(storage, pattern: str, body: str) -> None:

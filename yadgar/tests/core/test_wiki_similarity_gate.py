@@ -284,6 +284,7 @@ class TestWikiCheckDuplicate:
         result = server.wiki_check_duplicate(
             title="Test Page",
             content="Some content about testing.",
+            project=TEST_PROJECT_ID,
         )
         assert isinstance(result, dict)
         assert result.get("candidates") == [] or result.get("candidates") is not None
@@ -307,6 +308,7 @@ class TestWikiCheckDuplicate:
         result = server.wiki_check_duplicate(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
+            project=TEST_PROJECT_ID,
         )
         assert isinstance(result, dict)
         candidates = result.get("candidates", [])
@@ -324,6 +326,7 @@ class TestWikiCheckDuplicate:
         server.wiki_check_duplicate(
             title="Some New Page",
             content="Content about something new entirely.",
+            project=TEST_PROJECT_ID,
         )
         # Verify no page was created
         page = _wiki()._storage.get_wiki_page_by_slug("some-new-page")
@@ -342,6 +345,7 @@ class TestWikiCheckDuplicate:
         result = server.wiki_check_duplicate(
             title="Yadgar Benchmark Results",
             content=_BENCHMARK_CONTENT,
+            project=TEST_PROJECT_ID,
         )
         candidates = result.get("candidates", [])
         assert candidates == [], (

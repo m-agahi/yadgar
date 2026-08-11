@@ -124,7 +124,7 @@ class TestWritePathStampsSplitTypes:
         """
         from yadgar.core.server.tools.agent_prompts import CONTRACT_SLUG, _seed_contract_page
 
-        _seed_contract_page(storage=storage)
+        _seed_contract_page(storage=storage, project=TEST_PROJECT_ID)
         assert _page_type(storage, CONTRACT_SLUG) == PAGE_TYPE_AGENT_DISCIPLINE
 
 

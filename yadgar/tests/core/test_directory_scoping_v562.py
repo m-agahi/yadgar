@@ -603,6 +603,7 @@ class TestWikiQueryDirectoryScoping:
             "unique directory scope test",
             directory=YADGAR_DIR,
             max_results=20,
+            project=TEST_PROJECT_ID,
         )
         slugs = {r.get("slug") for r in results}
         assert slug_yadgar in slugs or True, "yadgar page should be eligible"

@@ -241,8 +241,8 @@ class TestAdrAddCanonicalRoundTrip:
         )
 
         # Each per-ADR page resolves CANONICALLY from the caller directory.
-        p1 = wiki_read(r1["slug"], directory=project_dir)
-        p2 = wiki_read(r2["slug"], directory=project_dir)
+        p1 = wiki_read(r1["slug"], directory=project_dir, project=TEST_PROJECT_ID)
+        p2 = wiki_read(r2["slug"], directory=project_dir, project=TEST_PROJECT_ID)
         assert "error" not in p1, f"ADR-0001 page not found canonically: {p1}"
         assert "error" not in p2, f"ADR-0002 page not found canonically: {p2}"
         assert "SurrealDB" in p1.get("content", "")
