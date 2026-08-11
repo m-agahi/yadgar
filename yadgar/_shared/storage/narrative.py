@@ -32,6 +32,11 @@ class BeliefRecord:
     confidence: float = 0.5
     embedding_info: tuple[bytes, str] | None = None
     directory_context: str | None = None
+    #: Car C13f (0047 §5): the owning project, STAMPED at write so
+    #: ``search_beliefs_fts`` can scope by it. ``derived_belief`` is SCHEMALESS,
+    #: so this column needs no migration to exist — see ``insert_profile``'s
+    #: docstring for why declaring it here would collide with §C11.
+    project_id: str | None = None
 
 
 class _NarrativeMixin:
@@ -228,7 +233,7 @@ class _NarrativeMixin:
             "evidence_memory_ids = $evids, confidence = $conf, "
             "embedding = $emb, embedding_model = $em, "
             "created_at = $now, updated_at = $now, directory_context = $dc, "
-            "valid_from = $now, valid_until = NONE",
+            "project_id = $pid, valid_from = $now, valid_until = NONE",
             {
                 "id": bid,
                 "bt": belief_type,
@@ -238,25 +243,43 @@ class _NarrativeMixin:
                 "conf": confidence,
                 "emb": emb_floats,
                 "em": embedding_model,
+                "pid": record.project_id,
                 "now": now,
                 "dc": directory_context,
             },
         )
         return bid
 
+    @observe(tier="stage")
     def search_beliefs_fts(
-        self, query: str, limit: int = 10, include_invalidated: bool = False
+        self,
+        query: str,
+        limit: int = 10,
+        include_invalidated: bool = False,
+        project_id: str | None = None,
     ) -> list[dict]:
-        """FTS over derived_belief.
+        """FTS over derived_belief, scoped to *project_id* when one is supplied.
 
         include_invalidated (v5.29.0): when False (default), excludes
         superseded rows (valid_until IS NOT NONE).
+
+        Car C13f (0047 §5): the scope arm, enforced in the query for the same
+        reason as ``search_profiles_fts`` — the caller's project reached
+        ``_search_profiles_and_beliefs`` and was never read, so beliefs were
+        searched corpus-wide. ``derived_belief`` has no ``tags`` column either,
+        so this is the project arm alone; see ``search_profiles_fts`` for the
+        full rationale. ``None``/empty means no filtering.
         """
         validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
+        params: dict = {"q": query, "lim": limit}
+        scope_clause = ""
+        if project_id:
+            scope_clause = " AND project_id = $pid"
+            params["pid"] = project_id
         rows = self._q(
             f"SELECT * FROM derived_belief WHERE (subject @@ $q "
-            f"OR belief_type @@ $q OR content @@ $q){validity_clause} LIMIT $lim",
-            {"q": query, "lim": limit},
+            f"OR belief_type @@ $q OR content @@ $q){validity_clause}{scope_clause} LIMIT $lim",
+            params,
         )
         return self._rows_to_dicts(rows)
 

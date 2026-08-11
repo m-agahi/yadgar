@@ -345,6 +345,7 @@ def evaluate_pair_unified(
     k_values: list[int],
     max_results: int = 50,
     type_filter: str = "all",
+    project: str | None = None,
 ) -> dict:
     """Run recall for one golden pair via the MCP recall tool (fan-out path).
 
@@ -359,6 +360,15 @@ def evaluate_pair_unified(
         k_values: k values for recall@k and nDCG@k.
         max_results: Max results to fetch per query.
         type_filter: "all" | "memory" | "wiki" (Step 5; default "all").
+        project: Car C13f (0047 §5) — the resolved project id forwarded to
+            ``recall``. WITHOUT IT EVERY PAIR IS AN ERROR ROW: C5/ADR-0227 made
+            ``recall`` fail loud on a missing identity, this function passed
+            none, and the ``except Exception`` below turned each raise into
+            ``{"error": ...}`` — so every metric the v6 harness reported was an
+            error row rather than a measurement. ``directory`` cannot stand in
+            for it: ADR-0227 is explicit that a directory is a filesystem hint,
+            not an identity. Left ``None`` for the unscoped/legacy case, which
+            still raises rather than guessing.
 
     Returns:
         Metrics dict with recall@k, nDCG@k, mrr, latency_ms (same schema as
@@ -391,13 +401,25 @@ def evaluate_pair_unified(
     try:
         # Build kwargs — type= only passed in Step 5 when supported
         kwargs: dict = {"max_results": max_results, "min_heat": 0.0, "directory": directory}
+        if project is not None:
+            kwargs["project"] = project
         if type_filter != "all":
             kwargs["type"] = type_filter
 
         results = recall_fn(query, **kwargs)
     except TypeError:
-        # Fallback: older recall() signature without type= (Steps 0-4)
-        results = recall_fn(query, max_results=max_results, min_heat=0.0, directory=directory)
+        # Fallback: older recall() signature without type= (Steps 0-4).
+        # C13f: carries ``project`` too — dropping it here would make the
+        # fallback path fail loud for a reason unrelated to the signature it
+        # exists to tolerate.
+        _fallback_kwargs: dict = {
+            "max_results": max_results,
+            "min_heat": 0.0,
+            "directory": directory,
+        }
+        if project is not None:
+            _fallback_kwargs["project"] = project
+        results = recall_fn(query, **_fallback_kwargs)
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return {
@@ -605,6 +627,7 @@ def run_eval(
     no_seed: bool = False,
     unified: bool = False,
     eval_directory: str = "eval-bootstrap",
+    eval_project: str | None = None,
     settings_overrides: dict | None = None,
 ) -> dict:
     """Run the full eval pipeline. Returns aggregated metrics dict.
@@ -615,6 +638,13 @@ def run_eval(
             in the yadgar server for wiki results to appear.
         eval_directory: Directory context for unified recall calls. Defaults to
             "eval-bootstrap" (matching the seed_pairs_into_storage stamp).
+        eval_project: Car C13f (0047 §5) — project id for unified recall calls.
+            REQUIRED when ``unified`` is True and deliberately NOT defaulted:
+            ADR-0227 forbids manufacturing an identity, and a plausible-looking
+            constant here (an "eval-bootstrap" project, say) is a namespace
+            nobody chose that reads as legitimate forever. Absent it, the run
+            fails immediately with an actionable message instead of producing a
+            full report in which every row is an error.
     """
     print("Yadgar Eval Harness — Phase 0")
     print(f"Golden set: {golden_path}")
@@ -624,6 +654,19 @@ def run_eval(
     if not pairs:
         print("No pairs to evaluate — exiting.", file=sys.stderr)
         sys.exit(1)
+
+    # C13f: fail BEFORE the expensive setup (surreal spawn, embedding model,
+    # seeding), not per-pair inside the scoring loop. The old behaviour was to
+    # discover the missing identity once per pair and swallow it into an error
+    # row, which produced a complete-looking report containing no measurements.
+    if unified and not eval_project:
+        print(
+            "--unified on requires --eval-project owner/repo (ADR-0227: yadgar "
+            "never guesses an identity, and --eval-directory is a filesystem "
+            "hint, not one).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     if dry_run:
         print(f"Dry-run: {len(pairs)} pairs loaded. Exiting without scoring.")
@@ -720,6 +763,7 @@ def run_eval(
                     _K_VALUES,
                     max_results=max_results,
                     type_filter=pair_type,
+                    project=eval_project,
                 )
             else:
                 metrics = evaluate_pair(pair, retriever, _K_VALUES, max_results=max_results)
@@ -810,6 +854,16 @@ def main() -> None:
             "Only used with --unified on."
         ),
     )
+    parser.add_argument(
+        "--eval-project",
+        type=str,
+        default=None,
+        help=(
+            "Project id (owner/repo) for unified recall calls. REQUIRED with "
+            "--unified on; intentionally has no default (ADR-0227: an invented "
+            "identity is indistinguishable from a real one at read time)."
+        ),
+    )
     args = parser.parse_args()
 
     run_eval(
@@ -820,6 +874,7 @@ def main() -> None:
         no_seed=args.no_seed,
         unified=(args.unified == "on"),
         eval_directory=args.eval_directory,
+        eval_project=args.eval_project,
     )
 
 

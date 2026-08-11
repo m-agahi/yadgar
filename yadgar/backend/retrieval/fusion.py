@@ -423,13 +423,40 @@ class _FusionMixin:
         project_id: str | None,
         max_results: int,
     ) -> list[dict]:
-        """Search structured profiles and derived beliefs."""
+        """Search structured profiles and derived beliefs, scoped to *project_id*.
+
+        Car C13f (0047 §5) fixes TWO defects that hid each other, and they must
+        stay fixed together:
+
+        1. ``project_id`` ARRIVED HERE AND WAS NEVER READ. Despite
+           ``_rerank_profile_belief_merge``'s "MIS-WIRING FIXED" note — which
+           fixed only where the value comes FROM — both searches ran
+           corpus-wide, so any project's profiles and beliefs could surface in
+           any other project's recall. It is now pushed into both queries.
+
+        2. EVERY ROW THIS METHOD BUILT WAS SILENTLY DROPPED. The dicts carried
+           no ``project_id`` and no ``tags``, and ``MemoryProvider.candidates``
+           runs ``is_project_eligible`` over the WHOLE result list — including
+           these injected rows. Under C5, every scoped caller therefore lost the
+           entire structured-knowledge channel with no error.
+
+        THE ROWS NOW CARRY THE SCOPE THEY WERE SELECTED BY, which is what makes
+        the guard truthful rather than special-cased. ``project_id`` is copied
+        from the ROW, never from the caller: with defect 1 fixed the query
+        already guarantees the row is in scope, so the stamp REPORTS a verified
+        fact instead of asserting an unverified one. Fixing defect 2 alone —
+        by stamping the caller's project, or by teaching the guard to exempt a
+        ``_source`` — would have converted a dead channel into a cross-project
+        leak, because nothing upstream had scoped the rows at all.
+        """
         extra_results: list[dict] = []
 
         # Search profiles
         if self._settings.PROFILE_EXTRACTION_ENABLED:
             try:
-                profiles = self._storage.search_profiles_fts(query, limit=max_results)
+                profiles = self._storage.search_profiles_fts(
+                    query, limit=max_results, project_id=project_id
+                )
                 for p in profiles:
                     extra_results.append(
                         {
@@ -437,6 +464,9 @@ class _FusionMixin:
                             "content": f"{p['entity_name']}: {p['attribute_type']} = {p['attribute_value']}",
                             "_source": "profile",
                             "_retrieval_score": self._settings.PROFILE_SEARCH_WEIGHT,
+                            # The row's OWN project — see the docstring. Not the
+                            # caller's: the query above is what proves scope.
+                            "project_id": p.get("project_id"),
                         }
                     )
             except (KeyError, TypeError, ValueError):  # fmt: skip
@@ -447,7 +477,9 @@ class _FusionMixin:
         # Search beliefs
         if self._settings.DERIVED_BELIEFS_ENABLED:
             try:
-                beliefs = self._storage.search_beliefs_fts(query, limit=max_results)
+                beliefs = self._storage.search_beliefs_fts(
+                    query, limit=max_results, project_id=project_id
+                )
                 boost = self._settings.BELIEF_HIGH_CONFIDENCE_BOOST
                 for b in beliefs:
                     score = (
@@ -461,6 +493,8 @@ class _FusionMixin:
                             "content": b["content"],
                             "_source": "belief",
                             "_retrieval_score": score,
+                            # The row's OWN project — see the docstring.
+                            "project_id": b.get("project_id"),
                         }
                     )
             except (KeyError, TypeError, ValueError):  # fmt: skip

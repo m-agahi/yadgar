@@ -104,6 +104,7 @@ class _UserMixin:
         memory_id: int | None = None,
         confidence: float = 0.5,
         directory_context: str | None = None,
+        project_id: str | None = None,
     ) -> int:
         """Insert or supersede a user_profile fact (v5.29.0 bi-temporal).
 
@@ -114,6 +115,17 @@ class _UserMixin:
         Uniqueness on currently-valid rows is enforced application-side:
         SurrealDB v3 does not support partial indexes (DEFINE INDEX ... WHERE).
         Migration 010 drops the old unconditional UNIQUE index.
+
+        Car C13f (0047 §5): ``project_id`` is STAMPED HERE so the read path can
+        scope by it. ``user_profile`` is SCHEMALESS — no ``DEFINE FIELD`` covers
+        it (the plan's §C11 table names it among exactly those) — so the column
+        needs no migration to exist; writing it is enough. That is deliberately
+        NOT a migration: §C11 owns declaring the type + index for the remaining
+        directory-bearing tables, and a schema statement here would collide with
+        that car. Rows written before this parameter existed carry no
+        ``project_id`` and are correctly invisible to a scoped read, which is the
+        same degraded-window trade C7 already made for ``memory``/``wiki_page``
+        (ADR-0227: zero rows beats a guessed identity).
         """
         now = self._now_iso()
         delta = float(os.environ.get("PROFILE_BITEMPORAL_VERSION_DELTA", "0.05"))
@@ -158,7 +170,8 @@ class _UserMixin:
                     "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
                     "attribute_value = $av, evidence_memory_ids = $evids, "
                     "confidence = $conf, created_at = $now, updated_at = $now, "
-                    "directory_context = $dc, valid_from = $now, valid_until = NONE;\n"
+                    "directory_context = $dc, project_id = $pid, "
+                    "valid_from = $now, valid_until = NONE;\n"
                     "COMMIT TRANSACTION",
                     {
                         "id": new_pid,
@@ -170,6 +183,7 @@ class _UserMixin:
                         "conf": confidence,
                         "now": now,
                         "dc": directory_context,
+                        "pid": project_id,
                     },
                 )
                 return new_pid
@@ -197,7 +211,8 @@ class _UserMixin:
             "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
             "attribute_value = $av, evidence_memory_ids = $evids, "
             "confidence = $conf, created_at = $now, updated_at = $now, "
-            "directory_context = $dc, valid_from = $now, valid_until = NONE;\n"
+            "directory_context = $dc, project_id = $pid, "
+            "valid_from = $now, valid_until = NONE;\n"
             "COMMIT TRANSACTION",
             {
                 "id": pid,
@@ -209,25 +224,54 @@ class _UserMixin:
                 "conf": confidence,
                 "now": now,
                 "dc": directory_context,
+                "pid": project_id,
             },
         )
         return pid
 
     @trace_span()
     def search_profiles_fts(
-        self, query: str, limit: int = 10, include_invalidated: bool = False
+        self,
+        query: str,
+        limit: int = 10,
+        include_invalidated: bool = False,
+        project_id: str | None = None,
     ) -> list[dict]:
-        """FTS over user_profile.
+        """FTS over user_profile, scoped to *project_id* when one is supplied.
 
         include_invalidated (v5.29.0): when False (default), excludes
         superseded rows (valid_until IS NOT NONE).
+
+        Car C13f (0047 §5): ``project_id`` is the SCOPE, and it is enforced HERE
+        rather than after the rows come back. Before this, the caller's project
+        reached ``_search_profiles_and_beliefs`` and was never read, so profiles
+        were searched CORPUS-WIDE and every project's structured knowledge was a
+        candidate for every other project's recall.
+
+        ONE ARM, NOT TWO. ``build_project_scope_clause`` emits
+        ``project_id = $p OR 'global' IN tags``; ``user_profile`` HAS NO ``tags``
+        COLUMN (see the CREATE in ``insert_profile``), so the reach arm would
+        test a field that does not exist. The predicate is therefore the project
+        arm alone — the honest predicate for a table with no cross-project reach
+        concept — and it is spelled out here instead of imported so it cannot
+        silently acquire an arm this table cannot answer.
+
+        A ``None``/empty *project_id* means NO filtering, matching
+        ``build_project_scope_clause``'s empty-fragment case for daemon-internal
+        and legacy callers. Unstamped rows (``project_id`` absent) match no
+        project, which is the same treatment memories and wiki pages get.
         """
         validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
+        params: dict = {"q": query, "lim": limit}
+        scope_clause = ""
+        if project_id:
+            scope_clause = " AND project_id = $pid"
+            params["pid"] = project_id
         rows = self._q(
             f"SELECT * FROM user_profile WHERE (entity_name @@ $q "
             f"OR attribute_type @@ $q OR attribute_key @@ $q OR attribute_value @@ $q)"
-            f"{validity_clause} LIMIT $lim",
-            {"q": query, "lim": limit},
+            f"{validity_clause}{scope_clause} LIMIT $lim",
+            params,
         )
         return self._rows_to_dicts(rows)
 

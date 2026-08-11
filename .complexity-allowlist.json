@@ -457,5 +457,16 @@
   "rationale": "C4b (0047 PR#40 §5): params 8 -> 9 for the enqueue-time project_id. anchor_memory mirrors the anchor queue payload the same way run_memorize_replay mirrors memorize's, and its ONLY non-test caller is run_anchor_replay, which forwards the payload field-for-field — the count is payload width, not logic (cyclomatic and nesting unchanged). The cheaper-looking reduction, dropping the vestigial `branch` parameter left over from ADR-0215's removal of branch scoping, is deliberately not taken in this car: deleting pre-existing dead surface is out of scope for an additive stamping change, and doing it here would mix a behavioural cleanup into the one commit that must be trivially auditable before C5 makes absence fatal. Revisit with C5 or with the ADR-0215 sweep.",
   "added": "2026-08-11",
   "added_by": "car-c4b-memorize-stamp"
+ },
+ {
+  "path": "yadgar/_shared/storage/user.py",
+  "function": "insert_profile",
+  "lineno": 98,
+  "metrics": {
+   "params": 9
+  },
+  "rationale": "Car C13f (0047 PR#40 §5): params 8 -> 9 for project_id. The function was sitting EXACTLY on the HARD cap (8 incl. self), and the added parameter is essential feature surface — one more user_profile column — not logic branching: cyclomatic, nesting and fn_loc are all unchanged. It cannot be dropped or defaulted, because it is the scope key the read path now filters on (search_profiles_fts pushes 'AND project_id = $pid'), and ADR-0227 forbids deriving an identity in-process, so the value has to arrive from the caller. Keyword-only does not help: complexity_audit.param_count sums args + kwonlyargs + posonlyargs, so the count is identical. THE HONEST FIX IS A ProfileRecord DATACLASS — precisely the refactor the SIBLING function already had done to it: insert_belief takes a single BeliefRecord whose docstring says its fields 'map 1-to-1 to the derived_belief table columns', which is what collapsed that signature. Mirroring it here would take insert_profile to 3 params and retire this entry outright. It is deferred because it is a storage-API change with a blast radius of ~17 insert_profile call sites (yadgar/tests/_shared/test_bitemporal_extension.py alone holds 16), and this car is the last blocker on the PR's make-e2e push gate — a broad signature churn here buys nothing for the three production bugs the car exists to fix and risks the gate it exists to turn green. Same deferral shape as the wiki_add Car M entry above (essential parameter surface, extraction owned by a dedicated refactor).",
+  "added": "2026-08-12",
+  "added_by": "car-c13f-classb-fixes"
  }
 ]

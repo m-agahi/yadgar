@@ -712,6 +712,13 @@ class TestBCB5_ProfileRecallSurfaces:
             attribute_value="Python (xb5prof88801 sentinel value)",
             confidence=0.9,
             directory_context=yadgar_dir,
+            # C13f: REQUIRED by the scope arm this car added to
+            # ``user.py::search_profiles_fts`` (``AND project_id = $pid``).
+            # Same move BC-B4's seed made when C7 moved the filter: the seed
+            # follows the predicate. An unstamped row is invisible to a scoped
+            # read BY DESIGN, so without this the test would fail on the seed
+            # rather than on the behaviour it exists to catch.
+            project_id=_TEST_PROJECT,
         )
         assert isinstance(pid, int), f"insert_profile must return int id, got {pid!r}"
 
@@ -767,6 +774,9 @@ class TestBCB6_BeliefRecallSurfaces:
                 content="TestUserBC_B6_xb6belief77701 prefers Python (xb6belief77701 sentinel value)",
                 confidence=0.9,
                 directory_context=yadgar_dir,
+                # C13f: REQUIRED by the scope arm added to
+                # ``narrative.py::search_beliefs_fts``. See BC-B5's seed.
+                project_id=_TEST_PROJECT,
             )
         )
         assert isinstance(bid, int), f"insert_belief must return int id, got {bid!r}"
@@ -792,6 +802,99 @@ class TestBCB6_BeliefRecallSurfaces:
             "Check fix #230: the belief branch except in fusion.py must NOT catch "
             "AttributeError (narrowed to (KeyError, TypeError, ValueError)) so a "
             "config/storage error does not silently drop every belief."
+        )
+
+
+class TestBCB7_ProfileBeliefScopedAtSource:
+    """BC-B7: profiles/beliefs from ANOTHER project never surface — WITHOUT the guard.
+
+    Car C13f. This is the regression catcher for the SECOND of two defects that
+    were hiding each other, and it is deliberately built so that the FIRST
+    defect's fix cannot satisfy it.
+
+    The pair, briefly. ``_search_profiles_and_beliefs`` accepted the caller's
+    ``project_id`` and never read it, so profiles and beliefs were searched
+    corpus-wide (defect 2). Separately, the dicts it injected carried no
+    ``project_id``/``tags``, so ``MemoryProvider``'s ``is_project_eligible``
+    dropped every one of them (defect 1) — which is precisely WHY defect 2 was
+    invisible: nothing leaked, because nothing survived.
+
+    So a fix for defect 1 alone (stamp the caller's project on the injected
+    rows, or exempt ``_source`` from the guard) would turn a dead channel into
+    a cross-project LEAK. BC-B5/BC-B6 could not catch that: they assert
+    in-project rows SURFACE, which a leak also satisfies.
+
+    THE GUARD IS PATCHED TO A NO-OP FOR THE DURATION. That is the whole point:
+    with the guard neutralised, the only thing that can keep another project's
+    rows out is the query itself. If someone later reverts the scope arm in
+    ``search_profiles_fts``/``search_beliefs_fts`` but keeps the stamp, this
+    test fails and BC-B5/BC-B6 still pass.
+    """
+
+    def test_other_project_profile_and_belief_never_surface(
+        self, e2e_engines, recall_backend_bypass, monkeypatch
+    ):
+        from yadgar._shared.storage.narrative import BeliefRecord
+        from yadgar.core.server.tools.recall import recall
+
+        yadgar_dir = e2e_engines["yadgar_dir"]
+        storage = e2e_engines["storage"]
+
+        # Seed a profile + belief owned by a DIFFERENT project. directory_context
+        # is the caller's on purpose: it isolates project_id as the only thing
+        # that can exclude these rows, so the test cannot pass for the incidental
+        # reason that some directory filter caught them.
+        storage.insert_profile(
+            entity_name="TestUserBC_B7_xb7leak99901",
+            attribute_type="preference",
+            attribute_key="language",
+            attribute_value="Rust (xb7leak99901 sentinel value)",
+            confidence=0.9,
+            directory_context=yadgar_dir,
+            project_id=_OTHER_PROJECT,
+        )
+        storage.insert_belief(
+            BeliefRecord(
+                belief_type="preference",
+                subject="TestUserBC_B7_xb7leak99901",
+                content="TestUserBC_B7_xb7leak99901 prefers Rust (xb7leak99901 sentinel value)",
+                confidence=0.9,
+                directory_context=yadgar_dir,
+                project_id=_OTHER_PROJECT,
+            )
+        )
+
+        # A real in-scope memory so recall has a vector result and the rerank
+        # pipeline (which is what injects profiles/beliefs) actually runs.
+        _insert_mem(
+            e2e_engines,
+            "BC-B7 TestUserBC_B7_xb7leak99901 preference language Rust",
+            yadgar_dir,
+            heat=0.9,
+        )
+
+        # Neutralise the residual row guard: prove the QUERY does the scoping.
+        import yadgar.backend.retrieval.providers.memory as _memprov
+
+        monkeypatch.setattr(
+            _memprov, "is_project_eligible", lambda *_args, **_kwargs: True, raising=True
+        )
+
+        results = recall(
+            "TestUserBC_B7_xb7leak99901 preference language Rust",
+            directory=yadgar_dir,
+            max_results=20,
+            project=_TEST_PROJECT,
+        )
+
+        leaked = [r for r in results if r.get("_source") in ("profile", "belief")]
+        assert leaked == [], (
+            "BC-B7: profiles/beliefs owned by another project MUST NOT surface, and "
+            "must be excluded by the SQL scope arm rather than by the row guard "
+            "(patched off here). "
+            f"Leaked {len(leaked)} row(s): {[(r.get('_source'), r.get('content')) for r in leaked]}. "
+            "Check the 'AND project_id = $pid' arm in user.py::search_profiles_fts and "
+            "narrative.py::search_beliefs_fts, and that fusion.py passes project_id to both."
         )
 
 

@@ -18,10 +18,11 @@ pytestmark = pytest.mark.e2e
 
 #: The identity the wiki seed in this file names. C5/ADR-0227 made
 #: ``project_id`` mandatory at the storage write chokepoint, so the seeded page
-#: cannot be inserted unnamed. NOTE: naming the SEED is not sufficient to make
-#: the first test pass — ``benchmarks/run_eval.evaluate_pair_unified`` has no
-#: ``project`` parameter and passes none to ``recall``, so the READ it performs
-#: still raises. That is a harness-side gap, reported rather than patched here.
+#: cannot be inserted unnamed. Naming the SEED is not sufficient: the READ must
+#: be named too. Car C13f gave ``benchmarks/run_eval.evaluate_pair_unified`` a
+#: ``project`` parameter and forwards it to ``recall``, closing the harness-side
+#: gap C13e reported here — every eval pair had been raising and being swallowed
+#: into ``{"error": ...}``, so every v6 metric was an error row.
 _TEST_PROJECT = "m-agahi/yadgar"
 
 
@@ -89,6 +90,13 @@ class TestEvalRoutesViaMCPTool:
                 directory=e2e_engines["yadgar_dir"],
                 k_values=[1, 5, 10],
                 max_results=20,
+                # C13f: the harness-side gap this file's module docstring
+                # reported is now closed — ``evaluate_pair_unified`` takes a
+                # ``project`` and forwards it to ``recall``. Without it the call
+                # raises (C5/ADR-0227) and the harness swallows the raise into
+                # ``{"error": ...}``, which is what made every v6 eval metric an
+                # error row rather than a measurement.
+                project=_TEST_PROJECT,
             )
             assert "error" not in metrics, f"evaluate_pair_unified error: {metrics.get('error')}"
             assert metrics.get("recall@10", 0.0) > 0, (
