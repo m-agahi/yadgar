@@ -529,3 +529,60 @@ async def max_adr_updated_at(payload: dict) -> dict:
     if dt is None:
         return {"updated_at": None}
     return {"updated_at": dt.timestamp()}
+
+
+# ── C6: the ``project`` registry seed + read ────────────────────────────────
+#
+# The registry is the FIRST thing an operator writes on a new deployment —
+# every ``task`` / ``adr`` row FKs to it, so with zero rows the ledger cannot
+# accept a single write. These two ops are the whole operator surface:
+# ``create_project_row`` seeds a project, ``list_project_rows`` shows what is
+# registered (and is what the C6 backfill validates its host-supplied mapping
+# against before applying anything).
+#
+# DELIBERATELY UNGUARDED by the registry check. They ARE the registry — a
+# guard here would be a bootstrap deadlock: nothing could ever be registered
+# because registering requires something to already be registered.
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.create_project_row")
+async def create_project_row(payload: dict) -> dict:
+    """Seed one ``project`` registry row.
+
+    payload: ``{"key": str, "kind": "git"|"local", "display_name"?: str,
+    "remote_url"?: str}``.
+
+    A duplicate key comes back as ``{"ok": False, "error": ...}`` naming the
+    key — NOT swallowed. The storage layer raises ``DuplicateProjectError``
+    rather than issuing ``INSERT OR IGNORE`` (ADR-0202/0223: auto-creating on
+    collision is how a typo mints a phantom namespace); this wrapper converts
+    it to the admin-op error shape like every other failure here.
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        row = await storage.create_project_row(
+            key=str(payload["key"]),
+            kind=str(payload["kind"]),
+            display_name=payload.get("display_name"),
+            remote_url=payload.get("remote_url"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("create_project_row error key=%s: %s", payload.get("key"), exc)
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "row": row}
+
+
+@observe(tier="boundary", metric="backend.admin.ledger.list_project_rows")
+async def list_project_rows(payload: dict) -> dict:
+    """Return every registered project. payload: ``{}`` (no parameters)."""
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        rows = await storage.list_project_rows()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list_project_rows error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    return {"rows": rows}

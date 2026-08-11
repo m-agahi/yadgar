@@ -144,6 +144,12 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # Car B: ledger READ ops (task / adr / agent_prompt) over MariaStorageEngine
     # methods. Async because asyncmy is async-only. Closes the in-process
     # _get_storage() read path core used to take for ledger tables.
+    # C6: the ``project`` registry seed + read. The registry is load-bearing
+    # (ADR-0202/0223) and ships with zero rows, so seeding it is the FIRST
+    # operator step on a new deployment — every task/adr row FKs to it. These
+    # two ops are deliberately NOT registry-guarded: they are the bootstrap.
+    "create_project_row": ledger.create_project_row,
+    "list_project_rows": ledger.list_project_rows,
     "list_task_rows": ledger.list_task_rows,
     "get_task_row": ledger.get_task_row,
     "list_task_rows_all_projects": ledger.list_task_rows_all_projects,

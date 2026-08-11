@@ -64,6 +64,7 @@ from yadgar._shared.storage.sql.config import (
     MariaClientConfig,
     read_client_option_file,
 )
+from yadgar._shared.storage.sql.registry import _ProjectRegistryMixin
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -83,8 +84,15 @@ DEFAULT_MAX_OVERFLOW = 5
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-class MariaStorageEngine:
-    """Engine-#2 handle: an async SQLAlchemy engine over a local MariaDB socket."""
+class MariaStorageEngine(_ProjectRegistryMixin):
+    """Engine-#2 handle: an async SQLAlchemy engine over a local MariaDB socket.
+
+    The ``project`` registry's three row methods (``create_project_row`` /
+    ``list_project_rows`` / ``assert_project_registered``) come from
+    ``_ProjectRegistryMixin`` — they live in ``sql/registry.py`` because this
+    file is at I13's HARD 1000-LOC cap. See that module for why a mixin here
+    cannot reproduce PR #32's MRO failure.
+    """
 
     def __init__(
         self,

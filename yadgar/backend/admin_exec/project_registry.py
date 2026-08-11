@@ -56,21 +56,19 @@ from typing import Any
 
 from yadgar._shared.observability.observe import observe
 
+# C6: the error classes moved to a STDLIB-ONLY module under ``_shared`` so
+# ``MariaStorageEngine`` can raise the SAME class objects this guard raises.
+# Identity matters — every ``except UnknownProjectError`` binds on it, and two
+# same-named classes would let a real rejection slip through an except block
+# that looks correct. The target module imports nothing but ``__future__``, so
+# this re-export does not put ``project_registry`` on the ``sql`` extra (see
+# the module docstring's promise, and ``test_errors_module_is_stdlib_only``).
+from yadgar._shared.storage.sql.errors import (
+    ProjectRegistryUnavailableError,
+    UnknownProjectError,
+)
+
 logger = logging.getLogger(__name__)
-
-
-class UnknownProjectError(RuntimeError):
-    """The given project_id is not present in the ``project`` registry.
-
-    Carries the offending ``project_id`` verbatim so the structured-error
-    path can surface it in the response payload. Subclasses ``RuntimeError``
-    to match the existing backend structured-error pattern
-    (``RestoreVerificationError`` in ``admin_exec/restore_sql.py``).
-    """
-
-    def __init__(self, project_id: str) -> None:
-        super().__init__(f"unknown project_id: {project_id!r}")
-        self.project_id = project_id
 
 
 @observe(tier="boundary", metric="backend.admin._ensure_project_exists_async")
@@ -134,6 +132,7 @@ def _live_engine() -> Any:
 
 
 __all__ = [
+    "ProjectRegistryUnavailableError",
     "UnknownProjectError",
     "_ensure_project_exists_async",
     "_ensure_project_exists_sync",
