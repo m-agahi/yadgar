@@ -77,8 +77,15 @@ def _make_mock_wiki(results=None):
 class TestForwardOnlyDispatch:
     """Phase 2a: recall() always calls _forward_to_backend — no flag gate."""
 
-    def _call_recall(self, directory="/tmp/test", **kwargs):
-        """Helper: call recall with _forward_to_backend mocked."""
+    def _call_recall(self, directory="/tmp/test", project="owner/repo", **kwargs):
+        """Helper: call recall with _forward_to_backend mocked.
+
+        ``project`` is explicit because C5 (ADR-0227) put the identity resolver
+        at the top of ``recall`` — a call naming only a directory now raises
+        ``UnresolvedProjectError`` before the forward these tests spy on is
+        ever reached. What is asserted below is what recall FORWARDS, so the
+        call has to get that far.
+        """
         fake_results = [_make_memory_dict(1)]
         captured = {}
 
@@ -93,7 +100,13 @@ class TestForwardOnlyDispatch:
         ):
             mock_st._consolidation = None
             mock_st._pool = None
-            result = recall_fn(query="test query", max_results=5, directory=directory, **kwargs)
+            result = recall_fn(
+                query="test query",
+                max_results=5,
+                directory=directory,
+                project=project,
+                **kwargs,
+            )
 
         return result, captured
 
@@ -269,7 +282,12 @@ class TestForwardOnlyEndToEnd:
         ):
             mock_st._consolidation = None
             mock_st._pool = None
-            result = recall_fn(query="test query", max_results=10, directory="/tmp/test")
+            result = recall_fn(
+                query="test query",
+                max_results=10,
+                directory="/tmp/test",
+                project="owner/repo",
+            )
 
         has_wiki = any(r.get("_source") == "wiki" for r in result)
         has_memory = any(r.get("id") == 1 for r in result)

@@ -444,7 +444,16 @@ def test_agent_prompt_save_validates_gates_wraps_core_then_forwards():
         return {"saved": True, "version": 1, "slug": payload["slug"], "page_id": 9}
 
     with patch.object(_ap, "_forward_admin", _fake_forward):
-        _ap.agent_prompt_save("fix-bug", "do the thing", directory="/proj")
+        _ap.agent_prompt_save(
+            "fix-bug",
+            "do the thing",
+            directory="/proj",
+            # C5 (ADR-0227): agent_prompt_save resolves an identity before it
+            # composes the payload, and returns an unresolved_project envelope
+            # instead of forwarding when nothing names one — so without this the
+            # two forwards asserted below never happen.
+            project="owner/repo",
+        )
 
     # 0047 Car I: page-first then ledger-row mirror (D40 content_hash). Two
     # forwards, in that order — a crash between them leaves an orphan page
