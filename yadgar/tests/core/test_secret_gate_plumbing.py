@@ -22,6 +22,8 @@ from __future__ import annotations
 from textwrap import dedent
 from unittest.mock import MagicMock
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # ---------------------------------------------------------------------------
 # Helper: patch gate_or_reject at the secrets module level
 # ---------------------------------------------------------------------------
@@ -90,6 +92,7 @@ class TestMemorizeForwardsTagsToGate:
             content="some content",
             context="/home/user/test",
             tags=tags,
+            project=TEST_PROJECT_ID,
         )
 
         # gate_or_reject must have been called with tags= kwarg
@@ -151,6 +154,7 @@ class TestWikiAddForwardsTagsToGate:
             title="Test Page",
             content="wiki content",
             tags=tags,
+            project=TEST_PROJECT_ID,
         )
 
         assert captured_calls, "gate_or_reject never called (wiki_add still uses check_secrets)"
@@ -199,6 +203,7 @@ class TestAnchorForwardsTagsToGate:
             content="critical fact",
             context="/home/user/project",
             reason="test reason",
+            project=TEST_PROJECT_ID,
         )
 
         assert captured_calls, "gate_or_reject never called in anchor()"
@@ -251,6 +256,7 @@ class TestCheckpointGateCallAcceptable:
         checkpoint(
             directory="/home/user/project",
             current_task="doing stuff",
+            project=TEST_PROJECT_ID,
         )
 
         assert captured_calls, "gate_or_reject never called in checkpoint()"
@@ -318,6 +324,7 @@ class TestMemorizeAllowlistedTagSucceeds:
             content=f"Test memory with fake token: {fake_token}",
             context="/home/user/test",
             tags=["test-fixture", "yadgar"],
+            project=TEST_PROJECT_ID,
             # R3: branch required at enqueue
         )
 

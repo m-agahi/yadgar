@@ -34,6 +34,25 @@ TEST_PROJECT_ID = "test-owner/test-repo"
 OTHER_PROJECT_ID = "other-owner/other-repo"
 
 
+def memorize_scoped(*args, **kwargs):
+    """``memorize_sync`` with a project NAMED (C13, ADR-0227).
+
+    ``memorize`` maps ``UnresolvedProjectError`` onto its error envelope
+    instead of raising, so an unnamed call does not blow up — it returns
+    ``{"error": "unresolved_project", ...}`` and stores nothing, and the test
+    fails several asserts later on an empty recall. That indirection is why
+    the naming is centralised in one helper rather than left to be
+    rediscovered per file.
+
+    ``setdefault`` rather than a fixed value: a test doing cross-project work
+    passes its own ``project=`` and this helper gets out of the way.
+    """
+    from yadgar.tests.conftest import memorize_sync  # noqa: PLC0415
+
+    kwargs.setdefault("project", TEST_PROJECT_ID)
+    return memorize_sync(*args, **kwargs)
+
+
 @pytest.fixture
 def test_project() -> str:
     """The default test identity, for tests whose signature can take it.

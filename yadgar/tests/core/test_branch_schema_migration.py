@@ -12,6 +12,8 @@ Migration is tested by calling the migration function directly
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 @pytest.fixture
 def storage(tmp_path):
@@ -144,6 +146,7 @@ class TestBranchBackfill:
                 "content": "already-tagged memory",
                 "directory_context": "/tmp",
                 "tags": [],
+                "project_id": TEST_PROJECT_ID,
             },
             branch="master",
         )
@@ -163,6 +166,7 @@ class TestBranchStorageHelpers:
                 "content": "feature branch memory",
                 "directory_context": "/tmp",
                 "tags": [],
+                "project_id": TEST_PROJECT_ID,
             },
             branch="feat/v5.0",
         )
@@ -176,6 +180,7 @@ class TestBranchStorageHelpers:
                 "content": "no-branch memory",
                 "directory_context": "/tmp",
                 "tags": [],
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT branch FROM memory:{mid}")
@@ -192,6 +197,7 @@ class TestBranchStorageHelpers:
                 "content": "content",
                 "tags": [],
                 "links": [],
+                "project_id": TEST_PROJECT_ID,
             },
             branch="feat/v5.0",
         )
@@ -207,6 +213,7 @@ class TestBranchStorageHelpers:
                 "content": "content",
                 "tags": [],
                 "links": [],
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT branch FROM wiki_page:{pid}")
@@ -229,6 +236,7 @@ class TestBranchStorageHelpers:
                 "content": "memory for update-branch test",
                 "directory_context": "/tmp",
                 "tags": [],
+                "project_id": TEST_PROJECT_ID,
             }
         )
         storage.update_memory_fields(mid, branch="feat/v5.0")

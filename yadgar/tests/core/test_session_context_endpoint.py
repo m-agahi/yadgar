@@ -14,6 +14,8 @@ from unittest.mock import patch
 import pytest
 from starlette.testclient import TestClient
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # ---------------------------------------------------------------------------
 # Test app setup
 # ---------------------------------------------------------------------------
@@ -360,6 +362,7 @@ def _seed_task_list_page(
             "page_type": "task_list",
             "wiki_schema_version": 1,
             "directory_context": directory,
+            "project_id": TEST_PROJECT_ID,
         },
         branch=branch,
     )
@@ -507,6 +510,7 @@ def test_task_list_nudge_absent_from_dispatch_prelude(tmp_path, monkeypatch):
         task_topic="restore the task list",
         directory=str(tmp_path),
         include_context=True,
+        project=TEST_PROJECT_ID,
     )
     text = out if isinstance(out, str) else str(out)
     assert _NUDGE_MARKER not in text, (

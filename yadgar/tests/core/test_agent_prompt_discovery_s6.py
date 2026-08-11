@@ -26,6 +26,7 @@ import sys
 import pytest
 
 from yadgar.core import server  # noqa: E402
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # R3 Car 3c: agent_prompt_save forwards its DB write to the backend /admin endpoint.
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
@@ -131,7 +132,9 @@ def _ledger_row_mocks():
 def _save(pattern: str, content: str, purpose: str | None = None) -> dict:
     from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
-    res = agent_prompt_save(pattern, content, directory="global", purpose=purpose)
+    res = agent_prompt_save(
+        pattern, content, directory="global", purpose=purpose, project=TEST_PROJECT_ID
+    )
     assert res.get("saved") is True, f"agent_prompt_save failed: {res}"
     return res
 
@@ -188,9 +191,15 @@ class TestBC_S6_List:
         import yadgar._shared.runtime.state as _st
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        agent_dispatch_prelude("popular-pat", "topic", storage=_st._storage)
-        agent_dispatch_prelude("popular-pat", "topic", storage=_st._storage)
-        agent_dispatch_prelude("popular-pat", "topic", storage=_st._storage)
+        agent_dispatch_prelude(
+            "popular-pat", "topic", storage=_st._storage, project=TEST_PROJECT_ID
+        )
+        agent_dispatch_prelude(
+            "popular-pat", "topic", storage=_st._storage, project=TEST_PROJECT_ID
+        )
+        agent_dispatch_prelude(
+            "popular-pat", "topic", storage=_st._storage, project=TEST_PROJECT_ID
+        )
         from yadgar.core.server.tools.agent_prompts import agent_prompt_list
 
         listing = agent_prompt_list(directory="global", limit=20)
@@ -235,7 +244,9 @@ class TestBC_S6_Brief:
         _save("review-diff", "a", purpose="Review.")
         _save("plan-feature", "b", purpose="Plan.")
         # Unrelated project dir — the library is global, must still surface.
-        result = server.project_brief("/tmp/some_unrelated_proj_s6", mode="restore")
+        result = server.project_brief(
+            "/tmp/some_unrelated_proj_s6", mode="restore", project=TEST_PROJECT_ID
+        )
         assert "agent_prompt_toc" in result, (
             f"agent_prompt_toc missing from restore keys: {list(result.keys())}"
         )
@@ -248,7 +259,9 @@ class TestBC_S6_Brief:
         assert "body" not in toc
 
     def test_restore_toc_empty_when_no_library(self):
-        result = server.project_brief("/tmp/empty_lib_proj_s6", mode="restore")
+        result = server.project_brief(
+            "/tmp/empty_lib_proj_s6", mode="restore", project=TEST_PROJECT_ID
+        )
         assert "agent_prompt_toc" in result
         assert result["agent_prompt_toc"]["patterns"] == []
 
@@ -305,13 +318,17 @@ class TestBC_S6_KillGate:
     def test_flag_off_project_brief_no_toc(self, monkeypatch):
         self._setup(monkeypatch)
         self._set_flag(monkeypatch, False)
-        result = server.project_brief("/tmp/killgate_proj_s6", mode="restore")
+        result = server.project_brief(
+            "/tmp/killgate_proj_s6", mode="restore", project=TEST_PROJECT_ID
+        )
         assert "agent_prompt_toc" not in result, "flag-off restore must suppress agent_prompt_toc"
 
     def test_flag_on_project_brief_has_toc(self, monkeypatch):
         self._setup(monkeypatch)
         self._set_flag(monkeypatch, True)
-        result = server.project_brief("/tmp/killgate_proj_s6", mode="restore")
+        result = server.project_brief(
+            "/tmp/killgate_proj_s6", mode="restore", project=TEST_PROJECT_ID
+        )
         assert "agent_prompt_toc" in result
 
     def test_flag_off_dispatch_prelude_no_prompt(self, monkeypatch):
@@ -320,7 +337,9 @@ class TestBC_S6_KillGate:
         import yadgar._shared.runtime.state as _st
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("review-pr-security", "review task", storage=_st._storage)
+        prelude = agent_dispatch_prelude(
+            "review-pr-security", "review task", storage=_st._storage, project=TEST_PROJECT_ID
+        )
         assert "Agent-prompt" not in prelude, (
             f"flag-off dispatch prelude must inject no prompt, got:\n{prelude}"
         )
@@ -331,5 +350,7 @@ class TestBC_S6_KillGate:
         import yadgar._shared.runtime.state as _st
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("review-pr-security", "review task", storage=_st._storage)
+        prelude = agent_dispatch_prelude(
+            "review-pr-security", "review task", storage=_st._storage, project=TEST_PROJECT_ID
+        )
         assert "Agent-prompt" in prelude

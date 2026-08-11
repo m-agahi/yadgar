@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -107,6 +108,7 @@ def _insert_roadmap_wiki(updated_at_ts: float) -> None:
         source_memory_ids=[],
         wait=True,
         directory=_TEST_DIR,
+        project=TEST_PROJECT_ID,
     )
     # Patch updated_at directly in storage to simulate wiki being refreshed at updated_at_ts
     from yadgar._shared.runtime.lifecycle import _get_storage
@@ -150,7 +152,7 @@ def test_signal_present_when_master_newer(_engines, tmp_path, flush_queue, monke
         lambda resolved, ts: "5.0.0",
     )
 
-    result = server.project_brief(str(repo), mode="signals")
+    result = server.project_brief(str(repo), mode="signals", project=TEST_PROJECT_ID)
     assert "roadmap_update_lag_hours" in result
     lag = result["roadmap_update_lag_hours"]
     assert lag > 0, f"Expected positive lag, got {lag}"
@@ -189,7 +191,7 @@ def test_signal_zero_when_roadmap_newer(_engines, tmp_path, monkeypatch):
         lambda resolved, ts: "5.0.0",
     )
 
-    result = server.project_brief(str(repo), mode="signals")
+    result = server.project_brief(str(repo), mode="signals", project=TEST_PROJECT_ID)
     assert result.get("roadmap_update_lag_hours") == 0.0
 
 
@@ -222,7 +224,7 @@ def test_recommended_action_fires_on_ship_commit(_engines, tmp_path, monkeypatch
         lambda resolved, ts: "5.41.2",  # version changed → ship confirmed
     )
 
-    result = server.project_brief(str(repo), mode="signals")
+    result = server.project_brief(str(repo), mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "update_roadmap" in actions, f"Expected update_roadmap in {actions}"
 
@@ -261,7 +263,7 @@ def test_recommended_action_skips_non_ship_commit(_engines, tmp_path, monkeypatc
         lambda resolved, ts: "5.0.0",  # no version change → not a ship
     )
 
-    result = server.project_brief(str(repo), mode="signals")
+    result = server.project_brief(str(repo), mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "update_roadmap" not in actions, f"Expected no update_roadmap, got {actions}"
 
@@ -307,7 +309,7 @@ def test_signal_uses_master_not_current_branch(_engines, tmp_path, monkeypatch):
         lambda resolved, ts: "5.0.0",
     )
 
-    result = server.project_brief(str(repo), mode="signals")
+    result = server.project_brief(str(repo), mode="signals", project=TEST_PROJECT_ID)
     lag = result.get("roadmap_update_lag_hours", None)
     assert lag is not None
     assert lag > 0, f"Expected positive lag from master (not feature branch), got {lag}"
@@ -340,7 +342,7 @@ def test_signal_roadmap_wiki_not_found(_engines, tmp_path, monkeypatch):
     )
 
     # No wiki page inserted → slug not found
-    result = server.project_brief(str(repo), mode="signals")
+    result = server.project_brief(str(repo), mode="signals", project=TEST_PROJECT_ID)
     assert result.get("roadmap_update_lag_hours", -1) == -1, (
         f"Expected -1 sentinel (or absent key), got {result.get('roadmap_update_lag_hours')}"
     )
@@ -383,7 +385,7 @@ def test_recommended_action_fires_on_squash_merge(_engines, tmp_path, monkeypatc
         lambda resolved, ts: "5.41.3",
     )
 
-    result = server.project_brief(str(repo), mode="signals")
+    result = server.project_brief(str(repo), mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "update_roadmap" in actions, (
         f"Expected update_roadmap for squash-merge ship (pyproject diff), got {actions}"

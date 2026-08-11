@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # R3 Car 3c: agent_prompt_save (called in test setup) forwards to backend /admin.
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -37,27 +39,35 @@ class TestDispatchHelperContract:
     def test_prelude_contains_contract_section(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("dispatch-fix-bug", "vacuum regression", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "dispatch-fix-bug", "vacuum regression", storage=storage, project=TEST_PROJECT_ID
+        )
         assert "## Yadgar subagent contract" in prelude
 
     def test_prelude_contains_recall_directive(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("any-pattern", "some topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "any-pattern", "some topic", storage=storage, project=TEST_PROJECT_ID
+        )
         # Contract should mention recall
         assert "recall" in prelude.lower()
 
     def test_prelude_contains_findings_directive(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("any-pattern", "some topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "any-pattern", "some topic", storage=storage, project=TEST_PROJECT_ID
+        )
         # Contract should mention Yadgar findings
         assert "Yadgar findings" in prelude
 
     def test_prelude_mentions_no_memorize(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("any-pattern", "some topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "any-pattern", "some topic", storage=storage, project=TEST_PROJECT_ID
+        )
         # Contract should tell agent not to memorize
         assert "memorize" in prelude.lower() or "NOT" in prelude
 
@@ -74,9 +84,12 @@ class TestDispatchHelperAgentPrompt:
             "Focus on root cause. Check test suite.",
             storage=storage,
             directory="global",
+            project=TEST_PROJECT_ID,
         )
 
-        prelude = agent_dispatch_prelude("dispatch-fix-bug", "fix the thing", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "dispatch-fix-bug", "fix the thing", storage=storage, project=TEST_PROJECT_ID
+        )
         assert "root cause" in prelude
 
     def test_includes_version_label(self, storage):
@@ -84,13 +97,23 @@ class TestDispatchHelperAgentPrompt:
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         agent_prompt_save(
-            "dispatch-review", "Review carefully.", storage=storage, directory="global"
+            "dispatch-review",
+            "Review carefully.",
+            storage=storage,
+            directory="global",
+            project=TEST_PROJECT_ID,
         )
         agent_prompt_save(
-            "dispatch-review", "Review even more carefully.", storage=storage, directory="global"
+            "dispatch-review",
+            "Review even more carefully.",
+            storage=storage,
+            directory="global",
+            project=TEST_PROJECT_ID,
         )
 
-        prelude = agent_dispatch_prelude("dispatch-review", "review task", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "dispatch-review", "review task", storage=storage, project=TEST_PROJECT_ID
+        )
         # Should reference v2 (latest)
         assert "v2" in prelude
 
@@ -98,7 +121,9 @@ class TestDispatchHelperAgentPrompt:
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
         # No prompt saved for this pattern
-        prelude = agent_dispatch_prelude("nonexistent-xyz-pattern", "some task", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "nonexistent-xyz-pattern", "some task", storage=storage, project=TEST_PROJECT_ID
+        )
         # Should still return a valid prelude (just without agent-prompt section)
         assert "## Yadgar subagent contract" in prelude
         assert isinstance(prelude, str)
@@ -111,7 +136,9 @@ class TestDispatchHelperNoPatternsGraceful:
     def test_empty_pattern_skips_prompt_lookup(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("", "refactor database layer", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "", "refactor database layer", storage=storage, project=TEST_PROJECT_ID
+        )
         # Should not mention agent-prompt section
         assert "## Yadgar subagent contract" in prelude
         assert "Recall hint" in prelude
@@ -119,7 +146,9 @@ class TestDispatchHelperNoPatternsGraceful:
     def test_recall_hint_includes_task_topic(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("", "memory pressure investigation", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "", "memory pressure investigation", storage=storage, project=TEST_PROJECT_ID
+        )
         assert "memory pressure investigation" in prelude
 
 
@@ -129,7 +158,9 @@ class TestDispatchHelperSizeBudget:
     def test_short_prelude_under_budget(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        prelude = agent_dispatch_prelude("short-pattern", "short topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "short-pattern", "short topic", storage=storage, project=TEST_PROJECT_ID
+        )
         assert len(prelude) <= 2000
 
     def test_long_agent_prompt_capped(self, storage):
@@ -138,13 +169,21 @@ class TestDispatchHelperSizeBudget:
 
         # Save a very long agent prompt
         long_content = "x" * 5000
-        agent_prompt_save("long-pattern", long_content, storage=storage, directory="global")
+        agent_prompt_save(
+            "long-pattern",
+            long_content,
+            storage=storage,
+            directory="global",
+            project=TEST_PROJECT_ID,
+        )
 
-        prelude = agent_dispatch_prelude("long-pattern", "long topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "long-pattern", "long topic", storage=storage, project=TEST_PROJECT_ID
+        )
         assert len(prelude) <= 2000
 
     def test_returns_string(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        result = agent_dispatch_prelude("any", "any", storage=storage)
+        result = agent_dispatch_prelude("any", "any", storage=storage, project=TEST_PROJECT_ID)
         assert isinstance(result, str)

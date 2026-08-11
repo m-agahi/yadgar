@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from yadgar.core import server
-from yadgar.tests.conftest import memorize_sync
+from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -73,11 +73,15 @@ class TestContentIntegrity:
     def test_exact_content_preserved(self, recall_backend_bypass):
         """recall() returns the exact content that was stored."""
         content = "The deployment uses Helm chart version 3.14.2 with replicas=5"
-        result = memorize_sync(content, "/home/user/project", ["infra"])
+        result = memorize_scoped(content, "/home/user/project", ["infra"])
         mid = result["id"]
 
         # Recall with a related query — v5.65: directory required
-        hits = server.recall("helm chart deployment replicas", directory="/home/user/project")
+        hits = server.recall(
+            "helm chart deployment replicas",
+            directory="/home/user/project",
+            project=TEST_PROJECT_ID,
+        )
         match = next((h for h in hits if h["id"] == mid), None)
         assert match is not None, "Memory not found in recall results"
         assert match["content"] == content, (
@@ -87,10 +91,12 @@ class TestContentIntegrity:
     def test_specific_detail_preserved(self, recall_backend_bypass):
         """Specific identifiers (IDs, paths, item names) survive retrieval unchanged."""
         content = "Codeberg PAT is stored in 1Password item zqq55bz2qi53gw375jlm2sh4jq"
-        result = memorize_sync(content, "/home/user", ["codeberg", "secrets"])
+        result = memorize_scoped(content, "/home/user", ["codeberg", "secrets"])
         mid = result["id"]
 
-        hits = server.recall("codeberg personal access token", directory="/home/user")
+        hits = server.recall(
+            "codeberg personal access token", directory="/home/user", project=TEST_PROJECT_ID
+        )
         match = next((h for h in hits if h["id"] == mid), None)
         assert match is not None
         assert "zqq55bz2qi53gw375jlm2sh4jq" in match["content"], (
@@ -100,7 +106,7 @@ class TestContentIntegrity:
     def test_recall_does_not_rewrite_content(self, recall_backend_bypass):
         """Calling recall() multiple times with different queries never rewrites content."""
         content = "Redis cluster uses Sentinel mode with quorum=2 and auth password stored in Vault"
-        result = memorize_sync(content, "/home/user/ops", ["redis", "vault"])
+        result = memorize_scoped(content, "/home/user/ops", ["redis", "vault"])
         mid = result["id"]
 
         queries = [
@@ -111,7 +117,7 @@ class TestContentIntegrity:
             "another unrelated: cooking pasta al dente",
         ]
         for query in queries:
-            server.recall(query, directory="/home/user/ops")
+            server.recall(query, directory="/home/user/ops", project=TEST_PROJECT_ID)
             mem = _get_memory(mid)
             assert mem is not None
             assert mem["content"] == content, (
@@ -122,7 +128,7 @@ class TestContentIntegrity:
     def test_consolidation_does_not_alter_content(self):
         """consolidate_now() never modifies the content field."""
         content = "API key for Datadog is sk-dd-prod-XXXX stored in ~/.secrets/datadog"
-        result = memorize_sync(content, "/home/user/monitoring", ["datadog", "api-key"])
+        result = memorize_scoped(content, "/home/user/monitoring", ["datadog", "api-key"])
         mid = result["id"]
 
         server.consolidate_now()
@@ -196,13 +202,15 @@ class TestRankingDiagnostics:
         # NOT contain the query phrase, else we'd be measuring FTS overlap.
         assert "personal access token" not in pat_content.lower()
 
-        pat = memorize_sync(pat_content, directory, ["codeberg", "secrets"])
+        pat = memorize_scoped(pat_content, directory, ["codeberg", "secrets"])
         pat_id = pat["id"]
         for i, dc in enumerate(self._DISTRACTORS):
-            memorize_sync(dc, directory, ["secrets", f"distractor{i}"])
+            memorize_scoped(dc, directory, ["secrets", f"distractor{i}"])
 
         # Expansion query — no "PAT" token, so FTS cannot bridge it.
-        hits = server.recall("personal access token", directory=directory, max_results=5)
+        hits = server.recall(
+            "personal access token", directory=directory, max_results=5, project=TEST_PROJECT_ID
+        )
         top_ids = [h["id"] for h in hits]
         assert pat_id in top_ids, (
             "1b DIAGNOSTIC: the 'Codeberg PAT' memory did NOT rank in the top-5 "
@@ -228,7 +236,7 @@ class TestNoCompression:
         content = (
             "PostgreSQL migration: added index on users.email using CONCURRENTLY to avoid lock"
         )
-        result = memorize_sync(content, "/home/user/db", ["postgres", "migration"])
+        result = memorize_scoped(content, "/home/user/db", ["postgres", "migration"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=7 * 24 + 1)  # 7 days + 1h
 
@@ -249,7 +257,7 @@ class TestNoCompression:
             "team=platform, cost-center=infra-001. Last reviewed 2024-01-15."
         )
         assert len(content) > 200, "test setup: content must exceed old tag-compression threshold"
-        result = memorize_sync(content, "/home/user/infra", ["k8s", "autoscaler"])
+        result = memorize_scoped(content, "/home/user/infra", ["k8s", "autoscaler"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=30 * 24 + 1)  # 30 days + 1h
 
@@ -263,7 +271,7 @@ class TestNoCompression:
     def test_long_content_not_truncated(self):
         """A 2500-char memory retains its full length after consolidation."""
         long_content = "Detail: " + ("x" * 2490)  # over 2000-char reconsolidation truncation limit
-        result = memorize_sync(long_content, "/home/user/docs", ["long"])
+        result = memorize_scoped(long_content, "/home/user/docs", ["long"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=10 * 24)
 
@@ -293,7 +301,7 @@ class TestHeatDecay:
 
     def test_heat_after_24h_above_98_percent(self):
         """After 24h, heat should still be above 98% of original."""
-        result = memorize_sync("fresh memory", "/home/user/test", ["test"])
+        result = memorize_scoped("fresh memory", "/home/user/test", ["test"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=24)
 
@@ -305,7 +313,7 @@ class TestHeatDecay:
 
     def test_heat_after_90_days_above_30_percent(self):
         """After 90 days without access, heat should still be above 30%."""
-        result = memorize_sync("90 day old fact", "/home/user/test", ["test"])
+        result = memorize_scoped("90 day old fact", "/home/user/test", ["test"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=90 * 24)
 
@@ -317,7 +325,7 @@ class TestHeatDecay:
 
     def test_important_memory_heat_after_90_days_above_75_percent(self):
         """Important memories (importance > 0.7) decay much more slowly."""
-        result = memorize_sync("critical architecture decision", "/home/user/test", ["arch"])
+        result = memorize_scoped("critical architecture decision", "/home/user/test", ["arch"])
         mid = result["id"]
         # Set high importance — triggers IMPORTANCE_DECAY_FACTOR path
         server._get_storage().update_memory_fields(mid, importance=0.9)
@@ -333,7 +341,7 @@ class TestHeatDecay:
 
     def test_heat_after_180_days_above_10_percent(self):
         """After 6 months without access, standard memories should still be above 10%."""
-        result = memorize_sync("6 month old memory", "/home/user/test", ["test"])
+        result = memorize_scoped("6 month old memory", "/home/user/test", ["test"])
         mid = result["id"]
         _set_memory_age(mid, hours_ago=180 * 24)
 
@@ -355,7 +363,7 @@ class TestProtectedMemories:
 
     def test_protected_memory_heat_not_decayed(self):
         """A protected memory's heat is untouched even after 1 year without access."""
-        result = memorize_sync(
+        result = memorize_scoped(
             "permanent config: prod DB is db.internal:5432",
             "/home/user/infra",
             ["db", "config"],
@@ -375,7 +383,7 @@ class TestProtectedMemories:
 
     def test_protected_memory_not_pruned(self):
         """A cold protected memory is never pruned."""
-        result = memorize_sync(
+        result = memorize_scoped(
             "protected cold memory that must survive",
             "/home/user/test",
             ["important"],
@@ -395,7 +403,7 @@ class TestProtectedMemories:
     def test_protected_memory_content_not_modified(self):
         """A 60-day-old protected memory's content is identical after consolidation."""
         content = "SSH key fingerprint for bastion host: SHA256:ABCDEF1234567890"
-        result = memorize_sync(content, "/home/user/ssh", ["ssh", "bastion"], is_protected=True)
+        result = memorize_scoped(content, "/home/user/ssh", ["ssh", "bastion"], is_protected=True)
         mid = result["id"]
         _set_memory_age(mid, hours_ago=60 * 24)
 
@@ -418,7 +426,7 @@ class TestAutoDeletion:
 
     def test_user_memory_not_auto_deleted(self):
         """A cold, unaccessed, low-confidence user memory is never auto-pruned."""
-        result = memorize_sync(
+        result = memorize_scoped(
             "important fact that should never be deleted",
             "/home/user/project",
             ["user-stored"],
@@ -448,6 +456,7 @@ class TestAutoDeletion:
                 "is_stale": False,
                 "file_hash": None,
                 "embedding_model": embeddings.get_model_name(),
+                "project_id": TEST_PROJECT_ID,
             }
         )
         storage._q(
@@ -481,6 +490,7 @@ class TestAutoDeletion:
                 "is_stale": False,
                 "file_hash": None,
                 "embedding_model": embeddings.get_model_name(),
+                "project_id": TEST_PROJECT_ID,
             }
         )
         mem = storage.get_memory(mid)
@@ -504,6 +514,7 @@ class TestAutoDeletion:
                 "is_stale": False,
                 "file_hash": None,
                 "embedding_model": embeddings.get_model_name(),
+                "project_id": TEST_PROJECT_ID,
             }
         )
         storage.update_memory_fields(mid, confidence=0.1, access_count=0, is_protected=True)
@@ -527,12 +538,12 @@ class TestCurationThreshold:
 
     def test_distinct_facts_stored_as_separate_memories(self):
         """Two related but distinct facts produce two separate memory IDs."""
-        r1 = memorize_sync(
+        r1 = memorize_scoped(
             "Production database host is prod-db-primary.internal port 5432",
             "/home/user/infra",
             ["db", "prod"],
         )
-        r2 = memorize_sync(
+        r2 = memorize_scoped(
             "Staging database host is staging-db.internal port 5433",
             "/home/user/infra",
             ["db", "staging"],
@@ -542,8 +553,8 @@ class TestCurationThreshold:
     def test_near_duplicate_content_merged_on_ingest(self):
         """Storing the exact same content twice results in only one memory."""
         content = "AWS account ID for production environment is 123456789012"
-        r1 = memorize_sync(content, "/home/user/aws", ["aws", "prod"])
-        r2 = memorize_sync(content, "/home/user/aws", ["aws", "prod"])
+        r1 = memorize_scoped(content, "/home/user/aws", ["aws", "prod"])
+        r2 = memorize_scoped(content, "/home/user/aws", ["aws", "prod"])
         # Merged: both should resolve to the same memory ID
         assert r1["id"] == r2["id"], (
             "Identical content produced two separate memories instead of merging"
@@ -563,7 +574,7 @@ class TestDeduplication:
     def test_exact_duplicate_removed_by_consolidation(self):
         """Two memories with identical content → consolidation keeps only one."""
         content = "Duplicate fact that should be deduplicated"
-        r1 = memorize_sync(content, "/home/user/test", ["test"])
+        r1 = memorize_scoped(content, "/home/user/test", ["test"])
         # Force a second distinct ID by inserting directly
         storage = server._get_storage()
         embeddings = server._get_embeddings()
@@ -578,6 +589,7 @@ class TestDeduplication:
                 "is_stale": False,
                 "file_hash": None,
                 "embedding_model": embeddings.get_model_name(),
+                "project_id": TEST_PROJECT_ID,
             }
         )
 
@@ -592,12 +604,12 @@ class TestDeduplication:
 
     def test_similar_but_distinct_memories_both_kept(self):
         """Two distinct memories at moderate similarity are both kept after consolidation."""
-        r1 = memorize_sync(
+        r1 = memorize_scoped(
             "The Python asyncio event loop runs coroutines cooperatively",
             "/home/user/test",
             ["python"],
         )
-        r2 = memorize_sync(
+        r2 = memorize_scoped(
             "JavaScript uses an event loop for non-blocking I/O operations",
             "/home/user/test",
             ["javascript"],
@@ -626,7 +638,7 @@ class TestRegressionScenarios:
         Fix: reconsolidation disabled — recall() is now read-only.
         """
         content = "Codeberg PAT is stored in 1Password item zqq55bz2qi53gw375jlm2sh4jq under Personal vault"
-        result = memorize_sync(content, "/home/user", ["codeberg", "1password", "pat"])
+        result = memorize_scoped(content, "/home/user", ["codeberg", "1password", "pat"])
         mid = result["id"]
 
         # Recall with very different contexts that previously triggered extinction
@@ -637,7 +649,7 @@ class TestRegressionScenarios:
             "password manager vault item",
         ]
         for query in unrelated_queries:
-            server.recall(query, directory="/home/user")
+            server.recall(query, directory="/home/user", project=TEST_PROJECT_ID)
 
         mem = _get_memory(mid)
         assert mem is not None
@@ -655,12 +667,16 @@ class TestRegressionScenarios:
         # Use a short fake token (< 20 chars after prefix) so it doesn't trigger
         # the v5.10.2 secret gate (ghp_[A-Za-z0-9_]{20,}).
         content = "GitHub token for CI: ghp_FAKE1234567890"
-        result = memorize_sync(content, "/home/user/projectA", ["github", "ci", "token"])
+        result = memorize_scoped(content, "/home/user/projectA", ["github", "ci", "token"])
         mid = result["id"]
 
         # Recall from a completely different project — v5.65: directory required
-        server.recall("github token authentication", directory="/home/user/projectB")
-        server.recall("CI deployment secrets", directory="/home/user/projectB")
+        server.recall(
+            "github token authentication", directory="/home/user/projectB", project=TEST_PROJECT_ID
+        )
+        server.recall(
+            "CI deployment secrets", directory="/home/user/projectB", project=TEST_PROJECT_ID
+        )
 
         mem = _get_memory(mid)
         assert mem is not None

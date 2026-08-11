@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -119,7 +120,7 @@ class TestNewSignalFields:
     """
 
     def test_anchor_count_project_field_present(self):
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert "anchor_count_project" in result, "anchor_count_project missing from signals"
 
     def test_anchor_redundancy_candidates_field_present_when_non_empty(self, storage, monkeypatch):
@@ -135,7 +136,7 @@ class TestNewSignalFields:
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert "anchor_redundancy_candidates" in result, (
             "anchor_redundancy_candidates missing when non-empty"
         )
@@ -143,17 +144,19 @@ class TestNewSignalFields:
     def test_anchor_promote_candidates_field_present_when_non_empty(self, storage):
         """anchor_promote_candidates appears when candidates exist (omitted when empty)."""
         _insert_anchor(storage, _HEADERS_CONTENT, directory=_DIR, tags=["recipe"])
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert "anchor_promote_candidates" in result, (
             "anchor_promote_candidates missing when non-empty"
         )
 
     def test_anchor_count_project_is_int(self):
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert isinstance(result["anchor_count_project"], int)
 
     def test_anchor_count_project_zero_when_no_anchors(self):
-        result = server.project_brief("/tmp/empty_dir_xyz123", mode="signals")
+        result = server.project_brief(
+            "/tmp/empty_dir_xyz123", mode="signals", project=TEST_PROJECT_ID
+        )
         assert result["anchor_count_project"] == 0
 
     def test_anchor_count_project_counts_only_non_expired(self, storage):
@@ -166,15 +169,15 @@ class TestNewSignalFields:
         _insert_anchor(storage, "expired anchor", directory=_DIR, valid_until=past)
         _insert_anchor(storage, "null expiry anchor", directory=_DIR)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         # 2 non-expired (future + null), 1 expired excluded
         assert result["anchor_count_project"] >= 2
 
     def test_anchor_count_project_excludes_other_dir(self, storage):
         """Count is scoped to directory_context = resolved dir, not cross-dir."""
         _insert_anchor(storage, "my anchor", directory=_DIR)
-        result_other = server.project_brief(_DIR2, mode="signals")
-        result_mine = server.project_brief(_DIR, mode="signals")
+        result_other = server.project_brief(_DIR2, mode="signals", project=TEST_PROJECT_ID)
+        result_mine = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert result_mine["anchor_count_project"] > result_other["anchor_count_project"]
 
 
@@ -187,7 +190,7 @@ class TestTokenBudget:
     """signals mode stays <= 100 tokens even under pathological load."""
 
     def test_token_budget_empty_db(self):
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         tokens = len(json.dumps(result)) // 4
         assert tokens <= 100, f"signals too large (empty): {tokens} tokens"
 
@@ -195,7 +198,7 @@ class TestTokenBudget:
         """Budget ≤100 with 15 anchors but no redundancy/promote candidates."""
         for i in range(15):
             _insert_anchor(storage, f"anchor content {i}", directory=_DIR)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         tokens = len(json.dumps(result)) // 4
         assert tokens <= 100, f"signals too large (15 anchors, no candidates): {tokens} tokens"
 
@@ -235,7 +238,7 @@ class TestTokenBudget:
                 tags=["rule"],
             )
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         redundancy = result.get("anchor_redundancy_candidates", [])
         promote = result.get("anchor_promote_candidates", [])
         # Verify truncation applied at K=3
@@ -298,7 +301,7 @@ class TestRedundancyDetection:
     def test_redundancy_candidates_empty_when_no_embeddings(self, storage):
         _insert_anchor(storage, "no emb anchor a", directory=_DIR)
         _insert_anchor(storage, "no emb anchor b", directory=_DIR)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         # Empty list → field omitted from payload (budget optimisation)
         assert result.get("anchor_redundancy_candidates", []) == []
 
@@ -318,7 +321,7 @@ class TestRedundancyDetection:
         # Lower threshold so these definitely qualify
         monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         pairs = result["anchor_redundancy_candidates"]
         assert len(pairs) >= 1
         ids_in_pairs = {p[0] for p in pairs} | {p[1] for p in pairs}
@@ -337,7 +340,7 @@ class TestRedundancyDetection:
 
         monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         pairs = result["anchor_redundancy_candidates"]
         if pairs:
             p = pairs[0]
@@ -361,7 +364,7 @@ class TestRedundancyDetection:
 
         monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         # Should not have cross-dir pairs (only 1 anchor in _DIR → empty → field absent)
         pairs = result.get("anchor_redundancy_candidates", [])
         for p in pairs:
@@ -381,7 +384,7 @@ class TestRedundancyDetection:
 
         monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         pairs = result.get("anchor_redundancy_candidates", [])
         assert len(pairs) <= 3
 
@@ -398,7 +401,7 @@ class TestRedundancyDetection:
 
         monkeypatch.setattr(get_settings(), "ANCHOR_REDUNDANCY_COSINE", 0.5, raising=False)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         pairs = result.get("anchor_redundancy_candidates", [])
         if len(pairs) == 3:
             # List was capped → _truncated must be True
@@ -429,7 +432,7 @@ class TestPromoteDetection:
             directory=_DIR,
             tags=["rule"],
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert mid in result["anchor_promote_candidates"]
 
     def test_promote_requires_word_count(self, storage):
@@ -440,7 +443,7 @@ class TestPromoteDetection:
             directory=_DIR,
             tags=["rule"],
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert mid not in result.get("anchor_promote_candidates", [])
 
     def test_promote_requires_header_count(self, storage):
@@ -451,7 +454,7 @@ class TestPromoteDetection:
             directory=_DIR,
             tags=["pattern"],
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert mid not in result.get("anchor_promote_candidates", [])
 
     def test_promote_requires_tag_intersection(self, storage):
@@ -462,7 +465,7 @@ class TestPromoteDetection:
             directory=_DIR,
             tags=["_anchor"],  # no promo-qualifying tag beyond base
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert mid not in result.get("anchor_promote_candidates", [])
 
     def test_promote_code_block_hashes_not_counted(self, storage):
@@ -474,7 +477,7 @@ class TestPromoteDetection:
             directory=_DIR,
             tags=["playbook"],
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         # Should still qualify (2 real headers, code block # excluded)
         assert mid in result["anchor_promote_candidates"]
 
@@ -487,7 +490,7 @@ class TestPromoteDetection:
                 directory=_DIR,
                 tags=["workflow"],
             )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert len(result.get("anchor_promote_candidates", [])) <= 3
 
 
@@ -511,7 +514,7 @@ class TestRecommendedActionsAudit:
         # Insert 10 healthy anchors — no expired/redundant/promotable
         for i in range(10):
             _insert_anchor(storage, f"anchor {i}", directory=_DIR)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" not in actions
 
@@ -525,7 +528,7 @@ class TestRecommendedActionsAudit:
         # Insert 6 healthy anchors with no expired/redundant/promotable content
         for i in range(6):
             _insert_anchor(storage, f"audit anchor {i}", directory=_DIR)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" not in actions, (
             "audit_anchors should NOT fire on count alone — actionability gate required"
@@ -540,7 +543,7 @@ class TestRecommendedActionsAudit:
         _insert_anchor(
             storage, "expired audit", directory=_DIR, valid_until=past, migration_grace=False
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" in actions
 
@@ -552,7 +555,7 @@ class TestRecommendedActionsAudit:
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(storage, "reason exp a", directory=_DIR, valid_until=past)
         _insert_anchor(storage, "reason exp b", directory=_DIR, valid_until=past)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action = next(
             (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"), None
         )
@@ -572,7 +575,7 @@ class TestRecommendedActionsRedundancy:
     """
 
     def test_merge_not_emitted_when_no_pairs(self):
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "merge_redundant_anchors" not in actions
 
@@ -589,7 +592,7 @@ class TestRecommendedActionsRedundancy:
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "merge_redundant_anchors" not in actions, "phantom name must not appear"
         assert "audit_anchors" in actions, "audit_anchors must fire when redundancy present"
@@ -607,7 +610,7 @@ class TestRecommendedActionsRedundancy:
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
 
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action = next(
             (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"),
             None,
@@ -627,7 +630,7 @@ class TestRecommendedActionsPromote:
     """
 
     def test_promote_not_emitted_when_no_candidates(self):
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "promote_anchor_to_wiki" not in actions
 
@@ -639,7 +642,7 @@ class TestRecommendedActionsPromote:
             directory=_DIR,
             tags=["recipe"],
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "promote_anchor_to_wiki" not in actions, "phantom name must not appear"
         assert "audit_anchors" in actions, "audit_anchors must fire when promotable anchors present"
@@ -652,7 +655,7 @@ class TestRecommendedActionsPromote:
             directory=_DIR,
             tags=["convention"],
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action = next(
             (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"),
             None,
@@ -674,7 +677,7 @@ class TestRecommendedActionsForgetExpired:
     def test_forget_phantom_name_never_emitted_when_no_expired(self, storage):
         future = (datetime.now(UTC) + timedelta(days=30)).isoformat()
         _insert_anchor(storage, "live anchor", directory=_DIR, valid_until=future)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "forget_expired_anchors" not in actions
 
@@ -684,7 +687,7 @@ class TestRecommendedActionsForgetExpired:
         _insert_anchor(
             storage, "expired anchor", directory=_DIR, valid_until=past, migration_grace=False
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "forget_expired_anchors" not in actions, "phantom name must not appear"
         assert "audit_anchors" in actions, "audit_anchors must fire when expired anchor present"
@@ -695,7 +698,7 @@ class TestRecommendedActionsForgetExpired:
         _insert_anchor(
             storage, "grace anchor", directory=_DIR, valid_until=past, migration_grace=True
         )
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
         assert "forget_expired_anchors" not in actions
 
@@ -704,7 +707,7 @@ class TestRecommendedActionsForgetExpired:
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(storage, "exp a", directory=_DIR, valid_until=past)
         _insert_anchor(storage, "exp b", directory=_DIR, valid_until=past)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action = next(
             (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"),
             None,
@@ -750,8 +753,8 @@ class TestRecommendedActionsOrder:
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
 
-        result1 = server.project_brief(_DIR, mode="signals")
-        result2 = server.project_brief(_DIR, mode="signals")
+        result1 = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
+        result2 = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         assert result1["recommended_actions"] == result2["recommended_actions"]
 
         # Exactly one audit_anchors action — no phantom names
@@ -856,7 +859,7 @@ class TestNoPhantomActionNames:
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 5, raising=False)
         for i in range(16):
             _insert_anchor(storage, f"healthy anchor {i}", directory=_DIR)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = {a["action"] for a in result["recommended_actions"]}
         assert not action_names & _PHANTOM_NAMES, (
             f"Phantom action names found: {action_names & _PHANTOM_NAMES}"
@@ -866,7 +869,7 @@ class TestNoPhantomActionNames:
         """Expired anchor present → audit_anchors recommended, NOT forget_expired_anchors."""
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(storage, "expired", directory=_DIR, valid_until=past, migration_grace=False)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = {a["action"] for a in result["recommended_actions"]}
         assert not action_names & _PHANTOM_NAMES, (
             f"Phantom action names found: {action_names & _PHANTOM_NAMES}"
@@ -884,7 +887,7 @@ class TestNoPhantomActionNames:
             return base
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = {a["action"] for a in result["recommended_actions"]}
         assert not action_names & _PHANTOM_NAMES, (
             f"Phantom action names found: {action_names & _PHANTOM_NAMES}"
@@ -893,7 +896,7 @@ class TestNoPhantomActionNames:
     def test_no_phantom_names_when_promote_present(self, storage):
         """Promotable anchor present → audit_anchors recommended, NOT promote_anchor_to_wiki."""
         _insert_anchor(storage, _HEADERS_CONTENT, directory=_DIR, tags=["recipe"])
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = {a["action"] for a in result["recommended_actions"]}
         assert not action_names & _PHANTOM_NAMES, (
             f"Phantom action names found: {action_names & _PHANTOM_NAMES}"
@@ -914,7 +917,7 @@ class TestAuditAnchorActionabilityGate:
         # Insert 16 healthy anchors: no expiry, no embeddings (no redundancy), no promo tags
         for i in range(16):
             _insert_anchor(storage, f"unique healthy anchor {i}", directory=_DIR)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" not in action_names, (
             "audit_anchors should NOT fire when count > threshold but nothing is actionable"
@@ -927,7 +930,7 @@ class TestAuditAnchorActionabilityGate:
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(storage, "expired", directory=_DIR, valid_until=past, migration_grace=False)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" in action_names, (
             "audit_anchors should fire when expired anchor present"
@@ -947,7 +950,7 @@ class TestAuditAnchorActionabilityGate:
             return base
 
         monkeypatch.setattr(proj_mod, "_compute_anchor_signals", patched)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" in action_names, (
             "audit_anchors should fire when redundancy candidates present"
@@ -959,7 +962,7 @@ class TestAuditAnchorActionabilityGate:
 
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         _insert_anchor(storage, _HEADERS_CONTENT, directory=_DIR, tags=["recipe"])
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" in action_names, (
             "audit_anchors should fire when promote candidates present"
@@ -972,7 +975,7 @@ class TestAuditAnchorActionabilityGate:
         monkeypatch.setattr(get_settings(), "ANCHOR_AUDIT_THRESHOLD", 100, raising=False)
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         _insert_anchor(storage, "expired", directory=_DIR, valid_until=past, migration_grace=False)
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action = next(
             (a for a in result["recommended_actions"] if a["action"] == "audit_anchors"), None
         )
@@ -984,7 +987,7 @@ class TestAuditAnchorActionabilityGate:
 
     def test_no_audit_signal_with_zero_anchors(self):
         """Empty project → no audit_anchors signal."""
-        result = server.project_brief(_DIR, mode="signals")
+        result = server.project_brief(_DIR, mode="signals", project=TEST_PROJECT_ID)
         action_names = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" not in action_names
 
@@ -1022,7 +1025,7 @@ class TestSignalAuditParity:
             migration_grace=False,
         )
         # _DIR_PARITY itself has no expired anchors
-        result = server.project_brief(_DIR_PARITY, mode="signals")
+        result = server.project_brief(_DIR_PARITY, mode="signals", project=TEST_PROJECT_ID)
         action_names = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" not in action_names, (
             "audit_anchors fired for _DIR_PARITY but the expired anchor is in "
@@ -1048,7 +1051,7 @@ class TestSignalAuditParity:
             valid_until=past,
             migration_grace=False,
         )
-        result = server.project_brief(_DIR_PARITY, mode="signals")
+        result = server.project_brief(_DIR_PARITY, mode="signals", project=TEST_PROJECT_ID)
         action_names = [a["action"] for a in result["recommended_actions"]]
         assert "audit_anchors" in action_names, (
             "audit_anchors must fire when expired non-grace anchor exists in the target dir"

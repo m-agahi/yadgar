@@ -19,6 +19,7 @@ import sys
 import pytest
 
 from yadgar.core import server  # noqa: E402
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass", "admin_backend_bypass")
 
@@ -55,7 +56,7 @@ def _save_agent_prompt(pattern: str, content: str, directory: str = "global") ->
     """Save an agent-prompt page via agent_prompt_save and assert success."""
     from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
-    res = agent_prompt_save(pattern, content, directory=directory)
+    res = agent_prompt_save(pattern, content, directory=directory, project=TEST_PROJECT_ID)
     assert res.get("saved") is True, f"agent_prompt_save failed: {res}"
 
 

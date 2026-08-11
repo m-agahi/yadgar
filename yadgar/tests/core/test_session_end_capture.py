@@ -22,6 +22,8 @@ from unittest.mock import patch
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # ---------------------------------------------------------------------------
 # Hook script helpers
 # ---------------------------------------------------------------------------
@@ -494,7 +496,7 @@ def test_hook_idempotent_overwrite(tmp_path):
 def test_signals_sentinel_emits_extract_action(flush_queue):
     """project_brief signals mode with pending sentinel → extract_last_session_findings."""
     from yadgar.core import server
-    from yadgar.tests.conftest import memorize_sync
+    from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
     directory = "/tmp/sentinel_signals_test"
     transcript_path = "/tmp/sentinel_signals_test/fake_transcript.jsonl"
@@ -512,14 +514,14 @@ def test_signals_sentinel_emits_extract_action(flush_queue):
             "last_touched_files": ["/tmp/sentinel_signals_test/foo.py"],
         }
     )
-    memorize_sync(
+    memorize_scoped(
         content=sentinel_content,
         context=directory,
         tags=["_session_end_sentinel", "session_end"],
     )
     flush_queue()
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = result.get("recommended_actions", [])
     action_types = [a["action"] for a in actions]
     assert "extract_last_session_findings" in action_types, (
@@ -530,7 +532,7 @@ def test_signals_sentinel_emits_extract_action(flush_queue):
 def test_signals_sentinel_action_has_required_fields(flush_queue):
     """extract_last_session_findings action has transcript_path, sentinel_id, reason."""
     from yadgar.core import server
-    from yadgar.tests.conftest import memorize_sync
+    from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
     directory = "/tmp/sentinel_fields_test"
     transcript_path = "/tmp/sentinel_fields_test/transcript.jsonl"
@@ -548,14 +550,14 @@ def test_signals_sentinel_action_has_required_fields(flush_queue):
             "last_touched_files": [],
         }
     )
-    memorize_sync(
+    memorize_scoped(
         content=sentinel_content,
         context=directory,
         tags=["_session_end_sentinel", "session_end"],
     )
     flush_queue()
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = result.get("recommended_actions", [])
     sentinel_action = next(
         (a for a in actions if a["action"] == "extract_last_session_findings"), None
@@ -571,7 +573,9 @@ def test_signals_no_sentinel_no_extract_action(flush_queue):
     """Without sentinel row, extract_last_session_findings is NOT in actions."""
     from yadgar.core import server
 
-    result = server.project_brief("/tmp/no_sentinel_dir_xyz", mode="signals")
+    result = server.project_brief(
+        "/tmp/no_sentinel_dir_xyz", mode="signals", project=TEST_PROJECT_ID
+    )
     actions = result.get("recommended_actions", [])
     action_types = [a["action"] for a in actions]
     assert "extract_last_session_findings" not in action_types
@@ -580,7 +584,7 @@ def test_signals_no_sentinel_no_extract_action(flush_queue):
 def test_signals_sentinel_different_dir_not_surfaced(flush_queue):
     """Sentinel from a different directory is NOT surfaced for current dir."""
     from yadgar.core import server
-    from yadgar.tests.conftest import memorize_sync
+    from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
     other_dir = "/tmp/sentinel_other_dir"
     our_dir = "/tmp/sentinel_our_dir_xyz"
@@ -598,7 +602,7 @@ def test_signals_sentinel_different_dir_not_surfaced(flush_queue):
             "last_touched_files": [],
         }
     )
-    memorize_sync(
+    memorize_scoped(
         content=sentinel_content,
         context=other_dir,
         tags=["_session_end_sentinel", "session_end"],
@@ -606,7 +610,7 @@ def test_signals_sentinel_different_dir_not_surfaced(flush_queue):
     flush_queue()
 
     # Query for our_dir — should NOT see the other_dir sentinel
-    result = server.project_brief(our_dir, mode="signals")
+    result = server.project_brief(our_dir, mode="signals", project=TEST_PROJECT_ID)
     actions = result.get("recommended_actions", [])
     action_types = [a["action"] for a in actions]
     assert "extract_last_session_findings" not in action_types
@@ -620,7 +624,7 @@ def test_signals_sentinel_different_dir_not_surfaced(flush_queue):
 def test_signals_missing_transcript_tombstone(flush_queue):
     """When sentinel transcript_path doesn't exist → tombstone note in action."""
     from yadgar.core import server
-    from yadgar.tests.conftest import memorize_sync
+    from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
     directory = "/tmp/sentinel_tombstone_test"
     missing_path = "/tmp/nonexistent_transcript_xyz_abc.jsonl"
@@ -638,14 +642,14 @@ def test_signals_missing_transcript_tombstone(flush_queue):
             "last_touched_files": ["/tmp/sentinel_tombstone_test/edited.py"],
         }
     )
-    memorize_sync(
+    memorize_scoped(
         content=sentinel_content,
         context=directory,
         tags=["_session_end_sentinel", "session_end"],
     )
     flush_queue()
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = result.get("recommended_actions", [])
     sentinel_action = next(
         (a for a in actions if a["action"] == "extract_last_session_findings"), None
@@ -661,7 +665,7 @@ def test_signals_missing_transcript_tombstone(flush_queue):
 def test_signals_missing_transcript_suggested_call_has_forget(flush_queue):
     """When transcript missing → suggested_call directs forget(sentinel_id)."""
     from yadgar.core import server
-    from yadgar.tests.conftest import memorize_sync
+    from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
     directory = "/tmp/sentinel_forget_test"
     missing_path = "/tmp/definitely_missing_transcript.jsonl"
@@ -679,14 +683,14 @@ def test_signals_missing_transcript_suggested_call_has_forget(flush_queue):
             "last_touched_files": [],
         }
     )
-    memorize_sync(
+    memorize_scoped(
         content=sentinel_content,
         context=directory,
         tags=["_session_end_sentinel", "session_end"],
     )
     flush_queue()
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = result.get("recommended_actions", [])
     sentinel_action = next(
         (a for a in actions if a["action"] == "extract_last_session_findings"), None
@@ -737,7 +741,7 @@ def test_session_context_imports_sentinel_file(tmp_path, monkeypatch, flush_queu
     assert not sentinel_file.exists(), "Sentinel file should be deleted after import"
 
     # Memory row should exist with _session_end_sentinel tag
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = result.get("recommended_actions", [])
     action_types = [a["action"] for a in actions]
     assert "extract_last_session_findings" in action_types
@@ -816,7 +820,7 @@ def test_session_context_import_moves_to_failed_after_3_retries(tmp_path, monkey
 def test_vacuum_prunes_old_sentinel_rows(monkeypatch, flush_queue):
     """vacuum_sentinels prunes _session_end_sentinel rows older than retention days."""
     from yadgar.core import server
-    from yadgar.tests.conftest import memorize_sync
+    from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
     directory = "/tmp/vacuum_sentinel_test"
     # Store a sentinel memory row
@@ -834,7 +838,7 @@ def test_vacuum_prunes_old_sentinel_rows(monkeypatch, flush_queue):
             "last_touched_files": [],
         }
     )
-    memorize_sync(
+    memorize_scoped(
         content=sentinel_content,
         context=directory,
         tags=["_session_end_sentinel", "session_end"],
@@ -842,7 +846,7 @@ def test_vacuum_prunes_old_sentinel_rows(monkeypatch, flush_queue):
     flush_queue()
 
     # Verify it's there
-    result_before = server.project_brief(directory, mode="signals")
+    result_before = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions_before = [a["action"] for a in result_before.get("recommended_actions", [])]
     assert "extract_last_session_findings" in actions_before
 
@@ -854,7 +858,7 @@ def test_vacuum_prunes_old_sentinel_rows(monkeypatch, flush_queue):
     flush_queue()
 
     # Should no longer appear
-    result_after = server.project_brief(directory, mode="signals")
+    result_after = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions_after = [a["action"] for a in result_after.get("recommended_actions", [])]
     assert "extract_last_session_findings" not in actions_after
 

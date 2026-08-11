@@ -8,6 +8,7 @@ from hypothesis import settings as hsettings
 from hypothesis import strategies as st
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -33,7 +34,7 @@ def test_memorize_handles_arbitrary_unicode(content):
 
     Uses the _engines autouse fixture (via module-level init).
     """
-    r = server.memorize(content[:1000], "/tmp", [])
+    r = server.memorize(content[:1000], "/tmp", [], project=TEST_PROJECT_ID)
     assert isinstance(r, dict)
     assert "stored" in r
     if not r["stored"]:
@@ -53,14 +54,14 @@ def test_memorize_handles_arbitrary_unicode(content):
 )
 def test_memorize_rejects_unpaired_surrogates(surrogates):
     """Content with unpaired UTF-16 surrogates must be synchronously rejected."""
-    r = server.memorize(f"prefix {surrogates} suffix", "/tmp", [])
+    r = server.memorize(f"prefix {surrogates} suffix", "/tmp", [], project=TEST_PROJECT_ID)
     assert r["stored"] is False
     assert r["reason"] == "invalid_unicode_surrogates"
 
 
 def test_memorize_unpaired_surrogate_rejected():
     """Direct surrogate codepoint is rejected with the expected reason."""
-    r = server.memorize(f"bad content: {chr(0xD800)}", "/tmp", [])
+    r = server.memorize(f"bad content: {chr(0xD800)}", "/tmp", [], project=TEST_PROJECT_ID)
     assert r["stored"] is False
     assert r["reason"] == "invalid_unicode_surrogates"
 
@@ -81,6 +82,7 @@ def test_wiki_list_response_bounded_at_scale(flush_queue):
             content=f"content {i} " * 5,
             category="reference",
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
     flush_queue()
     result = server.wiki_list()
@@ -96,6 +98,7 @@ def test_wiki_list_returns_no_content(flush_queue):
         title="Check page",
         content="This content should not appear in list",
         directory=_TEST_DIR,
+        project=TEST_PROJECT_ID,
     )
     flush_queue()
     result = server.wiki_list()
@@ -110,6 +113,7 @@ def test_wiki_list_respects_limit(flush_queue):
             title=f"Limit page {i}",
             content=f"content {i}",
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
     flush_queue()
     result = server.wiki_list(limit=5)
@@ -118,9 +122,15 @@ def test_wiki_list_respects_limit(flush_queue):
 
 def test_wiki_list_slug_prefix_filter(flush_queue):
     """slug_prefix filters to matching slugs only."""
-    server.wiki_add(title="alpha one", content="content a1", directory=_TEST_DIR)
-    server.wiki_add(title="alpha two", content="content a2", directory=_TEST_DIR)
-    server.wiki_add(title="beta one", content="content b1", directory=_TEST_DIR)
+    server.wiki_add(
+        title="alpha one", content="content a1", directory=_TEST_DIR, project=TEST_PROJECT_ID
+    )
+    server.wiki_add(
+        title="alpha two", content="content a2", directory=_TEST_DIR, project=TEST_PROJECT_ID
+    )
+    server.wiki_add(
+        title="beta one", content="content b1", directory=_TEST_DIR, project=TEST_PROJECT_ID
+    )
     flush_queue()
     result = server.wiki_list(slug_prefix="alpha")
     for p in result:
@@ -135,6 +145,7 @@ def test_wiki_list_negative_limit_returns_all(flush_queue):
             content=f"content neg {i}",
             force=True,
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
     flush_queue()
     result = server.wiki_list(limit=-1)
@@ -149,6 +160,7 @@ def test_wiki_list_zero_limit_returns_all(flush_queue):
             content=f"content zero {i}",
             force=True,
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
     flush_queue()
     result = server.wiki_list(limit=0)
@@ -163,6 +175,7 @@ def test_wiki_list_huge_limit_returns_all(flush_queue):
             content=f"content huge {i}",
             force=True,
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
     flush_queue()
     result = server.wiki_list(limit=1_000_000)
@@ -174,7 +187,7 @@ def test_wiki_list_huge_limit_returns_all(flush_queue):
 
 def test_memorize_response_shape_async_path():
     """Fast path must return only known fields."""
-    r = server.memorize("test content for schema check", "/tmp", [])
+    r = server.memorize("test content for schema check", "/tmp", [], project=TEST_PROJECT_ID)
     assert set(r.keys()) <= {"stored", "queued", "queue_id", "reason"}, (
         f"Unexpected keys in response: {set(r.keys())}"
     )
@@ -182,7 +195,7 @@ def test_memorize_response_shape_async_path():
 
 def test_memorize_response_shape_too_large_path():
     """Too-large reject must return exactly {stored, reason, max_bytes}."""
-    r = server.memorize("x" * 40_000, "/tmp", [])
+    r = server.memorize("x" * 40_000, "/tmp", [], project=TEST_PROJECT_ID)
     assert set(r.keys()) == {"stored", "reason", "max_bytes"}
     assert r["stored"] is False
     assert r["reason"] == "content_too_large"
@@ -190,7 +203,7 @@ def test_memorize_response_shape_too_large_path():
 
 def test_memorize_response_shape_surrogate_path():
     """Surrogate reject must return {stored, reason}."""
-    r = server.memorize(chr(0xD800), "/tmp", [])
+    r = server.memorize(chr(0xD800), "/tmp", [], project=TEST_PROJECT_ID)
     assert r["stored"] is False
     assert r["reason"] == "invalid_unicode_surrogates"
     # Must not include max_bytes or other fields

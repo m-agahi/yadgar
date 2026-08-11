@@ -41,6 +41,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +72,7 @@ def _insert_anchor(
         "tags": tags if tags is not None else ["_anchor", "yadgar"],
         "store_type": "episodic",
         "directory_context": "/home/user/project",
+        "project_id": TEST_PROJECT_ID,
         "heat": 1.0,
         "importance": 1.0,
         "is_protected": is_protected,

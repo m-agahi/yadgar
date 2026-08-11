@@ -28,6 +28,7 @@ import pytest
 from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
 from yadgar.core import server
 from yadgar.core.server.tools.wiki import wiki_append_section, wiki_history, wiki_restore
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -116,6 +117,7 @@ class TestWaitFalseDefault:
             content="content",
             tags=["test"],
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is True
         assert result.get("queued") is True
@@ -131,6 +133,7 @@ class TestWaitFalseDefault:
             wait=False,
             tags=["test2"],
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is True
         assert result.get("queued") is True
@@ -151,6 +154,7 @@ class TestWaitTrueBlocking:
             wait=True,
             tags=["waitflag"],
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
         # Must be committed (not just queued)
         assert result.get("stored") is True
@@ -183,6 +187,7 @@ class TestWaitOnSyncTools:
                 "confidence": "medium",
                 "source_memory_ids": [],
                 "links": [],
+                "project_id": TEST_PROJECT_ID,
             }
         )
         # wiki_update is sync — wait=True should be accepted and not error
@@ -203,12 +208,15 @@ class TestWaitOnSyncTools:
                 "confidence": "medium",
                 "source_memory_ids": [],
                 "links": [],
+                "project_id": TEST_PROJECT_ID,
             }
         )
         # Need a second version to restore to version 1
         _storage().update_wiki_page(pid, {"content": "updated content"})
         # wiki_restore(wait=True) should be accepted
-        result = wiki_restore(slug="restore-wait-test", version=1, wait=True)
+        result = wiki_restore(
+            slug="restore-wait-test", version=1, wait=True, project=TEST_PROJECT_ID
+        )
         assert "error" not in result, f"wiki_restore returned error: {result}"
 
     def test_wait_true_on_wiki_append_section_accepted(self, admin_backend_bypass):
@@ -225,6 +233,7 @@ class TestWaitOnSyncTools:
                 "confidence": "medium",
                 "source_memory_ids": [],
                 "links": [],
+                "project_id": TEST_PROJECT_ID,
             }
         )
         result = wiki_append_section(
@@ -232,6 +241,7 @@ class TestWaitOnSyncTools:
             section_heading="Introduction",
             content="New line.",
             wait=True,
+            project=TEST_PROJECT_ID,
         )
         assert "error" not in result, f"wiki_append_section returned error: {result}"
 
@@ -270,6 +280,7 @@ class TestWaitTimeout:
                     wait=True,
                     tags=["timeout-test"],
                     directory=_TEST_DIR,
+                    project=TEST_PROJECT_ID,
                 )
         elapsed = time.perf_counter() - t0
 
@@ -301,6 +312,7 @@ class TestWaitFalsePerf:
             content="warmup",
             tags=["warmup"],
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
 
         # Mock enqueue to avoid disk I/O for pure latency measurement
@@ -324,6 +336,7 @@ class TestWaitFalsePerf:
                     content="perf test",
                     tags=["perf"],
                     directory=_TEST_DIR,
+                    project=TEST_PROJECT_ID,
                 )
                 elapsed_ms = (time.perf_counter() - t0) * 1000
                 samples.append(elapsed_ms)
@@ -349,6 +362,7 @@ class TestWaitComposesWithOtherParams:
             content="first write",
             tags=["force-wait"],
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
         assert r1.get("stored") is True
 
@@ -360,6 +374,7 @@ class TestWaitComposesWithOtherParams:
             force=True,
             tags=["force-wait"],
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
         assert r2.get("stored") is True
         assert r2.get("committed") is True
@@ -377,6 +392,7 @@ class TestWaitComposesWithOtherParams:
             wait=True,
             tags=["replace-wait"],
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
 
         # Overwrite via replace_slug
@@ -387,6 +403,7 @@ class TestWaitComposesWithOtherParams:
             replace_slug=slug,
             tags=["replace-wait"],
             directory=_TEST_DIR,
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is True
         assert result.get("committed") is True

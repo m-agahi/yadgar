@@ -13,6 +13,7 @@ from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server
 from yadgar.core.server import _is_episodic_query
 from yadgar.tests.conftest import memorize_sync
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -75,8 +76,15 @@ class TestWikiBlendingThreshold:
     def test_episodic_query_skips_wiki(self, recall_backend_bypass):
         """Temporal/episodic queries must NOT blend wiki results."""
         _wiki().add("Architecture Overview", "Core design of the system.", "architecture")
-        server.memorize(content="Fixed a bug yesterday.", context="/tmp", tags=[])
-        results = server.recall(query="what happened yesterday", max_results=5, directory="/tmp")
+        server.memorize(
+            content="Fixed a bug yesterday.", context="/tmp", tags=[], project=TEST_PROJECT_ID
+        )
+        results = server.recall(
+            query="what happened yesterday",
+            max_results=5,
+            directory="/tmp",
+            project=TEST_PROJECT_ID,
+        )
         wiki_hits = [r for r in results if r.get("_source") == "wiki"]
         assert len(wiki_hits) == 0
 
@@ -92,9 +100,12 @@ class TestWikiBlendingThreshold:
             content="Storage engine handles all persistence operations.",
             context="/tmp",
             tags=[],
+            project=TEST_PROJECT_ID,
         )
         flush_queue()
-        results = server.recall(query="storage engine design", max_results=10, directory="/tmp")
+        results = server.recall(
+            query="storage engine design", max_results=10, directory="/tmp", project=TEST_PROJECT_ID
+        )
         wiki_hits = [r for r in results if r.get("_source") == "wiki"]
         # At least one wiki result should be present (relevance gate passed)
         assert len(wiki_hits) >= 1
@@ -104,8 +115,15 @@ class TestWikiBlendingThreshold:
         _wiki().add(
             "Test Architecture", "Key design decisions for the test system.", "architecture"
         )
-        server.memorize(content="Test system architecture notes.", context="/tmp", tags=[])
-        results = server.recall(query="test architecture", max_results=10, directory="/tmp")
+        server.memorize(
+            content="Test system architecture notes.",
+            context="/tmp",
+            tags=[],
+            project=TEST_PROJECT_ID,
+        )
+        results = server.recall(
+            query="test architecture", max_results=10, directory="/tmp", project=TEST_PROJECT_ID
+        )
         if len(results) >= 2:
             scores = [r.get("_retrieval_score", 0.0) for r in results]
             assert scores == sorted(scores, reverse=True)
@@ -119,8 +137,15 @@ class TestWikiBlendingThreshold:
                 "reference",
             )
         for i in range(5):
-            server.memorize(content=f"Memory {i} about topic {i}.", context="/tmp", tags=[])
-        results = server.recall(query="topic", max_results=4, directory="/tmp")
+            server.memorize(
+                content=f"Memory {i} about topic {i}.",
+                context="/tmp",
+                tags=[],
+                project=TEST_PROJECT_ID,
+            )
+        results = server.recall(
+            query="topic", max_results=4, directory="/tmp", project=TEST_PROJECT_ID
+        )
         assert len(results) <= 4
 
 

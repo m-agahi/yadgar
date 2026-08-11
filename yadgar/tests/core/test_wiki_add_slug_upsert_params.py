@@ -24,6 +24,7 @@ from unittest.mock import patch
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -100,6 +101,7 @@ class TestSlugParamAsync:
             upsert=True,
             directory=_TEST_DIR,
             wait=False,
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is True
         # Async path returns the effective slug immediately.
@@ -125,6 +127,7 @@ class TestSlugParamWait:
             upsert=True,
             directory=_TEST_DIR,
             wait=True,
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is not False, f"Write failed: {result}"
         # Returned slug must be the caller slug.
@@ -148,6 +151,7 @@ class TestSlugParamWait:
             upsert=True,
             directory=_TEST_DIR,
             wait=True,
+            project=TEST_PROJECT_ID,
         )
         # Title-derived slug must not exist.
         import re
@@ -174,6 +178,7 @@ class TestUpsertOverwrite:
             upsert=True,
             directory=_TEST_DIR,
             wait=True,
+            project=TEST_PROJECT_ID,
         )
         server.wiki_add(
             title=f"Gen Two {_uid()}",
@@ -183,6 +188,7 @@ class TestUpsertOverwrite:
             upsert=True,
             directory=_TEST_DIR,
             wait=True,
+            project=TEST_PROJECT_ID,
         )
         page = _storage().get_wiki_page_by_slug(caller_slug)
         assert page is not None
@@ -214,6 +220,7 @@ class TestUpsertFalseRejects:
             upsert=True,
             directory=_TEST_DIR,
             wait=True,
+            project=TEST_PROJECT_ID,
         )
         assert first.get("stored") is not False, f"Setup write failed: {first}"
 
@@ -226,6 +233,7 @@ class TestUpsertFalseRejects:
             upsert=False,
             directory=_TEST_DIR,
             wait=True,
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is False, f"Expected rejection, got: {result}"
         assert result.get("reason") == "slug_exists", f"Wrong reason: {result.get('reason')!r}"
@@ -257,7 +265,8 @@ class TestUpsertFalseRejects:
                 slug=f"proj-mod-c4b-{_uid()}",
                 upsert=False,
                 directory=_TEST_DIR,
-                wait=False,  # async; just check payload
+                wait=False,
+                project=TEST_PROJECT_ID,  # async; just check payload
             )
         finally:
             if real_enqueue:
@@ -288,6 +297,7 @@ class TestBackwardCompat:
             category="reference",
             directory=_TEST_DIR,
             wait=True,
+            project=TEST_PROJECT_ID,
         )
         import re
 

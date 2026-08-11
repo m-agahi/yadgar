@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # R3 Car 3c: agent_prompt_save forwards to backend /admin.
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -59,7 +61,7 @@ class TestContractFromWikiNormal:
         _seed_contract_page(storage=storage)
         _flush_prompt_cache()
 
-        prelude = agent_dispatch_prelude("", "test topic", storage=storage)
+        prelude = agent_dispatch_prelude("", "test topic", storage=storage, project=TEST_PROJECT_ID)
         assert "## Yadgar subagent contract" in prelude
 
     def test_no_purpose_header_in_prelude(self, storage):
@@ -70,7 +72,7 @@ class TestContractFromWikiNormal:
         _seed_contract_page(storage=storage)
         _flush_prompt_cache()
 
-        prelude = agent_dispatch_prelude("", "test topic", storage=storage)
+        prelude = agent_dispatch_prelude("", "test topic", storage=storage, project=TEST_PROJECT_ID)
         # The Purpose/Prompt wrapper must NOT appear in the injected contract section
         assert "## Purpose" not in prelude
 
@@ -81,7 +83,7 @@ class TestContractFromWikiNormal:
         _seed_contract_page(storage=storage)
         _flush_prompt_cache()
 
-        prelude = agent_dispatch_prelude("", "test topic", storage=storage)
+        prelude = agent_dispatch_prelude("", "test topic", storage=storage, project=TEST_PROJECT_ID)
         assert "recall" in prelude.lower()
 
     def test_contract_contains_findings_footer(self, storage):
@@ -91,7 +93,7 @@ class TestContractFromWikiNormal:
         _seed_contract_page(storage=storage)
         _flush_prompt_cache()
 
-        prelude = agent_dispatch_prelude("", "test topic", storage=storage)
+        prelude = agent_dispatch_prelude("", "test topic", storage=storage, project=TEST_PROJECT_ID)
         assert "Yadgar findings" in prelude
 
     def test_contract_footer_memorization_note_in_genesis(self):
@@ -115,7 +117,7 @@ class TestContractFromWikiNormal:
         _seed_contract_page(storage=storage)
         _flush_prompt_cache()
 
-        prelude = agent_dispatch_prelude("", "test topic", storage=storage)
+        prelude = agent_dispatch_prelude("", "test topic", storage=storage, project=TEST_PROJECT_ID)
         assert "memorized verbatim — one memory per bullet" in prelude
 
 
@@ -134,7 +136,9 @@ class TestContractCacheInvalidation:
         _flush_prompt_cache()
 
         # First read — baseline
-        prelude_before = agent_dispatch_prelude("", "epoch test", storage=storage)
+        prelude_before = agent_dispatch_prelude(
+            "", "epoch test", storage=storage, project=TEST_PROJECT_ID
+        )
         assert "Yadgar subagent contract" in prelude_before
 
         # Edit the contract page via agent_prompt_save (bumps wiki epoch)
@@ -143,10 +147,13 @@ class TestContractCacheInvalidation:
             "UPDATED_SENTINEL_TEXT unique_marker_xyz",
             directory="global",
             storage=storage,
+            project=TEST_PROJECT_ID,
         )
         _flush_prompt_cache()
 
-        prelude_after = agent_dispatch_prelude("", "epoch test", storage=storage)
+        prelude_after = agent_dispatch_prelude(
+            "", "epoch test", storage=storage, project=TEST_PROJECT_ID
+        )
         assert "UPDATED_SENTINEL_TEXT" in prelude_after, (
             "Cache invalidation failed: stale contract content served after resave"
         )
@@ -183,7 +190,9 @@ class TestContractReseedOnDelete:
         _flush_prompt_cache()
 
         # Call prelude — should trigger seed-on-miss and return genesis content
-        prelude = agent_dispatch_prelude("", "reseed test", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "", "reseed test", storage=storage, project=TEST_PROJECT_ID
+        )
         _, _, genesis_content = CONTRACT_GENESIS
         # Genesis must be in the prelude (possibly from in-memory fallback)
         assert "Yadgar subagent contract" in prelude
@@ -219,7 +228,9 @@ class TestContractSeedWriteFailure:
         # Patch _cached_agent_prompt at dispatch_helper (it IS a module attribute)
         monkeypatch.setattr(dh, "_cached_agent_prompt", lambda *_a, **_kw: None)
 
-        prelude = dh.agent_dispatch_prelude("", "failure test", storage=storage)
+        prelude = dh.agent_dispatch_prelude(
+            "", "failure test", storage=storage, project=TEST_PROJECT_ID
+        )
         # Must not crash; must include genesis contract header
         assert "## Yadgar subagent contract" in prelude
         _, _, genesis_content = CONTRACT_GENESIS
@@ -247,11 +258,12 @@ class TestContractBudgetIntact:
             "y" * 5000,
             directory="global",
             storage=storage,
+            project=TEST_PROJECT_ID,
         )
         _flush_prompt_cache()
 
         prelude = agent_dispatch_prelude(
-            "huge-pattern-contract-test", "budget test", storage=storage
+            "huge-pattern-contract-test", "budget test", storage=storage, project=TEST_PROJECT_ID
         )
         assert len(prelude) <= _TOTAL_BUDGET
         # Full contract header must survive truncation (it's sections[0])
@@ -282,7 +294,7 @@ class TestContractRule4:
         _seed_contract_page(storage=storage)
         _flush_prompt_cache()
 
-        prelude = agent_dispatch_prelude("", "plan test", storage=storage)
+        prelude = agent_dispatch_prelude("", "plan test", storage=storage, project=TEST_PROJECT_ID)
         assert "plan-executing-build" in prelude
 
     def test_contract_wiki_pointers_match_seeded_starters(self):
@@ -336,7 +348,9 @@ class TestContractPresentKillGateOff:
 
         monkeypatch.setattr(config_mod, "get_settings", lambda: _FakeSettings())
 
-        prelude = agent_dispatch_prelude("some-pattern", "killgate test", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "some-pattern", "killgate test", storage=storage, project=TEST_PROJECT_ID
+        )
         # Contract MUST be present even with kill-gate off
         assert "## Yadgar subagent contract" in prelude
         assert "Yadgar findings" in prelude

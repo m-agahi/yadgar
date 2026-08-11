@@ -15,6 +15,8 @@ import asyncio
 import threading
 from unittest.mock import MagicMock, patch
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 def test_compute_db_boost_mutates_inline_without_db_write():
     """_compute_db_boost applies heat/last_accessed in place and returns ids,
@@ -83,7 +85,9 @@ def test_recall_defers_session_side_effects_through_fork():
     ):
         mock_st._consolidation = None
         mock_st._pool = None
-        result = recall_mod.recall(query="query text", directory="/tmp", max_results=5)
+        result = recall_mod.recall(
+            query="query text", directory="/tmp", max_results=5, project=TEST_PROJECT_ID
+        )
 
     assert captured.get("called"), "recall() did not defer the session half through the fork seam"
     mock_apply.assert_called_once_with(fake_results, "query text")

@@ -24,6 +24,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -296,6 +297,7 @@ class TestWikiCheckDuplicate:
             title="Yadgar Roadmap Future Improvements",
             content=_ROADMAP_CONTENT_A,
             directory="/home/user/simgate",
+            project=TEST_PROJECT_ID,
             # R3: branch required
         )
         assert "slug" in add_result or add_result.get("stored"), f"wiki_add failed: {add_result}"
@@ -334,6 +336,7 @@ class TestWikiCheckDuplicate:
         server.wiki_add(
             title="Yadgar Architecture",
             content=_ARCH_CONTENT,
+            project=TEST_PROJECT_ID,
         )
 
         result = server.wiki_check_duplicate(

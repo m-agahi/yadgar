@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from yadgar.tests.conftest import memorize_sync  # R3: sync drain helper
+from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped  # R3: sync drain helper
 
 # ---------------------------------------------------------------------------
 # Storage-layer fixture (embedded SurrealDB, no MCP server)
@@ -42,7 +42,7 @@ def engines(tmp_path, monkeypatch, _isolate_file_queue):
 
     R3 migration: _drain_local.active is gone (R3 write path always enqueues).
     Wire the harness (drainer + forward bypasses) so memorize/anchor calls reach
-    the in-process backend.  Tests that need a memory id use memorize_sync().
+    the in-process backend.  Tests that need a memory id use memorize_scoped().
     """
     from yadgar.core import server
     from yadgar.tests._backend_harness import (
@@ -79,6 +79,7 @@ class TestMemorizeTier:
                 "tags": ["_anchor"],
                 "is_protected": True,
                 "tier": "conditional",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT tier FROM memory:{mid}")
@@ -92,6 +93,7 @@ class TestMemorizeTier:
                 "tags": ["_anchor"],
                 "is_protected": True,
                 "tier": "ephemeral",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT tier FROM memory:{mid}")
@@ -105,6 +107,7 @@ class TestMemorizeTier:
                 "tags": ["_anchor"],
                 "is_protected": True,
                 "tier": "semantic_immortal",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT tier FROM memory:{mid}")
@@ -117,6 +120,7 @@ class TestMemorizeTier:
                 "content": "regular memory",
                 "directory_context": "/tmp/proj",
                 "tags": [],
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT tier FROM memory:{mid}")
@@ -134,7 +138,7 @@ class TestValidUntil:
 
     def test_semantic_immortal_valid_until_none(self, engines):
         """tier=semantic_immortal → valid_until=None."""
-        result = memorize_sync(
+        result = memorize_scoped(
             "immortal credential location",
             "/tmp/proj",
             ["_anchor"],
@@ -151,7 +155,7 @@ class TestValidUntil:
     def test_conditional_defaults_90d(self, engines):
         """tier=conditional without ttl_days → valid_until ≈ now + 90d."""
         before = datetime.now(UTC)
-        result = memorize_sync(
+        result = memorize_scoped(
             "conditional anchor defaults",
             "/tmp/proj",
             ["_anchor"],
@@ -174,7 +178,7 @@ class TestValidUntil:
     def test_ephemeral_defaults_14d(self, engines):
         """tier=ephemeral without ttl_days → valid_until ≈ now + 14d."""
         before = datetime.now(UTC)
-        result = memorize_sync(
+        result = memorize_scoped(
             "ephemeral anchor defaults",
             "/tmp/proj",
             ["_anchor"],
@@ -197,7 +201,7 @@ class TestValidUntil:
     def test_ttl_days_explicit(self, engines):
         """ttl_days=30 → valid_until ≈ now + 30d."""
         before = datetime.now(UTC)
-        result = memorize_sync(
+        result = memorize_scoped(
             "explicit ttl anchor",
             "/tmp/proj",
             ["_anchor"],
@@ -221,7 +225,7 @@ class TestValidUntil:
     def test_explicit_valid_until_accepted(self, engines):
         """valid_until=<ISO-8601 UTC datetime> accepted."""
         target = datetime(2027, 1, 1, 0, 0, 0, tzinfo=UTC)
-        result = memorize_sync(
+        result = memorize_scoped(
             "explicit valid_until anchor",
             "/tmp/proj",
             ["_anchor"],
@@ -249,6 +253,7 @@ class TestValidUntil:
             tier="conditional",
             valid_until=datetime(2027, 1, 1, 0, 0, 0, tzinfo=UTC).isoformat(),
             ttl_days=30,
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is False
         assert (
@@ -264,7 +269,8 @@ class TestValidUntil:
             tags=["_anchor"],
             is_protected=True,
             tier="conditional",
-            valid_until="2027-01-01T00:00:00",  # no tz → naive
+            valid_until="2027-01-01T00:00:00",
+            project=TEST_PROJECT_ID,  # no tz → naive
         )
         assert result.get("stored") is False
         assert (
@@ -287,6 +293,7 @@ class TestAnchorTool:
             content="conditional anchor",
             context="/tmp/proj",
             tier="conditional",
+            project=TEST_PROJECT_ID,
             # R3: branch required
         )
         assert result.get("queued") or result.get("status") == "anchored"
@@ -296,6 +303,7 @@ class TestAnchorTool:
             content="ephemeral anchor",
             context="/tmp/proj",
             tier="ephemeral",
+            project=TEST_PROJECT_ID,
             # R3: branch required
         )
         assert result.get("queued") or result.get("status") == "anchored"
@@ -305,6 +313,7 @@ class TestAnchorTool:
         result = engines.anchor(
             content="default tier anchor",
             context="/tmp/proj",
+            project=TEST_PROJECT_ID,
             # R3: branch required
         )
         assert result.get("queued") or result.get("status") == "anchored"
@@ -315,6 +324,7 @@ class TestAnchorTool:
             content="immortal anchor no reason",
             context="/tmp/proj",
             tier="semantic_immortal",
+            project=TEST_PROJECT_ID,
             # R3: branch required
         )
         assert result.get("stored") is False or result.get("error") is not None
@@ -328,6 +338,7 @@ class TestAnchorTool:
             context="/tmp/proj",
             tier="semantic_immortal",
             reason="permanent credential location, never changes",
+            project=TEST_PROJECT_ID,
             # R3: branch required
         )
         assert result.get("queued") or result.get("status") == "anchored"
@@ -338,6 +349,7 @@ class TestAnchorTool:
             content="bad tier",
             context="/tmp/proj",
             tier="invalid_tier_xyz",
+            project=TEST_PROJECT_ID,
             # R3: branch required
         )
         assert result.get("stored") is False or result.get("error") is not None
@@ -358,6 +370,7 @@ class TestInvalidTier:
             tags=["_anchor"],
             is_protected=True,
             tier="bad_tier",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is False
         assert "tier" in result.get("reason", "").lower()
@@ -372,7 +385,7 @@ class TestAutoProtect:
     """tier set → is_protected auto-set to True."""
 
     def test_memorize_tier_auto_protects(self, engines):
-        result = memorize_sync(
+        result = memorize_scoped(
             "auto protect test",
             "/tmp/proj",
             ["_anchor"],
@@ -493,7 +506,7 @@ class TestProjectBriefRestoreExpiry:
         past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
         self._insert_anchor_raw(engines, "expired project anchor", past)
 
-        result = engines.project_brief("/tmp/brief_test", mode="restore")
+        result = engines.project_brief("/tmp/brief_test", mode="restore", project=TEST_PROJECT_ID)
         titles = [a.get("title", "") for a in result.get("top_anchors", [])]
         assert not any("expired project anchor" in t for t in titles)
 
@@ -501,7 +514,7 @@ class TestProjectBriefRestoreExpiry:
         future = (datetime.now(UTC) + timedelta(days=90)).isoformat()
         self._insert_anchor_raw(engines, "active project anchor", future)
 
-        result = engines.project_brief("/tmp/brief_test", mode="restore")
+        result = engines.project_brief("/tmp/brief_test", mode="restore", project=TEST_PROJECT_ID)
         titles = [a.get("title", "") for a in result.get("top_anchors", [])]
         assert any("active project anchor" in t for t in titles)
 

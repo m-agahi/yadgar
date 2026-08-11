@@ -30,6 +30,8 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
 
@@ -81,6 +83,7 @@ def test_nongit_directory_still_stores(tmp_path, monkeypatch, _unit_backend_harn
         content="content written from a directory that is not a git work-tree",
         category="reference",
         directory=str(tmp_path),
+        project=TEST_PROJECT_ID,
     )
     assert result.get("error") is None, result
     assert result.get("stored") is True, result
@@ -101,6 +104,7 @@ def test_empty_directory_rejected_when_enforcement_on(monkeypatch, _unit_backend
         content="content written with no directory context at all",
         category="reference",
         directory="",
+        project=TEST_PROJECT_ID,
     )
     assert result.get("stored") is False, result
     assert result.get("error") == "missing_directory", result

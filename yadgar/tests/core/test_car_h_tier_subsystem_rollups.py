@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # ── §4.1: wiki_rollup joins CANONICAL_PAGE_TYPES ──────────────────────────────
 
 
@@ -106,7 +108,7 @@ class TestAdrListTierFilter:
                 side_effect=_capture_forward,
             ),
         ):
-            adr_list(directory=project_dir)
+            adr_list(directory=project_dir, project=TEST_PROJECT_ID)
 
         assert captured, "expected adr_list to forward via _forward_admin"
         assert captured[0]["op"] == "list_adr_rows"
@@ -137,7 +139,7 @@ class TestAdrListTierFilter:
                 side_effect=_capture_forward,
             ),
         ):
-            adr_list(directory=project_dir, tier=None)
+            adr_list(directory=project_dir, tier=None, project=TEST_PROJECT_ID)
 
         assert captured[0]["payload"].get("tier") is None, (
             f"tier=None must NOT carry a tier filter; got {captured[0]['payload'].get('tier')!r}"
@@ -165,7 +167,7 @@ class TestAdrListTierFilter:
                 side_effect=_capture_forward,
             ),
         ):
-            adr_list(directory=project_dir, tier="historical")
+            adr_list(directory=project_dir, tier="historical", project=TEST_PROJECT_ID)
 
         assert captured[0]["payload"].get("tier") == "historical"
 
@@ -191,7 +193,7 @@ class TestAdrListTierFilter:
                 side_effect=_capture_forward,
             ),
         ):
-            adr_list(directory=project_dir, subsystem="storage")
+            adr_list(directory=project_dir, subsystem="storage", project=TEST_PROJECT_ID)
 
         assert captured[0]["payload"].get("subsystem") == "storage"
 
@@ -217,7 +219,7 @@ class TestAdrListTierFilter:
                 side_effect=_capture_forward,
             ),
         ):
-            adr_list(directory=project_dir)
+            adr_list(directory=project_dir, project=TEST_PROJECT_ID)
 
         # subsystem key absent (None = no filter), tier="binding" default present
         assert "subsystem" not in captured[0]["payload"] or (
@@ -518,6 +520,7 @@ class TestAdrAddTriggersRollupRegen:
                 supersedes="none",
                 tier="binding",
                 subsystem="storage",
+                project=TEST_PROJECT_ID,
             )
 
         assert rollup_calls, "expected run_rollup_regen forward to be called"
@@ -570,6 +573,7 @@ class TestAdrAddTriggersRollupRegen:
                 consequences=".",
                 revisit_trigger=".",
                 supersedes="none",
+                project=TEST_PROJECT_ID,
             )
 
         assert not rollup_calls, (

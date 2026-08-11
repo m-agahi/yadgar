@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
 # ---------------------------------------------------------------------------
@@ -291,6 +293,7 @@ def _insert_mem(storage, content: str, directory: str, tags: list | None = None)
             "directory_context": directory,
             "tags": tags or [],
             "heat": 1.0,
+            "project_id": TEST_PROJECT_ID,
         }
     )
 
@@ -355,7 +358,10 @@ class TestDirectoryScopingIntegration:
 
         # Recall with a query that matches those tokens — but directory=YADGAR_DIR.
         results = server.recall(
-            "aws-work IAM policy RDS cluster xzq888", directory=YADGAR_DIR, max_results=20
+            "aws-work IAM policy RDS cluster xzq888",
+            directory=YADGAR_DIR,
+            max_results=20,
+            project=TEST_PROJECT_ID,
         )
         result_ids = {r.get("id") for r in results}
         assert mid_aws1 not in result_ids, "aws-work memory must be excluded"
@@ -374,6 +380,7 @@ class TestDirectoryScopingIntegration:
             "yadgar genuine xzy919",
             directory=YADGAR_DIR,
             max_results=20,
+            project=TEST_PROJECT_ID,
         )
         result_ids = {r.get("id") for r in results}
         assert mid in result_ids, (
@@ -402,13 +409,17 @@ class TestDirectoryScopingIntegration:
         query = "aws-work RDS yadgar config endpoint xzq777b"
 
         # Scoped to YADGAR_DIR: aws row must be absent, yadgar row must be present.
-        results_yadgar = server.recall(query, directory=YADGAR_DIR, max_results=20)
+        results_yadgar = server.recall(
+            query, directory=YADGAR_DIR, max_results=20, project=TEST_PROJECT_ID
+        )
         ids_yadgar = {r.get("id") for r in results_yadgar}
         assert mid_aws not in ids_yadgar, "AWS-dir row must be excluded when directory=YADGAR_DIR"
         assert mid_yadgar in ids_yadgar, "Yadgar row must be present when directory=YADGAR_DIR"
 
         # Scoped to AWS_DIR: yadgar row must be absent, aws row must be present.
-        results_aws = server.recall(query, directory=AWS_DIR, max_results=20)
+        results_aws = server.recall(
+            query, directory=AWS_DIR, max_results=20, project=TEST_PROJECT_ID
+        )
         ids_aws = {r.get("id") for r in results_aws}
         assert mid_yadgar not in ids_aws, "Yadgar row must be excluded when directory=AWS_DIR"
         assert mid_aws in ids_aws, "AWS row must be present when directory=AWS_DIR"
@@ -433,6 +444,7 @@ class TestDirectoryScopingIntegration:
             "alpha.py beta.py frequently modified xzq987",
             directory=YADGAR_DIR,
             max_results=20,
+            project=TEST_PROJECT_ID,
         )
         matching = [r for r in results if r.get("content") == cofire_content]
         assert len(matching) <= 1, (
@@ -511,6 +523,7 @@ class TestQualityFloorBehavioral:
             "directory scoping decision is_directory_eligible eligible set xzyfloor01",
             directory=YADGAR_DIR,
             max_results=20,
+            project=TEST_PROJECT_ID,
         )
         result_ids = {r.get("id") for r in results}
         {r.get("content") for r in results}
@@ -568,6 +581,7 @@ class TestWikiQueryDirectoryScoping:
                 "source_memory_ids": [],
                 "confidence": "medium",
                 "directory_context": YADGAR_DIR,
+                "project_id": TEST_PROJECT_ID,
             }
         )
         wiki._storage.insert_wiki_page(
@@ -581,6 +595,7 @@ class TestWikiQueryDirectoryScoping:
                 "source_memory_ids": [],
                 "confidence": "medium",
                 "directory_context": AWS_DIR,
+                "project_id": TEST_PROJECT_ID,
             }
         )
 
@@ -627,6 +642,7 @@ class TestProjectBriefWikiScoping:
                 "source_memory_ids": [],
                 "confidence": "medium",
                 "directory_context": directory,
+                "project_id": TEST_PROJECT_ID,
             }
         )
 
@@ -648,7 +664,7 @@ class TestProjectBriefWikiScoping:
         self._insert_wiki(wiki_storage, slug_aws, "Aws Brief Scope PQ2", AWS_DIR)
         self._insert_wiki(wiki_storage, slug_global, "Global Brief Scope PQ3", "global")
 
-        result = server.project_brief(YADGAR_DIR, mode="catalog")
+        result = server.project_brief(YADGAR_DIR, mode="catalog", project=TEST_PROJECT_ID)
         page_slugs = {p["slug"] for p in result.get("key_wiki_pages", [])}
 
         assert slug_aws not in page_slugs, (
@@ -680,7 +696,7 @@ class TestProjectBriefWikiScoping:
         self._insert_wiki(wiki_storage, slug_aws, "Aws Brief Full RR2", AWS_DIR)
         self._insert_wiki(wiki_storage, slug_global, "Global Brief Full RR3", "global")
 
-        result = server.project_brief(YADGAR_DIR, mode="full")
+        result = server.project_brief(YADGAR_DIR, mode="full", project=TEST_PROJECT_ID)
         page_slugs = {p["slug"] for p in result.get("key_wiki_pages", [])}
 
         assert slug_aws not in page_slugs, (

@@ -44,6 +44,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
@@ -108,6 +109,7 @@ def _seed_memories(storage) -> None:
                 "directory_context": _DIR,
                 "tags": ["test"],
                 "heat": 1.0,
+                "project_id": TEST_PROJECT_ID,
             },
         )
 

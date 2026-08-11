@@ -12,6 +12,7 @@ Tests:
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -88,6 +89,7 @@ class TestWikiGet:
                 "category": "test",
                 "status": "approved",
                 "confidence": 0.9,
+                "project_id": TEST_PROJECT_ID,
             }
         )
         result = server.wiki_get(page_id)
@@ -112,6 +114,7 @@ class TestWikiGet:
                 "category": "test",
                 "status": "approved",
                 "confidence": 0.8,
+                "project_id": TEST_PROJECT_ID,
             }
         )
         result = server.wiki_get(page_id)
@@ -132,6 +135,7 @@ class TestWikiGet:
                 "category": "test",
                 "status": "approved",
                 "confidence": 0.8,
+                "project_id": TEST_PROJECT_ID,
             }
         )
         id_b = server._get_storage().insert_wiki_page(
@@ -143,6 +147,7 @@ class TestWikiGet:
                 "category": "test",
                 "status": "approved",
                 "confidence": 0.8,
+                "project_id": TEST_PROJECT_ID,
             }
         )
         result_a = server.wiki_get(id_a)

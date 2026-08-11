@@ -22,6 +22,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # ---------------------------------------------------------------------------
 # Pattern strictness
 # ---------------------------------------------------------------------------
@@ -202,6 +204,7 @@ class TestAnchorAPIGate:
             content="AKIAIOSFODNN7EXAMPLE my key",
             context="/home/user/project",
             reason="test key",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is False, f"anchor must reject secret content, got: {result}"
         assert "secret_detected" in result.get("reason", "")
@@ -215,6 +218,7 @@ class TestAnchorAPIGate:
             content=f"token={token}",
             context="/home/user/project",
             reason="test",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is False
         assert "secret_detected" in result.get("reason", "")
@@ -226,7 +230,8 @@ class TestAnchorAPIGate:
         result = anchor(
             content="normal content",
             context="/home/user/project",
-            reason=f"ghp_{'B' * 20}",  # gitleaks:allow — secret in reason
+            reason=f"ghp_{'B' * 20}",
+            project=TEST_PROJECT_ID,  # gitleaks:allow — secret in reason
         )
         assert result.get("stored") is False
         assert "secret_detected" in result.get("reason", "")
@@ -239,6 +244,7 @@ class TestAnchorAPIGate:
             content="my important decision about the database schema",
             context="/home/user/project",
             reason="architecture",
+            project=TEST_PROJECT_ID,
         )
         # Should NOT be rejected for secrets
         assert result.get("stored") is not False or "secret_detected" not in result.get(
@@ -255,7 +261,8 @@ class TestUpdateActiveWorkAPIGate:
 
         result = update_active_work(
             directory="/home/user/project",
-            content=f"key=ghp_{'A' * 20} working on deploy",  # gitleaks:allow
+            content=f"key=ghp_{'A' * 20} working on deploy",
+            project=TEST_PROJECT_ID,  # gitleaks:allow
         )
         assert result.get("stored") is False
         assert "secret_detected" in result.get("reason", "")
@@ -269,6 +276,7 @@ class TestUpdateActiveWorkAPIGate:
         result = update_active_work(
             directory="/home/user/project",
             content="Currently: refactoring storage layer. Next: add tests.",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is not False or "secret_detected" not in result.get(
             "reason", ""
@@ -285,6 +293,7 @@ class TestBootstrapProjectAPIGate:
         result = bootstrap_project(
             directory="/home/user/project",
             content="AKIAIOSFODNN7EXAMPLE is the AWS key",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is False
         assert "secret_detected" in result.get("reason", "")
@@ -305,6 +314,7 @@ class TestBootstrapProjectAPIGate:
         result = bootstrap_project(
             directory="/home/user/project",
             content="## Project\nYadgar memory system v5.10.x.\n",
+            project=TEST_PROJECT_ID,
         )
         # Should succeed (not rejected for secrets)
         assert result.get("stored") is not False or "secret_detected" not in result.get(
@@ -323,7 +333,8 @@ class TestCheckpointAPIGate:
 
         result = checkpoint(
             directory="/home/user/project",
-            current_task=f"deploying with token ghp_{'T' * 20}",  # gitleaks:allow
+            current_task=f"deploying with token ghp_{'T' * 20}",
+            project=TEST_PROJECT_ID,  # gitleaks:allow
         )
         assert result.get("stored") is False
         assert "secret_detected" in result.get("reason", "")
@@ -337,7 +348,8 @@ class TestCheckpointAPIGate:
         result = checkpoint(
             directory="/home/user/project",
             current_task="deploy",
-            key_decisions=[f"use token ghp_{'K' * 20}"],  # gitleaks:allow
+            key_decisions=[f"use token ghp_{'K' * 20}"],
+            project=TEST_PROJECT_ID,  # gitleaks:allow
         )
         assert result.get("stored") is False
         assert "secret_detected" in result.get("reason", "")
@@ -352,6 +364,7 @@ class TestCheckpointAPIGate:
             directory="/home/user/project",
             current_task="deploy",
             custom_context="AWS_KEY=AKIAIOSFODNN7EXAMPLE",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("stored") is False
         assert "secret_detected" in result.get("reason", "")
@@ -368,6 +381,7 @@ class TestCheckpointAPIGate:
             key_decisions=["Use SurrealDB for storage"],
             next_steps=["Write tests", "Deploy"],
             open_questions=["Should we add caching?"],
+            project=TEST_PROJECT_ID,
         )
         # Should not be rejected for secrets
         assert result.get("stored") is not False or "secret_detected" not in result.get(
@@ -448,6 +462,7 @@ class TestStorageLevelGate:
                     "content": "AKIAIOSFODNN7EXAMPLE my aws key",
                     "directory_context": "/home/user/project",
                     "tags": [],
+                    "project_id": TEST_PROJECT_ID,
                 }
             )
 
@@ -478,6 +493,7 @@ class TestStorageLevelGate:
                     "content": "Normal architecture decision about caching",
                     "directory_context": "/home/user/project",
                     "tags": [],
+                    "project_id": TEST_PROJECT_ID,
                 }
             )
         except SecretLeakBlocked:
@@ -511,6 +527,7 @@ class TestStorageLevelGate:
                     "content": "AKIAIOSFODNN7EXAMPLE bypassed",
                     "directory_context": "/home/user/project",
                     "tags": [],
+                    "project_id": TEST_PROJECT_ID,
                 }
             )
         except SecretLeakBlocked:

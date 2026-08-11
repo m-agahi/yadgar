@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar._shared.storage import StorageEngine
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,7 @@ def _insert_wiki_page(
             # pages of every mutability tier so the gate would deadlock its
             # own setup; ``_sanctioned=True`` skips the gate at insert time.
             "_sanctioned": True,
+            "project_id": TEST_PROJECT_ID,
         }
     )
 

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 @pytest.fixture(autouse=True)
 def _reset_epoch_and_caches():
@@ -422,7 +424,12 @@ def test_real_insert_wiki_page_bumps_epoch():
 
     s = _make_real_funnel()
     before = _recall_shadow._current_epoch(None)
-    assert s.insert_wiki_page({"slug": "p", "title": "T", "content": "c"}) == 1
+    assert (
+        s.insert_wiki_page(
+            {"slug": "p", "title": "T", "content": "c", "project_id": TEST_PROJECT_ID}
+        )
+        == 1
+    )
     assert _recall_shadow._current_epoch(None) == before + 1, (
         "storage.insert_wiki_page must call _bump_wiki_epoch"
     )

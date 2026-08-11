@@ -16,6 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # ---------------------------------------------------------------------------
 # Metric helpers
 # ---------------------------------------------------------------------------
@@ -334,7 +336,7 @@ class TestRecallStageMetrics:
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="embed_query")
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        retriever.recall("test query", max_results=1, project=TEST_PROJECT_ID)
         after = _count_labeled(yadgar_recall_stage_ms, stage="embed_query")
         assert after > before, (
             f"Expected embed_query stage observation; before={before}, after={after}"
@@ -346,7 +348,7 @@ class TestRecallStageMetrics:
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="bm25")
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        retriever.recall("test query", max_results=1, project=TEST_PROJECT_ID)
         after = _count_labeled(yadgar_recall_stage_ms, stage="bm25")
         assert after > before, f"Expected bm25 stage observation; before={before}, after={after}"
 
@@ -356,7 +358,7 @@ class TestRecallStageMetrics:
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="hnsw")
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        retriever.recall("test query", max_results=1, project=TEST_PROJECT_ID)
         after = _count_labeled(yadgar_recall_stage_ms, stage="hnsw")
         assert after > before, f"Expected hnsw stage observation; before={before}, after={after}"
 
@@ -366,7 +368,7 @@ class TestRecallStageMetrics:
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="rerank_final")
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        retriever.recall("test query", max_results=1, project=TEST_PROJECT_ID)
         after = _count_labeled(yadgar_recall_stage_ms, stage="rerank_final")
         assert after > before, (
             f"Expected rerank_final stage observation; before={before}, after={after}"
@@ -383,7 +385,7 @@ class TestRecallStageMetrics:
                     before_by_stage[s.labels["stage"]] = s.value
 
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        retriever.recall("test query", max_results=1, project=TEST_PROJECT_ID)
 
         observed_stages = set()
         for fam in yadgar_recall_stage_ms.collect():
@@ -412,7 +414,7 @@ class TestRecallSpanEmission:
         _, exporter = in_memory_tracer
 
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        retriever.recall("test query", max_results=1, project=TEST_PROJECT_ID)
 
         spans = exporter.get_finished_spans()
         span_names = [s.name for s in spans]
@@ -492,7 +494,7 @@ class TestNliOffNoObservation:
         nli_before = _count_labeled(yadgar_recall_stage_ms, stage="nli")
 
         retriever = _make_retriever_with_mocks(settings_override=s)
-        retriever.recall("test query", max_results=1)
+        retriever.recall("test query", max_results=1, project=TEST_PROJECT_ID)
 
         nli_after = _count_labeled(yadgar_recall_stage_ms, stage="nli")
         assert nli_after == nli_before, (

@@ -28,6 +28,7 @@ import pytest
 
 from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -65,6 +66,7 @@ def _insert(slug, title="Test", content="initial content"):
             "confidence": "medium",
             "source_memory_ids": [],
             "links": [],
+            "project_id": TEST_PROJECT_ID,
         }
     )
 

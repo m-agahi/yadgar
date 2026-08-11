@@ -25,6 +25,7 @@ import pytest
 
 from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -84,6 +85,7 @@ def _make_page(slug: str, page_type: str | None) -> int:
         "confidence": "high",
         "source_memory_ids": [],
         "directory_context": "global",
+        "project_id": TEST_PROJECT_ID,
         "wiki_schema_version": 1,
     }
     if page_type is not None:

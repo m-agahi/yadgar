@@ -19,6 +19,8 @@ import subprocess
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 def _git(*args: str, cwd) -> None:
     subprocess.run(
@@ -73,7 +75,7 @@ def test_memorize_from_worktree_lands_canonical(worktree_repo, stub_queue):
     from yadgar.core.server.tools.memorize import memorize
 
     repo, wt = worktree_repo
-    result = memorize("worktree finding xyz", str(wt), ["test"])
+    result = memorize("worktree finding xyz", str(wt), ["test"], project=TEST_PROJECT_ID)
     assert result["queued"] is True
     op, payload = stub_queue.jobs[-1]
     assert op == "memorize"
@@ -84,7 +86,7 @@ def test_memorize_from_plain_repo_unchanged(worktree_repo, stub_queue):
     from yadgar.core.server.tools.memorize import memorize
 
     repo, _wt = worktree_repo
-    result = memorize("canonical repo finding", str(repo), ["test"])
+    result = memorize("canonical repo finding", str(repo), ["test"], project=TEST_PROJECT_ID)
     assert result["queued"] is True
     _op, payload = stub_queue.jobs[-1]
     assert payload["context"] == str(repo)
@@ -96,7 +98,7 @@ def test_memorize_non_git_context_verbatim(tmp_path, stub_queue):
 
     plain = tmp_path / "not-a-repo"
     plain.mkdir()
-    result = memorize("plain dir finding", str(plain), ["test"])
+    result = memorize("plain dir finding", str(plain), ["test"], project=TEST_PROJECT_ID)
     assert result["queued"] is True
     _op, payload = stub_queue.jobs[-1]
     assert payload["context"] == str(plain)
@@ -109,7 +111,7 @@ def test_anchor_from_worktree_lands_canonical(worktree_repo, stub_queue):
     from yadgar.core.server.tools.misc import anchor
 
     repo, wt = worktree_repo
-    result = anchor("critical worktree fact", str(wt), reason="test")
+    result = anchor("critical worktree fact", str(wt), reason="test", project=TEST_PROJECT_ID)
     assert result["queued"] is True
     op, payload = stub_queue.jobs[-1]
     assert op == "anchor"
@@ -123,7 +125,7 @@ def test_checkpoint_from_worktree_lands_canonical(worktree_repo, stub_queue):
     from yadgar.core.server.tools.misc import checkpoint
 
     repo, wt = worktree_repo
-    result = checkpoint(directory=str(wt), current_task="car work")
+    result = checkpoint(directory=str(wt), current_task="car work", project=TEST_PROJECT_ID)
     assert result["queued"] is True
     op, payload = stub_queue.jobs[-1]
     assert op == "checkpoint"
@@ -147,7 +149,7 @@ def test_update_active_work_from_worktree_forwards_canonical(worktree_repo, monk
     monkeypatch.setattr(project_mod, "_forward_admin", _fake_forward)
     monkeypatch.setattr(project_mod, "_register_active_work_directory", lambda _d: None)
 
-    result = project_mod.update_active_work(str(wt), "working on car")
+    result = project_mod.update_active_work(str(wt), "working on car", project=TEST_PROJECT_ID)
     assert "error" not in result
     assert forwarded["op"] == "update_active_work"
     assert forwarded["payload"]["resolved"] == str(repo)

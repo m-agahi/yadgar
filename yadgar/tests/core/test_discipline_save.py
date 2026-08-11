@@ -32,6 +32,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -62,6 +63,7 @@ class TestDisciplineSaveCreate:
             "zz-probe-create",
             "Rule one.\nRule two.",
             purpose="A probe discipline.",
+            project=TEST_PROJECT_ID,
         )
         assert result["saved"] is True
         assert result["version"] == 1
@@ -77,11 +79,14 @@ class TestDisciplineSaveAdditionsOnly:
     def test_additions_only_update_allowed(self, storage):
         from yadgar.core.server.tools.agent_prompts import _read_agent_prompt, discipline_save
 
-        discipline_save("zz-probe-additions", "Rule one.\nRule two.", purpose="probe")
+        discipline_save(
+            "zz-probe-additions", "Rule one.\nRule two.", purpose="probe", project=TEST_PROJECT_ID
+        )
         result = discipline_save(
             "zz-probe-additions",
             "Rule one.\nRule two.\nRule three.",
             purpose="probe",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("error") is None, f"additions-only update rejected: {result}"
         assert result["saved"] is True
@@ -102,10 +107,12 @@ class TestDisciplineSaveAdditionsOnly:
             "zz-probe-purpose-reuse",
             "Rule one.",
             purpose="A specific, hand-written purpose.",
+            project=TEST_PROJECT_ID,
         )
         result = discipline_save(
             "zz-probe-purpose-reuse",
             "Rule one.\nRule two.",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("error") is None, f"additions-only update rejected: {result}"
         assert result["saved"] is True
@@ -124,11 +131,13 @@ class TestDisciplineSaveRemovalGuard:
             "zz-probe-removal",
             "Rule one.\nRule two.\nRule three.",
             purpose="probe",
+            project=TEST_PROJECT_ID,
         )
         result = discipline_save(
             "zz-probe-removal",
             "Rule one.\nRule three.",
             purpose="probe",
+            project=TEST_PROJECT_ID,
         )
         assert result.get("saved") is False
         assert result.get("error") == "removal_requires_confirmation"
@@ -148,12 +157,14 @@ class TestDisciplineSaveRemovalGuard:
             "zz-probe-removal-confirmed",
             "Rule one.\nRule two.\nRule three.",
             purpose="probe",
+            project=TEST_PROJECT_ID,
         )
         result = discipline_save(
             "zz-probe-removal-confirmed",
             "Rule one.\nRule three.",
             purpose="probe",
             confirm_removal=True,
+            project=TEST_PROJECT_ID,
         )
         assert result.get("saved") is True, f"ratified removal must succeed: {result}"
         assert result["version"] == 2
@@ -178,6 +189,7 @@ class TestSeederStillCreateIfAbsent:
             "recall-first",
             "Custom recall-first rule one.\nCustom recall-first rule two.",
             purpose="custom override",
+            project=TEST_PROJECT_ID,
         )
         seed_agent_prompts(storage=storage)
 
