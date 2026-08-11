@@ -76,9 +76,12 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    the topic (wiki_list → slug → wiki_read the slug NOW and edit the content it
    RETURNS — do NOT rewrite a page from memory; update via
    wiki_add(replace_slug=<slug>, ..., directory="{directory}",
-   wait=True); no near-duplicate pages). If no
+   project="{project}", wait=True); no near-duplicate pages). If no
    page fits, create one with wiki_add(tags=[...], directory="{directory}",
-   wait=True).
+   project="{project}", wait=True).
+   EVERY scoped call in this protocol carries project="{project}". Since C5 an
+   identity is never derived, so a call that omits it is REJECTED with
+   {{"error": "unresolved_project"}} rather than scoped to a guess.
    Verify wiki_history. Facts/structure only — decisions go in step 1.
 
 3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
@@ -86,15 +89,16 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    refined — one worth reusing for a recurring task shape (review, debug, explore,
    implement, etc.). Skip one-offs and trivial prompts.
    - Read existing patterns FIRST — actually CALL recall now and judge from the
-     RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"]) (or
+     RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"],
+     directory="{directory}", project="{project}") (or
      wiki_read the agent-prompt-toc page). See which task-shapes already have a
      pattern.
    - If an EXISTING pattern already covers this task-shape, IMPROVE/extend it:
      agent_prompt_save the SAME pattern slug — agent_prompt_save versions it.
    - Only create a NEW slug when no existing pattern fits. NEVER mint a
      near-duplicate: a differently-named clone of an existing shape.
-   - Call agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
-     content=<the prompt>, purpose=<one line>) — same slug to extend a match,
+   - Call agent_prompt_save(directory="{directory}", project="{project}",
+     pattern=<kebab-task-shape>, content=<the prompt>, purpose=<one line>) — same slug to extend a match,
      a new slug only when genuinely new.
 
 4. SUBAGENT FINDINGS CURATION (always run; findings sit in on-disk
@@ -107,7 +111,8 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
        repo structure/convention   → wiki_add / update owning page (step 2)
        reusable dispatch prompt     → agent_prompt_save (step 3)
        useful working fact          → memorize(content=REWRITTEN in your words,
-                                        context="{directory}", tags=[...])
+                                        context="{directory}", project="{project}",
+                                        tags=[...])
                                         — never store the raw bullet verbatim
        noise/status/one-off/dup     → DISCARD (do nothing)
      Dedup vs what you wrote this checkpoint + existing ADRs/wiki. Storing nothing is valid + common.

@@ -22,12 +22,20 @@ boundaries that already return an error envelope surface ``exc.payload``
 verbatim; the rest let it propagate, where ``str(exc)`` carries the same two
 facts inline.
 
-**Relationship to ``core.hooks._identity_mint.UnresolvableProjectError``.**
-Deliberately two classes, not one. That one is the HOST-side mint failing to
-derive an identity from a working tree (a git/config problem, fixed by adding a
-remote or writing ``.yadgar/project-id``). ``UnresolvedProjectError`` here is a
-CALL that arrived without one (an API problem, fixed by passing ``project=``).
-Merging them would produce an error whose remedy text is right half the time.
+**Relationship to the host-side mint's ``UnresolvableProjectError``.**
+Deliberately two classes, not one. That one is the HOST-side mint (under
+``core/hooks/``) failing to derive an identity from a working tree — a
+git/config problem, fixed by adding a remote or writing ``.yadgar/project-id``.
+``UnresolvedProjectError`` here is a CALL that arrived without one — an API
+problem, fixed by passing ``project=``. Merging them would produce an error
+whose remedy text is right half the time.
+
+(The sibling's module is named obliquely on purpose: C2's structural boundary
+test is a text scan for that module's name across ``core/server``, ``backend``
+and ``_shared``, and it is a text scan deliberately — a count-based or
+import-based check is satisfiable by a facade that re-exports the mint. Spelling
+the path here would trip it on prose, which is the same false positive this
+car's own residue guard had to solve.)
 """
 
 from __future__ import annotations

@@ -12,8 +12,9 @@ What survives is a set of pure readers with no identity POLICY in them: parse a
 remote URL, apply an insteadOf table, read a ``.yadgar/project-id`` file, shell
 out for ``remote.origin.url``. The policy — which sources count, in what order,
 and what happens when none resolve — is the composition, and it lives in
-``yadgar.core.hooks._identity_mint`` where only the host-side hook entry points
-can reach it. That module raises rather than guessing.
+the host-side mint under ``core/hooks/``, where only the hook entry points
+can reach it. That module raises rather than guessing. (Named obliquely: C2's
+boundary test text-scans for its module name outside the hook entry points.)
 
 The ``owner/repo`` key those helpers build is intentionally a path (not just
 ``repo``): a ``group/sub/repo`` triple stays one opaque path (§16.9). Splitting
