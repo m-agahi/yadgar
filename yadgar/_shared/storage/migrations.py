@@ -1536,6 +1536,91 @@ def _migration_031_project_id_backfill(storage) -> None:
     )
 
 
+# ── C11 (0047 PR#40 §5) — the OTHER directory-bearing tables ───────────────
+
+#: Tables that 033 declares ``project_id`` on. Ordered, deduplicated, and named
+#: ONCE so the statement list, the index list and the test's expectation cannot
+#: drift apart.
+#:
+#: Three of these carry their own legacy ``directory`` COLUMN (``memory_block``,
+#: ``episode``, ``action_log``); the rest are the SCHEMALESS ``directory_context``
+#: users that no ``DEFINE FIELD`` ever covered (``checkpoint``,
+#: ``narrative_entry``, ``user_profile``, ``derived_belief``,
+#: ``wiki_page_version``). ``runtime_config`` is the sixth-table GAP C9a/C9c/C10
+#: reported upward: it carries its own ``directory`` column, has no
+#: ``project_id``, and is absent from the plan's four-table list. It is declared
+#: here because leaving one directory-bearing table without the column is how
+#: the next car inherits the same report a fourth time.
+#:
+#: **The plan's fourth table, ``queue``, DOES NOT EXIST.** The cited site
+#: (``_shared/storage/queue.py:81``) is inside ``insert_action_log``'s docstring,
+#: and the queue itself is FILE-backed (``_shared/file_queue/``) — there is no
+#: ``DEFINE TABLE queue``, no writer and no row. Declaring a column on it to
+#: satisfy a table count would create a phantom.
+_C11_PROJECT_ID_TABLES: tuple[str, ...] = (
+    "memory_block",
+    "episode",
+    "action_log",
+    "checkpoint",
+    "narrative_entry",
+    "user_profile",
+    "derived_belief",
+    "wiki_page_version",
+    "runtime_config",
+)
+
+
+def _migration_033_project_id_other_tables(storage) -> None:
+    """Declare ``project_id`` + an index on the other directory-bearing tables.
+
+    C11 (0047 PR#40 §5). **Schema statements ONLY — no data step, no scan, no
+    derivation.** Every statement is ``DEFINE FIELD IF NOT EXISTS`` /
+    ``DEFINE INDEX IF NOT EXISTS``, so a replay issues the identical list and
+    changes nothing. That is the idempotency proof, and it is STRUCTURAL: 031's
+    filter was dead code because it filtered on a column it never projected, and
+    the only way to be sure that shape cannot recur is to have no row-touching
+    statement to get wrong.
+
+    **The legacy ``directory`` / ``directory_context`` columns are NOT dropped
+    here, and their writers are NOT silenced** (plan §5 C11: "add now, drop next
+    PR"). ADR-0225's stated reason for keeping them — *the backfill derives from
+    them* — is load-bearing in both directions: a row written between this car
+    and the drop migration with a ``project_id`` but no ``directory`` would have
+    nothing for the backfill to derive from and nothing for the un-backfilled
+    readers to match, which is strictly worse than the degraded window §8 5b
+    sanctions. So the writers DUAL-WRITE: they stamp ``project_id`` and keep
+    writing the legacy column. Three live consumers make that mandatory rather
+    than merely prudent — ``causal_discovery/pc.py`` filters episodes on
+    ``e["directory"]``, ``consolidation/cls.py`` reads ``ep.get("directory")``,
+    and ``consolidation/cleanup.py`` takes the action-log row's ``directory`` as
+    the summary memory's ``directory_context``.
+
+    **The safety property named in ADR-0225/0226 is about the DROP, not this
+    car.** Every table here is SCHEMALESS, so a future ``REMOVE FIELD`` removes
+    only the type definition while any surviving writer re-creates the column
+    untyped — and ``INFO FOR TABLE`` still looks clean. The next PR must kill
+    the writers, not merely issue the statement.
+
+    ``project_id`` is ``option<string>``: pre-existing rows read as ``None``,
+    NOT as ``"global"``. No backfill covers these tables — ``project_backfill``'s
+    ``_TABLES`` is ``("memory", "wiki_page")`` and §8 names no step for the rest
+    — so every reader that moves onto ``project_id`` here keeps a transitional
+    legacy arm for the historical corpus rather than silently returning nothing.
+    """
+    for table in _C11_PROJECT_ID_TABLES:
+        storage._q(f"DEFINE FIELD IF NOT EXISTS project_id ON TABLE {table} TYPE option<string>;")
+    for table in _C11_PROJECT_ID_TABLES:
+        storage._q(
+            f"DEFINE INDEX IF NOT EXISTS {table}_project_id_idx ON TABLE {table} FIELDS project_id;"
+        )
+    _log.info(
+        "migration_033: declared project_id + index on %d tables (%s) — schema only, "
+        "no backfill, legacy directory columns retained for the next PR's drop",
+        len(_C11_PROJECT_ID_TABLES),
+        ", ".join(_C11_PROJECT_ID_TABLES),
+    )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -1648,6 +1733,11 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "031_project_id_backfill",
         "fn": _migration_031_project_id_backfill,
+    },
+    # NOTE: 032 is RESERVED for C12 (drop wiki_page_version.branch). Do not use.
+    {
+        "version": "033_project_id_other_tables",
+        "fn": _migration_033_project_id_other_tables,
     },
 ]
 
