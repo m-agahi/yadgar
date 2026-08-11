@@ -74,9 +74,18 @@ def _check_wiki_add_context(directory: str | None) -> dict:
 
     ``is_draining()`` callers are exempt — this helper should only be called when
     not is_draining().
+
+    C13: the returned envelope carries ``stored``/``ok`` alongside the payload.
+    C5 replaced ``_missing_directory_error`` (which set ``stored=False``) with
+    the bare ``.payload``, while the resolver rejection thirty lines below kept
+    returning ``{"stored": False, "ok": False, **exc.payload}`` — so ONE tool
+    answered ONE error class in TWO shapes, and a caller doing the documented
+    ``result["stored"] is False`` check got ``None`` on this path and ``False``
+    on the other. The whole point of the structured error is that an agent gets
+    one shape of answer; shipping two defeats it.
     """
     if not (directory or "").strip():
-        return dict(UnresolvedProjectError("wiki_add").payload)
+        return {"stored": False, "ok": False, **UnresolvedProjectError("wiki_add").payload}
     return {}
 
 

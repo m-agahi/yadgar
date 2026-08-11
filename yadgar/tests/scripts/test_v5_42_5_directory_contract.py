@@ -89,12 +89,21 @@ def _slugify(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:64]
 
 
+#: Identity the direct-insert helpers stamp. C5 (ADR-0227) made the storage
+#: chokepoint "the caller's value, or a raise" — an insert with no project_id
+#: no longer falls back to 'global'. These fixtures exercise DIRECTORY scoping,
+#: which is a separate axis that survives until C11, so they all share one
+#: project_id: varying it would change what the directory assertions mean.
+_TEST_PROJECT_ID = "owner/repo"
+
+
 def _insert_wiki_direct(
     storage,
     title: str,
     content: str,
     directory_context: str,
     branch: str | None = None,
+    project_id: str = _TEST_PROJECT_ID,
 ) -> str:
     slug = _slugify(title)
     storage.insert_wiki_page(
@@ -109,6 +118,7 @@ def _insert_wiki_direct(
             "confidence": "medium",
             "branch": branch,
             "directory_context": directory_context,
+            "project_id": project_id,
         }
     )
     return slug
@@ -132,6 +142,7 @@ def _insert_memory_direct(storage, content: str, directory_context: str) -> None
             "file_hash": None,
             "embedding_model": "all-MiniLM-L6-v2",
             "branch": None,
+            "project_id": _TEST_PROJECT_ID,
             "_internal": True,
         }
     )
@@ -141,7 +152,19 @@ def _insert_memory_direct(storage, content: str, directory_context: str) -> None
 
 
 class TestWikiAddDirectoryBoundary:
-    """wiki_add must reject empty/missing directory at the MCP boundary."""
+    """wiki_add must reject empty/missing directory at the MCP boundary.
+
+    C5 (ADR-0227) changed the LABEL of this rejection, not its existence:
+    ``_check_wiki_add_context`` used to return ``_missing_directory_error``
+    and now returns the ``UnresolvedProjectError`` payload, so the wire
+    ``error`` reads ``unresolved_project``. The guard itself is very much
+    alive and is NOT the resolver — see
+    ``test_a_valid_project_does_not_rescue_an_empty_directory``, which is the
+    assertion that keeps these three from collapsing into duplicates of the
+    C5 resolver tests. ``directory_context`` survives until C11, and the
+    drainer's own step-4 check (covered by ``TestDrainerRejectsNoDirectory``
+    below) still rejects with the literal ``missing_directory``.
+    """
 
     def test_wiki_add_rejects_empty_directory(self):
         """wiki_add(directory='') → synchronous error, no storage write."""
@@ -155,8 +178,8 @@ class TestWikiAddDirectoryBoundary:
                 content="Some content",
                 directory="",
             )
-        assert result.get("error") == "missing_directory", (
-            f"Expected missing_directory error, got: {result}"
+        assert result.get("error") == "unresolved_project", (
+            f"Expected the boundary rejection, got: {result}"
         )
         assert result.get("stored") is False
 
@@ -172,8 +195,8 @@ class TestWikiAddDirectoryBoundary:
                 content="Some content",
                 directory="   ",
             )
-        assert result.get("error") == "missing_directory", (
-            f"Expected missing_directory error, got: {result}"
+        assert result.get("error") == "unresolved_project", (
+            f"Expected the boundary rejection, got: {result}"
         )
 
     def test_wiki_add_rejects_missing_directory_param(self):
@@ -188,8 +211,8 @@ class TestWikiAddDirectoryBoundary:
                 content="Some content",
                 # no directory param
             )
-        assert result.get("error") == "missing_directory", (
-            f"Expected missing_directory error, got: {result}"
+        assert result.get("error") == "unresolved_project", (
+            f"Expected the boundary rejection, got: {result}"
         )
 
     def test_wiki_add_accepts_valid_directory(self):
@@ -203,6 +226,7 @@ class TestWikiAddDirectoryBoundary:
                 title="Valid Dir Page",
                 content="Some content",
                 directory="/proj/x",
+                project=_TEST_PROJECT_ID,
             )
         assert result.get("error") != "missing_directory", (
             f"Should not reject valid directory, got: {result}"
@@ -222,7 +246,17 @@ class TestDrainerRejectsNoDirectory:
         *,
         directory_context: str | None = "ABSENT",
         internal: bool = False,
+        project_id: str | None = "owner/repo",
     ) -> dict:
+        """Build a queued wiki_add record.
+
+        ``project_id`` defaults to a real key because C4 added the enqueue-time
+        stamp as step 5 of ``_validate_wiki_add``, AFTER the step-4 directory
+        check this class is about. A record without one is rejected for the
+        wrong reason, which would silently turn the pass-case assertions below
+        into no-ops. The DIRECTORY check is what this class covers; the stamp
+        has its own coverage in ``test_c5_dlq_project_id_gate``.
+        """
         payload: dict = {
             "wiki_schema_version": 2,
             "slug": "drainer-dir-test",
@@ -233,6 +267,8 @@ class TestDrainerRejectsNoDirectory:
         }
         if directory_context != "ABSENT":
             payload["directory_context"] = directory_context
+        if project_id is not None:
+            payload["project_id"] = project_id
         if internal:
             payload["_internal"] = True
         return {"op": "wiki_add", "id": "test-id", "payload": payload}
@@ -327,7 +363,7 @@ class TestResolutionProjectBeatsGlobal:
 
         from yadgar.core.server.tools.wiki import wiki_read
 
-        result = wiki_read(slug, directory="/proj/A")
+        result = wiki_read(slug, directory="/proj/A", project=_TEST_PROJECT_ID)
 
         assert result.get("error") is None, f"Got error: {result}"
         assert result.get("directory_context") == "/proj/A", (
@@ -354,7 +390,7 @@ class TestResolutionProjectBeatsGlobal:
 
         from yadgar.core.server.tools.wiki import wiki_read
 
-        result = wiki_read(slug, directory="/proj/B")
+        result = wiki_read(slug, directory="/proj/B", project=_TEST_PROJECT_ID)
 
         assert result.get("error") is None, f"Got error: {result}"
         assert result.get("directory_context") == "global", (
@@ -449,6 +485,7 @@ class TestAgentPromptSaveRequiresDirectory:
             pattern="test-pattern-valid",
             content="Test prompt content",
             directory="/home/max/git/yadgar",
+            project=_TEST_PROJECT_ID,
         )
         assert result.get("saved") is True, f"Expected saved=True, got: {result}"
         assert result.get("error") is None
@@ -505,7 +542,9 @@ class TestRecallDirectoryScope:
 
         from yadgar.core.server.tools.recall import recall
 
-        results = recall(query="proj secret", max_results=10, directory="/proj/A")
+        results = recall(
+            query="proj secret", max_results=10, directory="/proj/A", project=_TEST_PROJECT_ID
+        )
 
         contents = [r.get("content", "") for r in results]
         any("proj-A-secret" in c for c in contents)

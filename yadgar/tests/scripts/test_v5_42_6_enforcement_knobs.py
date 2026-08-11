@@ -1,29 +1,38 @@
-"""v5.42.6 — enforcement-off knob (YADGAR_DIRECTORY_ENFORCEMENT).
+"""v5.42.6 — the enforcement-off knob (YADGAR_DIRECTORY_ENFORCEMENT) is INERT.
 
 ADR-0215 removed branch scoping, and with it the YADGAR_BRANCH_ENFORCEMENT half
-of this file (K3-K6, K8, K10, K12 and the branch arms of K13-K14, K15). The
-DIRECTORY half is untouched and is the reason this file survives: it is the only
-coverage of the surviving knob, so deleting the file wholesale — as the removal
-plan originally listed — would have dropped it.
+of this file (K3-K6, K8, K10, K12 and the branch arms of K13-K14, K15). C5 of
+the 0047 spine train (ADR-0227) then deleted the DIRECTORY half of the knob
+itself, across config.py, config_registry.py, config_yaml.py,
+queue_drainer/dlq.py, routes/control.py and tools/wiki.py: "relaxed enforcement
+is the mode in which unscoped rows entered the corpus", and a knob whose OFF
+position disables a scoping guarantee cannot coexist with an identity contract
+that is fail-loud by construction.
 
-Design:
-- YADGAR_DIRECTORY_ENFORCEMENT (default true) — when false, _validate_wiki_add
-  skips the directory_context check and logs WARN instead of rejecting.
-  MCP boundary in wiki_add also consults this knob.
-- Default true: existing tests are unaffected (default-ON = current behavior).
-- Metric: yadgar_writes_with_enforcement_relaxed{enforcement="directory"}
-  increments each time a write passes because enforcement is off.
+**So this file is inverted, not deleted.** Every assertion that used to pin
+"OFF relaxes the check" now pins "OFF changes nothing" — which is the more
+valuable test of the two, because the failure mode being guarded against is an
+operator (or a future car) resurrecting the escape hatch and quietly reopening
+the hole. A deleted file would guard nothing; a file asserting inertness fails
+loudly the moment the knob is rewired.
 
-Coverage:
-K1. directory enforcement OFF → _validate_wiki_add passes missing-directory record.
-K2. directory enforcement ON (default) → _validate_wiki_add rejects missing-directory.
-K7. WARN log fires when directory enforcement is off and record lacks directory.
-K9. Metric yadgar_writes_with_enforcement_relaxed{enforcement="directory"} increments
-    when directory enforcement is off.
-K11. Env parsing: YADGAR_DIRECTORY_ENFORCEMENT=false/0/FALSE/False → OFF.
-K13. Env parsing: unset (no env var) → defaults ON.
-K14. Env parsing: garbage value "banana" → fails-safe to ON.
-K16. MCP wiki_add: YADGAR_DIRECTORY_ENFORCEMENT=false → does NOT return missing_directory error.
+Coverage after the inversion:
+K1.  enforcement "off" → the missing-directory record is STILL rejected.
+K2.  enforcement "on"  → rejected (unchanged; the default was always this).
+K7.  no relaxation WARN is logged, because no write is relaxed any more.
+K9.  yadgar_writes_with_enforcement_relaxed{enforcement="directory"} never
+     increments. The metric NAME is retained deliberately (C5: a metric that
+     vanishes breaks dashboards and alert rules that outlive the code), so the
+     assertion is that it stays pinned at its prior value.
+K11. every falsy spelling (false/0/FALSE/False) is inert, not just the default.
+K13. unset → rejected (unchanged).
+K14. garbage/truthy → rejected (unchanged).
+K16. the MCP boundary: wiki_add with no directory still returns an error with
+     the knob off. It now returns unresolved_project rather than
+     missing_directory — C5 replaced _missing_directory_error with the
+     structured raise — so the assertion names the error it must be, not merely
+     one it must not be. The old form (`!= "missing_directory"`) survived C5
+     GREEN while testing nothing at all.
 """
 
 from __future__ import annotations
@@ -66,19 +75,27 @@ def _missing_directory_record() -> dict:
 
 
 class TestDirectoryEnforcementKnob:
-    """K1-K2: YADGAR_DIRECTORY_ENFORCEMENT controls directory check in _validate_wiki_add."""
+    """K1-K2: YADGAR_DIRECTORY_ENFORCEMENT no longer controls anything."""
 
-    def test_enforcement_off_passes_missing_directory(self, tmp_path):
-        """K1: YADGAR_DIRECTORY_ENFORCEMENT=false → _validate_wiki_add returns None."""
+    def test_enforcement_off_still_rejects_missing_directory(self, tmp_path):
+        """K1 (inverted): YADGAR_DIRECTORY_ENFORCEMENT=false relaxes nothing.
+
+        This assertion used to be ``result is None``. C5 deleted the knob's
+        only reader in ``_validate_wiki_add``, so the env var is now an
+        unread string in the environment — setting it must not reopen the
+        hole it used to open.
+        """
         drainer = _make_drainer(tmp_path)
         record = _missing_directory_record()
 
         with patch.dict(os.environ, {"YADGAR_DIRECTORY_ENFORCEMENT": "false"}):
             result = drainer._validate_wiki_add(record)
 
-        assert result is None, (
-            f"directory enforcement OFF should pass missing-directory record; got: {result!r}"
+        assert result is not None, (
+            "C5/ADR-0227: the enforcement escape hatch is deleted — "
+            f"'false' must not pass a missing-directory record; got: {result!r}"
         )
+        assert "directory" in result.lower()
 
     def test_enforcement_on_rejects_missing_directory(self, tmp_path):
         """K2: YADGAR_DIRECTORY_ENFORCEMENT=true (default) → rejects missing directory."""
@@ -91,38 +108,65 @@ class TestDirectoryEnforcementKnob:
         assert result is not None, "directory enforcement ON should reject missing-directory record"
         assert "directory" in result.lower()
 
+    def test_the_two_knob_positions_are_indistinguishable(self, tmp_path):
+        """The inertness stated as one assertion: OFF and ON produce the same answer.
+
+        K1 and K2 each pin one position; a future car could satisfy both while
+        still branching on the variable. This pins that there is no branch.
+        """
+        drainer = _make_drainer(tmp_path)
+
+        with patch.dict(os.environ, {"YADGAR_DIRECTORY_ENFORCEMENT": "false"}):
+            off = drainer._validate_wiki_add(_missing_directory_record())
+        with patch.dict(os.environ, {"YADGAR_DIRECTORY_ENFORCEMENT": "true"}):
+            on = drainer._validate_wiki_add(_missing_directory_record())
+
+        assert off == on
+
 
 # ── K7: WARN log fires when enforcement is relaxed ───────────────────────────
 
 
 class TestEnforcementRelaxedWarnLog:
-    """K7: WARN log emitted when enforcement is off and check would have rejected."""
+    """K7 (inverted): there is no relaxation left to warn about."""
 
-    def test_warn_log_fires_when_directory_enforcement_off(self, tmp_path, caplog):
-        """K7: WARN logged when directory enforcement is off + record missing directory."""
+    def test_no_relaxation_warning_is_logged_when_the_knob_is_off(self, tmp_path, caplog):
+        """K7 (inverted): the WARN existed to announce a relaxed write; none happen now.
+
+        The old assertion required a WARN naming 'directory' and 'enforcement'.
+        That log line was the audit trail for a write that passed *because*
+        enforcement was off — C5 deleted the branch that emitted it, so its
+        continued presence would mean the branch came back.
+        """
         drainer = _make_drainer(tmp_path)
         record = _missing_directory_record()
 
         with patch.dict(os.environ, {"YADGAR_DIRECTORY_ENFORCEMENT": "false"}):
             with caplog.at_level(logging.WARNING):
-                drainer._validate_wiki_add(record)
+                result = drainer._validate_wiki_add(record)
 
-        assert any(
-            "directory" in m.lower() and "enforcement" in m.lower() for m in caplog.messages
-        ), (
-            "Expected WARN log containing 'directory' and 'enforcement' when enforcement is off; "
-            f"got messages: {caplog.messages}"
-        )
+        assert result is not None, "the record must still be rejected"
+        assert not any(
+            "enforcement" in m.lower() and "relax" in m.lower() for m in caplog.messages
+        ), f"a relaxation WARN implies the deleted escape hatch is live: {caplog.messages}"
 
 
 # ── K9: metric counter increments when enforcement relaxed ───────────────────
 
 
 class TestEnforcementRelaxedMetric:
-    """K9: yadgar_writes_with_enforcement_relaxed counter increments on relaxation."""
+    """K9 (inverted): the counter is retained at rest and never increments."""
 
-    def test_directory_relaxed_metric_increments(self, tmp_path):
-        """K9: yadgar_writes_with_enforcement_relaxed{enforcement='directory'} increments."""
+    def test_directory_relaxed_metric_never_increments(self, tmp_path):
+        """K9 (inverted): the metric NAME survives C5; the increment does not.
+
+        C5 kept ``yadgar_writes_with_enforcement_relaxed`` registered on
+        purpose — "a metric name that vanishes breaks dashboards and alert
+        rules outliving the code" — so this is not a dead-symbol test. It is
+        the assertion that the retained name stays at rest: any increment
+        means a write passed because enforcement was relaxed, which is the
+        exact event C5 made impossible.
+        """
         drainer = _make_drainer(tmp_path)
         record = _missing_directory_record()
 
@@ -136,7 +180,9 @@ class TestEnforcementRelaxedMetric:
         after = _get_counter_value(
             "yadgar_writes_with_enforcement_relaxed_total", {"enforcement": "directory"}
         )
-        assert after > before, f"Counter should have incremented; before={before}, after={after}"
+        assert after == before, (
+            f"a relaxed-write increment means the escape hatch is live; before={before}, after={after}"
+        )
 
 
 def _get_counter_value(metric_name: str, labels: dict) -> float:
@@ -160,16 +206,21 @@ class TestEnforcementEnvParsing:
     """K11, K13-K14: env var parsing for the directory enforcement knob."""
 
     @pytest.mark.parametrize("val", ["false", "0", "FALSE", "False"])
-    def test_directory_enforcement_false_values(self, tmp_path, val):
-        """K11: YADGAR_DIRECTORY_ENFORCEMENT falsy values → enforcement OFF."""
+    def test_directory_enforcement_false_values_are_inert(self, tmp_path, val):
+        """K11 (inverted): every falsy spelling is inert, not just the default one.
+
+        Parametrised deliberately: a resurrection of the knob would most
+        plausibly re-add one spelling (``"false"``) while the others stayed
+        dead, which a single-value assertion would miss.
+        """
         drainer = _make_drainer(tmp_path)
         record = _missing_directory_record()
 
         with patch.dict(os.environ, {"YADGAR_DIRECTORY_ENFORCEMENT": val}):
             result = drainer._validate_wiki_add(record)
 
-        assert result is None, (
-            f"YADGAR_DIRECTORY_ENFORCEMENT={val!r} should turn off enforcement; got: {result!r}"
+        assert result is not None, (
+            f"YADGAR_DIRECTORY_ENFORCEMENT={val!r} must not turn off a deleted knob; got: {result!r}"
         )
 
     def test_unset_env_defaults_on(self, tmp_path):
@@ -208,8 +259,8 @@ class TestMCPBoundaryEnforcementKnobs:
     out so no real queue write occurs.
     """
 
-    def test_directory_enforcement_off_skips_mcp_missing_directory_rejection(self):
-        """K16: YADGAR_DIRECTORY_ENFORCEMENT=false → wiki_add does not return missing_directory."""
+    def test_directory_enforcement_off_still_rejects_at_the_mcp_boundary(self):
+        """K16 (inverted): the knob does not buy a pass at the MCP boundary either."""
         from unittest.mock import MagicMock, patch
 
         import yadgar._shared.runtime.state as _st
@@ -236,6 +287,14 @@ class TestMCPBoundaryEnforcementKnobs:
                 directory=None,
             )
 
-        assert result.get("error") != "missing_directory", (
-            f"YADGAR_DIRECTORY_ENFORCEMENT=false should skip MCP missing_directory rejection; got: {result!r}"
+        # The old assertion was `!= "missing_directory"`, which C5 satisfied
+        # without testing anything: the boundary now raises unresolved_project
+        # instead, so a negative assertion passes even if the call were to
+        # succeed outright. Name the error it must BE.
+        assert result.get("error") == "unresolved_project", (
+            "C5 replaced _missing_directory_error with the structured raise; a call "
+            f"naming no project must still be refused with the knob off. got: {result!r}"
+        )
+        assert result.get("stored") is not True, (
+            f"the knob must not let an unscoped page through to the queue: {result!r}"
         )
