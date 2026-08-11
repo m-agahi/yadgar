@@ -61,6 +61,12 @@ pytestmark = pytest.mark.e2e
 
 PROJECT_DIR = "/home/test/yadgar-project"
 
+#: Identity every write in this file names. ADR-0215 (the subject here) removed
+#: the BRANCH dimension; C5/ADR-0227 then made the PROJECT dimension mandatory
+#: at the same boundaries. Naming it keeps each test on its own subject: a
+#: writer that refuses for want of an identity is not evidence about branch.
+PROJECT_ID = "owner/repo"
+
 
 def _no_branch_context_anywhere(monkeypatch) -> None:
     """Construct the exact environment the v5.42.3 hard-reject fired on.
@@ -103,6 +109,7 @@ class TestWritesSucceedWithoutBranchContext:
             content=f"memorize note {token}",
             context=PROJECT_DIR,
             tags=["adr-0215"],
+            project=PROJECT_ID,
         )
         assert result.get("stored") is True, (
             f"memorize must accept a write with no branch context (ADR-0215); got {result}"
@@ -129,6 +136,7 @@ class TestWritesSucceedWithoutBranchContext:
             content=f"anchor note {token}",
             context=PROJECT_DIR,
             reason="adr-0215 write path",
+            project=PROJECT_ID,
         )
         assert result.get("queued") is True, (
             f"anchor must accept a write with no branch context (ADR-0215); got {result}"
@@ -150,7 +158,7 @@ class TestWritesSucceedWithoutBranchContext:
         storage = e2e_engines["storage"]
         token = "adr0215writepathcheckpoint"
 
-        result = checkpoint(directory=PROJECT_DIR, current_task=f"task {token}")
+        result = checkpoint(directory=PROJECT_DIR, current_task=f"task {token}", project=PROJECT_ID)
         assert result.get("queued") is True, (
             f"checkpoint must accept a write with no branch context (ADR-0215); got {result}"
         )

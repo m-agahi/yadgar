@@ -119,7 +119,18 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    #
+    # C13: the validated value is KEPT and stamped on the enqueue payload
+    # below. C4b gave memorize / anchor / agent_prompt_save their enqueue-time
+    # stamp and did not reach checkpoint; C5 then widened the drainer's
+    # ``_validate_project_id`` gate from wiki_add to EVERY op type. Together
+    # those meant checkpoint validated an identity it had been handed and then
+    # threw it away, so every checkpoint job was permanently DLQ'd as
+    # ``missing_project_id`` -- including the ones from the stop-hook protocol,
+    # which C5 had just taught to pass ``project="{project}"``. The highest-
+    # volume recovery path in the system, discarding the one value that would
+    # have let it through.
+    _project_id = accept_project_param(project, directory)
     # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
     _surrogate_err = _validate_checkpoint_surrogates(
         current_task,
@@ -162,6 +173,13 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
             "next_steps": next_steps,
             "active_errors": active_errors,
             "custom_context": custom_context,
+            # C13: the enqueue-time stamp the drainer's gate requires. Set from
+            # the value the caller named, never derived — the drainer runs in a
+            # container that cannot mint one (ADR-0227). A caller that named
+            # none still lands in the DLQ, which is the DECLARED failure path
+            # for a queued write (recoverable, requeueable once the caller
+            # passes project=), not a silent drop.
+            "project_id": _project_id,
         },
     )
     return {"queued": True, "directory": directory}
