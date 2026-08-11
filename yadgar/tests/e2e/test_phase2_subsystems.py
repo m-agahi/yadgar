@@ -34,6 +34,14 @@ pytestmark = pytest.mark.e2e
 
 _E2E_BRANCH = "feat/e2e-phase2"
 
+#: The two identities this file needs. C5/ADR-0227 made ``project_id``
+#: mandatory at the storage write chokepoint and at every scoped read.
+#: The PAIR is load-bearing: BC-G1/BC-G3 proves a page scoped to one project
+#: does NOT resolve from another, and Car C7 moved that decision off
+#: ``directory_context`` onto ``project_id``.
+_TEST_PROJECT = "m-agahi/yadgar"
+_OTHER_PROJECT = "m-agahi/aws-work"
+
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror Phase-1 seeding style)
@@ -60,6 +68,7 @@ def _insert_mem(
     heat: float = 0.8,
     tags: list[str] | None = None,
     last_accessed: str | None = None,
+    project_id: str = _TEST_PROJECT,
 ) -> int:
     """Insert a memory with a real embedding; return the row id (seeding only)."""
     storage = e2e_engines["storage"]
@@ -69,6 +78,7 @@ def _insert_mem(
         "content": content,
         "embedding": emb,
         "directory_context": directory,
+        "project_id": project_id,
         "heat": heat,
         "tags": tags or [],
         "last_accessed": last_accessed or now,
@@ -79,12 +89,26 @@ def _insert_mem(
     return storage.insert_memory(doc)
 
 
-def _memorize_and_find(e2e_engines, content: str, directory: str, tags: list[str]) -> dict | None:
-    """Drive the REAL memorize() → drain → lookup path; return the stored row or None."""
+def _memorize_and_find(
+    e2e_engines,
+    content: str,
+    directory: str,
+    tags: list[str],
+    project: str = _TEST_PROJECT,
+) -> dict | None:
+    """Drive the REAL memorize() → drain → lookup path; return the stored row or None.
+
+    C13 (e) — two coupled changes, as in ``test_phase1_db_layer``: ``project`` is
+    named (C5/ADR-0227 makes an unnamed memorize fatal), and the read-back
+    matches ``directory_context`` against the PROJECT because C10 (f) moved that
+    stamp off ``context`` and onto the resolved ``project_id``. Naming the
+    project without re-pointing the match would return ``None`` for every
+    successful write.
+    """
     server = e2e_engines["server"]
     storage = e2e_engines["storage"]
 
-    result = server.memorize(content, directory, tags)
+    result = server.memorize(content, directory, tags, project=project)
     if not result.get("queued"):
         return result
     _drain(e2e_engines)
@@ -92,14 +116,14 @@ def _memorize_and_find(e2e_engines, content: str, directory: str, tags: list[str
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
         for row in rows:
-            if row.get("content") == content and row.get("directory_context") == directory:
+            if row.get("content") == content and row.get("directory_context") == project:
                 return row
     except Exception:
         pass
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
         for row in recent:
-            if row.get("content") == content and row.get("directory_context") == directory:
+            if row.get("content") == content and row.get("directory_context") == project:
                 return row
     except Exception:
         pass
@@ -272,6 +296,13 @@ class TestBCH1_AutoCaptureStampsCwd:
                     "summary": f"BC-H1 edit number {i} xh1cap55005",
                     "directory": caller_cwd,
                     "session_id": session_id,
+                    # C4/C13 (e): the host-side hook runner stamps this on the
+                    # request body. ``hook_auto_capture`` cannot mint one — it
+                    # runs in the daemon container (ADR-0227) — so a payload
+                    # without it enqueues project_id='' and the drainer DLQs the
+                    # batch as ``missing_project_id``. The row never lands and
+                    # the assertion below reports an empty action list.
+                    "project_id": _TEST_PROJECT,
                 }
                 resp = await hook_auto_capture(_FakeRequest(payload))
             return resp
@@ -418,6 +449,7 @@ class TestBCG1_WikiWriteReadScope:
             category="reference",
             tags=["e2e", "bc-g1"],
             wait=True,
+            project=_TEST_PROJECT,
         )
         assert add.get("committed") or add.get("stored") or "slug" in add, (
             f"BC-G1: wiki_add must succeed, got {add}"
@@ -426,7 +458,7 @@ class TestBCG1_WikiWriteReadScope:
         assert slug, f"BC-G1: wiki_add must return a slug, got {add}"
 
         # Read under the SAME directory — must resolve to our page.
-        same = wiki_read(slug, directory=yadgar_dir)
+        same = wiki_read(slug, directory=yadgar_dir, project=_TEST_PROJECT)
         assert "error" not in same, (
             f"BC-G3: wiki_read(slug, directory=yadgar_dir) MUST resolve the page. Got {same}"
         )
@@ -436,7 +468,11 @@ class TestBCG1_WikiWriteReadScope:
 
         # Read under a DIFFERENT directory — §25 resolution must NOT surface the
         # yadgar-scoped page (no project-canonical/global fallback to it).
-        cross = wiki_read(slug, directory=other_dir)
+        # C13 (e): the cross read must name the OTHER identity. Post-C7 the §25
+        # ladder resolves on project_id, so passing only a different DIRECTORY
+        # would no longer describe a different scope and the negative assertion
+        # below would be vacuous.
+        cross = wiki_read(slug, directory=other_dir, project=_OTHER_PROJECT)
         cross_is_other = "error" in cross or "xg1yad88008" not in str(cross.get("content", ""))
         assert cross_is_other, (
             "BC-G3: a page scoped to yadgar_dir MUST NOT resolve under other_dir. "
@@ -662,6 +698,7 @@ def _insert_mem_stale(
         "content": content,
         "embedding": emb,
         "directory_context": directory,
+        "project_id": _TEST_PROJECT,
         "heat": heat,
         "tags": [],
         "last_accessed": now,
@@ -1178,6 +1215,7 @@ def _insert_mem_dated(
         "content": content,
         "embedding": emb,
         "directory_context": directory,
+        "project_id": _TEST_PROJECT,
         "heat": heat,
         "tags": [],
         "last_accessed": created_at,

@@ -30,6 +30,18 @@ pytestmark = pytest.mark.e2e
 # Branch used for memorize() calls — the e2e worktree branch.
 _E2E_BRANCH = "feat/v5.68-e2e-net"
 
+#: The two identities this file needs. C5/ADR-0227 made ``project_id``
+#: mandatory at the storage write chokepoint and at every scoped read, so no
+#: seed and no recall here can run unnamed.
+#:
+#: The PAIR is load-bearing, not decoration. BC-B1's exclusion test proves one
+#: project's rows stay out of another's recall, and Car C7 moved that decision
+#: off ``directory_context`` and onto ``project_id`` inside the stage-1 WHERE.
+#: Seeding both halves under a single identity would leave the test green while
+#: proving nothing.
+_TEST_PROJECT = "m-agahi/yadgar"
+_OTHER_PROJECT = "m-agahi/aws-work"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,12 +62,30 @@ def _drain(e2e_engines) -> None:
         drainer.drain_now()
 
 
-def _memorize_and_drain(e2e_engines, content: str, directory: str, tags: list[str]) -> dict | None:
+def _memorize_and_drain(
+    e2e_engines,
+    content: str,
+    directory: str,
+    tags: list[str],
+    project: str = _TEST_PROJECT,
+) -> dict | None:
     """Call memorize(), drain, return stored row dict or None.
 
     Returns the stored memory dict (with 'id', 'content', etc.) after drain,
     or None if the memory can't be found (signals a bug in the write path).
     Uses the same lookup pattern as memorize_sync() in tests/conftest.py.
+
+    C13 (e) — TWO coupled changes, and the second is the one worth reading:
+
+    1. ``project`` is named, because C5/ADR-0227 made an unnamed memorize a
+       hard error rather than a defaulted write.
+    2. The read-back below matches ``directory_context`` against the PROJECT,
+       not against *directory*. C10 (f) stopped ``context`` being a scope key:
+       ``_phase_store`` now writes ``directory_context`` from the resolved
+       ``project_id``, and ``context`` survives only as an optional path for
+       staleness hashing. Adding ``project=`` without re-pointing this match
+       would have left the helper returning ``None`` for every successful
+       write — a green write path reported as a missing row.
     """
     server = e2e_engines["server"]
     storage = e2e_engines["storage"]
@@ -64,6 +94,7 @@ def _memorize_and_drain(e2e_engines, content: str, directory: str, tags: list[st
         content,
         directory,
         tags,
+        project=project,
     )
     # Early-reject path — not queued, return result as-is
     if not result.get("queued"):
@@ -72,11 +103,12 @@ def _memorize_and_drain(e2e_engines, content: str, directory: str, tags: list[st
     # Drain the queue so the memory lands in SurrealDB
     _drain(e2e_engines)
 
-    # Look up the stored row by exact content + directory match (FTS then heat scan)
+    # Look up the stored row by exact content + PROJECT match (FTS then heat
+    # scan). See the docstring: post-C10 (f) the stamp is the project_id.
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
         for row in rows:
-            if row.get("content") == content and row.get("directory_context") == directory:
+            if row.get("content") == content and row.get("directory_context") == project:
                 return row
     except Exception:
         pass
@@ -84,7 +116,7 @@ def _memorize_and_drain(e2e_engines, content: str, directory: str, tags: list[st
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
         for row in recent:
-            if row.get("content") == content and row.get("directory_context") == directory:
+            if row.get("content") == content and row.get("directory_context") == project:
                 return row
     except Exception:
         pass
@@ -103,12 +135,18 @@ def _insert_mem(  # noqa: PLR0913 — test helper: each param is a required memo
     is_protected: bool = False,
     tier: str | None = None,
     access_count: int = 0,
+    project_id: str = _TEST_PROJECT,
 ) -> int:
     """Insert a memory with a real embedding. Returns the row id.
 
     Used for seeding in sections B/C/G/H where insert_memory is correct
     (the unit under test is recall/consolidation, not the write path itself).
     Pass the desired directory_context directly as *directory*.
+
+    ``project_id`` is separate from *directory* on purpose. C5/ADR-0227 makes
+    naming one mandatory, and Car C7 made it the key recall actually scopes on,
+    so a seed that wants to be INVISIBLE to the caller's recall must differ
+    here — changing *directory* alone no longer hides anything.
     """
     storage = e2e_engines["storage"]
     emb = _embed(e2e_engines, content)
@@ -117,6 +155,7 @@ def _insert_mem(  # noqa: PLR0913 — test helper: each param is a required memo
         "content": content,
         "embedding": emb,
         "directory_context": directory,
+        "project_id": project_id,
         "heat": heat,
         "tags": tags or [],
         "last_accessed": last_accessed or now,
@@ -218,8 +257,15 @@ class TestBCA1_MemorizeRecallRoundTrip:
         assert mid is not None, f"BC-A1: stored row must have an id. Got: {row!r}"
 
         # Verify row has correct directory_context stamp
-        assert row.get("directory_context") == yadgar_dir, (
-            f"BC-A1: directory_context must equal {yadgar_dir!r}, got {row.get('directory_context')!r}"
+        # C10 (f) (0047 PR#40 §5): the stamp is the PROJECT, not the path.
+        # ``context`` lost its scoping role, so ``_phase_store`` writes
+        # ``directory_context`` from the resolved ``project_id``. Re-pointed as
+        # an EQUALITY — deliberately not relaxed to a truthiness check — so this
+        # still fails if the stamp is dropped, and catches a regression back to
+        # the path as well.
+        assert row.get("directory_context") == _TEST_PROJECT, (
+            f"BC-A1: directory_context must equal {_TEST_PROJECT!r}, "
+            f"got {row.get('directory_context')!r}"
         )
 
         # Verify recall surfaces the row from this directory.
@@ -227,6 +273,7 @@ class TestBCA1_MemorizeRecallRoundTrip:
             "BC-A1 unique sentinel content",
             directory=yadgar_dir,
             max_results=10,
+            project=_TEST_PROJECT,
         )
         result_ids = _ids_from_results(results)
         # Also check by content string if id type mismatch
@@ -373,12 +420,19 @@ class TestBCB1_DirectoryFilter:
             "BC-B1 aws-work other project memory xb1other55502",
             other_dir,
             heat=0.9,
+            # C13 (e): the exclusion is decided HERE, by identity. Car C7 moved
+            # scoping into the stage-1 WHERE keyed on ``project_id``; a row that
+            # differs only by ``directory_context`` is no longer excluded by
+            # anything, so seeding both halves under one project would leave
+            # this test green while proving nothing.
+            project_id=_OTHER_PROJECT,
         )
 
         results = recall(
             "BC-B1 project memory",
             directory=yadgar_dir,
             max_results=20,
+            project=_TEST_PROJECT,
         )
         result_ids = _ids_from_results(results)
 
@@ -392,28 +446,47 @@ class TestBCB1_DirectoryFilter:
         )
 
     def test_global_memory_included(self, e2e_engines, recall_backend_bypass):
-        """Memory stamped directory_context='' (global) SHALL appear in any recall."""
+        """A row with cross-project REACH SHALL appear in any project's recall.
+
+        C13 (e) — RE-POINTED onto the surviving mechanism, not deleted.
+
+        This asserted that ``directory_context=''`` (the "global slot") was an
+        always-eligible sentinel. Car C7 retired that idea wholesale: reach is a
+        TAG and ownership is ``project_id`` (§1.4). An empty ``directory_context``
+        now scopes nothing, and C5/ADR-0227 additionally makes an unnamed write
+        raise, so the old seed could not even be inserted.
+
+        The SUBJECT is unchanged and still real — "a row meant to be visible
+        everywhere is visible from another project's recall" — so the seed is
+        re-pointed onto the ``'global'`` reach tag while OWNED by a different
+        project. That ownership is what makes the assertion non-vacuous: the row
+        is reachable ONLY via the reach tag, never via a project match.
+        """
         from yadgar.core.server.tools.recall import recall
 
         yadgar_dir = e2e_engines["yadgar_dir"]
+        other_dir = e2e_engines["other_dir"]
 
         mid_global = _insert_mem(
             e2e_engines,
             "BC-B1 global memory xb1global55503 cross-project",
-            "",  # global slot (empty string = global)
+            other_dir,
             heat=0.9,
+            tags=["global"],
+            project_id=_OTHER_PROJECT,
         )
 
         results = recall(
             "BC-B1 global memory cross-project",
             directory=yadgar_dir,
             max_results=20,
+            project=_TEST_PROJECT,
         )
         result_ids = _ids_from_results(results)
 
         assert mid_global in result_ids, (
-            f"BC-B1: global-slot memory {mid_global} must appear in recall(directory=yadgar_dir). "
-            f"Got ids: {result_ids}"
+            f"BC-B1: reach-tagged memory {mid_global}, owned by {_OTHER_PROJECT!r}, must appear "
+            f"in recall(project={_TEST_PROJECT!r}). Got ids: {result_ids}"
         )
 
 
@@ -437,6 +510,11 @@ class TestBCB2_WikiDirectoryFilter:
             category="reference",
             tags=["e2e", "bc-b2"],
             wait=True,
+            # C13 (e): the exclusion below is decided by IDENTITY, not by
+            # directory — Car C7 keyed the wiki arm of the stage-1 WHERE on
+            # project_id too. Writing this page under the caller's own project
+            # would make the "must NOT appear" assertion unsatisfiable.
+            project=_OTHER_PROJECT,
         )
         # Accept any success indicator: committed, stored, or queued
         assert (
@@ -453,6 +531,7 @@ class TestBCB2_WikiDirectoryFilter:
             "BC-B2 AWS xb2aws66601 wiki",
             directory=yadgar_dir,
             max_results=20,
+            project=_TEST_PROJECT,
         )
         result_slugs = {r.get("slug") for r in results if r.get("slug")}
         result_content_strs = " ".join(str(r.get("content", "")) for r in results)
@@ -487,6 +566,7 @@ class TestBCB2_WikiDirectoryFilter:
             category="reference",
             tags=["e2e", "bc-b2"],
             wait=True,
+            project=_TEST_PROJECT,
         )
         assert (
             result.get("committed")
@@ -502,6 +582,7 @@ class TestBCB2_WikiDirectoryFilter:
             "BC-B2 Yadgar xb2yad77701 wiki",
             directory=yadgar_dir,
             max_results=20,
+            project=_TEST_PROJECT,
         )
         result_slugs = {r.get("slug") for r in results if r.get("slug")}
         result_content_strs = " ".join(str(r.get("content", "")) for r in results)
@@ -520,18 +601,38 @@ class TestBCB2_WikiDirectoryFilter:
 
 
 class TestBCB3_DirectoryRequired:
-    """BC-B3: recall/wiki_query SHALL raise when directory is absent/empty."""
+    """BC-B3: an unscopeable read SHALL raise rather than read the whole corpus.
+
+    C13 (e) — the two ``recall`` cases below are INVERTED IN PLACE, not deleted.
+
+    They asserted ``ValueError(match="directory")`` — the pre-C7 contract that
+    the DIRECTORY was recall's required scope key. Car C7 deleted that guard
+    outright (see ``_resolve_recall_scope``: it measured the branch as dead both
+    ways round and removed it), because the scope key is now ``project_id`` and
+    ``resolve_effective_project`` is its single chokepoint.
+
+    So the SHALL survives — an unscopeable read still refuses — but the guard
+    that enforces it, and the exception it raises, both changed. Asserting the
+    new raise is what keeps this class honest: were the fail-loud rule ever
+    softened back into a corpus-wide default, these two would go red, which is
+    exactly what they were written to do.
+
+    The ``wiki_query`` cases below are UNCHANGED: that tool still validates its
+    directory, and both still pass.
+    """
 
     def test_recall_raises_without_directory(self, e2e_engines):
+        from yadgar._shared.errors import UnresolvedProjectError
         from yadgar.core.server.tools.recall import recall
 
-        with pytest.raises(ValueError, match="directory"):
+        with pytest.raises(UnresolvedProjectError, match="project_id"):
             recall("test query", directory=None)
 
     def test_recall_raises_with_empty_directory(self, e2e_engines):
+        from yadgar._shared.errors import UnresolvedProjectError
         from yadgar.core.server.tools.recall import recall
 
-        with pytest.raises(ValueError, match="directory"):
+        with pytest.raises(UnresolvedProjectError, match="project_id"):
             recall("test query", directory="")
 
     def test_wiki_query_raises_without_directory(self, e2e_engines):
@@ -559,14 +660,23 @@ class TestBCB4_SystemTagExcluded:
         mid_system = _insert_mem(
             e2e_engines,
             "BC-B4 system internal sentinel xb4sys77701 drop-system test",
-            "system",  # directory_context='system' must be excluded from recall
+            "system",  # directory_context='system' — kept for provenance
             heat=0.9,
+            # C13 (e): the exclusion now hangs on the IDENTITY, so the identity
+            # is what must say "system". ``'system'`` is the pre-v5.64 mis-stamp
+            # sink named in ``_NON_IDENTIFYING_PROJECT_IDS``; it is truthy, so it
+            # inserts, and it never equals the caller's project, so the stage-1
+            # WHERE drops it. Leaving this at the default project would have made
+            # the row eligible and the test would fail for the right reason —
+            # C7 moved the filter and the seed had not followed.
+            project_id="system",
         )
 
         results = recall(
             "BC-B4 system internal sentinel xb4sys77701",
             directory=yadgar_dir,
             max_results=20,
+            project=_TEST_PROJECT,
         )
         result_ids = _ids_from_results(results)
 
@@ -617,6 +727,7 @@ class TestBCB5_ProfileRecallSurfaces:
             "TestUserBC_B5_xb5prof88801 preference language",
             directory=yadgar_dir,
             max_results=20,
+            project=_TEST_PROJECT,
         )
         profile_sources = [r for r in results if r.get("_source") == "profile"]
         assert len(profile_sources) > 0, (
@@ -672,6 +783,7 @@ class TestBCB6_BeliefRecallSurfaces:
             "TestUserBC_B6_xb6belief77701 preference Python",
             directory=yadgar_dir,
             max_results=20,
+            project=_TEST_PROJECT,
         )
         belief_sources = [r for r in results if r.get("_source") == "belief"]
         assert len(belief_sources) > 0, (

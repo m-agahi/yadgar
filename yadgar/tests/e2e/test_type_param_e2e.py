@@ -24,6 +24,14 @@ pytestmark = pytest.mark.e2e
 
 YADGAR_DIR = "/home/test/yadgar-project"
 
+#: The identity every seed and every read in this file names. C5/ADR-0227 made
+#: ``project_id`` mandatory at the storage write chokepoint and at the recall
+#: scope resolver, so neither half of a type-filter test can run unnamed. Seeds
+#: and reads MUST agree: post-C7 the stage-1 WHERE filters on ``project_id``,
+#: so a mismatch would empty the pool and every ``type=`` assertion would fail
+#: for a reason that has nothing to do with the type parameter under test.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 def _insert_mem(storage, embeddings, content: str) -> int:
     """Insert a memory with real embedding."""
@@ -33,6 +41,7 @@ def _insert_mem(storage, embeddings, content: str) -> int:
             "content": content,
             "embedding": emb,
             "directory_context": YADGAR_DIR,
+            "project_id": _TEST_PROJECT,
             "tags": [],
             "heat": 1.0,
         }
@@ -51,6 +60,7 @@ def _insert_wiki(title: str, content: str) -> str:
     opts = WikiAddOptions(
         source_memory_ids=[],
         directory_context=YADGAR_DIR,
+        project_id=_TEST_PROJECT,
     )
     page = _st._wiki.add(
         title=title,
@@ -82,6 +92,7 @@ def _run_recall(
         directory=directory,
         max_results=max_results,
         type=type_filter,  # noqa: A002
+        project=_TEST_PROJECT,
     )
 
 
@@ -231,6 +242,7 @@ class TestTypeParamE2E:
             directory=YADGAR_DIR,
             max_results=20,
             type="memory",  # noqa: A002
+            project=_TEST_PROJECT,
         )
 
         fanout_mem_ids = [
@@ -330,6 +342,13 @@ class TestTypeParamE2E:
                 query="any query",
                 directory=YADGAR_DIR,
                 type="invalid",  # noqa: A002
+                # C13 (e): the identity is named so the ValueError this test is
+                # ABOUT is the one that fires. C5/ADR-0227 resolves project_id
+                # ahead of the type gate, so an unnamed call raises
+                # UnresolvedProjectError first and the test would pass its
+                # ``pytest.raises`` for the wrong reason — or fail on the type
+                # mismatch — either way telling us nothing about early validation.
+                project=_TEST_PROJECT,
             )
 
     def test_type_all_memory_order_parity_with_relevant_wiki(
@@ -414,6 +433,7 @@ class TestTypeParamE2E:
             directory=YADGAR_DIR,
             max_results=20,
             type="all",  # noqa: A002
+            project=_TEST_PROJECT,
         )
 
         fanout_mem_ids = [
@@ -519,6 +539,7 @@ class TestTypeParamE2E:
             directory=YADGAR_DIR,
             max_results=20,
             type="all",  # noqa: A002
+            project=_TEST_PROJECT,
         )
 
         # No wiki should appear — the pool was forced empty.
@@ -569,6 +590,7 @@ class TestTypeParamE2E:
                 directory=YADGAR_DIR,
                 max_results=10,
                 type="wiki",  # noqa: A002
+                project=_TEST_PROJECT,
             )
             recall_slugs = {
                 r.get("slug") or r.get("id") for r in recall_results if r.get("_source") == "wiki"
@@ -580,6 +602,7 @@ class TestTypeParamE2E:
                     query=f"wiki query alias test {unique}",
                     directory=YADGAR_DIR,
                     max_results=10,
+                    project=_TEST_PROJECT,
                 )
             wiki_query_slugs = {r.get("slug") or r.get("id") for r in wiki_results}
 

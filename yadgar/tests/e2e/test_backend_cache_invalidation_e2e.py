@@ -47,6 +47,14 @@ pytestmark = pytest.mark.e2e
 
 YADGAR_DIR = "/home/test/yadgar-project"
 
+#: The identity every seed and every recall in this file names. C5/ADR-0227
+#: made ``project_id`` mandatory at the storage write chokepoint and at the
+#: recall scope resolver. Seeds and reads MUST agree: post-C7 the stage-1 WHERE
+#: filters on ``project_id``, so a mismatch would empty the result pool and a
+#: cache-invalidation assertion would read "nothing came back" as "the cache
+#: served nothing stale" — the exact false green this file exists to prevent.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture(autouse=True)
 def _restore_injected_globals():
@@ -201,6 +209,7 @@ def _seed(storage, embeddings, content: str, *, heat: float = 1.0) -> int:
             "content": content,
             "embedding": emb,
             "directory_context": YADGAR_DIR,
+            "project_id": _TEST_PROJECT,
             "tags": [],
             "heat": heat,
         }
@@ -222,7 +231,9 @@ def _run_fanout_recall(monkeypatch, query: str, directory: str, max_results: int
     _rm = sys.modules.get("yadgar.core.server.tools.recall")
     if _rm is None:
         import yadgar.core.server.tools.recall as _rm  # noqa: PLC0415
-    return _rm.recall(query=query, directory=directory, max_results=max_results)
+    return _rm.recall(
+        query=query, directory=directory, max_results=max_results, project=_TEST_PROJECT
+    )
 
 
 # ===========================================================================

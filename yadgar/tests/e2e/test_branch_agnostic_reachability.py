@@ -57,6 +57,13 @@ GHOST_BRANCH = "feat/does-not-exist"
 
 PROJECT_DIR = "/home/test/yadgar-project"
 
+#: The identity every seed and every read in this file names. ADR-0215 (the
+#: subject here) removed the BRANCH dimension; C5/ADR-0227 then made the
+#: PROJECT dimension mandatory at the write chokepoint and at every scoped
+#: read. Naming it keeps each test on its own subject: a reader that refuses
+#: for want of an identity is not evidence about branch-agnostic reach.
+PROJECT_ID = "owner/repo"
+
 
 def _pin_caller_to_master(monkeypatch) -> None:
     """Make the caller's context look like a plain ``master`` checkout.
@@ -108,6 +115,7 @@ def _insert_wiki_page(storage, embeddings, slug: str, title: str, content: str) 
             "source_memory_ids": [],
             "links": [],
             "directory_context": PROJECT_DIR,
+            "project_id": PROJECT_ID,
             "embedding": embeddings.encode(f"{title}\n{content[:4000]}"),
         }
     )
@@ -120,6 +128,7 @@ def _insert_memory(storage, embeddings, content: str) -> int:
             "content": content,
             "embedding": embeddings.encode(content),
             "directory_context": PROJECT_DIR,
+            "project_id": PROJECT_ID,
             "tags": [],
             "heat": 1.0,
         }
@@ -149,12 +158,12 @@ class TestBranchAgnosticReachability:
         )
         _stamp_branch(storage, "wiki_page", ghost_id, GHOST_BRANCH)
 
-        control = wiki_read(control_slug, directory=PROJECT_DIR)
+        control = wiki_read(control_slug, directory=PROJECT_DIR, project=PROJECT_ID)
         assert control.get("slug") == control_slug, (
             f"harness broken: unstamped control page unreadable — got {control}"
         )
 
-        ghost = wiki_read(ghost_slug, directory=PROJECT_DIR)
+        ghost = wiki_read(ghost_slug, directory=PROJECT_DIR, project=PROJECT_ID)
         assert ghost.get("slug") == ghost_slug, (
             f"wiki_read must reach a page stamped branch={GHOST_BRANCH!r} from a "
             f"master caller (ADR-0215); got {ghost}"
@@ -180,7 +189,9 @@ class TestBranchAgnosticReachability:
         if _rm is None:
             import yadgar.core.server.tools.recall as _rm
 
-        results = _rm.recall(query=f"note {token}", directory=PROJECT_DIR, max_results=20)
+        results = _rm.recall(
+            query=f"note {token}", directory=PROJECT_DIR, max_results=20, project=PROJECT_ID
+        )
         result_ids = {r.get("id") for r in results}
 
         assert control_id in result_ids, (

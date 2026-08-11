@@ -16,6 +16,14 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
+#: The identity the wiki seed in this file names. C5/ADR-0227 made
+#: ``project_id`` mandatory at the storage write chokepoint, so the seeded page
+#: cannot be inserted unnamed. NOTE: naming the SEED is not sufficient to make
+#: the first test pass — ``benchmarks/run_eval.evaluate_pair_unified`` has no
+#: ``project`` parameter and passes none to ``recall``, so the READ it performs
+#: still raises. That is a harness-side gap, reported rather than patched here.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 class TestEvalRoutesViaMCPTool:
     """Step 0: evaluate_pair routes through MCP recall tool when unified=True.
@@ -48,6 +56,7 @@ class TestEvalRoutesViaMCPTool:
         opts = WikiAddOptions(
             source_memory_ids=[],
             directory_context=e2e_engines["yadgar_dir"],
+            project_id=_TEST_PROJECT,
         )
         page = _st._wiki.add(
             title="Step0 Eval Routing Test",
@@ -108,7 +117,19 @@ class TestEvalRoutesViaMCPTool:
         }
 
         from yadgar._shared.runtime import state as _st
+        from yadgar.backend.retrieval import ensure_retrieval_engine
 
+        # C13 (e): compose the retriever explicitly instead of inheriting it
+        # from whichever earlier test in this module happened to drive a recall.
+        # ``_st._retriever`` is a process-global composed LAZILY on the first
+        # backend recall, so this test was silently order-dependent: it passed
+        # only because the sibling above it ran a full recall first. When that
+        # sibling started failing early (C5 made its unnamed recall raise), this
+        # test failed on its own precondition — reporting a missing retriever
+        # for a reason that has nothing to do with the legacy path it tests.
+        # The assertion below is kept, not replaced: composition must actually
+        # produce an engine.
+        ensure_retrieval_engine()
         assert _st._retriever is not None, "Retriever must be initialized"
 
         metrics = evaluate_pair(pair, _st._retriever, k_values=[1, 5, 10], max_results=20)
