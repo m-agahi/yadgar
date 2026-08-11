@@ -4,6 +4,7 @@
     "content",
     "context",
     "is_protected",
+    "project_id",
     "provenance_agent",
     "tags"
   ],

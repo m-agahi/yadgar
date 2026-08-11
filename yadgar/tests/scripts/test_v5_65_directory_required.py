@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar._shared.errors import UnresolvedProjectError
+
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
 # ---------------------------------------------------------------------------
@@ -56,7 +58,31 @@ def _make_mock_retriever(memories: list[dict] | None = None) -> Any:
 
 
 class TestRecallDirectoryRequired:
-    """recall() must raise ValueError immediately when directory not supplied."""
+    """recall() must fail loud immediately when nothing names a scope.
+
+    CONTRACT MOVED, NOT DROPPED (C5 / ADR-0227). v5.65 Fix D added a
+    ``ValueError("recall: directory is required")`` because the container
+    cannot see the caller's tree, so a directory-less recall used to run in a
+    legacy all-pass mode that returned another project's rows. C5 put the
+    identity resolver AHEAD of that guard: ``_resolve_project_for_recall``
+    resolves first and raises ``UnresolvedProjectError`` when neither
+    ``project`` nor a session value names an identity, so the ValueError below
+    it can no longer be reached (``project`` truthy short-circuits its second
+    condition; ``project`` absent never gets there).
+
+    These tests therefore assert the SAME property against the SAME inputs —
+    a recall that names no scope fails immediately, before any storage or
+    retriever access, rather than silently answering from the whole DB — with
+    the exception type the boundary now raises. What is deliberately NOT done
+    here is relaxing them to ``pytest.raises(Exception)``: the point of the
+    v5.65 file is that this specific input is refused, and a test that accepts
+    any exception would keep passing if the refusal became an unrelated crash.
+
+    A directory alone is no longer sufficient (``test_recall_directory_without_project_raises``)
+    and a project alone now IS (``test_recall_project_without_directory_is_accepted``);
+    both are new, and together they pin which of the two arguments carries
+    identity — the distinction the whole car exists to draw.
+    """
 
     def _call_recall(self, **kwargs):
         import yadgar._shared.runtime.state as _st
@@ -79,50 +105,64 @@ class TestRecallDirectoryRequired:
             return recall_fn(**kwargs)
 
     def test_recall_no_directory_raises(self):
-        """RED: recall(query) without directory must raise ValueError.
+        """recall(query) with nothing naming a scope must fail loud.
 
-        Pre-fix: silently returns results.
-        Post-fix: raises immediately with "directory is required".
+        Pre-v5.65: silently returned results from the whole DB.
+        Pre-C5: ValueError("directory is required").
+        Post-C5: UnresolvedProjectError — the identity gate fires first.
         """
-        with pytest.raises(ValueError, match="directory is required"):
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
             self._call_recall(query="test query")
 
     def test_recall_directory_none_raises(self):
-        """RED: recall(query, directory=None) must raise ValueError.
-
-        Pre-fix: silently runs legacy all-pass mode.
-        Post-fix: raises immediately.
-        """
-        with pytest.raises(ValueError, match="directory is required"):
+        """recall(query, directory=None) must fail loud, not run a legacy all-pass."""
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
             self._call_recall(query="test query", directory=None)
 
     def test_recall_directory_empty_string_raises(self):
-        """RED: recall(query, directory='') must raise ValueError.
-
-        Empty string after strip is not a valid directory.
-        """
-        with pytest.raises(ValueError, match="directory is required"):
+        """Empty string after strip is not a valid scope."""
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
             self._call_recall(query="test query", directory="")
 
     def test_recall_directory_whitespace_raises(self):
-        """recall(query, directory='   ') must raise ValueError.
-
-        Whitespace-only after strip equals empty.
-        """
-        with pytest.raises(ValueError, match="directory is required"):
+        """Whitespace-only after strip equals empty."""
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
             self._call_recall(query="test query", directory="   ")
 
+    def test_recall_directory_without_project_raises(self):
+        """A directory is a filesystem hint, not an identity (ADR-0227).
+
+        This is the assertion v5.65 could not make and C5 makes mandatory: the
+        directory is well-formed and present, and the call is still refused,
+        because the process answering it cannot see the tree that path names.
+        """
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
+            self._call_recall(query="test query", directory="/home/max/git/yadgar")
+
+    def test_recall_project_without_directory_is_accepted(self):
+        """The converse: naming the identity alone is sufficient.
+
+        The dead ValueError's second condition (``and not project``) encoded
+        this before C5 and is the reason it can never fire now. Pinning it here
+        keeps the two-argument contract explicit rather than implied by absence.
+        """
+        result = self._call_recall(query="test query", project="owner/repo")
+        assert isinstance(result, list)
+
     def test_recall_valid_directory_does_not_raise(self):
-        """recall(query, directory='/home/max/git/yadgar') must NOT raise."""
-        # Should return a list (possibly empty)
-        result = self._call_recall(query="test query", directory="/home/max/git/yadgar")
+        """recall(directory=..., project=...) must NOT raise."""
+        result = self._call_recall(
+            query="test query", directory="/home/max/git/yadgar", project="owner/repo"
+        )
         assert isinstance(result, list)
 
     def test_recall_raises_before_storage_access(self):
-        """ValueError must fire BEFORE any storage/retriever access.
+        """The refusal must fire BEFORE any storage/retriever access.
 
-        Verify: if storage is None, directory-missing should still raise (not a
-        storage-not-init error).
+        Verified by nulling storage AND retriever: a scope-less recall must
+        still produce the scope error, never a storage-not-initialised one.
+        This property is what makes the guard a boundary check rather than a
+        late failure after work has already been done.
         """
         import yadgar._shared.runtime.state as _st
         from yadgar.core.server.tools.recall import recall as recall_fn
@@ -132,7 +172,7 @@ class TestRecallDirectoryRequired:
             patch.object(_st, "_retriever", None),
             patch.object(_st, "_consolidation", None),
         ):
-            with pytest.raises(ValueError, match="directory is required"):
+            with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
                 recall_fn(query="test", directory=None)
 
 
@@ -174,8 +214,16 @@ class TestWikiQueryDirectoryRequired:
             self._call_wiki_query(query="test query", directory="")
 
     def test_wiki_query_valid_directory_does_not_raise(self):
-        """wiki_query with valid directory must NOT raise."""
-        result = self._call_wiki_query(query="test", directory="/home/max/git/yadgar")
+        """wiki_query with a valid directory AND a project must NOT raise.
+
+        Unlike ``recall``, wiki_query's own ``directory is required`` guard is
+        still REACHABLE — it runs ahead of the resolver, which is why the three
+        raise-cases above still assert ValueError. The identity is what this
+        call additionally needs since C5, so it names one.
+        """
+        result = self._call_wiki_query(
+            query="test", directory="/home/max/git/yadgar", project="owner/repo"
+        )
         assert isinstance(result, list)
 
     def test_wiki_query_raises_before_wiki_access(self):

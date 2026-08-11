@@ -50,6 +50,12 @@ def _slugify(title: str) -> str:
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 
+#: C5 (ADR-0227): the storage chokepoint takes the caller's value or raises,
+#: so every direct-insert fixture names one. These tests vary DIRECTORY, so a
+#: single shared identity keeps the directory assertions meaningful.
+_TEST_PROJECT_ID = "owner/repo"
+
+
 def _insert_wiki_page(slug, title, content, directory="global"):
     """Insert a wiki page directly to storage for test setup."""
     st = _storage()
@@ -64,6 +70,7 @@ def _insert_wiki_page(slug, title, content, directory="global"):
             "source_memory_ids": [],
             "confidence": "high",
             "directory_context": directory,
+            "project_id": _TEST_PROJECT_ID,
         },
     )
 
@@ -82,6 +89,7 @@ def _insert_memory(content, directory="/proj/test"):
             "is_stale": False,
             "file_hash": None,
             "embedding_model": "all-MiniLM-L6-v2",
+            "project_id": _TEST_PROJECT_ID,
             "_internal": True,
         },
     )
@@ -109,8 +117,12 @@ def test_q3_wiki_query_scopes_to_directory(tmp_path):
         directory="/proj/beta",
     )
 
-    results_a = wiki_query("schema discipline project", directory="/proj/alpha")
-    results_b = wiki_query("schema discipline project", directory="/proj/beta")
+    results_a = wiki_query(
+        "schema discipline project", directory="/proj/alpha", project=_TEST_PROJECT_ID
+    )
+    results_b = wiki_query(
+        "schema discipline project", directory="/proj/beta", project=_TEST_PROJECT_ID
+    )
 
     slugs_a = [r["slug"] for r in results_a]
     slugs_b = [r["slug"] for r in results_b]

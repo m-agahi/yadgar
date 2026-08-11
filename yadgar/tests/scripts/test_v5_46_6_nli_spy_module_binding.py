@@ -21,7 +21,7 @@ from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
-from yadgar.backend.curation import MemoryCurator
+from yadgar.backend.curation import CurateParams, MemoryCurator
 
 
 def _make_embedding(seed: int = 0) -> bytes:
@@ -93,6 +93,10 @@ class TestNLISpyModuleBinding:
                 "embedding": base_emb,
                 "tags": ["db"],
                 "directory_context": "/test/spy",
+                # C5 (ADR-0227): the storage chokepoint takes the caller's
+                # value or raises. This test is about the curation module
+                # binding, so any stable identity does.
+                "project_id": "owner/repo",
             }
         )
 
@@ -113,6 +117,10 @@ class TestNLISpyModuleBinding:
             context="/test/spy",
             tags=["db"],
             embedding=new_emb,
+            # C4b/C5: CurateParams.project_id defaults to None and is forwarded
+            # onto NewMemorySpec, so a curator-created row without it is refused
+            # at the storage chokepoint before the spy assertion is reached.
+            params=CurateParams(project_id="owner/repo"),
         )
 
         assert _calls, (
