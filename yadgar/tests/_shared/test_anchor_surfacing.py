@@ -23,6 +23,13 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.restoration.checkpoint_restore import CheckpointRestore
 from yadgar._shared.storage import StorageEngine
 
+# C10g (0047 PR#40 §5): the scope tokens in this file are PROJECT IDS, not
+# paths. ``get_anchored_memories_scoped``'s project bucket is keyed on the
+# project_id now (its writer, ``anchor_memory``, moved onto the same key in the
+# same car), so path-shaped literals here would have been a fixture that no
+# production writer can produce. ``"global"`` / ``"system"`` / ``""`` are left
+# verbatim — those are the legacy sentinel values whose absence is the assertion.
+#
 # C13 (0047 PR#40 §5): seeds must NAME the project they write into —
 # C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
 # A per-file constant, deliberately NOT a shared fixture default: a new test
@@ -109,19 +116,19 @@ class TestGetAnchoredMemoriesScoped:
         _seed_anchor(storage, "GLOBAL: always surface me", "global", global_reach=True)
         # Seed 20 project-B anchors to fill any unscoped limit=20 cap.
         for i in range(20):
-            _seed_anchor(storage, f"project-B anchor {i}", "/repos/B")
+            _seed_anchor(storage, f"project-B anchor {i}", "acme/repo-b")
 
-        result = storage.get_anchored_memories_scoped(directory="/repos/A", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="acme/repo-a", limit=20)
         contents = [r["content"] for r in result]
         assert "GLOBAL: always surface me" in contents, (
             f"global anchor not in result; got {contents[:5]}"
         )
 
     def test_project_anchor_does_not_surface_in_other_project(self, storage):
-        """Project-scoped anchor for /repos/A does NOT appear for /repos/B."""
-        _seed_anchor(storage, "ONLY FOR REPO A", "/repos/A")
+        """Project-scoped anchor for acme/repo-a does NOT appear for acme/repo-b."""
+        _seed_anchor(storage, "ONLY FOR REPO A", "acme/repo-a")
 
-        result = storage.get_anchored_memories_scoped(directory="/repos/B", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="acme/repo-b", limit=20)
         contents = [r["content"] for r in result]
         assert "ONLY FOR REPO A" not in contents, (
             f"project-A anchor leaked into project-B restore; got {contents}"
@@ -130,9 +137,9 @@ class TestGetAnchoredMemoriesScoped:
     def test_global_anchors_appear_before_project_anchors(self, storage):
         """Global anchors are returned first even if project anchor has higher heat."""
         _seed_anchor(storage, "global fact", "global", heat=1.0, global_reach=True)
-        _seed_anchor(storage, "project fact hot", "/repos/X", heat=100.0)
+        _seed_anchor(storage, "project fact hot", "acme/repo-x", heat=100.0)
 
-        result = storage.get_anchored_memories_scoped(directory="/repos/X", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="acme/repo-x", limit=20)
         assert len(result) >= 2, f"expected >=2 rows, got {len(result)}"
         assert result[0]["content"] == "global fact", (
             f"global anchor should be index 0 but got: {result[0]['content']}"
@@ -148,7 +155,7 @@ class TestGetAnchoredMemoriesScoped:
         """
         _seed_anchor(storage, "shared scope anchor", "global", global_reach=True)
 
-        result = storage.get_anchored_memories_scoped(directory="global", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="global", limit=20)
         matching = [r for r in result if r["content"] == "shared scope anchor"]
         assert len(matching) == 1, f"dedup failed — anchor appeared {len(matching)} times"
 
@@ -157,7 +164,7 @@ class TestGetAnchoredMemoriesScoped:
         for i in range(60):
             _seed_anchor(storage, f"global anchor {i}", "global", global_reach=True)
 
-        result = storage.get_anchored_memories_scoped(directory="/some/project", limit=100)
+        result = storage.get_anchored_memories_scoped(project_id="acme/some-project", limit=100)
         assert len(result) <= 50, f"hard cap 50 violated — got {len(result)} results"
 
     def test_expired_anchors_excluded(self, storage):
@@ -177,7 +184,7 @@ class TestGetAnchoredMemoriesScoped:
             global_reach=True,
         )
 
-        result = storage.get_anchored_memories_scoped(directory="/proj", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="acme/proj", limit=20)
         contents = [r["content"] for r in result]
         assert "expired global anchor" not in contents, "expired anchor should not surface"
         assert "active global anchor" in contents, "active anchor should surface"
@@ -214,17 +221,17 @@ class TestGetAnchoredMemoriesScoped:
         """
         _seed_anchor(storage, "system anchor", "system")
 
-        result = storage.get_anchored_memories_scoped(directory="/some/project", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="acme/some-project", limit=20)
         contents = [r["content"] for r in result]
         assert "system anchor" not in contents, (
             "system directory_context anchor must NOT surface after v5.65 (mis-stamp sink dropped)"
         )
 
     def test_project_anchors_surface_for_correct_project(self, storage):
-        """Project anchor for /repos/myproject appears when restoring from that project."""
-        _seed_anchor(storage, "myproject specific anchor", "/repos/myproject")
+        """Project anchor for acme/myproject appears when restoring from that project."""
+        _seed_anchor(storage, "myproject specific anchor", "acme/myproject")
 
-        result = storage.get_anchored_memories_scoped(directory="/repos/myproject", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="acme/myproject", limit=20)
         contents = [r["content"] for r in result]
         assert "myproject specific anchor" in contents, (
             "project anchor should appear for its own project"
@@ -235,7 +242,7 @@ class TestGetAnchoredMemoriesScoped:
         _seed_anchor(storage, "low heat global", "global", heat=1.0, global_reach=True)
         _seed_anchor(storage, "high heat global", "global", heat=50.0, global_reach=True)
 
-        result = storage.get_anchored_memories_scoped(directory="/proj", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="acme/proj", limit=20)
         # C13: membership of the global bucket is the ``global`` TAG since C5,
         # not directory_context — filtering on the directory here would select
         # rows by a key the write path can no longer produce.
@@ -263,9 +270,12 @@ class TestRestoreUsesScope:
         _seed_anchor(storage, "GLOBAL CRITICAL FACT", "global", global_reach=True)
         # Seed 20 project-A anchors so the old flat query would fill the cap.
         for i in range(20):
-            _seed_anchor(storage, f"proj-A anchor {i}", "/repos/project_A")
+            _seed_anchor(storage, f"proj-A anchor {i}", "acme/project-a")
 
-        result = rep.restore(directory="/repos/project_A")
+        # C10g: the anchor bucket is keyed on project_id. Passing only a
+        # directory would leave the project half empty and make the crowding-out
+        # premise of this test unreachable.
+        result = rep.restore(directory="/repos/project_A", project_id="acme/project-a")
         formatted = result.get("formatted", "")
         assert "GLOBAL CRITICAL FACT" in formatted, (
             f"global anchor missing from restore output.\n"
@@ -275,9 +285,9 @@ class TestRestoreUsesScope:
     def test_restore_does_not_include_other_project_anchors(self, replay):
         """restore(directory=project_A) excludes project_B anchors."""
         storage, rep = replay
-        _seed_anchor(storage, "PROJECT B SECRET ANCHOR", "/repos/project_B")
+        _seed_anchor(storage, "PROJECT B SECRET ANCHOR", "acme/project-b")
 
-        result = rep.restore(directory="/repos/project_A")
+        result = rep.restore(directory="/repos/project_A", project_id="acme/project-a")
         formatted = result.get("formatted", "")
         assert "PROJECT B SECRET ANCHOR" not in formatted, (
             "project_B anchor should not appear in project_A restore"

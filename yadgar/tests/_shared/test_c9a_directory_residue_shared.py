@@ -192,8 +192,10 @@ _ALLOWLIST: dict[str, str] = {
     # ``storage/memory.py::get_memories_by_store_type`` is GONE from this dict:
     # C9c renamed it AND re-keyed its WHERE onto ``build_project_scope_clause``.
     # It is pinned in ``_SWEPT`` below instead.
-    "storage/memory.py::get_memories_for_directory": _C9C_SEMANTIC_SPLIT,
-    "storage/memory.py::get_anchored_memories_scoped": _C9C_C10_CALLER,
+    # ``storage/memory.py::get_memories_for_directory`` and
+    # ``::get_anchored_memories_scoped`` are GONE from this dict: C10g renamed
+    # both onto ``project_id`` together with the writers and callers that made
+    # them safe to move. Pinned in ``_SWEPT`` below instead.
     "storage/memory.py::get_recent_memories_since": _C9C_C10_CALLER,
     "storage/wiki.py::list_wiki_pages": _C9C_C10_CALLER,
     "storage/wiki.py::list_wiki_catalog": _C9C_C10_CALLER,
@@ -201,7 +203,9 @@ _ALLOWLIST: dict[str, str] = {
     "storage/wiki.py::upsert_project_init": _C9C_PARAM_COLLISION,
     "storage/wiki.py::upsert_active_work": _C9C_PARAM_COLLISION,
     "storage/wiki.py::upsert_dispatch_prelude_marker": _C9C_PARAM_COLLISION,
-    "metacognition/gap_detection.py::detect_gaps": _C9C_COUPLED_PASSTHROUGH,
+    # ``metacognition/gap_detection.py::detect_gaps`` is GONE from this dict:
+    # its callee (``get_memories_for_directory``) moved in C10g, which is the
+    # exact condition ``_C9C_COUPLED_PASSTHROUGH`` said would unblock it.
     "wiki/store.py::_autolink_title_map": _C9C_COUPLED_PASSTHROUGH,
     "wiki/store.py::autolink": _C9C_COUPLED_PASSTHROUGH,
 }
@@ -222,6 +226,17 @@ _SWEPT: tuple[str, ...] = (
     # together with its WHERE re-key onto ``build_project_scope_clause`` and
     # both of its call sites in ``backend/cls_store/clustering.py``.
     "storage/memory.py::get_memories_by_store_type",
+    # C10g — restore's two memory-backed sinks plus the pass-through that feeds
+    # one of them. Each moved together with the half that made it safe:
+    # ``get_memories_for_directory`` with the C10f memorize stamp already in
+    # the tree, ``get_anchored_memories_scoped`` with ``anchor_memory``'s stamp
+    # in the SAME commit, and ``detect_gaps`` with its callee. The PREDICATES
+    # deliberately stay on ``directory_context`` — that column is where both
+    # writers now put the identity; moving onto the ``project_id`` column is
+    # C11's table work.
+    "storage/memory.py::get_memories_for_directory",
+    "storage/memory.py::get_anchored_memories_scoped",
+    "metacognition/gap_detection.py::detect_gaps",
 )
 
 #: Anti-vacuity floors (ADR-0080). A walk that silently found nothing would

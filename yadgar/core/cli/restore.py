@@ -12,12 +12,19 @@ def cmd_restore(args):
 
     silence_logging()
     # C4: resolved host-side, non-fatal (this runs inside
-    # post-compact-rehydrate.sh). C7 re-keys the restore read from
-    # ``directory`` onto this value; until then it is resolved but unused,
-    # which is deliberate — nothing here substitutes a project when the mint
-    # cannot name one.
-    resolve_cli_project(getattr(args, "project", None), args.directory, required=False)
-    result = forward_restore(args.directory)
+    # post-compact-rehydrate.sh). C10g wires the value through: restore's
+    # memory-backed sinks (anchors, hot memories, gaps) are keyed on it, while
+    # the checkpoint and memory-block sinks still key on the path.
+    #
+    # Still NON-FATAL, deliberately. When the mint cannot name a project this
+    # passes None and the memory buckets come back empty — the checkpoint and
+    # blocks, which are what a post-compact rehydrate most needs, still land.
+    # Raising here would lose those too, and this runs unattended in a shell
+    # hook where a traceback is a silent no-output.
+    _project_id = resolve_cli_project(
+        getattr(args, "project", None), args.directory, required=False
+    )
+    result = forward_restore(args.directory, project_id=_project_id)
     formatted = result.get("formatted", "")
     if formatted:
         print(formatted)

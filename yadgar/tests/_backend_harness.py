@@ -260,10 +260,14 @@ def patch_restore_bypass(monkeypatch: Any) -> None:
 
     _orig_forward_restore = _forward_module._forward_restore
 
-    def _bypass_restore(directory="", timeout_s=120.0):
+    # C10g (0047 PR#40 §5): mirrors ``_forward_restore``'s signature, which now
+    # carries the project_id alongside the path (restore's sinks key on
+    # different columns). A bypass that dropped it would make every scoped
+    # restore in the test suite silently unscoped.
+    def _bypass_restore(directory="", project_id=None, timeout_s=120.0):
         if os.environ.get("YADGAR_EMBED_URL"):
-            return _orig_forward_restore(directory, timeout_s=timeout_s)
-        return run_restore(directory)
+            return _orig_forward_restore(directory, project_id, timeout_s=timeout_s)
+        return run_restore(directory, project_id)
 
     monkeypatch.setattr(_forward_module, "_forward_restore", _bypass_restore)
     for _consumer in ("yadgar.core.server.tools.misc",):

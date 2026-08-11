@@ -39,6 +39,17 @@ def _flag_memories_for_file(
     batch are skipped so heat is halved exactly once per batch.
     """
     memories = storage.get_memories_by_file_hash(old_hash)
+    # C10g (0047 PR#40 §5) — DELIBERATE CARVE-OUT, do not "fix" this into a
+    # project_id. ``parent_dir`` is a CHANGED FILE's parent directory, never a
+    # project identity, so there is nothing here to re-key onto.
+    # ``get_memories_for_directory`` is now project_id-keyed (its column holds
+    # ``owner/repo`` since C10f moved memorize's stamp), so this arm degrades to
+    # a no-match: no memory is flagged stale by directory any more. The
+    # ``file_hash`` arm above is unaffected and still does the real work — it is
+    # the precise arm, and it is what every staleness test exercises. Restoring
+    # a directory arm means giving this function a real project identity from
+    # its caller, which is C11's shape (the plan's "semantic split"), not a
+    # rename this car could make.
     parent_dir = str(Path(filepath).parent)
     dir_memories = storage.get_memories_for_directory(parent_dir, min_heat=0.0)
 

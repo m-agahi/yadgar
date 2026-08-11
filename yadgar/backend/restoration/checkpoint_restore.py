@@ -143,8 +143,24 @@ class CheckpointRestore:
             non-test caller). Reaches ``insert_memory`` as
             ``_resolve_project_id_for_write``'s ``caller_value``, so a stamped
             anchor never touches the classifier this container cannot run
-            (ADR-0227 §1.1). Stamped independently of ``context``: ownership
-            and reach are different facts (§1.4).
+            (ADR-0227 §1.1).
+
+        C10g — ``context`` IS NO LONGER THE SCOPE KEY. ``directory_context`` is
+        stamped from ``project_id``, exactly as C10f did for ``memorize``
+        (``_memorize_phases/_phase_store.py``). This half is inseparable from
+        the read half: ``restore``'s anchor bucket now queries
+        ``get_anchored_memories_scoped(project_id=…)``, so a stamp that stayed
+        on ``context`` would make every anchor unreachable — which is precisely
+        why C10f reverted its attempt rather than shipping one side. ``anchor``
+        hardcodes ``file_hash=None``, so ``context`` was PURELY a scope key
+        here; with the scope moved it is now only the value the caller typed,
+        retained for the payload/log surface.
+
+        ``project_id=None`` (a pre-C4b payload still sitting in the queue)
+        stamps NONE rather than falling back to ``context``. A fallback would
+        reintroduce the mixed path/identity semantics C10f deleted; an
+        unstamped row is the same accepted cost as the un-backfilled corpus
+        (plan §8 step 5b), and the C6 backfill is what closes it.
 
         NOTE — the ``checkpoint`` table is deliberately NOT part of this. It
         has no ``project_id`` column (see ``insert_checkpoint`` in
@@ -158,7 +174,9 @@ class CheckpointRestore:
             "content": content,
             "embedding": embedding,
             "tags": tags + ["_anchor"],
-            "directory_context": context,
+            # C10g: THE STAMP — the resolved project_id, never ``context``.
+            # Moves in lockstep with get_anchored_memories_scoped's re-key.
+            "directory_context": project_id,
             "heat": self._settings.REPLAY_ANCHOR_HEAT,
             "is_stale": False,
             "file_hash": None,
@@ -349,17 +367,33 @@ class CheckpointRestore:
     @observe(tier="stage")
     def _fetch_hot_memories(
         self,
-        directory: str,
+        project_id: str,
         exclude_ids: set[int],
         max_memories: int,
     ) -> list[dict]:
-        """Fetch hot project memories, deduplicated against exclude_ids (step 4 of restore)."""
-        if directory:
-            hot = self._storage.get_memories_for_directory(
-                directory, min_heat=self._settings.HOT_THRESHOLD
-            )
-        else:
-            hot = self._storage.get_memories_by_heat(self._settings.HOT_THRESHOLD)
+        """Fetch hot project memories, deduplicated against exclude_ids (step 4 of restore).
+
+        C10g (0047 PR#40 §5): takes the **project_id**, not the caller's path.
+        C10f moved ``memorize``'s stamp so a new ``memory`` row carries the
+        resolved project_id in ``directory_context``; handing this sink a
+        filesystem path matched zero rows and raised nothing.
+
+        NO-SCOPE MEANS EMPTY, NOT CORPUS-WIDE. The deleted ``else`` branch here
+        called ``get_memories_by_heat(HOT_THRESHOLD)`` — and ``HOT_THRESHOLD``
+        defaults to ``0.0``, i.e. every memory in the DB. That branch was
+        near-dead while a path was almost always supplied, but routing this sink
+        onto project_id makes ``None`` the COMMON case for the two
+        ``_forward_restore`` callers that bypass the MCP tool (the post-compact
+        HTTP hook and the CLI, which resolves its project non-fatally), so a
+        rare widening branch would have become the default one. ``hook_project_id``
+        states the rule this follows: losing an injection is recoverable,
+        leaking one is not.
+        """
+        if not project_id:
+            return []
+        hot = self._storage.get_memories_for_directory(
+            project_id, min_heat=self._settings.HOT_THRESHOLD
+        )
         for m in hot:
             m.pop("embedding", None)
         return [m for m in hot if m["id"] not in exclude_ids][:max_memories]
@@ -373,12 +407,12 @@ class CheckpointRestore:
         query text** — it reads no table, so it cannot produce a silent zero-row
         match the way the four storage-backed sinks would.
 
-        Caveat for the next reader: until C11 re-keys ``restore()`` itself, the
-        caller still supplies the directory-valued scope key, so the string may
-        read ``project work in /home/max/git/yadgar`` rather than
-        ``project work in m-agahi/yadgar``. That is a slightly-off embedding
-        query, not a wrong answer, and it corrects itself for free when C11
-        lands.
+        C10g closed the caveat that used to sit here: ``restore`` now threads a
+        real project_id, so the string reads ``project work in m-agahi/yadgar``
+        rather than ``project work in /home/max/git/yadgar``. When no project is
+        named the argument is ``""`` and this returns ``""``, which disables SR
+        prediction for that call — the same "no scope means no rows" posture the
+        memory-backed sinks take.
         """
         if checkpoint:
             task = checkpoint.get("current_task", "")
@@ -390,7 +424,7 @@ class CheckpointRestore:
     def _predict_memories(
         self,
         checkpoint: dict | None,
-        directory: str,
+        project_id: str,
         seen_ids: set[int],
         max_memories: int,
     ) -> list[dict]:
@@ -400,7 +434,7 @@ class CheckpointRestore:
         """
         if self._cognitive_map is None or not self._cognitive_map.has_sufficient_data():
             return []
-        query = self._build_sr_query(checkpoint, directory)
+        query = self._build_sr_query(checkpoint, project_id)
         if not query:
             return []
         query_emb = self._embeddings.encode(query)
@@ -423,21 +457,24 @@ class CheckpointRestore:
         return predicted
 
     @observe(tier="stage")
-    def _detect_gaps_safe(self, directory: str) -> list[dict]:
+    def _detect_gaps_safe(self, project_id: str) -> list[dict]:
         """Detect knowledge gaps, suppressing errors (step 6 of restore).
 
         Returns at most 3 gaps. Returns [] when metacognition is absent or on error.
+
+        C10g: takes the project_id — ``detect_gaps`` forwards straight into
+        ``get_memories_for_directory``, so it inherits that sink's key.
         """
-        if self._metacognition is None or not directory:
+        if self._metacognition is None or not project_id:
             return []
         try:
-            return self._metacognition.detect_gaps(directory)[:3]
+            return self._metacognition.detect_gaps(project_id)[:3]
         except Exception:
             logger.debug("Gap detection failed during restore")
             return []
 
     @trace_span()
-    def restore(self, directory: str = "") -> dict:
+    def restore(self, directory: str = "", project_id: str | None = None) -> dict:
         """Intelligent context reconstruction after compaction.
 
         Combines:
@@ -449,40 +486,49 @@ class CheckpointRestore:
 
         Returns structured data + formatted markdown for injection.
 
-        C10 (0047 §5, judgement site (b)) — C11 WORKLIST. ``directory`` here is
-        the **identity** half of the parameter (b) split; the real-path half is
-        gone (``worktree_path``, drain side only). It is deliberately NOT
-        renamed to ``project_id``, because it fans out to FIVE sinks and every
-        one still keys on a directory-valued column:
+        C10g (0047 §5, judgement site (b)) — **THE FAN-OUT IS NOT UNIFORM, AND
+        THAT IS THE DESIGN, NOT AN UNFINISHED SWEEP.** ``restore`` takes BOTH
+        values and routes each sink to the one its table actually keys on:
 
-          1. ``get_active_checkpoint``      → ``checkpoint.directory_context``
-             — table has **no ``project_id`` column** (migration 031 declared it
-             on ``wiki_page`` + ``memory`` only). Flips symmetrically with the
-             drain writer.
+          1. ``get_active_checkpoint``        → ``checkpoint.directory_context``
+             — **PATH.** The table has no ``project_id`` column (migration 031
+             declared it on ``wiki_page`` + ``memory`` only). It would flip
+             *symmetrically* with the drain writer, but flipping it would store
+             an identity in a column named for a path with no column to move
+             onto. C11 adds the column.
           2. ``get_anchored_memories_scoped`` → ``memory.directory_context``
-             — ``memory`` HAS ``project_id``; the READ is not re-keyed yet.
+             — **project_id.** C10g moved ``anchor_memory``'s stamp onto the
+             project_id in the SAME change; move either alone and every anchor
+             becomes unreachable.
           3. ``get_memories_for_directory``   → ``memory.directory_context``
-             — same; ``WHERE directory_context = $dir``.
+             — **project_id.** C10f moved ``memorize``'s stamp here, so every
+             row written after that car carries ``owner/repo`` in this column.
           4. ``list_blocks``                  → ``memory_block.directory``
-             — **no ``project_id`` column, and does NOT flip symmetrically.**
-             See the seam note on ``_fetch_blocks_safe``; this is the sink that
-             forced the deferral.
-          5. ``detect_gaps``                  → metacognition, directory-keyed.
+             — **PATH, and it does NOT flip symmetrically.** Blocks are written
+             by ``block_create(directory=…)``, a C11-blocked site that still
+             stores real paths. Route this sink onto project_id and every block
+             silently vanishes from every restore. See ``_fetch_blocks_safe``.
+          5. ``detect_gaps``                  → forwards into sink 3
+             — **project_id**, inherited.
 
-        Renaming the parameter without re-keying these reads would have callers
-        pass ``owner/repo`` into ``WHERE directory_context = $dir`` and match
-        zero rows while raising nothing. C11 re-keys the columns; sinks 2/3/5
-        are also in C9c's path.
+        The rule for the next reader: a sink moves only when its WRITER has
+        already moved. Sinks 2 and 3 had; 1 and 4 had not.
+
+        Args:
+            directory: Host-side project path. Still the key for the checkpoint
+                and memory-block sinks, and the value rendered in the footer.
+            project_id: Resolved ``owner/repo`` identity. ``None``/empty means
+                the caller named no project — the memory-backed sinks then
+                return EMPTY rather than widening (see ``_fetch_hot_memories``).
         """
         max_memories = self._settings.REPLAY_MAX_RESTORE_MEMORIES
+        scope = project_id or ""
 
-        # 1. Latest checkpoint
+        # 1. Latest checkpoint — PATH-keyed (no project_id column on the table).
         checkpoint = self._storage.get_active_checkpoint(directory)
 
         # 2. Anchored memories (scope-split: global first then project)
-        anchored = self._storage.get_anchored_memories_scoped(
-            directory=directory, limit=max_memories
-        )
+        anchored = self._storage.get_anchored_memories_scoped(project_id=scope, limit=max_memories)
         for m in anchored:
             m.pop("embedding", None)
 
@@ -492,14 +538,14 @@ class CheckpointRestore:
         # 4. Hot project memories (deduplicated)
         anchor_ids = {m["id"] for m in anchored}
         recent_ids = {m["id"] for m in recent_memories}
-        hot_memories = self._fetch_hot_memories(directory, anchor_ids | recent_ids, max_memories)
+        hot_memories = self._fetch_hot_memories(scope, anchor_ids | recent_ids, max_memories)
 
         # 5. Predictive retrieval via SR cognitive map
         seen_ids = anchor_ids | recent_ids | {m["id"] for m in hot_memories}
-        predicted = self._predict_memories(checkpoint, directory, seen_ids, max_memories)
+        predicted = self._predict_memories(checkpoint, scope, seen_ids, max_memories)
 
         # 6. Gap detection
-        gaps = self._detect_gaps_safe(directory)
+        gaps = self._detect_gaps_safe(scope)
 
         # Build formatted markdown for hook injection
         markdown = self._format_restoration(

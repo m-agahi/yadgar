@@ -48,13 +48,15 @@ def test_restore_route_returns_result_envelope(client):
     resp = client.post("/restore", json={"directory": "/my/project"})
     assert resp.status_code == 200
     assert resp.json() == {"result": _RESTORE_PAYLOAD}
-    client.run_restore_mock.assert_called_once_with("/my/project")
+    # C10g: the route forwards BOTH scope values — restore's sinks key on
+    # different columns, so dropping either silently unscopes half of them.
+    client.run_restore_mock.assert_called_once_with("/my/project", None)
 
 
 def test_restore_route_directory_defaults_empty(client):
     resp = client.post("/restore", json={})
     assert resp.status_code == 200
-    client.run_restore_mock.assert_called_once_with("")
+    client.run_restore_mock.assert_called_once_with("", None)
 
 
 def test_restore_route_rejects_unknown_fields(client):

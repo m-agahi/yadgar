@@ -290,7 +290,7 @@ async def restore_route(
     # Bootstrap engines (idempotent, guarded by lock).
     await asyncio.to_thread(_es._ensure_recall_engines)
 
-    result = await asyncio.to_thread(run_restore, req.directory)
+    result = await asyncio.to_thread(run_restore, req.directory, req.project_id)
     return RestoreResponse(result=result)
 
 

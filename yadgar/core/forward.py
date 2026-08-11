@@ -184,7 +184,9 @@ def _forward_read_query(query: str, params: dict | None = None, timeout_ms: int 
 
 
 @observe(tier="boundary", metric="tools._forward._forward_restore")
-def _forward_restore(directory: str = "", timeout_s: float = 120.0) -> dict:
+def _forward_restore(
+    directory: str = "", project_id: str | None = None, timeout_s: float = 120.0
+) -> dict:
     """Forward restore to the backend POST /restore endpoint (T2 Car B).
 
     The restore compute (CheckpointRestore + CognitiveMap SR navigation, census
@@ -193,7 +195,15 @@ def _forward_restore(directory: str = "", timeout_s: float = 120.0) -> dict:
     ``yadgar restore`` CLI subcommand.
 
     Args:
-        directory: Project directory to restore context for ("" = all).
+        directory: Host-side project path. C10g: still the key for restore's
+            checkpoint + memory-block sinks (neither table carries a
+            ``project_id`` column yet), and no longer a scope key for anything
+            else.
+        project_id: Resolved ``owner/repo``. C10g: keys restore's memory-backed
+            sinks — the anchor and hot buckets and gap detection — because
+            C10f/C10g moved both writers' stamp onto it. ``None`` means the
+            caller named no project; those buckets come back EMPTY rather than
+            widened to the corpus.
         timeout_s: httpx request timeout. Restore builds + inverts the SR
             matrix — allow the same generous budget as the MCP recall forward.
 
@@ -220,7 +230,7 @@ def _forward_restore(directory: str = "", timeout_s: float = 120.0) -> dict:
 
     resp = httpx.post(
         f"{backend_base}/restore",
-        json={"directory": directory},
+        json={"directory": directory, "project_id": project_id},
         headers=headers,
         timeout=timeout_s,
     )

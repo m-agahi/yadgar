@@ -767,8 +767,21 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
 @mcp_server.custom_route("/hooks/post-compact", methods=["GET"])
 @trace_span()
 async def hook_post_compact(request: Request) -> JSONResponse:
-    """Called by SessionStart hook after compaction. Returns restoration context."""
+    """Called by SessionStart hook after compaction. Returns restoration context.
+
+    C10g (0047 PR#40 §5): accepts an optional ``?project=owner/repo``. Restore's
+    anchor / hot-memory / gap sinks are keyed on the project_id now, so a hook
+    that sends only ``?directory=`` gets the checkpoint and memory blocks (both
+    still path-keyed) and empty memory buckets.
+
+    Unlike ``hook_project_id``, a missing project does NOT raise here. That
+    function raises because widening its recall would LEAK another project's
+    memories into the prompt; restore cannot leak — the sinks return empty —
+    and raising would additionally throw away the checkpoint, which is the part
+    of a post-compact restore that cannot be reconstructed from anywhere else.
+    """
     directory = request.query_params.get("directory", os.getcwd())
+    project_id = request.query_params.get("project")
 
     # T2 Car B: restore compute runs backend-side behind POST /restore.
     # Lazy import mirrors the tools.recall import at :181 (avoids the
@@ -776,7 +789,7 @@ async def hook_post_compact(request: Request) -> JSONResponse:
     from yadgar.core.forward import _forward_restore  # noqa: PLC0415
 
     try:
-        result = await asyncio.to_thread(_forward_restore, directory)
+        result = await asyncio.to_thread(_forward_restore, directory, project_id)
         return JSONResponse(result)
     except Exception as e:
         logger.exception("hook_post_compact error: %s", e)

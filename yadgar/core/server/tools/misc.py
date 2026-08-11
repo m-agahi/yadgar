@@ -205,11 +205,38 @@ def restore(directory: str = "", *, project: str | None = None) -> dict:
 
     T2 Car B: thin forwarder — the restore compute (CheckpointRestore +
     CognitiveMap SR navigation) runs backend-side behind POST /restore.
+
+    project: C10g (0047 PR#40 §5) — REQUIRED in effect. The anchor bucket, the
+      hot-memories bucket and gap detection are all keyed on the resolved
+      project_id now, so a call that names no project gets the checkpoint and
+      memory blocks (both still path-keyed) and empty memory buckets. When
+      neither ``project=`` nor a session identity names one, this returns the
+      structured unresolved-project envelope rather than guessing (ADR-0227).
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
-    return _forward_restore(directory)
+    # C10g (0047 PR#40 §5): PROMOTED from ``accept_project_param`` to a real
+    # resolution, the same promotion C5b made for ``bootstrap_project``. That
+    # helper only validates the override; restore's memory-backed sinks are now
+    # keyed on the resolved project_id, so boundary-validation-only would leave
+    # the anchor and hot buckets permanently empty.
+    #
+    # Both values go down the wire: restore fans out to five sinks and they key
+    # on different columns (see ``CheckpointRestore.restore``). ``directory``
+    # still keys the checkpoint and memory-block sinks.
+    #
+    # Failure returns the tool's error envelope rather than raising — the MCP
+    # boundary never raises, matching ``anchor`` above.
+    try:
+        _effective_project_id = resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,
+            tool="restore",
+        )
+    except UnresolvedProjectError as exc:
+        return {"ok": False, **exc.payload}
+    except InvalidProjectOverrideError as exc:
+        return {"ok": False, "reason": f"restore: {exc}"}
+    return _forward_restore(directory, project_id=_effective_project_id)
 
 
 _VALID_ANCHOR_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})

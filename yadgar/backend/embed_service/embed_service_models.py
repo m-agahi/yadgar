@@ -108,9 +108,17 @@ class RecallResponse(BaseModel):
 
 
 class RestoreRequest(BaseModel):
-    """Request body for POST /restore."""
+    """Request body for POST /restore.
+
+    C10g (0047 PR#40 §5): carries BOTH scope values, because ``restore``'s
+    sinks key on different columns — ``directory`` still keys the checkpoint
+    and memory-block sinks (neither table has a ``project_id`` column yet),
+    ``project_id`` keys the memory-backed ones. ``extra="forbid"`` is safe for
+    the added optional field: core and backend images deploy together.
+    """
 
     directory: str = ""
+    project_id: str | None = None
 
     model_config = {"extra": "forbid"}
 

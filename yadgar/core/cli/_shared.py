@@ -44,9 +44,10 @@ def resolve_cli_project(
 
     ``required=False`` is for the two COMPACTION-HOOK commands, ``drain`` and
     ``restore`` (and the local-read ``context``). They are invoked from
-    ``pre-compact-drain.sh`` / ``post-compact-rehydrate.sh``, and nothing in
-    this car consumes their project_id yet — C7 re-keys the read and C11 adds
-    the checkpoint column. Exiting there would mean an unresolvable tree
+    ``pre-compact-drain.sh`` / ``post-compact-rehydrate.sh``. C10g made
+    ``restore`` CONSUME the value (its memory-backed sinks are keyed on it),
+    and C11 still owes the checkpoint column. Exiting there would mean an
+    unresolvable tree
     silently loses the checkpoint the drain exists to save, which is the same
     "worse than reporting it" trade ADR-0227 accepts for the nightly cycle.
     They therefore pass the value through when it resolves and pass ``None``
@@ -93,11 +94,18 @@ def silence_logging() -> None:
     logging.disable(logging.CRITICAL)
 
 
-def forward_restore(directory: str) -> dict:
-    """POST /restore on the backend and return the restore payload dict."""
+def forward_restore(directory: str, project_id: str | None = None) -> dict:
+    """POST /restore on the backend and return the restore payload dict.
+
+    C10g (0047 PR#40 §5): threads the host-resolved project_id alongside the
+    path. Restore's sinks key on different columns — the memory-backed ones on
+    the project_id, the checkpoint + memory-block ones still on the path.
+    ``None`` (this CLI resolves non-fatally) means the memory buckets come back
+    empty; it never widens them.
+    """
     from yadgar.core.forward import _forward_restore
 
-    return _forward_restore(directory)
+    return _forward_restore(directory, project_id=project_id)
 
 
 def forward_pre_compact_drain(

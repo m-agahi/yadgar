@@ -159,7 +159,11 @@ class TestRestore:
             reason="Team decision",
             project_id=_TEST_PROJECT,
         )
-        result = replay.restore("/test")
+        # C10g: the anchor STAMP and this bucket's reader moved together onto
+        # the project_id, so restore must be told which project. Passing only
+        # "/test" here is what C10f watched go red before it reverted the
+        # half-change — keep both arguments.
+        result = replay.restore("/test", project_id=_TEST_PROJECT)
         assert result["anchored_memories"] >= 1
         assert "React" in result["formatted"]
 
@@ -184,8 +188,10 @@ class TestRestore:
         # Simulate compaction
         replay.pre_compact_drain("/test")
 
-        # Restore
-        result = replay.restore("/test")
+        # Restore — C10g: path keys the checkpoint sink, project_id keys the
+        # anchor sink. This test asserts both in one call, which is why it is
+        # the pin for the stamp/reader pair.
+        result = replay.restore("/test", project_id=_TEST_PROJECT)
         assert result["checkpoint"] is not None
         assert result["anchored_memories"] >= 1
         assert "Refactoring auth module" in result["formatted"]
@@ -409,7 +415,11 @@ class TestRunRestore:
     def test_invalidates_map_then_delegates(self):
         """Cross-process staleness fix: the SR matrix is rebuilt per restore
         (transitions are recorded core-side; the backend _dirty flag cannot see
-        them), then CheckpointRestore.restore runs with the directory."""
+        them), then CheckpointRestore.restore runs with the directory.
+
+        C10g: BOTH scope values are forwarded. ``restore`` fans out to sinks
+        that key on different columns, so dropping either here would silently
+        unscope half of them."""
         from unittest.mock import MagicMock
 
         import yadgar._shared.runtime.state as _st
@@ -424,12 +434,12 @@ class TestRunRestore:
         _st._cognitive_map = cmap
         _st._replay = replay
         try:
-            result = run_restore("/proj")
+            result = run_restore("/proj", _TEST_PROJECT)
         finally:
             _st._storage, _st._embeddings, _st._cognitive_map, _st._replay = saved
 
         cmap.invalidate.assert_called_once_with()
-        replay.restore.assert_called_once_with(directory="/proj")
+        replay.restore.assert_called_once_with(directory="/proj", project_id=_TEST_PROJECT)
         assert result == {"formatted": "# R", "epoch": 1}
 
     def test_raises_when_engines_missing(self):

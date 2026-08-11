@@ -528,12 +528,30 @@ class _MemoryMixin:
             {"id": memory_id},
         )
 
-    def get_memories_for_directory(self, directory: str, min_heat: float = 0.1) -> list[dict]:
+    def get_memories_for_directory(self, project_id: str, min_heat: float = 0.1) -> list[dict]:
+        """Rows this project owns, hottest first.
+
+        C10g (0047 PR#40 §5) — the PARAMETER is re-keyed onto ``project_id``;
+        the PREDICATE deliberately stays on ``directory_context``. That is not
+        an oversight: C10f moved ``memorize``'s stamp so a new ``memory`` row
+        stores the resolved ``owner/repo`` in ``directory_context``, so this
+        column IS the project key today. Re-keying the predicate onto the
+        separate ``project_id`` column is C11's table work, and doing it here
+        would strand every row written by C10f.
+
+        C9a's ``_C9C_SEMANTIC_SPLIT`` deferral is discharged by this rename:
+        the predictive_coding / narrative / restoration callers all pass a
+        resolved project_id. ONE caller does not —
+        ``backend/admin_exec/staleness.py`` passes a changed file's parent
+        directory. It is left deliberately (its directory arm degrades to
+        no-match; its ``file_hash`` arm is unaffected) and the rename is what
+        makes that mismatch visible at the call site instead of silent.
+        """
         rows = self._q(
             "SELECT * FROM memory WHERE directory_context = $dir AND heat >= $min "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC",
-            {"dir": directory, "min": min_heat, "now": self._now_iso()},
+            {"dir": project_id, "min": min_heat, "now": self._now_iso()},
         )
         return self._rows_to_dicts(rows)
 
@@ -1193,14 +1211,25 @@ class _MemoryMixin:
     @observe(tier="stage")
     def get_anchored_memories_scoped(
         self,
-        directory: str,
+        project_id: str,
         limit: int = 20,
     ) -> list[dict]:
         """Return anchors in scope priority order: global-reach first, then project.
 
         Two queries, hard cap `limit` each (safety cap 50 per design).
         Global = ``'global' IN tags`` (**C5**).
-        Project = directory_context = directory (exact repo root match).
+        Project = ``directory_context = project_id`` (**C10g**).
+
+        **C10g (0047 PR#40 §5) re-keyed the project bucket onto the project_id,
+        together with its writer.** ``CheckpointRestore.anchor_memory`` now
+        stamps ``directory_context`` from the resolved project_id instead of the
+        caller's ``context`` path, matching what C10f did to ``memorize``. The
+        two halves are ONE change: C10f attempted the stamp alone, watched this
+        reader's tests go red, and reverted rather than ship a bucket whose
+        writer it no longer agreed with. The PREDICATE stays on
+        ``directory_context`` for the same reason as
+        ``get_memories_for_directory`` — that column is where the write path
+        puts the identity today; moving onto the ``project_id`` column is C11's.
         v5.65: 'system' removed from global bucket (mis-stamp sink; v5.64 stopped new writes).
         Deduplicates by memory id. Returns global anchors first, then project.
         No rank-filter applied — anchors surface unconditionally (design §2).
@@ -1240,7 +1269,7 @@ class _MemoryMixin:
             "AND directory_context = $dir "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC LIMIT $lim",
-            {"dir": directory, "now": _now, "lim": _cap},
+            {"dir": project_id, "now": _now, "lim": _cap},
         )
 
         seen: set[int] = set()
