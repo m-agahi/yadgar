@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 @pytest.fixture(scope="module")
 def storage(module_storage):
@@ -32,6 +34,7 @@ class TestMigration025AgentPromptSlugCollapse:
                 "confidence": "high",
                 "source_memory_ids": [],
                 "directory_context": "global",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         storage.insert_wiki_page(
@@ -45,6 +48,7 @@ class TestMigration025AgentPromptSlugCollapse:
                 "confidence": "high",
                 "source_memory_ids": [],
                 "directory_context": "global",
+                "project_id": TEST_PROJECT_ID,
             }
         )
 
@@ -74,6 +78,7 @@ class TestMigration025AgentPromptSlugCollapse:
                 "confidence": "high",
                 "source_memory_ids": [],
                 "directory_context": "global",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         # Should not raise or fail
@@ -95,6 +100,7 @@ class TestMigration025AgentPromptSlugCollapse:
                 "confidence": "high",
                 "source_memory_ids": [],
                 "directory_context": "global",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         _migration_025_agent_prompt_slug_collapse(storage)

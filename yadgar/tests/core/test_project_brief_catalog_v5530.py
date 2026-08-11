@@ -27,6 +27,7 @@ from yadgar.core.server.tools.project import (
     _render_wiki_catalog,
     _slug_prefix,
 )
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,7 @@ def _add_wiki_page(title: str, category: str, directory: str, flush) -> None:
         wait=True,
         directory=directory,
         force=True,
+        project=TEST_PROJECT_ID,
     )
     flush()
 
@@ -220,12 +222,12 @@ def test_render_wiki_catalog_multiple_groups():
 
 
 def test_catalog_mode_has_wiki_catalog_key():
-    result = server.project_brief("/tmp/myproject")
+    result = server.project_brief("/tmp/myproject", project=TEST_PROJECT_ID)
     assert "wiki_catalog" in result
 
 
 def test_catalog_mode_wiki_catalog_is_dict():
-    result = server.project_brief("/tmp/myproject")
+    result = server.project_brief("/tmp/myproject", project=TEST_PROJECT_ID)
     catalog = result["wiki_catalog"]
     assert isinstance(catalog, dict)
     assert "total" in catalog
@@ -233,14 +235,14 @@ def test_catalog_mode_wiki_catalog_is_dict():
 
 
 def test_catalog_mode_wiki_catalog_empty_when_no_pages():
-    result = server.project_brief("/tmp/no_pages_project_xyz")
+    result = server.project_brief("/tmp/no_pages_project_xyz", project=TEST_PROJECT_ID)
     catalog = result["wiki_catalog"]
     assert catalog["total"] == 0
     assert catalog["groups"] == {}
 
 
 def test_catalog_mode_render_contains_wiki_index_header():
-    result = server.project_brief("/tmp/myproject")
+    result = server.project_brief("/tmp/myproject", project=TEST_PROJECT_ID)
     render = result.get("_render", "")
     assert "## Wiki Index" in render
 
@@ -250,7 +252,7 @@ def test_catalog_mode_render_groups_titles_with_pages(flush_queue):
     _add_wiki_page("Core Architecture", "architecture", directory, flush_queue)
     _add_wiki_page("Tech Decision 1", "decision", directory, flush_queue)
 
-    result = server.project_brief(directory)
+    result = server.project_brief(directory, project=TEST_PROJECT_ID)
     render = result["_render"]
 
     # Must contain titles
@@ -271,10 +273,11 @@ def test_catalog_mode_render_no_bare_slug_only_line(flush_queue):
         wait=True,
         directory=directory,
         force=True,
+        project=TEST_PROJECT_ID,
     )
     flush_queue()
 
-    result = server.project_brief(directory)
+    result = server.project_brief(directory, project=TEST_PROJECT_ID)
     render = result["_render"]
     # Find the slug that was generated (it's based on the title)
     catalog = result["wiki_catalog"]
@@ -299,10 +302,11 @@ def test_catalog_mode_render_length_capped(flush_queue):
             wait=True,
             directory=directory,
             force=True,
+            project=TEST_PROJECT_ID,
         )
         flush_queue()
 
-    result = server.project_brief(directory)
+    result = server.project_brief(directory, project=TEST_PROJECT_ID)
     render = result["_render"]
     # Big category → prefix breakdown line instead of bare titles + "…more"
     assert "by prefix:" in render
@@ -315,12 +319,12 @@ def test_catalog_mode_render_length_capped(flush_queue):
 
 
 def test_restore_mode_has_wiki_catalog_key():
-    result = server.project_brief("/tmp/myproject", mode="restore")
+    result = server.project_brief("/tmp/myproject", mode="restore", project=TEST_PROJECT_ID)
     assert "wiki_catalog" in result
 
 
 def test_restore_mode_wiki_catalog_is_dict():
-    result = server.project_brief("/tmp/myproject", mode="restore")
+    result = server.project_brief("/tmp/myproject", mode="restore", project=TEST_PROJECT_ID)
     catalog = result["wiki_catalog"]
     assert isinstance(catalog, dict)
     assert "total" in catalog
@@ -329,7 +333,7 @@ def test_restore_mode_wiki_catalog_is_dict():
 
 def test_restore_mode_still_has_key_wiki_pages():
     """key_wiki_pages must stay for back-compat (test_restore_mode_returns_required_keys)."""
-    result = server.project_brief("/tmp/myproject", mode="restore")
+    result = server.project_brief("/tmp/myproject", mode="restore", project=TEST_PROJECT_ID)
     assert "key_wiki_pages" in result
 
 
@@ -337,7 +341,7 @@ def test_restore_mode_catalog_groups_with_pages(flush_queue):
     directory = "/tmp/restore_catalog_test"
     _add_wiki_page("Restore Architecture", "architecture", directory, flush_queue)
 
-    result = server.project_brief(directory, mode="restore")
+    result = server.project_brief(directory, mode="restore", project=TEST_PROJECT_ID)
     catalog = result["wiki_catalog"]
     assert catalog["total"] >= 1
     assert "architecture" in catalog["groups"]
@@ -349,7 +353,7 @@ def test_restore_mode_catalog_groups_with_pages(flush_queue):
 
 
 def test_full_mode_has_wiki_catalog_key():
-    result = server.project_brief("/tmp/myproject", mode="full")
+    result = server.project_brief("/tmp/myproject", mode="full", project=TEST_PROJECT_ID)
     assert "wiki_catalog" in result
 
 
@@ -357,29 +361,29 @@ def test_full_mode_has_wiki_catalog_key():
 
 
 def test_signals_mode_has_no_wiki_catalog():
-    result = server.project_brief("/tmp/myproject", mode="signals")
+    result = server.project_brief("/tmp/myproject", mode="signals", project=TEST_PROJECT_ID)
     assert "wiki_catalog" not in result
 
 
 def test_signals_mode_has_no_render():
-    result = server.project_brief("/tmp/myproject", mode="signals")
+    result = server.project_brief("/tmp/myproject", mode="signals", project=TEST_PROJECT_ID)
     assert "_render" not in result
 
 
 def test_signals_mode_has_no_key_wiki_pages():
-    result = server.project_brief("/tmp/myproject", mode="signals")
+    result = server.project_brief("/tmp/myproject", mode="signals", project=TEST_PROJECT_ID)
     assert "key_wiki_pages" not in result
 
 
 def test_signals_mode_token_budget_still_met():
     """signals mode payload must remain ≤100 tokens after v5.53.0 changes."""
-    result = server.project_brief("/tmp/myproject", mode="signals")
+    result = server.project_brief("/tmp/myproject", mode="signals", project=TEST_PROJECT_ID)
     tokens = len(json.dumps(result)) // 4
     assert tokens <= 100, f"signals mode too large: {tokens} tokens (budget: 100)"
 
 
 def test_signals_mode_required_keys_still_present():
-    result = server.project_brief("/tmp/myproject", mode="signals")
+    result = server.project_brief("/tmp/myproject", mode="signals", project=TEST_PROJECT_ID)
     required = {
         "init_memory_present",
         "active_work_present",

@@ -16,6 +16,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import yadgar._shared.paths as _paths
+from yadgar._shared.storage._project_id_writer import observe_project_id_skip
 from yadgar._shared.wiki.wiki_meta import (
     PAGE_TYPE_AGENT_DISCIPLINE,
     PAGE_TYPE_AGENT_INDEX,
@@ -991,7 +992,7 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
 
     # Fetch all agent-prompt wiki pages
     rows = storage._q(
-        "SELECT id, slug, content, tags, title, directory_context, "
+        "SELECT id, slug, content, tags, title, directory_context, project_id, "
         "category, confidence, source_memory_ids FROM wiki_page "
         "WHERE tags CONTAINS 'agent-prompt'"
     )
@@ -1018,6 +1019,10 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
         if prev is None or row["_ver"] > prev["_ver"]:
             best[pat] = row
 
+    #: Patterns whose bare slug is present after this pass — the only ones
+    #: whose -vN sources are safe to delete.
+    collapsed: set[str] = set()
+
     for pattern_slug, row in best.items():
         bare_slug = pattern_slug  # already "agent-prompt-<pattern>"
         existing = storage.get_wiki_page_by_slug(bare_slug)
@@ -1027,8 +1032,31 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
         title = row.get("title", "").split(" v")[0]  # strip " v2" from title if present
         category = row.get("category", "reference")
         confidence = row.get("confidence", "high")
+        # C13 (0047 PR#40 §5): the collapse INHERITS the -vN row's owner. This
+        # is not a derivation — the value was stamped by whoever wrote the
+        # source page, and reading it back is what "travels as an explicit
+        # caller parameter" means for a write built from another row (see
+        # ``resolve_project_id_from_rows``). The column was not even in the
+        # SELECT before this car; the insert below then reached the chokepoint
+        # unstamped, which after C5 is a raise inside the migration chain.
+        project_id = row.get("project_id")
 
         if existing is None:
+            if not project_id:
+                # Skip-and-count, C4's declared failure path for a sessionless
+                # writer: a pre-Car-L -vN row names no owner, and a migration
+                # that dies on one legacy row is worse than one that reports
+                # it. The source pages are LEFT IN PLACE (see the delete guard
+                # below) so an operator-invoked backfill can still collapse
+                # them once they carry an identity — deleting them here would
+                # destroy the only copy of the content.
+                observe_project_id_skip("migration_025")
+                _log.warning(
+                    "migration_025: %s names no project_id — collapse skipped, "
+                    "versioned pages retained",
+                    bare_slug,
+                )
+                continue
             page_id = storage.insert_wiki_page(
                 {
                     "slug": bare_slug,
@@ -1040,6 +1068,7 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
                     "confidence": confidence,
                     "source_memory_ids": row.get("source_memory_ids", []),
                     "directory_context": directory_context,
+                    "project_id": project_id,
                     "page_type": "agent_prompt",
                     "wiki_schema_version": 1,
                 }
@@ -1047,9 +1076,14 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
             _log.info("migration_025: created %s (page_id=%s)", bare_slug, page_id)
         else:
             _log.info("migration_025: bare slug %s already exists — skipping insert", bare_slug)
+        collapsed.add(pattern_slug)
 
-    # Delete all versioned pages
+    # Delete the versioned pages whose pattern actually collapsed. A pattern
+    # skipped for want of an owner keeps its -vN rows: the bare slug does not
+    # exist, so deleting them would lose the content outright.
     for row in versioned:
+        if row["_pattern"] not in collapsed:
+            continue
         page_id = storage._extract_id(row.get("id"))
         if page_id is not None:
             storage.delete_wiki_page(page_id)

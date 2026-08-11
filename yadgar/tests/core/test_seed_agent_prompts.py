@@ -25,6 +25,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar.core import server  # noqa: E402
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # R3 Car 3c: seed_agent_prompts calls agent_prompt_save which forwards to backend /admin.
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
@@ -175,7 +176,7 @@ class TestSeedCreatesStarters:
             seed_agent_prompts,
         )
 
-        result = seed_agent_prompts(storage=storage)
+        result = seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
         assert result["seeded"] is True
         assert result["created"] == 15, f"expected 15 created, got {result}"
         assert result["skipped"] == 0
@@ -197,11 +198,11 @@ class TestSeedIdempotent:
         from yadgar.core.server.tools.agent_prompts import seed_agent_prompts
 
         # First call
-        r1 = seed_agent_prompts(storage=storage)
+        r1 = seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
         assert r1["created"] == 15, f"first call should create 15, got {r1}"
 
         # Second call — must skip all 15
-        r2 = seed_agent_prompts(storage=storage)
+        r2 = seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
         assert r2["created"] == 0, f"second call should create 0, got {r2}"
         assert r2["skipped"] == 15
 
@@ -242,8 +243,8 @@ class TestSeedSingleAnchor:
         """
         from yadgar.core.server.tools.agent_prompts import seed_agent_prompts
 
-        seed_agent_prompts(storage=storage)
-        seed_agent_prompts(storage=storage)
+        seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
+        seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
 
         import yadgar._shared.runtime.state as _st
 

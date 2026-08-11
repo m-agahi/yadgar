@@ -26,6 +26,7 @@ import re
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -140,7 +141,7 @@ class TestSeedDisciplines:
             seed_agent_prompts,
         )
 
-        result = seed_agent_prompts(storage=storage)
+        result = seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
         assert result["disciplines_created"] == 7, f"expected 7 disciplines created: {result}"
         assert result["disciplines_skipped"] == 0
         assert sorted(result["disciplines"]) == sorted(_EXPECTED_DISCIPLINE_NAMES)
@@ -154,15 +155,15 @@ class TestSeedDisciplines:
     def test_seed_disciplines_idempotent(self, storage):
         from yadgar.core.server.tools.agent_prompts import seed_agent_prompts
 
-        seed_agent_prompts(storage=storage)
-        r2 = seed_agent_prompts(storage=storage)
+        seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
+        r2 = seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
         assert r2["disciplines_created"] == 0
         assert r2["disciplines_skipped"] == 7
 
     def test_toc_rows_include_disciplines(self, storage):
         from yadgar.core.server.tools.agent_prompts import seed_agent_prompts
 
-        seed_agent_prompts(storage=storage)
+        seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
 
         # Car I (0047 §7): the wiki ``agent-prompt-toc`` page is retired as
         # the discovery surface — the table is now ``list_agent_discipline_rows``

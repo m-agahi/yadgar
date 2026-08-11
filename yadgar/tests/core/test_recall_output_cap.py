@@ -30,6 +30,8 @@ from unittest.mock import patch
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 def _compact(obj) -> int:
     """Serialised byte size, matching the shaper's own accounting."""
@@ -273,7 +275,9 @@ class TestSideEffectClosureGetsUntrimmedRows:
             patch.object(mod, "_st") as mock_st,
         ):
             mock_st._consolidation = None
-            result = mod.recall(query="seam test", directory="/tmp", max_results=5)
+            result = mod.recall(
+                query="seam test", directory="/tmp", project=TEST_PROJECT_ID, max_results=5
+            )
 
             drain_session_side_effects(timeout=10.0)
 
@@ -312,7 +316,7 @@ class TestMaxCharsParam:
         from yadgar.core.server.tools.recall import recall
 
         with pytest.raises(ValueError, match="max_chars"):
-            recall(query="q", directory="/tmp", max_chars=bad)
+            recall(query="q", directory="/tmp", project=TEST_PROJECT_ID, max_chars=bad)
 
     def test_max_chars_validated_before_backend_call(self):
         """Guard runs alongside the existing type/mode/profile checks — no I/O first."""
@@ -321,7 +325,7 @@ class TestMaxCharsParam:
         mod = sys.modules["yadgar.core.server.tools.recall"]
         with patch.object(mod, "_forward_to_backend") as fwd:
             with pytest.raises(ValueError, match="max_chars"):
-                mod.recall(query="q", directory="/tmp", max_chars=0)
+                mod.recall(query="q", directory="/tmp", project=TEST_PROJECT_ID, max_chars=0)
             fwd.assert_not_called()
 
     def test_per_call_max_chars_overrides_the_configured_default(self):
@@ -337,7 +341,9 @@ class TestMaxCharsParam:
             patch.object(mod, "_st") as mock_st,
         ):
             mock_st._consolidation = None
-            result = mod.recall(query="q", directory="/tmp", max_results=1, max_chars=100)
+            result = mod.recall(
+                query="q", directory="/tmp", project=TEST_PROJECT_ID, max_results=1, max_chars=100
+            )
             drain_session_side_effects(timeout=10.0)
 
         assert len(result[0]["content"]) == 100
@@ -429,7 +435,7 @@ class TestAdrListPagination:
         ledger_rows = [
             {
                 "id": i,
-                "project_id": "local/proj",
+                "project_id": "owner/proj",
                 "title": f"t{i}",
                 "status": "accepted",
                 "decided_on": "",
@@ -439,10 +445,9 @@ class TestAdrListPagination:
         ]
         with (
             patch.object(adr_mod, "_resolve_project_root", return_value="/proj"),
-            patch.object(adr_mod, "derive_project_id", return_value=("local/proj", "")),
             patch.object(adr_mod, "_forward_admin", return_value={"rows": ledger_rows}),
         ):
-            out = adr_mod.adr_list(directory="/proj", limit=10)
+            out = adr_mod.adr_list(directory="/proj", limit=10, project="owner/proj")
 
         assert [r["adr_id"] for r in out["adrs"]] == [f"ADR-{i:04d}" for i in range(1, 11)]
         assert out["count"] == 10
@@ -456,7 +461,7 @@ class TestAdrListPagination:
         ledger_rows = [
             {
                 "id": i,
-                "project_id": "local/proj",
+                "project_id": "owner/proj",
                 "title": "",
                 "status": "open",
                 "decided_on": "",
@@ -466,10 +471,9 @@ class TestAdrListPagination:
         ]
         with (
             patch.object(adr_mod, "_resolve_project_root", return_value="/proj"),
-            patch.object(adr_mod, "derive_project_id", return_value=("local/proj", "")),
             patch.object(adr_mod, "_forward_admin", return_value={"rows": ledger_rows}),
         ):
-            out = adr_mod.adr_list(directory="/proj", limit=10, offset=25)
+            out = adr_mod.adr_list(directory="/proj", limit=10, offset=25, project="owner/proj")
 
         assert [r["adr_id"] for r in out["adrs"]] == [f"ADR-{i:04d}" for i in range(26, 31)]
         assert out["count"] == 5
@@ -483,7 +487,7 @@ class TestAdrListPagination:
         ledger_rows = [
             {
                 "id": 1,
-                "project_id": "local/proj",
+                "project_id": "owner/proj",
                 "title": "",
                 "status": "open",
                 "decided_on": "",
@@ -492,10 +496,9 @@ class TestAdrListPagination:
         ]
         with (
             patch.object(adr_mod, "_resolve_project_root", return_value="/proj"),
-            patch.object(adr_mod, "derive_project_id", return_value=("local/proj", "")),
             patch.object(adr_mod, "_forward_admin", return_value={"rows": ledger_rows}),
         ):
-            out = adr_mod.adr_list(directory="/proj")
+            out = adr_mod.adr_list(directory="/proj", project="owner/proj")
 
         assert set(out) == {"adrs", "count"}
         assert out["count"] == 1

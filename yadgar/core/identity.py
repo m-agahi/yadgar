@@ -55,8 +55,11 @@ logger = logging.getLogger(__name__)
 def _insteadof_rules() -> dict[str, str]:
     """Return the parsed insteadOf table from the live git config.
 
-    Cached at process scope: the table rarely changes inside a session,
-    and ``derive_project_id`` is on the hot path for memory writes.
+    Cached at process scope: the table rarely changes inside a session.
+    (C13: the cache's original justification — ``derive_project_id`` being on
+    the memory-write hot path — died with that function. The reader is now the
+    host-side mint, called once per session, so the cache is cheap insurance
+    against a repeated shell-out rather than a hot-path necessity.)
     Failures are swallowed — no insteadOf is a normal state, not a bug.
     """
     try:

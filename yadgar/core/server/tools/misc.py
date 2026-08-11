@@ -130,6 +130,10 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     # which C5 had just taught to pass ``project="{project}"``. The highest-
     # volume recovery path in the system, discarding the one value that would
     # have let it through.
+    #
+    # The checkpoint TABLE still has no project_id column -- that is C11's
+    # work. The PAYLOAD carrying one is what the drainer's gate requires.
+    # (Found independently by two C13 sweeps, tests/core and tests/scripts.)
     _project_id = accept_project_param(project, directory)
     # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
     _surrogate_err = _validate_checkpoint_surrogates(

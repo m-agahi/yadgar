@@ -27,6 +27,7 @@ import pytest
 from yadgar._shared.config import get_settings
 from yadgar._shared.thermodynamics.thermodynamics import MemoryThermodynamics
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +58,7 @@ def _insert_anchor(content: str = "Immortal workflow rule that must survive comp
             "is_stale": False,
             "file_hash": None,
             "embedding_model": embeddings.get_model_name(),
+            "project_id": TEST_PROJECT_ID,
         }
     )
     return mid
@@ -118,6 +120,7 @@ class TestMemoryUpdateAllowlistWidened:
                 "heat": 0.7,
                 "importance": 1.0,
                 "directory_context": "/tmp/test",
+                "project_id": TEST_PROJECT_ID,
             }
         )
 

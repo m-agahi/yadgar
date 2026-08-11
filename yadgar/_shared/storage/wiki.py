@@ -148,11 +148,11 @@ class _WikiMixin:
             params["page_type"] = page_copy["page_type"]
             params["wiki_schema_version"] = page_copy.get("wiki_schema_version", 1)
         # Car L (0047 §16.9): project_id alongside directory_context, REQUIRED
-        # on page_copy (reslug, wiki_add replay and the live paths all stamp).
-        # C13: the "fall back to the lazy classifier … then to 'unresolved' so
-        # the write never blocks" note that stood here described behaviour C5
-        # DELETED — an unstamped page RAISES (ADR-0227). C5 fixed the twin
-        # comment on memory.py's side of this chokepoint and missed this one.
+        # on page_copy. C13: the "fall back to the lazy classifier … then to
+        # 'unresolved' so the write never blocks" note that stood here described
+        # behaviour C5 DELETED — an unstamped page RAISES, and blocking the write
+        # is the point (ADR-0227). ``directory_context`` above keeps its
+        # ``or "global"`` deliberately: that is REACH, on a column alive until C11.
         project_id = _resolve_project_id_for_write(
             caller_value=page_copy.get("project_id"),
             directory_context=directory_context,

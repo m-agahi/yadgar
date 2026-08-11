@@ -1181,8 +1181,17 @@ class WikiStore:
         title: str | None = None,
         tags: list[str] | None = None,
         source_memory_ids: list[int] | None = None,
+        *,
+        project_id: str | None = None,
     ) -> dict:
-        """Ingest content. If title matches existing page, append with timestamp."""
+        """Ingest content. If title matches existing page, append with timestamp.
+
+        C13 (0047 PR#40 §5): ``project_id`` is threaded through to the create
+        branch. The append branch does not need it — it UPDATEs a row whose
+        owner was stamped by whoever inserted it, and re-stamping on append
+        would let a second writer rename an existing page's owner. The create
+        branch is a real insert, and after C5 an unstamped insert raises.
+        """
         if title is None:
             title = "Untitled"
         slug = self._slugify(title)
@@ -1214,7 +1223,10 @@ class WikiStore:
             title=title,
             content=content,
             tags=tags,
-            opts=WikiAddOptions(source_memory_ids=source_memory_ids),
+            opts=WikiAddOptions(
+                source_memory_ids=source_memory_ids,
+                project_id=project_id,
+            ),
         )
 
     @observe(tier="boundary")
@@ -1458,9 +1470,13 @@ class WikiStore:
     def _autolink_write_page(self, page: dict, content: str, proposals: list[dict]) -> None:
         """Apply insertions and upsert WITHOUT clobbering page metadata.
 
-        Re-passes the page's own category, directory_context, page_type and
-        confidence so the add() upsert never resets them to defaults.
-        Tags the page 'auto-linked' so editors can see machine edits.
+        Re-passes the page's own category, directory_context, page_type,
+        confidence and — C13 (0047 PR#40 §5) — ``project_id`` so the add()
+        upsert never resets them to defaults. Ownership belongs on that list
+        for the same reason the other four do: this method is holding the row
+        it is rewriting, and a rewrite that drops the owner is the defect C5
+        made visible rather than a new one it introduced. Tags the page
+        'auto-linked' so editors can see machine edits.
         """
         new_content = _autolink_apply_insertions(content, proposals)
         if new_content == content:
@@ -1474,6 +1490,7 @@ class WikiStore:
                 confidence=page.get("confidence", "medium"),
                 directory_context=page.get("directory_context"),
                 page_type=page.get("page_type"),
+                project_id=page.get("project_id"),
             ),
         )
 

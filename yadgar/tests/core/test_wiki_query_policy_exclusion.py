@@ -30,6 +30,7 @@ from yadgar._shared.wiki.wiki_meta import (
     PAGE_TYPE_TASK_LIST,
 )
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 _DIR = "/tmp/wiki-query-policy"
 
@@ -77,6 +78,7 @@ def _corpus():
             "confidence": "high",
             "source_memory_ids": [],
             "directory_context": "global",
+            "project_id": TEST_PROJECT_ID,
             "wiki_schema_version": 1,
         }
         if page_type is not None:
@@ -88,7 +90,10 @@ def _corpus():
 def _slugs(**kwargs) -> set[str]:
     from yadgar.core.server.tools.wiki import wiki_query
 
-    return {r["slug"] for r in wiki_query("quokka marsupial", directory=_DIR, **kwargs)}
+    return {
+        r["slug"]
+        for r in wiki_query("quokka marsupial", directory=_DIR, project=TEST_PROJECT_ID, **kwargs)
+    }
 
 
 class TestWikiQueryHonoursExclusion:
@@ -189,7 +194,9 @@ class TestWikiQueryDownweight:
         """
         from yadgar.core.server.tools.wiki import wiki_query
 
-        results = wiki_query("quokka marsupial", directory=_DIR, max_results=20)
+        results = wiki_query(
+            "quokka marsupial", directory=_DIR, project=TEST_PROJECT_ID, max_results=20
+        )
         order = [r["slug"] for r in results]
         scores = {r["slug"]: r.get("_retrieval_score") for r in results}
         assert "plain-quokka-page" in order

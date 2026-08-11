@@ -12,6 +12,7 @@ Tests:
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -35,6 +36,7 @@ class TestMemoryUpdate:
                 "store_type": "episodic",
                 "heat": 0.7,
                 "directory_context": "/tmp/test",
+                "project_id": TEST_PROJECT_ID,
             }
         )
 
@@ -140,6 +142,7 @@ class TestWikiUpdate:
                 "category": "test",
                 "status": "approved",
                 "confidence": 0.8,
+                "project_id": TEST_PROJECT_ID,
             }
         )
 

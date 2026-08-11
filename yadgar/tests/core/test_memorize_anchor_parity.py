@@ -26,6 +26,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -98,6 +100,7 @@ class TestProtectedAutoTier:
             context=str(tmp_path),
             tags=[],
             is_protected=True,
+            project=TEST_PROJECT_ID,
         )
 
         # The enqueued payload must carry tier=conditional
@@ -117,6 +120,7 @@ class TestProtectedAutoTier:
             tags=[],
             is_protected=True,
             tier="ephemeral",
+            project=TEST_PROJECT_ID,
         )
 
         assert env["payloads"], "memorize must have enqueued a payload"
@@ -143,6 +147,7 @@ class TestProtectedAutoAnchorTag:
             context=str(tmp_path),
             tags=["custom-tag"],
             is_protected=True,
+            project=TEST_PROJECT_ID,
         )
 
         assert env["payloads"], "memorize must have enqueued a payload"
@@ -161,6 +166,7 @@ class TestProtectedAutoAnchorTag:
             context=str(tmp_path),
             tags=["_anchor"],
             is_protected=True,
+            project=TEST_PROJECT_ID,
         )
 
         assert env["payloads"], "memorize must have enqueued a payload"
@@ -185,6 +191,7 @@ class TestProtectedReasonTag:
             tags=[],
             is_protected=True,
             reason="schema-decision",
+            project=TEST_PROJECT_ID,
         )
 
         assert env["payloads"], "memorize must have enqueued a payload"
@@ -202,6 +209,7 @@ class TestProtectedReasonTag:
             tags=[],
             is_protected=True,
             reason="",
+            project=TEST_PROJECT_ID,
         )
 
         assert env["payloads"], "memorize must have enqueued a payload"
@@ -227,6 +235,7 @@ class TestProtectedTTLComputation:
             context=str(tmp_path),
             tags=[],
             is_protected=True,
+            project=TEST_PROJECT_ID,
             # No tier given — should auto-default to conditional
         )
         after = datetime.now(UTC)
@@ -253,6 +262,7 @@ class TestProtectedTTLComputation:
             tags=[],
             is_protected=True,
             tier="ephemeral",
+            project=TEST_PROJECT_ID,
         )
         after = datetime.now(UTC)
 
@@ -283,6 +293,7 @@ class TestSemanticImmortalRequiresReason:
             tags=[],
             is_protected=True,
             tier="semantic_immortal",
+            project=TEST_PROJECT_ID,
             # No reason kwarg
         )
         assert result.get("stored") is False, (
@@ -302,6 +313,7 @@ class TestSemanticImmortalRequiresReason:
             is_protected=True,
             tier="semantic_immortal",
             reason="This is a permanent architectural constraint",
+            project=TEST_PROJECT_ID,
         )
         # Should NOT be rejected for missing reason
         assert "requires" not in result.get("reason", "").lower(), f"Unexpected rejection: {result}"
@@ -323,6 +335,7 @@ class TestUnprotectedNoDefaults:
             context=str(tmp_path),
             tags=["debug"],
             is_protected=False,
+            project=TEST_PROJECT_ID,
         )
 
         assert env["payloads"], "memorize must have enqueued a payload"
@@ -344,6 +357,7 @@ class TestUnprotectedNoDefaults:
             context=str(tmp_path),
             tags=[],
             is_protected=False,
+            project=TEST_PROJECT_ID,
         )
 
         # tier should be absent from the payload (memorize only sets the key
@@ -373,6 +387,7 @@ class TestRowEquivalence:
             tags=[],
             is_protected=True,
             reason="important-decision",
+            project=TEST_PROJECT_ID,
         )
 
         assert env["payloads"], "memorize must have enqueued a payload"

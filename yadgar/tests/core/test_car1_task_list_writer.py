@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
 _DIR = "/home/user/car1-proj"
@@ -56,10 +58,14 @@ class TestGatedWrite:
         drainer = _unit_backend_harness
         from yadgar.core import server
 
-        server.wiki_write_task_list(project="demo", content=_PAGE, directory=_DIR)
+        server.wiki_write_task_list(
+            project="demo", content=_PAGE, directory=_DIR, project_id=TEST_PROJECT_ID
+        )
         drainer.drain_now()
         updated = _PAGE.replace("in_progress", "completed")
-        server.wiki_write_task_list(project="demo", content=updated, directory=_DIR)
+        server.wiki_write_task_list(
+            project="demo", content=updated, directory=_DIR, project_id=TEST_PROJECT_ID
+        )
         drainer.drain_now()
 
         page = _get_page("demo-task-list")
@@ -73,10 +79,12 @@ class TestGatedWrite:
         drainer = _unit_backend_harness
         from yadgar.core import server
 
-        server.wiki_write_task_list(project="demo", content=_PAGE, directory=_DIR)
+        server.wiki_write_task_list(
+            project="demo", content=_PAGE, directory=_DIR, project_id=TEST_PROJECT_ID
+        )
         drainer.drain_now()
 
-        read = server.wiki_read("demo-task-list", directory=_DIR)
+        read = server.wiki_read("demo-task-list", directory=_DIR, project=TEST_PROJECT_ID)
         assert read.get("slug") == "demo-task-list", read
         assert "task:0001" in read.get("content", "")
 

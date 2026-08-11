@@ -38,6 +38,7 @@ import pytest
 
 from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 _TEST_DIR = "/tmp/test-project-adr-carf"
 
@@ -57,6 +58,9 @@ _ADR_LIST_ROW_KEYS: frozenset[str] = frozenset(
 # the body_slug link. The `_resolve_project_root` patch is reused from
 # test_adr.py's pattern.
 _VALID_ADR_PARAMS = dict(
+    # C5/ADR-0227: adr_add resolves an identity or returns the
+    # unresolved_project envelope — the base params name one.
+    project=TEST_PROJECT_ID,
     directory=_TEST_DIR,
     title="Use ledger-backed ADR rows for metadata",
     status="accepted",
@@ -171,7 +175,7 @@ class TestAdrListReturnShape:
         project_dir = str(tmp_path / "lproj")
         __import__("os").makedirs(project_dir, exist_ok=True)
         with patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir):
-            result = adr_list(directory=project_dir)
+            result = adr_list(directory=project_dir, project=TEST_PROJECT_ID)
 
         # Untruncated envelope: exactly {"adrs", "count"} — no total/truncated/next_offset.
         assert isinstance(result, dict)
@@ -215,7 +219,7 @@ class TestAdrListReturnShape:
                 return_value={"rows": rows_fixture},
             ),
         ):
-            result = adr_list(directory=project_dir)
+            result = adr_list(directory=project_dir, project=TEST_PROJECT_ID)
 
         assert result["count"] == 1
         assert len(result["adrs"]) == 1
@@ -257,7 +261,7 @@ class TestAdrListReturnShape:
                 return_value={"rows": rows_fixture},
             ),
         ):
-            result = adr_list(directory=project_dir, limit=5)
+            result = adr_list(directory=project_dir, limit=5, project=TEST_PROJECT_ID)
 
         assert result["count"] == 5
         assert result["total"] == 12
@@ -295,7 +299,7 @@ class TestAdrListReturnShape:
                 return_value={"rows": rows_fixture},
             ),
         ):
-            page2 = adr_list(directory=project_dir, limit=5, offset=10)
+            page2 = adr_list(directory=project_dir, limit=5, offset=10, project=TEST_PROJECT_ID)
 
         # Last page (offset 10 of 12 → 2 rows left), no next_offset.
         assert page2["count"] == 2
@@ -326,7 +330,7 @@ class TestAdrListReturnShape:
                 side_effect=_capture_forward,
             ),
         ):
-            adr_list(directory=project_dir, status="open")
+            adr_list(directory=project_dir, status="open", project=TEST_PROJECT_ID)
 
         assert captured, "expected adr_list to forward via _forward_admin"
         assert captured[0]["op"] == "list_adr_rows"
@@ -367,7 +371,7 @@ class TestAdrGetReturnShape:
                 return_value=body_fixture,
             ),
         ):
-            result = adr_get(directory=project_dir, adr_id="ADR-0001")
+            result = adr_get(directory=project_dir, adr_id="ADR-0001", project=TEST_PROJECT_ID)
 
         assert isinstance(result, dict)
         assert "error" not in result
@@ -418,7 +422,7 @@ class TestAdrGetReturnShape:
                 return_value={"row": row_fixture},
             ),
         ):
-            result = adr_get(directory=project_dir, adr_id="ADR-0001")
+            result = adr_get(directory=project_dir, adr_id="ADR-0001", project=TEST_PROJECT_ID)
 
         # Pre-migration keys remain a SUBSET.
         pre_keys = set(body_fixture)

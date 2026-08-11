@@ -21,9 +21,13 @@ For drainer async-path tests, see test_wiki_sim_gate_drainer.py.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
+from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -43,8 +47,14 @@ def _wiki():
 
 
 def _add(title: str, content: str, **kwargs) -> dict:
-    """Direct WikiStore.add — bypasses async queue."""
-    return _wiki().add(title, content, **kwargs)
+    """Direct WikiStore.add with this file's project NAMED — bypasses async queue.
+
+    C5/ADR-0227: add() derives nothing, so an unstamped insert raises. Naming
+    is centralised here rather than repeated per call; a test that reaches past
+    this helper to the store still reds.
+    """
+    opts = kwargs.pop("opts", None) or WikiAddOptions()
+    return _wiki().add(title, content, opts=replace(opts, project_id=TEST_PROJECT_ID), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +293,7 @@ class TestWikiCheckDuplicate:
         result = server.wiki_check_duplicate(
             title="Test Page",
             content="Some content about testing.",
+            project=TEST_PROJECT_ID,
         )
         assert isinstance(result, dict)
         assert result.get("candidates") == [] or result.get("candidates") is not None
@@ -296,6 +307,7 @@ class TestWikiCheckDuplicate:
             title="Yadgar Roadmap Future Improvements",
             content=_ROADMAP_CONTENT_A,
             directory="/home/user/simgate",
+            project=TEST_PROJECT_ID,
             # R3: branch required
         )
         assert "slug" in add_result or add_result.get("stored"), f"wiki_add failed: {add_result}"
@@ -305,6 +317,7 @@ class TestWikiCheckDuplicate:
         result = server.wiki_check_duplicate(
             title="Yadgar Future Roadmap",
             content=_ROADMAP_CONTENT_B,
+            project=TEST_PROJECT_ID,
         )
         assert isinstance(result, dict)
         candidates = result.get("candidates", [])
@@ -322,6 +335,7 @@ class TestWikiCheckDuplicate:
         server.wiki_check_duplicate(
             title="Some New Page",
             content="Content about something new entirely.",
+            project=TEST_PROJECT_ID,
         )
         # Verify no page was created
         page = _wiki()._storage.get_wiki_page_by_slug("some-new-page")
@@ -334,11 +348,13 @@ class TestWikiCheckDuplicate:
         server.wiki_add(
             title="Yadgar Architecture",
             content=_ARCH_CONTENT,
+            project=TEST_PROJECT_ID,
         )
 
         result = server.wiki_check_duplicate(
             title="Yadgar Benchmark Results",
             content=_BENCHMARK_CONTENT,
+            project=TEST_PROJECT_ID,
         )
         candidates = result.get("candidates", [])
         assert candidates == [], (

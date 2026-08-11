@@ -239,13 +239,20 @@ def _strip_composes_section(content: str) -> str:
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._resolve_discipline_text")
-def _resolve_discipline_text(slug: str, storage) -> str | None:
+def _resolve_discipline_text(slug: str, storage, project: str | None = None) -> str | None:
     """Resolve a composed discipline slug to its prompt body.
 
     Resolution: epoch-cached slug read → seed-on-miss from the disciplines
     genesis (create-if-absent, mirrors the contract path) → genesis text as
     in-memory fallback. Unknown slugs (no page, no genesis) return None and
     are skipped. Never raises — composition must not crash the prelude.
+
+    C13 (0047 PR#40 §5): ``project`` is threaded from ``agent_dispatch_prelude``,
+    which already has it. Without it the seed-on-miss WRITE below raised
+    ``UnresolvedProjectError`` straight into the ``except Exception`` here and
+    the page was silently never reseeded — the prelude still rendered from
+    genesis, so the degradation was invisible and permanent. A write inside a
+    never-raises helper is exactly where a dropped identity hides.
     """
     from yadgar.core.server.tools.agent_prompts import (  # noqa: PLC0415
         DISCIPLINE_SLUG_PREFIX,
@@ -260,7 +267,11 @@ def _resolve_discipline_text(slug: str, storage) -> str | None:
         result = _cached_slug_read(slug, storage)
         if result is None and slug in genesis:
             # Seed-on-miss: re-create the discipline page from packaged genesis.
-            _seed_discipline_pages(storage=storage, only=slug[len(DISCIPLINE_SLUG_PREFIX) :])
+            _seed_discipline_pages(
+                storage=storage,
+                only=slug[len(DISCIPLINE_SLUG_PREFIX) :],
+                project=project,
+            )
             logger.info("prelude_discipline_reseeded slug=%s", slug)
             result = _read_agent_prompt(slug, storage=storage)
         if result is None:
@@ -273,7 +284,9 @@ def _resolve_discipline_text(slug: str, storage) -> str | None:
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._build_discipline_sections")
-def _build_discipline_sections(composes: list[str], storage) -> list[str]:
+def _build_discipline_sections(
+    composes: list[str], storage, project: str | None = None
+) -> list[str]:
     """Render composed discipline slugs into prelude sections.
 
     Dedup rule: slugs in CONTRACT_COVERS are never re-included (the contract —
@@ -285,7 +298,7 @@ def _build_discipline_sections(composes: list[str], storage) -> list[str]:
     for slug in composes:
         if slug in CONTRACT_COVERS:
             continue
-        body = _resolve_discipline_text(slug, storage)
+        body = _resolve_discipline_text(slug, storage, project)
         if body:
             sections.append(f"## Discipline [{slug}]\n\n{body}")
     return sections
@@ -509,7 +522,7 @@ def agent_dispatch_prelude(
         # what had to stop being best-effort.
         try:
             discipline_sections = _build_discipline_sections(
-                _composes_for(pattern, raw_content), storage
+                _composes_for(pattern, raw_content), storage, project
             )
             body = _strip_composes_section(raw_content)
             # Truncate if needed to respect the pattern-snippet budget

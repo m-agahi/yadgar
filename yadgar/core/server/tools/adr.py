@@ -711,9 +711,10 @@ def adr_list(
     ``total`` / ``truncated: True`` / ``next_offset`` when the page is
     truncated.
 
-    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override lets a caller
-    list another project's ADRs. Precedence: ``project`` (override) >
-    ``session_project`` > ``directory``-derived (Car A0) > ``"global"``. When
+    Car M (0047 §7, §16.6): the ``project=`` override lets a caller list
+    another project's ADRs. Precedence, as C5 left it: ``project`` (override) >
+    ``session_project`` > a raise. The ``directory``-derived and ``"global"``
+    tiers this docstring used to name are DELETED (ADR-0227). When
     supplied, the validated project_id is forwarded to the backend
     ``list_adr_rows`` op so the list is namespaced to the override. When
     BOTH ``project`` and ``directory`` are supplied, ``project`` wins and

@@ -35,6 +35,7 @@ import pytest
 
 from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 UTC = UTC
 
@@ -162,6 +163,10 @@ def _engines(tmp_path_factory):
 # Minimal valid ADR call params (excludes directory which is passed separately)
 _VALID_ADR_PARAMS = dict(
     directory=_TEST_DIR,
+    # C5/ADR-0227: adr_add resolves an identity or returns the unresolved_project
+    # envelope. The base params carry one so the validation tests below still
+    # exercise the FIELD checks they are named for rather than tripping on scope.
+    project=TEST_PROJECT_ID,
     title="Use SurrealDB for persistent storage",
     status="accepted",
     date="2026-06-25",
@@ -240,8 +245,8 @@ class TestAdrAddCanonicalRoundTrip:
         )
 
         # Each per-ADR page resolves CANONICALLY from the caller directory.
-        p1 = wiki_read(r1["slug"], directory=project_dir)
-        p2 = wiki_read(r2["slug"], directory=project_dir)
+        p1 = wiki_read(r1["slug"], directory=project_dir, project=TEST_PROJECT_ID)
+        p2 = wiki_read(r2["slug"], directory=project_dir, project=TEST_PROJECT_ID)
         assert "error" not in p1, f"ADR-0001 page not found canonically: {p1}"
         assert "error" not in p2, f"ADR-0002 page not found canonically: {p2}"
         assert "SurrealDB" in p1.get("content", "")
@@ -263,7 +268,7 @@ class TestAdrAddCanonicalRoundTrip:
             adr_add(**params)
             adr_add(**dict(params, title="Second decision", status="open"))
 
-        listing = adr_list(directory=project_dir)
+        listing = adr_list(directory=project_dir, project=TEST_PROJECT_ID)
         rows = listing["adrs"]
         assert [r["adr_id"] for r in rows] == ["ADR-0001", "ADR-0002"]
         assert rows[0]["status"] == "accepted"
@@ -303,9 +308,9 @@ class TestAdrGetList:
         __import__("os").makedirs(project_dir, exist_ok=True)
         with patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir):
             adr_add(**dict(_VALID_ADR_PARAMS, directory=project_dir))
-            got = adr_get(directory=project_dir, adr_id="ADR-0001")
+            got = adr_get(directory=project_dir, adr_id="ADR-0001", project=TEST_PROJECT_ID)
             # accepts loose forms too
-            got_loose = adr_get(directory=project_dir, adr_id="1")
+            got_loose = adr_get(directory=project_dir, adr_id="1", project=TEST_PROJECT_ID)
         assert "error" not in got, f"adr_get failed: {got}"
         assert "SurrealDB" in got.get("content", "")
         assert "error" not in got_loose, f"loose adr_id failed: {got_loose}"
@@ -316,7 +321,7 @@ class TestAdrGetList:
         project_dir = str(tmp_path / "getempty")
         __import__("os").makedirs(project_dir, exist_ok=True)
         with patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir):
-            got = adr_get(directory=project_dir, adr_id="ADR-0099")
+            got = adr_get(directory=project_dir, adr_id="ADR-0099", project=TEST_PROJECT_ID)
         assert "error" in got
 
     def test_adr_list_all_and_status_filter(self, tmp_path, _ledger_stub):
@@ -329,8 +334,8 @@ class TestAdrGetList:
             adr_add(
                 **dict(_VALID_ADR_PARAMS, directory=project_dir, title="Open one", status="open")
             )
-            all_adrs = adr_list(directory=project_dir)
-            open_only = adr_list(directory=project_dir, status="open")
+            all_adrs = adr_list(directory=project_dir, project=TEST_PROJECT_ID)
+            open_only = adr_list(directory=project_dir, status="open", project=TEST_PROJECT_ID)
 
         assert all_adrs["count"] == 2, f"expected 2 ADRs, got {all_adrs}"
         assert open_only["count"] == 1, f"expected 1 open ADR, got {open_only}"
@@ -342,7 +347,7 @@ class TestAdrGetList:
         project_dir = str(tmp_path / "listempty")
         __import__("os").makedirs(project_dir, exist_ok=True)
         with patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir):
-            result = adr_list(directory=project_dir)
+            result = adr_list(directory=project_dir, project=TEST_PROJECT_ID)
         assert result == {"adrs": [], "count": 0}
 
 
@@ -369,8 +374,8 @@ class TestAdrSupersede:
                     supersedes="ADR-0001",
                 )
             )
-            target = adr_get(directory=project_dir, adr_id="ADR-0001")
-            listing = adr_list(directory=project_dir)
+            target = adr_get(directory=project_dir, adr_id="ADR-0001", project=TEST_PROJECT_ID)
+            listing = adr_list(directory=project_dir, project=TEST_PROJECT_ID)
 
         # Target page's status tag flipped to superseded (wiki side — unchanged).
         assert "adr-status:superseded" in (target.get("tags") or []), (
@@ -433,7 +438,7 @@ class TestAdrAddConcurrentIdAssignment:
         assert len(set(returned)) == 2, f"Duplicate ADR IDs (race not fixed): {returned}"
 
         with patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir):
-            listing = adr_list(directory=project_dir)
+            listing = adr_list(directory=project_dir, project=TEST_PROJECT_ID)
         ids = {r["adr_id"] for r in listing["adrs"]}
         assert len(ids) == 2, f"Ledger must hold 2 distinct ids: {ids}"
         # The ids must be sequential (AUTO_INCREMENT semantics on the stub).

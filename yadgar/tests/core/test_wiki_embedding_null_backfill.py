@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ---------------------------------------------------------------------------
 # Content
@@ -110,6 +111,7 @@ def _insert_page_with_null_embedding(title: str, content: str) -> int:
             "confidence": 1.0,
             "embedding": None,  # NULL — the pre-v5.39 condition
             "source_memory_ids": [],
+            "project_id": TEST_PROJECT_ID,
         },
     )
     return page_id
@@ -191,6 +193,7 @@ class TestNullEmbeddingBugReproduction:
             server.wiki_add(
                 title="Fully Embedded Page",
                 content="This page has a real embedding computed by _compute_embedding.",
+                project=TEST_PROJECT_ID,
             )
         finally:
             _loc._drain_local.active = False
@@ -272,7 +275,9 @@ class TestBackfillFixesBug:
         # Insert a real page (has embedding).
         _loc._drain_local.active = True
         try:
-            server.wiki_add(title="Embedded Page", content="Has an embedding already.")
+            server.wiki_add(
+                title="Embedded Page", content="Has an embedding already.", project=TEST_PROJECT_ID
+            )
         finally:
             _loc._drain_local.active = False
 

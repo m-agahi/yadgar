@@ -16,6 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # ---------------------------------------------------------------------------
 # Metric helpers
 # ---------------------------------------------------------------------------
@@ -161,7 +163,11 @@ def _call_recall_mcp_tool(query: str = "test query", max_results: int = 1, min_h
         patch.object(_st, "_last_recalled_ids", {}),
     ):
         return recall_fn(
-            query=query, max_results=max_results, min_heat=min_heat, directory="/tmp/test"
+            query=query,
+            max_results=max_results,
+            min_heat=min_heat,
+            directory="/tmp/test",
+            project=TEST_PROJECT_ID,
         )
 
 
@@ -184,6 +190,7 @@ def _call_wiki_query_mcp_tool(
             category=category,
             max_results=max_results,
             directory="/tmp/test",
+            project=TEST_PROJECT_ID,
         )
 
 
@@ -313,7 +320,7 @@ class TestRecallDurationMetricBugA:
         ):
             from yadgar.core.server.tools.recall import recall as recall_fn
 
-            recall_fn(query="test", max_results=1, directory="/tmp/test")
+            recall_fn(query="test", max_results=1, directory="/tmp/test", project=TEST_PROJECT_ID)
 
         after = _count_nolabel(yadgar_recall_duration_ms)
         assert after - before == 1, (

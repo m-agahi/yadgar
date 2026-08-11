@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # R3 Car 3c: agent_prompt_save forwards its DB write to the backend /admin endpoint.
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -50,7 +52,11 @@ class TestAgentPromptSave:
         from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         result = agent_prompt_save(
-            "dispatch-fix-bug", "Dispatch a bug-fix agent.", directory="global", storage=storage
+            "dispatch-fix-bug",
+            "Dispatch a bug-fix agent.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
         )
         assert result["saved"] is True
         assert result["version"] == 1
@@ -59,9 +65,19 @@ class TestAgentPromptSave:
     def test_second_save_updates_page_not_creates_new(self, storage):
         from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
-        agent_prompt_save("dispatch-fix-bug", "First version.", directory="global", storage=storage)
+        agent_prompt_save(
+            "dispatch-fix-bug",
+            "First version.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
+        )
         result = agent_prompt_save(
-            "dispatch-fix-bug", "Second version.", directory="global", storage=storage
+            "dispatch-fix-bug",
+            "Second version.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
         )
         assert result["saved"] is True
         assert result["version"] == 2
@@ -79,10 +95,18 @@ class TestAgentPromptSave:
         from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
         r1 = agent_prompt_save(
-            "dispatch-fix-bug", "Bug fix prompt.", directory="global", storage=storage
+            "dispatch-fix-bug",
+            "Bug fix prompt.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
         )
         r2 = agent_prompt_save(
-            "dispatch-research", "Research prompt.", directory="global", storage=storage
+            "dispatch-research",
+            "Research prompt.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
         )
         assert r1["version"] == 1
         assert r2["version"] == 1
@@ -99,7 +123,13 @@ class TestAgentPromptSave:
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_PATTERN
         from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
-        agent_prompt_save("dispatch-fix-bug", "Fix bugs.", directory="global", storage=storage)
+        agent_prompt_save(
+            "dispatch-fix-bug",
+            "Fix bugs.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
+        )
         page = storage.get_wiki_page_by_slug("agent-prompt-dispatch-fix-bug")
         assert page is not None
         assert page.get("page_type") == PAGE_TYPE_AGENT_PATTERN
@@ -118,6 +148,7 @@ class TestAgentPromptSave:
             "Probe prompt for storage_scope enforcement.",
             directory="/tmp/some-project",
             storage=storage,
+            project=TEST_PROJECT_ID,
         )
         page = storage.get_wiki_page_by_slug("agent-prompt-zz-probe-scope")
         assert page is not None, "page must be stored"
@@ -151,6 +182,7 @@ class TestWikiAddStorageScopeEnforcement:
             opts=WikiAddOptions(
                 directory_context="/tmp/some-project",
                 page_type="agent_prompt",
+                project_id=TEST_PROJECT_ID,
             ),
         )
         slug = result.get("slug")
@@ -177,6 +209,7 @@ class TestWikiAddStorageScopeEnforcement:
             opts=WikiAddOptions(
                 directory_context=project_dir,
                 page_type=None,
+                project_id=TEST_PROJECT_ID,
             ),
         )
         slug = result.get("slug")
@@ -204,6 +237,7 @@ class TestWikiAddStorageScopeEnforcement:
             opts=WikiAddOptions(
                 directory_context=project_dir,
                 page_type="some_unregistered_type",
+                project_id=TEST_PROJECT_ID,
             ),
         )
         slug = result.get("slug")
@@ -225,9 +259,19 @@ class TestReadAgentPrompt:
     def test_read_returns_latest_content(self, storage):
         from yadgar.core.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
 
-        agent_prompt_save("dispatch-fix-bug", "First version.", directory="global", storage=storage)
         agent_prompt_save(
-            "dispatch-fix-bug", "Second version — updated.", directory="global", storage=storage
+            "dispatch-fix-bug",
+            "First version.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
+        )
+        agent_prompt_save(
+            "dispatch-fix-bug",
+            "Second version — updated.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
         )
         result = _read_agent_prompt("agent-prompt-dispatch-fix-bug", storage=storage)
         assert result is not None
@@ -245,7 +289,11 @@ class TestReadAgentPrompt:
         from yadgar.core.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
 
         agent_prompt_save(
-            "dispatch-review-code", "Review code carefully.", directory="global", storage=storage
+            "dispatch-review-code",
+            "Review code carefully.",
+            directory="global",
+            storage=storage,
+            project=TEST_PROJECT_ID,
         )
         result = _read_agent_prompt("agent-prompt-dispatch-review-code", storage=storage)
         assert result is not None
@@ -257,7 +305,11 @@ class TestReadAgentPrompt:
 
         for i in range(1, 6):
             agent_prompt_save(
-                "multi-version-test", f"Prompt version {i}.", directory="global", storage=storage
+                "multi-version-test",
+                f"Prompt version {i}.",
+                directory="global",
+                storage=storage,
+                project=TEST_PROJECT_ID,
             )
         result = _read_agent_prompt("agent-prompt-multi-version-test", storage=storage)
         assert result is not None
@@ -279,6 +331,7 @@ class TestAgentPromptDoubleWrap:
             directory="global",
             purpose="Test purpose",
             storage=storage,
+            project=TEST_PROJECT_ID,
         )
         page = storage.get_wiki_page_by_slug("agent-prompt-double-wrap-test")
         assert page is not None
@@ -303,6 +356,7 @@ class TestAgentPromptDoubleWrap:
             directory="global",
             purpose="A test purpose",
             storage=storage,
+            project=TEST_PROJECT_ID,
         )
         page = storage.get_wiki_page_by_slug("agent-prompt-bare-content-test")
         assert page is not None
