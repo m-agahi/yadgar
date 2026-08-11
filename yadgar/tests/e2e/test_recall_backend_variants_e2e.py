@@ -31,6 +31,15 @@ pytestmark = pytest.mark.e2e
 _DIR = "/home/test/yadgar-variant-e2e"
 _QUERY = "variant e2e recall probe 7k3m"
 
+#: The identity every seed and every request body in this file names.
+#: C5/ADR-0227 made ``project_id`` mandatory at the storage write chokepoint,
+#: and C7 made it a REQUIRED field on ``RecallRequest`` (``extra="forbid"``, so
+#: an absent value is a 422 and never an unscoped read). Seeds and requests MUST
+#: agree, or every variant below would probe an empty corpus and the profile /
+#: type / mode differences this file exists to measure would all read as "no
+#: results" — identical, and identically meaningless.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,6 +53,7 @@ def _insert_mem(storage, embeddings, content: str, heat: float = 0.9) -> int:
             "content": content,
             "embedding": emb,
             "directory_context": _DIR,
+            "project_id": _TEST_PROJECT,
             "tags": [],
             "heat": heat,
         }
@@ -58,6 +68,7 @@ def _insert_wiki(title: str, content: str) -> str:
     opts = WikiAddOptions(
         source_memory_ids=[],
         directory_context=_DIR,
+        project_id=_TEST_PROJECT,
     )
     page = _st._wiki.add(
         title=title,
@@ -82,6 +93,7 @@ def _insert_and_assign_pool(storage, embeddings, content: str) -> int:
             "content": content,
             "embedding": emb,
             "directory_context": _DIR,
+            "project_id": _TEST_PROJECT,
             "heat": 0.9,
             "tags": [],
             "last_accessed": now,
@@ -155,6 +167,7 @@ def variant_corpus(e2e_engines, monkeypatch):
 def _base_payload(**overrides) -> dict:
     payload = {
         "query": _QUERY,
+        "project_id": _TEST_PROJECT,
         "directory": _DIR,
         "max_results": 10,
         "min_heat": 0.0,
