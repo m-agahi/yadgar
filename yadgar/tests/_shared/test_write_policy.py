@@ -140,26 +140,27 @@ class TestWriteBlockPolicy:
         assert blocked is False
         assert modified is None
 
-    def test_directory_scoped_block_matches(self, engine):
+    def test_project_scoped_block_matches(self, engine):
+        # C10(a): scope="directory" (prefix) → scope="project" (exact equality).
         engine.add_rule(
             "write_block",
-            "directory",
+            "project",
             "content contains secret",
             "filter",
-            scope_value="/work/classified",
+            scope_value="acme/classified",
         )
-        blocked, _, _ = engine.check_write_policy("this is secret", "/work/classified/docs", [])
+        blocked, _, _ = engine.check_write_policy("this is secret", "acme/classified", [])
         assert blocked is True
 
-    def test_directory_scoped_block_does_not_match_other_dir(self, engine):
+    def test_project_scoped_block_does_not_match_other_project(self, engine):
         engine.add_rule(
             "write_block",
-            "directory",
+            "project",
             "content contains secret",
             "filter",
-            scope_value="/work/classified",
+            scope_value="acme/classified",
         )
-        blocked, _, _ = engine.check_write_policy("this is secret", "/other/project", [])
+        blocked, _, _ = engine.check_write_policy("this is secret", "acme/other", [])
         assert blocked is False
 
     def test_no_rules_returns_not_blocked(self, engine):

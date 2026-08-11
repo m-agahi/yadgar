@@ -251,7 +251,7 @@ def _process_entry(
 
 
 @observe(tier="stage")
-def _list_worktrees(directory: str) -> list[str]:
+def _list_worktrees(worktree_path: str) -> list[str]:
     """Return ``git worktree list`` entries as "path (branch)" strings.
 
     Best-effort — a non-git directory, missing git, or timeout yields []. Never
@@ -260,14 +260,19 @@ def _list_worktrees(directory: str) -> list[str]:
     Moved from ``backend.restoration.checkpoint_restore`` (Car fix-drain-inflight)
     so the HOST-SIDE drain callers can capture worktrees where the git tree is
     actually visible; in-container ``git -C host_path`` returns nonzero → [].
+
+    C10 (0047 §5, judgement site (b)): the parameter is named ``worktree_path``,
+    not ``directory``, because it is a **real filesystem path** handed to
+    ``git -C`` — ADR-0225 carve-out 3. It is NOT a scoping key and never was;
+    the conflation with the checkpoint identity is what (b) split apart.
     """
     import subprocess  # noqa: PLC0415
 
-    if not directory:
+    if not worktree_path:
         return []
     try:
         out = subprocess.run(
-            ["git", "-C", directory, "worktree", "list", "--porcelain"],
+            ["git", "-C", worktree_path, "worktree", "list", "--porcelain"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -361,7 +366,7 @@ def parse_in_flight(transcript_path: str | None) -> dict:
 
 
 @observe(tier="stage")
-def capture_in_flight(transcript_path: str | None, directory: str) -> dict:
+def capture_in_flight(transcript_path: str | None, worktree_path: str | None) -> dict:
     """Host-side combined capture: parse transcript + list worktrees.
 
     This is the single entry point both host-side drain callers use. It runs
@@ -370,10 +375,16 @@ def capture_in_flight(transcript_path: str | None, directory: str) -> dict:
     of Car fix-drain-inflight. Never raises: parse degrades to empty lists, the
     worktree capture degrades to [].
 
+    C10 (0047 §5, judgement site (b)): the second parameter was ``directory``,
+    which the drain path was ALSO using as the checkpoint identity. Here it is
+    only ever a real path for ``git -C`` (carve-out 3), so it is named
+    ``worktree_path`` and is now optional — absent → ``worktrees: []``, which
+    is already this function's best-effort contract for a non-git tree.
+
     Returns the same shape as ``parse_in_flight`` with ``worktrees`` populated.
     """
     result = parse_in_flight(transcript_path)
-    result["worktrees"] = _list_worktrees(directory)
+    result["worktrees"] = _list_worktrees(worktree_path or "")
     return result
 
 

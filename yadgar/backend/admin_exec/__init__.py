@@ -247,6 +247,119 @@ def _ensure_engines() -> None:
     ensure_restoration_engines()
 
 
+def _resolve_storage():
+    """Return the runtime storage engine for ops that take it as a parameter."""
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+
+    return _get_storage()
+
+
+@observe(tier="hot", span=False)
+def _kwargs_op(fn):
+    """Adapt a KEYWORD-ONLY op body to the dispatch's ``impl(payload)`` contract.
+
+    C10 (0047 §5(d)). Both dispatchers call ``impl(payload)`` — one positional
+    dict. Four registered bodies are declared keyword-only (``def f(*, a, b)``),
+    so that call raised ``TypeError: takes 0 positional arguments but 1 was
+    given`` **every time**. They could never have executed through ``/admin``:
+
+        reslug, retype_page_type, seed_adr_rows, seed_task_from_pages
+
+    (measured by binding every entry in ``_ADMIN_OPS`` against ``impl({})``).
+    ``retype_page_type`` is D23's "sole sanctioned writer" for the ADR supersede
+    lifecycle transition, so that transition has never run through this route.
+
+    The async branch is not cosmetic: ``_is_async_op`` uses
+    ``inspect.iscoroutinefunction``, which inspects the wrapper's own code flags.
+    A sync wrapper around a coroutine body would report False, and the sync
+    dispatcher would return an un-awaited coroutine object as if it were the
+    result dict. ``functools.wraps`` is deliberately NOT used — it would copy
+    ``__wrapped__`` and make ``inspect.signature`` report the wrapped
+    keyword-only signature, hiding the very mismatch this adapter exists to fix.
+    """
+    if inspect.iscoroutinefunction(fn):
+
+        @observe(
+            exempt=(
+                "the WRAPPED op body already carries its own @observe boundary "
+                "sample, and run_admin_op/run_admin_op_async instrument the "
+                "dispatch around it. Instrumenting this adapter would add a "
+                "THIRD sample per call for exactly four ops — observe's "
+                "double-instrumentation guard suppresses a duplicate span, not "
+                "a duplicate metric."
+            )
+        )
+        async def _acall(payload: dict):
+            return await fn(**payload)
+
+        _acall.__name__ = f"{getattr(fn, '__name__', 'op')}__kwargs_adapter"
+        return _acall
+
+    def _call(payload: dict):
+        return fn(**payload)
+
+    _call.__name__ = f"{getattr(fn, '__name__', 'op')}__kwargs_adapter"
+    return _call
+
+
+@observe(tier="hot", span=False)
+def _payload_storage_op(fn):
+    """Adapt ``fn(payload, *, storage)`` to ``impl(payload)``, injecting storage.
+
+    C10: ``reslug_adr_pages`` takes the payload positionally but declares
+    ``storage`` keyword-only with **no default**, so ``impl(payload)`` raised
+    ``TypeError: missing a required keyword-only argument: 'storage'``. The
+    dispatchers call ``_ensure_engines()`` first, so the runtime storage is
+    composed by the time this runs.
+    """
+    if inspect.iscoroutinefunction(fn):
+
+        @observe(
+            exempt=(
+                "the WRAPPED op body already carries its own @observe boundary "
+                "sample, and run_admin_op/run_admin_op_async instrument the "
+                "dispatch around it. Instrumenting this adapter would add a "
+                "THIRD sample per call for exactly four ops — observe's "
+                "double-instrumentation guard suppresses a duplicate span, not "
+                "a duplicate metric."
+            )
+        )
+        async def _acall(payload: dict):
+            return await fn(payload, storage=_resolve_storage())
+
+        _acall.__name__ = f"{getattr(fn, '__name__', 'op')}__storage_adapter"
+        return _acall
+
+    def _call(payload: dict):
+        return fn(payload, storage=_resolve_storage())
+
+    _call.__name__ = f"{getattr(fn, '__name__', 'op')}__storage_adapter"
+    return _call
+
+
+# ── C10: re-register the four bodies whose signatures the dispatch cannot call ──
+#
+# Applied here rather than inline in ``_ADMIN_OPS`` because the adapters are
+# defined below the table. Keeping the table a flat name → body map also keeps
+# it readable as the registry it is; the adaptation is a dispatch concern.
+#
+# ``_ADMIN_OPS_KWARG_SHAPED`` is the closed list — ``test_admin_op_dispatch_shapes``
+# re-derives it empirically from the live table, so a new keyword-only op added
+# later fails that test instead of silently becoming unreachable.
+_ADMIN_OPS_KWARG_SHAPED: tuple[str, ...] = (
+    "retype_page_type",
+    "seed_adr_rows",
+    "seed_task_from_pages",
+)
+_ADMIN_OPS_PAYLOAD_STORAGE_SHAPED: tuple[str, ...] = ("reslug",)
+
+for _op_name in _ADMIN_OPS_KWARG_SHAPED:
+    _ADMIN_OPS[_op_name] = _kwargs_op(_ADMIN_OPS[_op_name])
+for _op_name in _ADMIN_OPS_PAYLOAD_STORAGE_SHAPED:
+    _ADMIN_OPS[_op_name] = _payload_storage_op(_ADMIN_OPS[_op_name])
+del _op_name
+
+
 def _is_async_op(impl: AdminOp) -> TypeIs[Callable[[dict], Awaitable[dict]]]:
     """Return True when *impl* must be awaited rather than called in a thread.
 

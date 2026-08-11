@@ -187,7 +187,32 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         tags: list[str],
         timestamp: datetime,
     ) -> str:
-        """Generate a contextual prefix for richer embedding semantics."""
+        """Generate a contextual prefix for richer embedding semantics.
+
+        ── C10 (0047 §5) — ADR-0225 CARVE-OUT, DELIBERATELY NOT SWEPT ──────────
+
+        ``basename(directory)`` below builds the ``[Project: …]`` segment of a
+        string that is CONCATENATED INTO THE EMBEDDING INPUT
+        (``write_exec/_memorize_phases/_phase_embed.py``,
+        ``curation/ingestion.py``). It is not a scope key, not a WHERE clause and
+        not a display label — it is model input.
+
+        Sweeping it to the canonical ``owner/repo`` would therefore change the
+        text every NEW row embeds, while the ENTIRE existing corpus keeps the
+        vectors produced from the old text. Nothing errors; recall just gets
+        quietly worse as the two populations drift apart in cosine space. That
+        is a silent wrong answer with no error surface — the exact failure class
+        this train exists to delete — so the sweep would cause the harm it is
+        meant to prevent.
+
+        The migration path exists and is an OPERATOR action, not a car's: change
+        the prefix and run ``reembed_all`` so the whole corpus is re-encoded from
+        the new text in one pass. Until someone chooses to pay that, this stays.
+
+        Cheap when that day comes: the LABEL already reads ``[Project: …]``, so
+        only the VALUE changes — swap ``basename(directory)`` for the project_id
+        and re-embed. No format change, no reader to update.
+        """
         dir_basename = os.path.basename(directory.rstrip("/")) or directory
         tags_joined = ", ".join(tags) if tags else "none"
         timestamp_human = timestamp.strftime("%Y-%m-%d %H:%M")

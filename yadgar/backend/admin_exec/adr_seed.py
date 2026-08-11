@@ -306,13 +306,25 @@ async def seed_adr_rows(  # noqa: C901 - cohesive: orchestrator stitches idempot
     # (legacy Car 2 format) — Car L's reslug is shipped but the operator runs
     # it dry-run by default. The seed is format-agnostic: any slug matching
     # ``-adr-NNNN`` is consumed.
-    legacy_prefix = f"{directory.rstrip('/').split('/')[-1]}-adr-"
-    pages = _collect_candidate_pages(
-        project_slug_prefix=legacy_prefix,
-        list_pages=lambda prefix, _dir, limit: storage.list_wiki_pages(
-            slug_prefix=prefix, limit=limit
-        ),
-    )
+    #
+    # C10 (0047 §5, judgement site (d)): the prefix is built from ADR-0202's
+    # CANONICAL slug form (``owner/repo`` → ``owner_repo`` via
+    # ``reslug._project_id_to_slug``), not ``basename(directory)``. Basename was
+    # a project-name surrogate: two checkouts of different repos with the same
+    # directory name produced the same prefix.
+    #
+    # BOTH prefixes are enumerated for one cycle. The live corpus is still on
+    # the legacy ``yadgar-adr-`` shape, so dropping it here would make the seed
+    # silently find zero pages on exactly the corpus it exists to lift.
+    for _prefix in _adr_slug_prefixes(project_id, directory):
+        pages = _collect_candidate_pages(
+            project_slug_prefix=_prefix,
+            list_pages=lambda prefix, _dir, limit: storage.list_wiki_pages(
+                slug_prefix=prefix, limit=limit
+            ),
+        )
+        if pages:
+            break
 
     pages_seen = len(pages)
     rows_inserted = 0
@@ -458,7 +470,7 @@ async def _read_existing_adr_row(storage: Any, slug: str) -> object:
     the storage surface is partial (the test stub path) or when no row
     exists with that body_slug.
     """
-    project_id = _derive_project_id_for_slug(slug)
+    project_id = _project_slug_from_page_slug(slug)
     try:
         rows_obj = storage.list_adr_rows(project_id=project_id)
         # Storage returns a coroutine on the real engine; tests inject
@@ -475,16 +487,52 @@ async def _read_existing_adr_row(storage: Any, slug: str) -> object:
     return None
 
 
-def _derive_project_id_for_slug(slug: str) -> str:
-    """Best-effort project_id derivation from a per-ADR page slug.
+@observe(tier="hot", span=False)
+def _adr_slug_prefixes(project_id: str, directory: str) -> list[str]:
+    """ADR page-slug prefixes to enumerate, canonical first, legacy second.
 
-    The seed runs once per project; the canonical ``project_id`` is the
-    ``directory`` arg. For the body_slug resolver we extract the project
-    part: ``yadgar-adr-0001`` → ``yadgar`` (legacy shape).
+    C10 (0047 §5, judgement site (d)). Two prefixes, in priority order:
+
+    1. **Canonical (ADR-0202)** — ``owner/repo`` → ``owner_repo`` via
+       :func:`reslug._project_id_to_slug`, giving ``owner_repo_adr-``. This is
+       the shape :data:`reslug.NEW_SLUG_TEMPLATE` emits, so a reslugged corpus
+       is found here.
+    2. **Legacy** — ``basename(directory)`` + ``-adr-``, the Car 2 shape the
+       live corpus still uses (``yadgar-adr-NNNN``). Retained for one cycle:
+       Car L's reslug is shipped but runs dry-run by default, so the rows this
+       seed exists to lift are still under the old prefix.
+
+    The legacy entry is the ONLY remaining use of ``basename(directory)`` as a
+    project surrogate, and it is now explicitly a back-compat read path rather
+    than an identity derivation. Drop it once the reslug has been applied.
+
+    Deduplicated and empties dropped, so a project whose canonical slug equals
+    its basename yields one prefix rather than two identical scans.
+    """
+    from yadgar.backend.admin_exec.reslug import _project_id_to_slug  # noqa: PLC0415
+
+    prefixes: list[str] = []
+    if project_id:
+        prefixes.append(f"{_project_id_to_slug(project_id)}_adr-")
+    basename = (directory or "").rstrip("/").split("/")[-1]
+    if basename:
+        prefixes.append(f"{basename}-adr-")
+    return list(dict.fromkeys(p for p in prefixes if p))
+
+
+def _project_slug_from_page_slug(slug: str) -> str:
+    """Extract the project part of a per-ADR page slug: ``X-adr-0001`` → ``X``.
+
+    NOT ``identity.derive_project_id`` despite the old name
+    (``_derive_project_id_for_slug``, renamed by C10 §5(d)). This derives
+    nothing about the host — it regex-parses a slug that was already built
+    elsewhere, and is used only to look a row back up by ``body_slug``. The old
+    name invited the next reader to delete it as a duplicate of the real
+    resolver; it is not one.
     """
     import re as _re
 
-    m = _re.match(r"^(.+?)-adr-\d{4}$", slug or "")
+    m = _re.match(r"^(.+?)[-_]adr-\d{4}$", slug or "")
     return m.group(1) if m else ""
 
 
@@ -584,6 +632,14 @@ def _count_legacy_index_rows(directory: str, storage: Any) -> int:
     as a mismatch — the gate's two-sided reconciliation is between
     ``pages_seen`` and ``page_type_adr_rows``, with ``index_rows`` as the
     legacy-trace counter for a single-cycle rollback path (D35d).
+
+    C10 (0047 §5(d)): this one KEEPS ``basename(directory)`` deliberately. The
+    function's whole job is counting rows in the **legacy** index page, whose
+    slug was minted as ``<basename>-adr-index`` by the Car 2 scheme. Rebuilding
+    it from the canonical project slug would look up a page that, by
+    construction, was never written — the counter would read 0 and the D35c
+    gate would silently lose its legacy-trace signal. The basename here is a
+    historical slug component, not an identity derivation.
     """
     import os as _os
 
