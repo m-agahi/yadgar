@@ -117,7 +117,19 @@ class TestDrainStageMsMetric:
         q = FileQueue(base_dir=tmp_path)
         # _internal=True: approved carve-out — bypasses branch-context pre-validation
         # so the item reaches _apply_inner (which is patched) and the stage metric fires.
-        q.enqueue("memorize", {"content": "x", "context": "y", "tags": [], "_internal": True})
+        # C13: the DLQ project_id gate runs for EVERY op type since C5 and the
+        # ``_internal`` carve-out deliberately does not cover it — an unstamped
+        # payload is DLQ'd before it reaches _apply_inner, so no stage metric fires.
+        q.enqueue(
+            "memorize",
+            {
+                "content": "x",
+                "context": "y",
+                "tags": [],
+                "_internal": True,
+                "project_id": _PROJECT,
+            },
+        )
 
         with patch.object(QueueDrainer, "_apply_inner"):
             drainer = QueueDrainer(queue=q, storage_factory=MagicMock(), drain_interval=999)
@@ -140,7 +152,19 @@ class TestDrainStageMsMetric:
         q = FileQueue(base_dir=tmp_path)
         # _internal=True: approved carve-out — bypasses branch-context pre-validation
         # so the item reaches _apply_inner (which is patched) and the stage metric fires.
-        q.enqueue("memorize", {"content": "x", "context": "y", "tags": [], "_internal": True})
+        # C13: the DLQ project_id gate runs for EVERY op type since C5 and the
+        # ``_internal`` carve-out deliberately does not cover it — an unstamped
+        # payload is DLQ'd before it reaches _apply_inner, so no stage metric fires.
+        q.enqueue(
+            "memorize",
+            {
+                "content": "x",
+                "context": "y",
+                "tags": [],
+                "_internal": True,
+                "project_id": _PROJECT,
+            },
+        )
 
         with patch.object(QueueDrainer, "_apply_inner"):
             drainer = QueueDrainer(queue=q, storage_factory=MagicMock(), drain_interval=999)

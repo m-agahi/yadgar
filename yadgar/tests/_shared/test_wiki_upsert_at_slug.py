@@ -178,5 +178,6 @@ class TestTitleDerivedBackwardCompat:
             "Legacy Title Page",
             "plain content",
             category="reference",
+            opts=WikiAddOptions(project_id=_PROJECT),
         )
         assert _storage().get_wiki_page_by_slug("legacy-title-page") is not None

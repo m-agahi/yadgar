@@ -59,11 +59,20 @@ def _seed_anchor(
     directory_context: str,
     heat: float = 1.0,
     valid_until: str | None = None,
+    *,
+    global_reach: bool = False,
 ) -> int:
-    """Insert an anchor memory — is_protected=True, tags=['_anchor']."""
+    """Insert an anchor memory — is_protected=True, tags=['_anchor'].
+
+    C13 (0047 PR#40 §5): ``global_reach`` adds the ``global`` TAG, which is
+    what ``get_anchored_memories_scoped`` keys its global bucket on since C5.
+    It is a separate argument from ``directory_context`` on purpose — §1.4
+    splits ownership from reach, and the two are no longer the same fact.
+    """
+    tags = ["_anchor", "global"] if global_reach else ["_anchor"]
     data: dict[str, Any] = {
         "content": content,
-        "tags": ["_anchor"],
+        "tags": tags,
         "directory_context": directory_context,
         "heat": heat,
         "is_protected": True,
@@ -97,7 +106,7 @@ class TestGetAnchoredMemoriesScoped:
         This is the core regression test for the 2026-05-18 incident: a global
         anchor must not be crowded out by project anchors.
         """
-        _seed_anchor(storage, "GLOBAL: always surface me", "global")
+        _seed_anchor(storage, "GLOBAL: always surface me", "global", global_reach=True)
         # Seed 20 project-B anchors to fill any unscoped limit=20 cap.
         for i in range(20):
             _seed_anchor(storage, f"project-B anchor {i}", "/repos/B")
@@ -120,7 +129,7 @@ class TestGetAnchoredMemoriesScoped:
 
     def test_global_anchors_appear_before_project_anchors(self, storage):
         """Global anchors are returned first even if project anchor has higher heat."""
-        _seed_anchor(storage, "global fact", "global", heat=1.0)
+        _seed_anchor(storage, "global fact", "global", heat=1.0, global_reach=True)
         _seed_anchor(storage, "project fact hot", "/repos/X", heat=100.0)
 
         result = storage.get_anchored_memories_scoped(directory="/repos/X", limit=20)
@@ -132,11 +141,12 @@ class TestGetAnchoredMemoriesScoped:
     def test_deduplication_when_anchor_matches_both_scopes(self, storage):
         """An anchor matching both global and project queries appears once.
 
-        Seed an anchor with directory_context='global' then call with
-        directory='global' so both the global-bucket WHERE clause AND the
-        project-bucket WHERE clause match the same row.
+        C13: the global bucket is keyed on the ``global`` TAG since C5, so
+        matching BOTH clauses now needs the tag AND directory_context='global'
+        with directory='global' passed in. Seeding only the directory made this
+        match one bucket, which is not the case it claims to cover.
         """
-        _seed_anchor(storage, "shared scope anchor", "global")
+        _seed_anchor(storage, "shared scope anchor", "global", global_reach=True)
 
         result = storage.get_anchored_memories_scoped(directory="global", limit=20)
         matching = [r for r in result if r["content"] == "shared scope anchor"]
@@ -145,36 +155,55 @@ class TestGetAnchoredMemoriesScoped:
     def test_hard_cap_50_enforced(self, storage):
         """Result never exceeds 50 entries even when limit > 50."""
         for i in range(60):
-            _seed_anchor(storage, f"global anchor {i}", "global")
+            _seed_anchor(storage, f"global anchor {i}", "global", global_reach=True)
 
         result = storage.get_anchored_memories_scoped(directory="/some/project", limit=100)
         assert len(result) <= 50, f"hard cap 50 violated — got {len(result)} results"
 
     def test_expired_anchors_excluded(self, storage):
         """Anchors with valid_until in the past are excluded."""
-        _seed_anchor(storage, "expired global anchor", "global", valid_until=_iso_past())
-        _seed_anchor(storage, "active global anchor", "global", valid_until=_iso_future())
+        _seed_anchor(
+            storage,
+            "expired global anchor",
+            "global",
+            valid_until=_iso_past(),
+            global_reach=True,
+        )
+        _seed_anchor(
+            storage,
+            "active global anchor",
+            "global",
+            valid_until=_iso_future(),
+            global_reach=True,
+        )
 
         result = storage.get_anchored_memories_scoped(directory="/proj", limit=20)
         contents = [r["content"] for r in result]
         assert "expired global anchor" not in contents, "expired anchor should not surface"
         assert "active global anchor" in contents, "active anchor should surface"
 
-    def test_empty_string_directory_context_treated_as_global(self, storage):
-        """Anchors with directory_context='' are treated as global (included for all dirs).
+    def test_empty_string_directory_context_is_refused_at_write(self, storage):
+        """INVERTED by C13: an empty directory_context is not global — it is not writable.
 
-        v5.46.6: skip removed — insert_memory now normalises '' → 'global' before
-        writing, so queries that check directory_context = '' still surface these
-        via the global-bucket WHERE clause.  Schema ASSERT on wiki_page does not
-        apply to the memory table.
+        The v5.46.6 premise this test was written on — "insert_memory normalises
+        '' → 'global' before writing, so queries that check directory_context =
+        '' still surface these via the global-bucket WHERE clause" — is one of
+        the two ``or "global"`` expressions C5 deleted from the memory insert
+        dict (ADR-0227: nothing is invented on a write's behalf). That
+        normalisation was also the only reason the row could be stored at all:
+        the memory table's schema ASSERT requires a non-empty
+        ``directory_context``, so with the sentinel-minting expression gone the
+        write is refused outright rather than quietly re-homed under 'global'.
+
+        The old docstring's "Schema ASSERT on wiki_page does not apply to the
+        memory table" is stale — it does now, which is why this asserts the
+        raise rather than an absence from the result set.
+
+        Reach is declared, not inferred: a genuinely global anchor carries the
+        ``global`` tag — see ``test_global_anchor_surfaces_in_unrelated_project``.
         """
-        _seed_anchor(storage, "empty-context global", "")
-
-        result = storage.get_anchored_memories_scoped(directory="/some/project", limit=20)
-        contents = [r["content"] for r in result]
-        assert "empty-context global" in contents, (
-            "empty-string directory_context anchor should be in global bucket"
-        )
+        with pytest.raises(RuntimeError, match="directory_context"):
+            _seed_anchor(storage, "empty-context anchor", "")
 
     def test_system_directory_context_not_surfaced(self, storage):
         """v5.65: Anchors with directory_context='system' are no longer surfaced.
@@ -203,11 +232,14 @@ class TestGetAnchoredMemoriesScoped:
 
     def test_heat_ordering_within_global_scope(self, storage):
         """Within the global bucket, anchors are ordered heat DESC."""
-        _seed_anchor(storage, "low heat global", "global", heat=1.0)
-        _seed_anchor(storage, "high heat global", "global", heat=50.0)
+        _seed_anchor(storage, "low heat global", "global", heat=1.0, global_reach=True)
+        _seed_anchor(storage, "high heat global", "global", heat=50.0, global_reach=True)
 
         result = storage.get_anchored_memories_scoped(directory="/proj", limit=20)
-        global_items = [r for r in result if r.get("directory_context") == "global"]
+        # C13: membership of the global bucket is the ``global`` TAG since C5,
+        # not directory_context — filtering on the directory here would select
+        # rows by a key the write path can no longer produce.
+        global_items = [r for r in result if "global" in r.get("tags", [])]
         assert len(global_items) >= 2
         assert global_items[0]["content"] == "high heat global", (
             f"within global scope, highest heat should be first; got {global_items[0]['content']}"
@@ -228,7 +260,7 @@ class TestRestoreUsesScope:
         limit=20 and 20 project anchors crowds out the global anchor.
         """
         storage, rep = replay
-        _seed_anchor(storage, "GLOBAL CRITICAL FACT", "global")
+        _seed_anchor(storage, "GLOBAL CRITICAL FACT", "global", global_reach=True)
         # Seed 20 project-A anchors so the old flat query would fill the cap.
         for i in range(20):
             _seed_anchor(storage, f"proj-A anchor {i}", "/repos/project_A")

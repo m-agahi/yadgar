@@ -245,7 +245,14 @@ class TestMemoryContentInjection:
             "$content $id $result",
         ]
         for p in payloads:
-            storage.insert_memory({"content": p, "directory_context": "/test", "tags": ["payload"]})
+            storage.insert_memory(
+                {
+                    "content": p,
+                    "directory_context": "/test",
+                    "project_id": _PROJECT,
+                    "tags": ["payload"],
+                }
+            )
 
         # All canaries must still exist
         for cid in ids:

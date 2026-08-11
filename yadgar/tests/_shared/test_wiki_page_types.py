@@ -117,6 +117,7 @@ class TestWikiAddPageType:
             "Old Style Page",
             "Some content without a type.",
             category="reference",
+            opts=WikiAddOptions(project_id=_PROJECT),
         )
         # No page_type in result — backward compat
         assert result.get("page_type") is None
@@ -132,6 +133,7 @@ class TestWikiAddPageType:
             "Untyped Page",
             "Some content.",
             category="reference",
+            opts=WikiAddOptions(project_id=_PROJECT),
         )
         page = _storage().get_wiki_page_by_slug("untyped-page")
         assert page is not None
@@ -162,6 +164,7 @@ class TestWikiAddPageType:
             "## Purpose\nUpdated.\n## Signature\nfoo(x)\n## Behaviour\nUpdated.",
             category="reference",
             # page_type intentionally omitted
+            opts=WikiAddOptions(project_id=_PROJECT),
         )
         # Existing type preserved in storage
         page = _storage().get_wiki_page_by_slug("typed-page")
@@ -231,6 +234,7 @@ class TestWikiLintPageType:
             "This page has no ## sections at all.",
             category="reference",
             # page_type intentionally omitted
+            opts=WikiAddOptions(project_id=_PROJECT),
         )
         report = _wiki().lint()
         violations = [i for i in report["issues"] if i["type"] == "missing_section"]
@@ -336,6 +340,7 @@ class TestCatalogPageTypeGrouping:
             "Arch Overview",
             "Some architectural overview without page type.",
             category="architecture",
+            opts=WikiAddOptions(project_id=_PROJECT),
         )
         storage = _storage()
         catalog = _build_wiki_catalog(storage, "global")
@@ -366,6 +371,7 @@ class TestCatalogPageTypeGrouping:
             "Plain Page",
             "No type here.",
             category="pattern",
+            opts=WikiAddOptions(project_id=_PROJECT),
         )
         storage = _storage()
         catalog = _build_wiki_catalog(storage, "global")
