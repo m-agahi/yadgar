@@ -2,6 +2,7 @@ import pytest
 
 from yadgar._shared.config import Settings
 from yadgar.core.staleness import StalenessDetector
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(scope="module")
@@ -36,6 +37,7 @@ def _make_memory(content="test memory", directory="/tmp/project", **kwargs):
     base = {
         "content": content,
         "directory_context": directory,
+        "project_id": TEST_PROJECT_ID,
         "tags": ["test"],
     }
     base.update(kwargs)
