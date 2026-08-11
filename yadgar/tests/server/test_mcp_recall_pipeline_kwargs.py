@@ -55,7 +55,14 @@ def _call_recall(query: str = "test query", profile=None, **kwargs):
         mock_st._consolidation = None
         mock_st._pool = None
 
-        call_kwargs: dict = {"query": query, "directory": "/tmp/test"}
+        # C5 (ADR-0227): the identity resolver runs at the top of recall(), so a
+        # call naming only a directory raises before the forward these tests spy
+        # on. The subject here is which kwargs recall FORWARDS, so it names one.
+        call_kwargs: dict = {
+            "query": query,
+            "directory": "/tmp/test",
+            "project": "owner/repo",
+        }
         if profile is not None:
             call_kwargs["profile"] = profile
         call_kwargs.update(kwargs)
@@ -140,7 +147,12 @@ class TestRecallInvalidProfile:
             mock_st._pool = None
 
             with pytest.raises((ValueError, Exception)) as exc_info:
-                recall_fn(query="test", profile="turbo-ultra-hyper", directory="/tmp/test")
+                recall_fn(
+                    query="test",
+                    profile="turbo-ultra-hyper",
+                    directory="/tmp/test",
+                    project="owner/repo",
+                )
             assert (
                 "turbo-ultra-hyper" in str(exc_info.value).lower()
                 or "unknown" in str(exc_info.value).lower()
@@ -161,7 +173,12 @@ class TestRecallInvalidProfile:
             mock_st._pool = None
 
             try:
-                recall_fn(query="test", profile="bogus_profile", directory="/tmp/test")
+                recall_fn(
+                    query="test",
+                    profile="bogus_profile",
+                    directory="/tmp/test",
+                    project="owner/repo",
+                )
             except Exception:
                 pass
             mock_fwd.assert_not_called()
@@ -271,6 +288,7 @@ class TestStageOverridesRemoved:
                 recall_fn(
                     query="test",
                     directory="/tmp/test",
+                    project="owner/repo",
                     stage_overrides={"nli": {"enabled": False}},
                 )
 

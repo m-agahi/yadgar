@@ -29,13 +29,26 @@ def _make_args(
     directory="/tmp/proj",
     session="sess-123",
     db_path=None,
+    project="owner/repo",
 ):
+    """Build a parsed-args double for ``cmd_capture``.
+
+    ``project`` is explicit because ``/tmp/proj`` is not a git tree and carries
+    no ``.yadgar/project-id``: since C5 (ADR-0227) ``resolve_cli_project`` has
+    no tier left to fall through to, so an args double without the attribute
+    exits 2 before the enqueue these tests are about. ``register()`` puts the
+    real ``--project`` flag on the subparser (``add_project_argument``), so
+    naming it here matches the CLI a caller actually invokes rather than
+    papering over a gap. Pass ``project=None`` to exercise the unresolvable
+    path deliberately.
+    """
     return SimpleNamespace(
         tool_name=tool_name,
         summary=summary,
         directory=directory,
         session=session,
         db_path=db_path,
+        project=project,
     )
 
 
@@ -132,6 +145,12 @@ class TestCmdCaptureHappyPath:
         (record,) = _pending_records(queue_dir)
         assert record["payload"]["session_id"] == "my-session"
 
+    def test_payload_receives_project_id(self, queue_dir):
+        """C4/C5: the host-side CLI is the only participant that can resolve it."""
+        cmd_capture(_make_args(project="acme/widget"))
+        (record,) = _pending_records(queue_dir)
+        assert record["payload"]["project_id"] == "acme/widget"
+
     def test_payload_receives_timestamp_string(self, queue_dir):
         cmd_capture(_make_args())
         (record,) = _pending_records(queue_dir)
@@ -171,3 +190,16 @@ class TestCmdCaptureException:
                 cmd_capture(args)
         err = capsys.readouterr().err
         assert "disk full" in err
+
+    def test_unresolvable_tree_exits_two_and_enqueues_nothing(self, queue_dir):
+        """C5/ADR-0227: no ``--project`` + no identity in the tree is fatal.
+
+        ``/tmp/proj`` has neither a ``.yadgar/project-id`` nor an origin remote,
+        so the mint raises and ``resolve_cli_project`` exits 2. The assertion
+        that matters is the SECOND one: the failure happens BEFORE the enqueue,
+        so no action_log job lands carrying a guessed namespace.
+        """
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_capture(_make_args(project=None))
+        assert exc_info.value.code == 2
+        assert _pending_records(queue_dir) == []

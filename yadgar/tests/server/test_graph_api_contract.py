@@ -67,6 +67,13 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {_TEST_TOKEN}"}
 
 
+#: Identity the seeded rows are written under. C5 (ADR-0227) made the storage
+#: chokepoint "the caller's value, or a raise", so a direct insert must name
+#: one. The /api/graph contract this file pins is identity-agnostic — it
+#: asserts node/edge SHAPE — so a single shared key is correct here.
+_TEST_PROJECT_ID = "owner/repo"
+
+
 def _seed_memories(n: int = 5) -> None:
     """Insert n memories into the active StorageEngine."""
     import yadgar._shared.runtime.state as _st
@@ -80,6 +87,7 @@ def _seed_memories(n: int = 5) -> None:
                 "directory_context": "/test",
                 "tags": ["contract", "test"],
                 "heat": float(i + 1) / float(n),
+                "project_id": _TEST_PROJECT_ID,
             }
         )
 

@@ -362,6 +362,11 @@ def test_memorize_writes_to_queue(monkeypatch, tmp_path):
             content="queue side-effect test content",
             context="/tmp/queue-test",
             tags=["test", "queue"],
+            # C4b/C5 (ADR-0227): memorize resolves the identity BEFORE the
+            # enqueue and returns an unresolved_project envelope instead of
+            # queueing when nothing names one. The payload assertions below
+            # are about the job SHAPE, so the call names a project.
+            project="owner/repo",
         )
 
     assert result.get("stored") is True
@@ -380,6 +385,13 @@ def test_memorize_writes_to_queue(monkeypatch, tmp_path):
     # re-populating branch trips this test rather than silently re-arming the
     # dimension the ADR removed.
     assert "branch" not in pdata, f"memorize payload must carry no branch key; got {sorted(pdata)}"
+    # C4b (0047 PR#40 §5): the enqueue stamps project_id UNCONDITIONALLY, in the
+    # one process that can see the session. Asserted positively: a payload that
+    # reaches the drainer unattributed is re-derived inside a container with no
+    # git binary, which is the failure ADR-0227 exists to prevent.
+    assert pdata["project_id"] == "owner/repo", (
+        f"memorize payload must carry the resolved project_id; got {sorted(pdata)}"
+    )
 
     # Structural snapshot (masks UUID queue_id but preserves payload shape)
     snapshot_data = {

@@ -108,9 +108,18 @@ def test_graceful_stop_flushes_queue(tmp_path):
     drainer = _TrackingDrainer(fq, lambda: _FakeStorage(), drain_interval=0.05)
     drainer.start()
 
-    # Enqueue 10 items
+    # Enqueue 10 items.
+    #
+    # C4b (0047 PR#40 §5) extended the DLQ gate from wiki_add to EVERY op type,
+    # so a memorize payload without an enqueue-time project_id is rejected
+    # before _apply_inner runs. _TrackingDrainer only overrides
+    # _validate_wiki_add, so stamping the payload is what keeps this test about
+    # flush_barrier rather than about the gate.
     for i in range(10):
-        fq.enqueue("memorize", {"content": f"item-{i}", "context": "/tmp"})
+        fq.enqueue(
+            "memorize",
+            {"content": f"item-{i}", "context": "/tmp", "project_id": "owner/repo"},
+        )
 
     ok = drainer.flush_barrier(timeout=10.0)
     drainer.stop()

@@ -163,6 +163,10 @@ class TestMigration018BackfillsFieldAbsentWikiPage:
                 "source_memory_ids": [],
                 "confidence": "medium",
                 "directory_context": "/home/max/git/yadgar",
+                # C5 (ADR-0227): the storage chokepoint is "the caller's value,
+                # or a raise" — this insert goes through the normal helper, so
+                # it must stamp one. The subject here is directory_context.
+                "project_id": "owner/repo",
             }
         )
 
