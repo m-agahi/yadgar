@@ -519,7 +519,15 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
     global_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
-        "AND (directory_context = '' OR directory_context = 'global') "
+        # C13 (0047 PR#40 §5): re-keyed off directory_context and onto the
+        # ``global`` reach TAG, matching what C5 already did to the OTHER reader
+        # of this same bucket (``get_anchored_memories_scoped``). C5 re-keyed
+        # one and missed these two, leaving a reader whose predicate the write
+        # path can no longer satisfy: every site that minted
+        # ``directory_context = 'global'`` is deleted, so this bucket could only
+        # ever shrink. Same C6 dependency as its sibling — narrow until the
+        # backfill re-keys the legacy rows to a real owner plus the reach tag.
+        "AND 'global' INSIDE tags "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
         {"now": _now},
@@ -575,7 +583,15 @@ def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
     global_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
-        "AND (directory_context = '' OR directory_context = 'global') "
+        # C13 (0047 PR#40 §5): re-keyed off directory_context and onto the
+        # ``global`` reach TAG, matching what C5 already did to the OTHER reader
+        # of this same bucket (``get_anchored_memories_scoped``). C5 re-keyed
+        # one and missed these two, leaving a reader whose predicate the write
+        # path can no longer satisfy: every site that minted
+        # ``directory_context = 'global'`` is deleted, so this bucket could only
+        # ever shrink. Same C6 dependency as its sibling — narrow until the
+        # backfill re-keys the legacy rows to a real owner plus the reach tag.
+        "AND 'global' INSIDE tags "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
         {"now": _now},

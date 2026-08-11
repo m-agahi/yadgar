@@ -295,16 +295,46 @@ def test_anchor_scope_split_returns_separate_fields():
 
 
 def test_anchor_scope_split_global_list(flush_queue):
-    """F1: global anchors include rows with directory_context='' (system)."""
-    # Inject a global anchor by directly calling anchor with empty/system context
-    server.anchor("global system rule", "", "global_rule", project=TEST_PROJECT_ID)
+    """F1: global-REACH anchors surface regardless of the project directory.
+
+    INVERTED by C5. The bucket used to be keyed on ``directory_context IN
+    ('', 'global')``; it is now keyed on the ``global`` TAG, because §1.4
+    splits ownership (``project_id``, always a real project) from reach
+    (a tag, where "global" is a real answer). A reader keyed on the old
+    predicate reads a concept no write path can produce any more.
+
+    Both halves are pinned: the tagged row surfaces from an unrelated
+    directory, and an identically-scoped row WITHOUT the tag does not — that
+    second assertion is the one that fails if the deleted predicate is ever
+    restored. Both rows carry a real ``directory_context``, which is the point:
+    reach no longer rides on the directory being empty.
+    """
+    _elsewhere = "/tmp/anchor_scope_owner_proj"
+    server.memorize(
+        content="global system rule",
+        context=_elsewhere,
+        tags=["_anchor", "global"],
+        is_protected=True,
+        project=TEST_PROJECT_ID,
+    )
+    server.memorize(
+        content="untagged project rule",
+        context=_elsewhere,
+        tags=["_anchor"],
+        is_protected=True,
+        project=TEST_PROJECT_ID,
+    )
     flush_queue()
 
     result = server.project_brief("/tmp/unrelated_project_xyz", project=TEST_PROJECT_ID)
-    # Global anchors are returned regardless of project directory
+    # Global-reach anchors are returned regardless of project directory
     assert isinstance(result["top_anchors_global"], list)
     titles = [a.get("title", "") for a in result["top_anchors_global"]]
     assert any("global system rule" in t for t in titles)
+    assert not any("untagged project rule" in t for t in titles), (
+        "an anchor without the 'global' tag is not global REACH — C5 re-keyed "
+        "this bucket off directory_context and onto the tag"
+    )
 
 
 def test_anchor_scope_split_project_list(flush_queue):
@@ -328,14 +358,21 @@ def test_anchor_scope_split_project_not_in_other_project(flush_queue):
     assert not any("dirA private anchor" in t for t in project_titles)
 
 
-def test_anchor_scope_global_includes_system_context(flush_queue, monkeypatch):
-    """F1: rows with directory_context='global' or '' surface in global bucket.
+def test_anchor_scope_global_excludes_the_directory_sentinel(flush_queue, monkeypatch):
+    """INVERTED by C13: ``directory_context='global'`` is NOT global reach.
 
-    #28: anchor context="global" is the global sentinel, not a filesystem path.
-    normalize_write_context resolves it relative to CWD via git heuristics —
-    in a linked-worktree CWD this finds the worktree .git FILE and returns the
-    canonical repo root instead of passing "global" through. Fix: chdir to /tmp
-    so the heuristic finds no .git and the sentinel is stored verbatim.
+    This test used to assert the opposite — that the directory sentinel put a
+    row in the global bucket. C5 deleted every write site that could MINT that
+    sentinel and re-keyed the reach predicate onto the ``global`` TAG (§1.4:
+    ownership is project_id, reach is a tag); C13 re-keyed the two readers in
+    ``project.py`` that C5 missed. A row whose only claim to global reach is a
+    directory string is exactly the phantom this train removes, so the
+    assertion is inverted rather than dropped.
+
+    #28's chdir survives for the reason it was added: ``normalize_write_context``
+    resolves "global" relative to CWD via git heuristics, and in a linked
+    worktree it would return the canonical repo root instead of storing the
+    sentinel verbatim — which would make this test vacuous in either direction.
     """
     monkeypatch.chdir("/tmp")
     server.anchor(
@@ -345,7 +382,9 @@ def test_anchor_scope_global_includes_system_context(flush_queue, monkeypatch):
 
     result = server.project_brief("/tmp/any_project_at_all", project=TEST_PROJECT_ID)
     global_titles = [a.get("title", "") for a in result["top_anchors_global"]]
-    assert any("global anchor with explicit global ctx" in t for t in global_titles)
+    assert not any("global anchor with explicit global ctx" in t for t in global_titles), (
+        "directory_context='global' is a dead sentinel — reach is the 'global' tag"
+    )
 
 
 def test_legacy_top_anchors_is_union(flush_queue):

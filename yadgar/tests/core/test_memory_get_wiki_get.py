@@ -33,6 +33,7 @@ def _mem(content: str, **kwargs) -> dict:
         "store_type": "episodic",
         "heat": 0.5,
         "directory_context": "/tmp/test",
+        "project_id": TEST_PROJECT_ID,
     }
     base.update(kwargs)
     return base

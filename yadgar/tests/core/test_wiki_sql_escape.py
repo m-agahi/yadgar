@@ -14,7 +14,9 @@ the fix. The conftest fixture starts a real SurrealDB process if `surreal` is on
 
 import pytest
 
+from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 ROUTE53_FIXTURE = """\
 # AWS Route53 glossary — account 488021763009
@@ -76,6 +78,7 @@ class TestWikiSQLEscape:
             content=ROUTE53_FIXTURE,
             category="reference",
             tags=["aws", "route53"],
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
         )
         assert result.get("slug") == "aws-route53-glossary"
 
@@ -90,7 +93,12 @@ class TestWikiSQLEscape:
         wiki = server._wiki
         assert wiki is not None
 
-        wiki.add(title="AWS VPC inventory", content=VPC_FIXTURE, category="reference")
+        wiki.add(
+            title="AWS VPC inventory",
+            content=VPC_FIXTURE,
+            category="reference",
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
+        )
         page = wiki.read("aws-vpc-inventory")
         assert page is not None
         assert "↔" in page["content"]
@@ -102,7 +110,11 @@ class TestWikiSQLEscape:
         wiki = server._wiki
         assert wiki is not None
 
-        wiki.add(title="Emoji page", content="First version — no emoji")
+        wiki.add(
+            title="Emoji page",
+            content="First version — no emoji",
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
+        )
         wiki.add(title="Emoji page", content="Updated — now has 🚨 emoji ↔ test")
 
         page = wiki.read("emoji-page")

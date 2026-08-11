@@ -119,7 +119,13 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # C13: the validated value is KEPT and stamped on the enqueued payload
+    # below. C3 discarded it, but C5 made the drainer's project_id gate run for
+    # every op type — so a checkpoint enqueued without the stamp was rejected
+    # with ``missing_project_id`` and DLQ'd, on a call whose caller had passed
+    # ``project=``. The checkpoint TABLE still has no project_id column (that is
+    # C11's work); the PAYLOAD carrying one is what the gate requires.
+    _project_id = accept_project_param(project, directory)
     # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
     _surrogate_err = _validate_checkpoint_surrogates(
         current_task,
@@ -162,6 +168,7 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
             "next_steps": next_steps,
             "active_errors": active_errors,
             "custom_context": custom_context,
+            "project_id": _project_id,
         },
     )
     return {"queued": True, "directory": directory}

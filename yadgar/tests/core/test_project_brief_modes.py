@@ -416,8 +416,18 @@ def test_checkpoint_age_hours_populated(flush_queue):
 
 
 def test_restore_mode_global_anchor_has_global_scope(flush_queue):
-    """Global anchor (directory_context='') gets scope='global'."""
-    server.anchor("global scope anchor", "", "global_rule", project=TEST_PROJECT_ID)
+    """A global-REACH anchor gets scope='global'.
+
+    INVERTED by C5: the reach marker is the ``global`` TAG, not an empty
+    ``directory_context`` (§1.4 — ownership is project_id, reach is a tag).
+    """
+    server.memorize(
+        content="global scope anchor",
+        context="/tmp/restore_global_owner",
+        tags=["_anchor", "global"],
+        is_protected=True,
+        project=TEST_PROJECT_ID,
+    )
     flush_queue()
 
     result = server.project_brief(

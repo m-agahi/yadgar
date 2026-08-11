@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from yadgar.backend.graph.graph_api import GraphAPI
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(scope="module")
@@ -16,7 +17,13 @@ def storage(module_storage):
 
 
 def _mem(content):
-    return {"content": content, "directory_context": "/proj", "tags": ["t"], "heat": 1.0}
+    return {
+        "content": content,
+        "directory_context": "/proj",
+        "project_id": TEST_PROJECT_ID,
+        "tags": ["t"],
+        "heat": 1.0,
+    }
 
 
 def _make_mock_storage(nodes_rows, causal_edges_rows, entity_rels=None, entity_rows=None):
