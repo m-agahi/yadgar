@@ -354,6 +354,66 @@ def test_no_separate_number_column(upgrade_sql):
         )
 
 
+def test_task_carries_completed_at(upgrade_sql):
+    """C15a item 1 — ``task.completed_at DATETIME NULL``.
+
+    The sweep ages completed rows off this column instead of ``updated_at``,
+    which bumps on every edit and so reset the 90-day clock on any touched
+    row (§14.2). Nullable because a row that has not completed has no
+    completion instant, and the sweep reads NULL as "clock never started"
+    rather than "infinitely old".
+    """
+    body = _create_table_body(upgrade_sql, "task")
+    assert re.search(
+        r"`?completed_at`?\s+DATETIME(?:\s+NULL)?(?=\s*,|\s*\)|\s*$)",
+        body,
+        re.IGNORECASE,
+    ), "task missing completed_at DATETIME NULL"
+    assert not re.search(r"`?completed_at`?\s+DATETIME\s+NOT NULL", body, re.IGNORECASE), (
+        "task.completed_at must be NULLable — a pending task has no completion instant"
+    )
+
+
+def test_adr_carries_superseded_at(upgrade_sql):
+    """C15a item 2 — ``adr.superseded_at DATETIME NULL``.
+
+    Aging superseded ADRs off ``created_at`` gave zero grace: an ADR written
+    120 days ago and superseded today archived on the very next sweep. The
+    column is nullable because ``rejected`` / ``deprecated`` rows are swept
+    too and nothing supersedes them — those fall back to ``created_at``.
+    """
+    body = _create_table_body(upgrade_sql, "adr")
+    assert re.search(
+        r"`?superseded_at`?\s+DATETIME(?:\s+NULL)?(?=\s*,|\s*\)|\s*$)",
+        body,
+        re.IGNORECASE,
+    ), "adr missing superseded_at DATETIME NULL"
+    assert not re.search(r"`?superseded_at`?\s+DATETIME\s+NOT NULL", body, re.IGNORECASE), (
+        "adr.superseded_at must be NULLable — rejected/deprecated rows never carry one"
+    )
+
+
+def test_task_is_unique_on_project_id_and_body_slug(upgrade_sql):
+    """C15a item 3 — ``UNIQUE(project_id, body_slug)`` on ``task``.
+
+    Parent-plan D8: one ledger row ↔ one wiki page is the only genuine 1:1,
+    so the constraint belongs on ``body_slug`` rather than on the title (two
+    tasks may share a name). MySQL permits repeated NULLs in a UNIQUE index,
+    so an unslugged row (D4 — ``body_slug`` is NULL until the body page
+    exists) is not blocked by it.
+
+    Asserted on the rendered CREATE TABLE rather than on a round-trip
+    INSERT because the offline render is the only artefact available without
+    a live MariaDB — and it is the DDL, not a row, that carries the claim.
+    """
+    body = _create_table_body(upgrade_sql, "task")
+    assert re.search(
+        r"UNIQUE\s*\(\s*`?project_id`?\s*,\s*`?body_slug`?\s*\)",
+        body,
+        re.IGNORECASE,
+    ), "task missing UNIQUE (project_id, body_slug)"
+
+
 def _balanced_body(sql: str, open_idx: int) -> str | None:
     """Return the text between ``sql[open_idx]`` (a ``(``) and its partner.
 

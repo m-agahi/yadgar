@@ -104,9 +104,26 @@ def _project_id_to_slug(project_id: str) -> str:
     """Replace ``/`` with ``_`` in a project_id for use in a wiki slug.
 
     Wiki slugs cannot contain ``/`` (the path is the slug). The canonical
-    mapping is mechanical: ``owner/repo`` → ``owner_repo``. The exposed
-    ``NEW_SLUG_TEMPLATE`` calls this internally so the caller passes the
-    un-mangled ``owner/repo`` project_id.
+    mapping is mechanical: ``owner/repo`` → ``owner_repo``. The substitution
+    runs across the WHOLE path, so GitLab groups and subgroups need no
+    depth-aware special case. The exposed ``NEW_SLUG_TEMPLATE`` calls this
+    internally so the caller passes the un-mangled ``owner/repo`` project_id.
+
+    THE COLLISION IS DELIBERATE — DO NOT "FIX" IT BY ADDING ESCAPING.
+    This mapping is NOT injective. ``_`` is legal inside both owner and repo
+    names, so ``a_b/c`` and ``a/b_c`` both yield ``a_b_c``. ADR-0202 accepted
+    that knowingly: the collision needs two of ONE user's own projects whose
+    paths differ only in underscore placement, and since nothing ever parses
+    a slug (ADR-0202: *"the slug is OPAQUE: never parsed"*), the blast radius
+    is a loud unique-index conflict at write time, never a silent wrong read.
+
+    ADR-0202 requires this note wherever slug construction is implemented,
+    in its own words, *"or a future reader will 'fix' it by adding escaping
+    and break every existing slug"* — escape-then-join was considered and
+    rejected there as noise for an adversarial-naming case, and adopting it
+    now would re-slug the entire minted corpus, whose slugs are IMMUTABLE.
+    The sanctioned response to a real collision is ADR-0202's own revisit
+    trigger (escape-then-join for NEWLY minted slugs only), not a change here.
 
     NOT a capping function — it is a pure separator swap. The cap
     (:func:`cap_slug`) is applied once, at the point the finished slug is

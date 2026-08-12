@@ -287,7 +287,17 @@ def seed_task_from_pages(*, directory: str, project_id: str, dry_run: bool = Fal
                     state=_fields.get("state", "open"),
                     active_form=_fields.get("active_form", ""),
                     plan_path=_fields.get("plan_path", ""),
-                    body_slug=_fields.get("body_slug", ""),
+                    # C15a: NULL, not "". 002 now carries
+                    # ``UNIQUE(project_id, body_slug)`` on ``task``, and MySQL
+                    # permits repeated NULLs in a UNIQUE index but NOT repeated
+                    # empty strings. The ``## task:<id>`` section schema has no
+                    # ``body_slug`` field at all, so every seeded row takes this
+                    # default — with "" the constraint would collapse an entire
+                    # project's tasks onto ONE row and the rest would vanish into
+                    # the except-clause below as "skipped duplicates", breaking
+                    # D35c's exact-equality gate. NULL is also the honest value:
+                    # D4 says body_slug is unset until the body page exists.
+                    body_slug=_fields.get("body_slug") or None,
                 )
                 _page_seed["seeded"] += 1
             except Exception as _we:  # noqa: BLE001 — idempotent: skip on duplicate

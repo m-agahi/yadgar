@@ -11,19 +11,29 @@ via ``yadgar.backend.admin_exec.invariants_cross_engine``'s content_hash
 check. The inverse order would leave a flipped row pointing at a
 recall-visible page.
 
-AGE-FIELD DEVIATION (documented in completing PR body):
-  - The plan calls for aging task rows off ``completed_at`` (§3.4 / §14.2),
-    but the ``task`` table has no ``completed_at`` column (only
-    ``created_at`` + ``updated_at``), and the project no-migration rule
-    forbids adding one. K ages task rows off ``updated_at`` instead —
-    a regression on §14.2's intent ("editing a completed task must not
-    reset its 90-day clock"). Operators who want strict completion-clock
-    behaviour must add a ``completed_at`` column + a follow-up sweep
-    revision.
-  - ADR rows have no ``completed_at`` either; K ages them off
-    ``created_at`` (the plan's choice — §3.5).
+AGE FIELDS (C15a — Car K's deviation is RETIRED):
+Car K aged task rows off ``updated_at`` and ADR rows off ``created_at``
+because neither column existed and K read the no-migration rule as
+forbidding one. C15a establishes that ``002_ledger_tables`` is unreleased
+and CREATES both tables, so both columns were added in place.
+
+  - task: ``completed_at`` (``_task_retired_at``). ``updated_at`` bumps on
+    every edit, so under K editing a completed task reset its 90-day clock
+    — the §14.2 regression by name.
+  - adr: ``superseded_at``, falling back to ``created_at``
+    (``_adr_retired_at``). Under K an ADR created 120 days ago and
+    superseded today archived on the very next sweep with zero grace. The
+    fallback is load-bearing: ``rejected`` / ``deprecated`` rows are swept
+    too and nothing supersedes them, so a strict policy would silently
+    stop archiving two of the three statuses.
   - agent_pattern / agent_discipline rows use ``updated_at`` (the only
     timestamp those tables carry).
+
+ONE READER PER CORPUS, and why that matters: the retirement instant is
+resolved by ``_task_retired_at`` / ``_adr_retired_at`` and NOWHERE else.
+``_count_candidates`` (the circuit-breaker) re-implements the selection
+alongside the sweep, so two copies of the age rule would let the breaker
+count one population while the sweep archives another.
 
 MUTABILITY POLICY (Car J): a body page whose ``mutability_override`` is set
 to ``"locked"`` or ``"derived"`` is SKIPPED — the operator pinned this
@@ -78,6 +88,13 @@ _PAGE_TYPE_AGENT_DISCIPlINE_ARCHIVED = "agent_discipline_archived"
 # override only — per-type defaults are bypassed by ``_sanctioned=True``).
 _SKIPPED_MUTABILITY: frozenset[str] = frozenset({"locked", "derived"})
 
+# The task status the sweep collects, and the three ADR statuses. Named once
+# because ``_count_candidates`` re-implements the selection for the
+# circuit-breaker: a literal in only one of the two places lets the breaker
+# count a different population than the sweep archives.
+_STATUS_COMPLETED = "completed"
+_ADR_SWEEP_STATUSES: tuple[str, ...] = ("superseded", "rejected", "deprecated")
+
 
 # ── Storage handles ─────────────────────────────────────────────────────────
 
@@ -104,14 +121,56 @@ def _get_storage() -> Any:
 
 
 @observe(tier="hot", span=False)
-def _parse_iso(ts: str | None) -> datetime | None:
-    """Parse an ISO-8601 timestamp string. Returns None when falsy or unparseable."""
+def _parse_iso(ts: Any) -> datetime | None:
+    """Coerce a ledger timestamp to an AWARE UTC datetime. None when unusable.
+
+    Accepts both shapes the ledger actually yields. The test doubles hand
+    back ISO-8601 strings; SQLAlchemy hands back a ``datetime`` for a MariaDB
+    ``DATETIME`` column, and the original string-only version returned None
+    for those (``fromisoformat`` raises TypeError on a datetime, which the
+    except swallowed) — so against a real database every age comparison
+    fell through the ``is None`` guard and the sweep archived nothing at all,
+    silently, while every test stayed green.
+
+    A NAIVE value is read as UTC rather than rejected: these columns are
+    written by ``ledger_columns.now_utc`` and MySQL's ``CURRENT_TIMESTAMP``,
+    both UTC, and the sweep compares against a tz-aware cutoff — mixing the
+    two raises ``TypeError: can't compare offset-naive and offset-aware``.
+    """
     if not ts:
         return None
-    try:
-        return datetime.fromisoformat(ts)
-    except (TypeError, ValueError):  # fmt: skip
-        return None
+    parsed = ts if isinstance(ts, datetime) else None
+    if parsed is None:
+        try:
+            parsed = datetime.fromisoformat(ts)
+        except (TypeError, ValueError):  # fmt: skip
+            return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+@observe(tier="hot", span=False)
+def _task_retired_at(row: dict[str, Any]) -> datetime | None:
+    """When a task's retention clock STARTED — its ``completed_at``.
+
+    NULL means the clock never started, never "infinitely old": a row that
+    has not completed cannot have run out of retention, and treating the
+    absence as age would make an unstamped corpus sweep itself away on its
+    first run.
+    """
+    return _parse_iso(row.get("completed_at"))
+
+
+@observe(tier="hot", span=False)
+def _adr_retired_at(row: dict[str, Any]) -> datetime | None:
+    """When an ADR's retention clock STARTED — ``superseded_at``, else ``created_at``.
+
+    The fallback is not tidiness. The sweep collects three statuses and only
+    ``superseded`` ever carries a ``superseded_at``; ``rejected`` and
+    ``deprecated`` rows are retired by a human decision that stamps nothing.
+    Reading ``superseded_at`` strictly would leave both of those archiving
+    never, with no test failing to say so.
+    """
+    return _parse_iso(row.get("superseded_at")) or _parse_iso(row.get("created_at"))
 
 
 @observe(tier="hot", span=False)
@@ -322,10 +381,7 @@ async def _resolve_projects(sql: Any, target_project: str | None) -> list[str]:
     return projects
 
 
-@observe(
-    exempt="per-project for-loop dispatch; each leaf already carries its own "
-    "@observe span so the boundary sample would be a redundant aggregate"
-)
+@observe(tier="stage", span=False)
 async def _sweep_tasks_and_adrs(
     sql: Any,
     surreal: Any,
@@ -333,7 +389,15 @@ async def _sweep_tasks_and_adrs(
     retention_days: int,
     now_dt: datetime,
 ) -> tuple[int, int, int]:
-    """Sweep task + adr rows for each project. Returns (tasks, adrs, skipped)."""
+    """Sweep task + adr rows for each project. Returns (tasks, adrs, skipped).
+
+    ``span=False`` per ADR-0074, not ``exempt=``. The previous rationale
+    claimed "each leaf already carries its own @observe span" while both
+    leaves were themselves ``exempt`` no-ops — so there were ZERO spans
+    anywhere below the boundary and I33 still reported MISSING=0. ADR-0074
+    names ``span=False`` as the right tool for a loop dispatcher: the metric
+    and the lint sentinel survive, only the per-item span is suppressed.
+    """
     archived_tasks = 0
     archived_adrs = 0
     skipped_immutable = 0
@@ -347,24 +411,24 @@ async def _sweep_tasks_and_adrs(
     return archived_tasks, archived_adrs, skipped_immutable
 
 
-@observe(
-    exempt="per-row inner loop already inside the project dispatcher; the per-row "
-    "retype + flip calls each carry their own @observe on _retype_body_page + "
-    "sql.update_task_row, so a wrapper span here would be a redundant counter"
-)
+@observe(tier="hot", span=False)
 async def _sweep_project_tasks(
     sql: Any,
     surreal: Any,
     project_id: str,
     cutoff: datetime,
 ) -> tuple[int, int]:
-    """Sweep task rows for one project_id. Returns (archived, skipped)."""
-    rows = await sql.list_task_rows(project_id=project_id, status="completed")
+    """Sweep task rows for one project_id. Returns (archived, skipped).
+
+    ``span=False`` per ADR-0074 — see ``_sweep_tasks_and_adrs`` for why the
+    previous ``exempt=`` rationale was false.
+    """
+    rows = await sql.list_task_rows(project_id=project_id, status=_STATUS_COMPLETED)
     archived = 0
     skipped = 0
     for row in rows:
-        updated_at = _parse_iso(row.get("updated_at"))
-        if updated_at is None or updated_at >= cutoff:
+        retired_at = _task_retired_at(row)
+        if retired_at is None or retired_at >= cutoff:
             continue
         page = _body_page_for_row(surreal, row.get("body_slug"), fallback_id=int(row["id"]))
         if page is None or _is_skipped_mutability(page):
@@ -377,25 +441,25 @@ async def _sweep_project_tasks(
     return archived, skipped
 
 
-@observe(
-    exempt="per-row inner loop already inside the project dispatcher; the per-row "
-    "retype + flip calls each carry their own @observe on _retype_body_page + "
-    "sql._flip_adr_status, so a wrapper span here would be a redundant counter"
-)
+@observe(tier="hot", span=False)
 async def _sweep_project_adrs(
     sql: Any,
     surreal: Any,
     project_id: str,
     cutoff: datetime,
 ) -> tuple[int, int]:
-    """Sweep ADR rows for one project_id. Returns (archived, skipped)."""
+    """Sweep ADR rows for one project_id. Returns (archived, skipped).
+
+    ``span=False`` per ADR-0074 — see ``_sweep_tasks_and_adrs`` for why the
+    previous ``exempt=`` rationale was false.
+    """
     archived = 0
     skipped = 0
-    for adr_status in ("superseded", "rejected", "deprecated"):
+    for adr_status in _ADR_SWEEP_STATUSES:
         adr_rows = await sql.list_adr_rows(project_id=project_id, status=adr_status)
         for row in adr_rows:
-            created_at = _parse_iso(row.get("created_at"))
-            if created_at is None or created_at >= cutoff:
+            retired_at = _adr_retired_at(row)
+            if retired_at is None or retired_at >= cutoff:
                 continue
             page = _body_page_for_row(surreal, row.get("body_slug"), fallback_id=int(row["id"]))
             if page is None or _is_skipped_mutability(page):
@@ -445,15 +509,15 @@ async def _count_candidates(
         project_ids, _ = _dedupe_projects(all_tasks)
 
     for project_id in project_ids:
-        tasks = await sql.list_task_rows(project_id=project_id, status="completed")
+        tasks = await sql.list_task_rows(project_id=project_id, status=_STATUS_COMPLETED)
         for t in tasks:
-            ts = _parse_iso(t.get("updated_at"))
+            ts = _task_retired_at(t)
             if ts is not None and ts < cutoff:
                 task_count += 1
-        for adr_status in ("superseded", "rejected", "deprecated"):
+        for adr_status in _ADR_SWEEP_STATUSES:
             adrs = await sql.list_adr_rows(project_id=project_id, status=adr_status)
             for a in adrs:
-                ts = _parse_iso(a.get("created_at"))
+                ts = _adr_retired_at(a)
                 if ts is not None and ts < cutoff:
                     adr_count += 1
 

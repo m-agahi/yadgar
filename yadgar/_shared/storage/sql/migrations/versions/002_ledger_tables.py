@@ -14,12 +14,13 @@ WHAT THIS REVISION CREATES
 Seven tables (three rows of four below, then the three join tables):
 
   task                — title, status, state, active_form, plan_path,
-                        body_slug, project_id (plain column, NO FK), id
-                        AUTO_INCREMENT PK (ADR-0197; ``id`` IS the number,
-                        no separate ``number`` column).
+                        body_slug, completed_at, project_id (plain column,
+                        NO FK), id AUTO_INCREMENT PK (ADR-0197; ``id`` IS
+                        the number, no separate ``number`` column).
+                        UNIQUE(project_id, body_slug) — see below.
   adr                 — title, status, decided_on, subsystem, tier,
-                        body_slug, project_id (plain column, NO FK), id
-                        AUTO_INCREMENT PK.
+                        body_slug, superseded_at, project_id (plain column,
+                        NO FK), id AUTO_INCREMENT PK.
   agent_pattern       — name (PK-like unique), body_slug, purpose, status,
                         baseline_hash, content_hash, uses, id AUTO_INCREMENT
                         PK. ``content_hash NOT NULL`` + ``baseline_hash
@@ -49,6 +50,38 @@ that construct was retired in favour of ``id BIGINT UNSIGNED AUTO_INCREMENT``.
 PR #32 §13.2 blocker 2 — surfaces that ledger method return shapes MUST be
 keyed on ``id``, not ``number``. This revision makes ``id`` the only
 identifier and never creates ``number``.
+
+THE TWO RETIREMENT CLOCKS — ``completed_at`` / ``superseded_at`` (C15a)
+------------------------------------------------------------------------
+Both added IN PLACE on this unreleased revision (§0 licence — this revision
+CREATES both tables and has never run anywhere), for the same reason and
+with the same shape: ``DATETIME NULL``.
+
+The nightly archive sweep retires a row 90 days after it STOPS being live,
+and neither table previously carried the instant at which that happened.
+Car K therefore aged tasks off ``updated_at`` and ADRs off ``created_at``,
+and both are the wrong interval:
+
+  * ``updated_at`` bumps on every edit, so touching a completed task reset
+    its 90-day clock — the regression §14.2 named explicitly.
+  * ``created_at`` measures age-since-authoring, so an ADR written 120 days
+    ago and superseded today was archived on the very NEXT sweep, with no
+    grace period whatsoever.
+
+Both are NULLable, and the sweep reads NULL as "this clock never started"
+rather than "infinitely old" — a row that has not completed cannot have run
+out of retention. ``superseded_at`` additionally stays NULL for the
+``rejected`` / ``deprecated`` rows the sweep also collects (nothing
+supersedes them); those fall back to ``created_at``, which is why the
+column can be added without changing their behaviour at all.
+
+UNIQUE(project_id, body_slug) ON ``task``
+-----------------------------------------
+Parent-plan D8: one ledger row ↔ one wiki page is the only genuine 1:1, so
+uniqueness belongs on ``body_slug``, NOT on the title (two tasks may share
+a name). Scoped by ``project_id`` because the slug is only unique within a
+project. MySQL permits repeated NULLs in a UNIQUE index, so this does not
+block the D4 state where ``body_slug`` is NULL until the body page exists.
 
 ZERO ROWS — D35a
 ----------------
@@ -159,9 +192,11 @@ def upgrade() -> None:
         sa.Column("active_form", sa.String(length=512), nullable=True),
         sa.Column("plan_path", sa.String(length=512), nullable=True),
         sa.Column("body_slug", _SLUG, nullable=True),
+        sa.Column("completed_at", sa.DateTime(), nullable=True),
         created_at,
         updated_at,
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("project_id", "body_slug", name="uq_task_project_body_slug"),
         sa.Index("ix_task_project_id", "project_id"),
         sa.Index("ix_task_status", "status"),
         **_MYSQL,
@@ -177,6 +212,7 @@ def upgrade() -> None:
         sa.Column("subsystem", sa.String(length=128), nullable=True),
         sa.Column("tier", sa.String(length=32), nullable=True),
         sa.Column("body_slug", _SLUG, nullable=True),
+        sa.Column("superseded_at", sa.DateTime(), nullable=True),
         created_at,
         updated_at,
         sa.PrimaryKeyConstraint("id"),

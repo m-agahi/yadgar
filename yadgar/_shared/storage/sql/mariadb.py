@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage.sql import ledger_columns as lc
 from yadgar._shared.storage.sql.config import (
     CLIENT_GROUP,
     MariaClientConfig,
@@ -303,6 +304,9 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         than the offending value, and by then the caller has lost the
         context in which the typo was made.
 
+        C15a: a row born ``status='completed'`` is stamped here, or its
+        retention clock never starts (``ledger_columns``).
+
         Raises:
             UnknownProjectError: ``project_id`` is not a registered project.
         """
@@ -312,9 +316,10 @@ class MariaStorageEngine(_ProjectRegistryMixin):
 
         sql = text(
             "INSERT INTO task "
-            "(project_id, title, status, state, active_form, plan_path, body_slug) "
+            "(project_id, title, status, state, active_form, plan_path, "
+            "body_slug, completed_at) "
             "VALUES (:project_id, :title, :status, :state, :active_form, "
-            ":plan_path, :body_slug)"
+            ":plan_path, :body_slug, :completed_at)"
         )
         params = {
             "project_id": project_id,
@@ -324,6 +329,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             "active_form": active_form,
             "plan_path": plan_path,
             "body_slug": body_slug,
+            "completed_at": lc.now_utc() if status == lc.STATUS_COMPLETED else None,
         }
         async with self._engine.begin() as conn:
             result = await conn.execute(sql, params)
@@ -350,8 +356,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             where_extra = " AND status = :status"
             params["status"] = status
         sql = text(
-            "SELECT id, project_id, title, status, state, active_form, "
-            "plan_path, body_slug, created_at, updated_at "
+            f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
             "FROM task WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC"
         )
         async with self._engine.connect() as conn:
@@ -378,8 +383,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             where_extra = " WHERE status = :status"
             params["status"] = status
         sql = text(
-            "SELECT id, project_id, title, status, state, active_form, "
-            "plan_path, body_slug, created_at, updated_at "
+            f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
             "FROM task" + where_extra + " ORDER BY id ASC"
         )
         async with self._engine.connect() as conn:
@@ -391,11 +395,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         """Single-row ``task`` lookup by ``id``. ``None`` when absent."""
         from sqlalchemy import text  # noqa: PLC0415
 
-        sql = text(
-            "SELECT id, project_id, title, status, state, active_form, "
-            "plan_path, body_slug, created_at, updated_at "
-            "FROM task WHERE id = :id"
-        )
+        sql = text(f"SELECT {lc.TASK_COLUMNS} FROM task WHERE id = :id")  # noqa: S608
         async with self._engine.connect() as conn:
             result = await conn.execute(sql, {"id": task_id})
             row = result.first()
@@ -409,6 +409,10 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         writes (minus ``id`` / ``created_at`` / ``updated_at`` — those are
         owned by MySQL). An empty ``fields`` is a no-op, NOT an error —
         the caller has nothing to update.
+
+        C15a — THE COMPLETION STAMP. A transition to ``status='completed'``
+        stamps ``completed_at`` unless the caller passed one explicitly.
+        Rationale + the leaving-``completed`` case: ``ledger_columns``.
         """
         from sqlalchemy import text  # noqa: PLC0415
 
@@ -424,10 +428,13 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             "active_form",
             "plan_path",
             "body_slug",
+            "completed_at",
         }
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"unknown task columns: {sorted(unknown)}")
+        if fields.get("status") == lc.STATUS_COMPLETED and "completed_at" not in fields:
+            fields = {**fields, "completed_at": lc.now_utc()}
         set_clause = ", ".join(f"`{col}` = :{col}" for col in fields)
         params: dict[str, Any] = dict(fields)
         params["id"] = task_id
@@ -555,8 +562,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             where_extra += " AND subsystem = :subsystem"
             params["subsystem"] = subsystem
         sql = text(
-            "SELECT id, project_id, title, status, decided_on, subsystem, "
-            "tier, body_slug, created_at, updated_at "
+            f"SELECT {lc.ADR_COLUMNS} "  # noqa: S608 — module constant, no interpolation
             "FROM adr WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC"
         )
         async with self._engine.connect() as conn:
@@ -568,11 +574,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         """Single-row ``adr`` lookup by ``id``."""
         from sqlalchemy import text  # noqa: PLC0415
 
-        sql = text(
-            "SELECT id, project_id, title, status, decided_on, subsystem, "
-            "tier, body_slug, created_at, updated_at "
-            "FROM adr WHERE id = :id"
-        )
+        sql = text(f"SELECT {lc.ADR_COLUMNS} FROM adr WHERE id = :id")  # noqa: S608
         async with self._engine.connect() as conn:
             result = await conn.execute(sql, {"id": adr_id})
             row = result.first()
@@ -606,12 +608,21 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         page-type retype (D23); F only flips the SQL ``status`` column so the
         ``adr_list(status='superseded')`` filter surfaces the target immediately
         after the supersede commit.
+
+        C15a — THE SUPERSESSION STAMP. Flipping TO ``'superseded'`` also
+        stamps ``superseded_at``, and ONLY that flip does (this same method
+        later flips the row to ``'archived'``). Rationale: ``ledger_columns``.
         """
         from sqlalchemy import text  # noqa: PLC0415
 
-        sql = text("UPDATE adr SET status = :status WHERE id = :id")
+        params: dict[str, Any] = {"id": adr_id, "status": status}
+        set_extra = ""
+        if status == lc.STATUS_SUPERSEDED:
+            set_extra = ", superseded_at = :superseded_at"
+            params["superseded_at"] = lc.now_utc()
+        sql = text(f"UPDATE adr SET status = :status{set_extra} WHERE id = :id")  # noqa: S608
         async with self._engine.begin() as conn:
-            await conn.execute(sql, {"id": adr_id, "status": status})
+            await conn.execute(sql, params)
 
     @observe(tier="boundary", metric="backend.sql.adr.list_superseded")
     async def list_superseded_adr_rows(self) -> list[dict]:
@@ -736,9 +747,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         from sqlalchemy import text  # noqa: PLC0415
 
         sql = text(
-            "SELECT id, name, body_slug, purpose, status, baseline_hash, "
-            "content_hash, uses, created_at, updated_at "
-            "FROM agent_pattern ORDER BY name ASC"
+            f"SELECT {lc.AGENT_PATTERN_COLUMNS} FROM agent_pattern ORDER BY name ASC"  # noqa: S608
         )
         async with self._engine.connect() as conn:
             result = await conn.execute(sql)
@@ -750,9 +759,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         from sqlalchemy import text  # noqa: PLC0415
 
         sql = text(
-            "SELECT id, name, body_slug, purpose, status, baseline_hash, "
-            "content_hash, uses, created_at, updated_at "
-            "FROM agent_pattern WHERE name = :name"
+            f"SELECT {lc.AGENT_PATTERN_COLUMNS} FROM agent_pattern WHERE name = :name"  # noqa: S608
         )
         async with self._engine.connect() as conn:
             result = await conn.execute(sql, {"name": name})
@@ -839,8 +846,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         from sqlalchemy import text  # noqa: PLC0415
 
         sql = text(
-            "SELECT id, name, body_slug, purpose, always_applied, position, "
-            "status, baseline_hash, content_hash, created_at, updated_at "
+            f"SELECT {lc.AGENT_DISCIPLINE_COLUMNS} "  # noqa: S608 — module constant
             "FROM agent_discipline ORDER BY position ASC, name ASC"
         )
         async with self._engine.connect() as conn:
@@ -910,8 +916,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         if not isinstance(limit, int) or limit < 1:
             raise ValueError(f"limit must be a positive int: {limit!r}")
         sql = text(
-            "SELECT id, name, body_slug, purpose, status, baseline_hash, "
-            "content_hash, uses, created_at, updated_at "
+            f"SELECT {lc.AGENT_PATTERN_COLUMNS} "  # noqa: S608 — module constant
             "FROM agent_pattern ORDER BY uses DESC, name ASC LIMIT :limit"
         )
         async with self._engine.connect() as conn:

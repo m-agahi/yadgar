@@ -17,18 +17,28 @@ PER-PAGE OPT-OUT: a body wiki page whose ``mutability_override`` is set to
 sanctioned (``_sanctioned=True``) so per-type defaults do NOT trip the gate —
 the override is the explicit opt-out.
 
-AGE-FIELD DEVIATION (documented in completing PR body):
-  - The plan calls for aging task rows off ``completed_at`` (§3.4 / §14.2),
-    but the ``task`` table has no ``completed_at`` column (only
-    ``created_at`` + ``updated_at``), and the project no-migration rule
-    forbids adding one. K ages task rows off ``updated_at`` instead —
-    a regression on §14.2's intent ("editing a completed task must not
-    reset its 90-day clock"). Operators who want strict completion-clock
-    behaviour must add a ``completed_at`` column + a follow-up sweep
-    revision.
-  - ADR rows have no ``completed_at`` either; K ages them off
-    ``created_at`` (the plan's choice — §3.5).
-  - agent_pattern / agent_discipline rows use ``updated_at``.
+AGE FIELDS (C15a — the Car K deviation is RETIRED):
+  Car K aged task rows off ``updated_at`` and ADR rows off ``created_at``,
+  because the ``task``/``adr`` tables carried neither a ``completed_at`` nor
+  a ``superseded_at`` column and K read the project no-migration rule as
+  forbidding one. C15a (0047 remediation §5.C15a items 1+2) establishes that
+  ``002_ledger_tables`` is unreleased and CREATES both tables itself, so the
+  columns were added in place. The sweep now ages off:
+
+  - task: ``completed_at``. ``updated_at`` bumps on every edit, so under K
+    editing a completed task reset its 90-day clock — the exact regression
+    §14.2 named. ``TestTaskArchivePolicy`` pins BOTH directions: an old
+    ``completed_at`` with a fresh ``updated_at`` still archives, and a fresh
+    ``completed_at`` with an old ``updated_at`` does NOT.
+  - adr: ``superseded_at``, falling back to ``created_at`` when unset. Under
+    K an ADR created 120 days ago and superseded today archived on the very
+    next sweep with ZERO grace. The fallback is load-bearing, not tidiness:
+    ``rejected`` / ``deprecated`` rows are swept too and are never stamped
+    with a ``superseded_at``, so without it two of the three sweep statuses
+    would silently stop archiving altogether. ``TestAdrArchivePolicy`` pins
+    all three cases.
+  - agent_pattern / agent_discipline rows use ``updated_at`` (unchanged —
+    those tables carry no other timestamp).
 
 ORDERING (§4.1): body page retype FIRST, then ledger row flip. A mid-sweep
 crash leaves a retyped page + stale row — detectable by
@@ -44,12 +54,16 @@ archives nothing — mirrors ``MEMORY_ARCHIVE_RETENTION_CIRCUIT_BREAKER``.
 
 from __future__ import annotations
 
+import ast
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from yadgar.backend import admin_exec
+from yadgar.backend.admin_exec import nightly_sweep
 from yadgar.backend.admin_exec.nightly_sweep import run_nightly_archive_sweep
 
 # ---------------------------------------------------------------------------
@@ -217,12 +231,14 @@ def _task_row(
     status: str = "completed",
     body_slug: str | None = None,
     updated_at: str | None = None,
+    completed_at: str | None = None,
 ) -> dict:
     if body_slug is None:
         # Default to the test-flavoured canonical slug (the same shape
         # Car L's reslug writes: ``{project_id_safe}_task-{id}``).
         project_id_safe = project_id.replace("/", "_")
         body_slug = f"{project_id_safe}_task-{id_}"
+    resolved_updated = updated_at if updated_at is not None else _ago(100)
     return {
         "id": id_,
         "project_id": project_id,
@@ -233,7 +249,13 @@ def _task_row(
         "plan_path": None,
         "body_slug": body_slug,
         "created_at": _ago(200),
-        "updated_at": updated_at if updated_at is not None else _ago(100),
+        "updated_at": resolved_updated,
+        # C15a: the sweep ages off ``completed_at``. A caller that says only
+        # "this row is old" through ``updated_at`` means the task completed
+        # then too, so the default MIRRORS it and every pre-C15a caller keeps
+        # its original meaning. The tests that actually pin the age field pass
+        # BOTH values explicitly and so do not depend on this default.
+        "completed_at": completed_at if completed_at is not None else resolved_updated,
     }
 
 
@@ -244,10 +266,12 @@ def _adr_row(
     status: str = "superseded",
     body_slug: str | None = None,
     created_at: str | None = None,
+    superseded_at: str | None = None,
 ) -> dict:
     if body_slug is None:
         project_id_safe = project_id.replace("/", "_")
         body_slug = f"{project_id_safe}_adr-{id_}"
+    resolved_created = created_at if created_at is not None else _ago(100)
     return {
         "id": id_,
         "project_id": project_id,
@@ -257,8 +281,13 @@ def _adr_row(
         "subsystem": None,
         "tier": None,
         "body_slug": body_slug,
-        "created_at": created_at if created_at is not None else _ago(100),
+        "created_at": resolved_created,
         "updated_at": _ago(50),
+        # C15a: mirrors ``created_at`` by default for the same reason
+        # ``_task_row.completed_at`` mirrors ``updated_at`` — a caller that
+        # says only "this ADR is old" keeps meaning that. Set it to ``None``
+        # explicitly to exercise the created_at FALLBACK path.
+        "superseded_at": superseded_at if superseded_at is not None else resolved_created,
     }
 
 
@@ -381,8 +410,20 @@ class TestTaskArchivePolicy:
     async def test_completed_task_past_retention_is_archived(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A task past TASK_ARCHIVE_RETENTION_DAYS is flipped + body retyped."""
-        task = _task_row(id_=42, body_slug="p_r_task-42", updated_at=_ago(120))
+        """A task past TASK_ARCHIVE_RETENTION_DAYS is flipped + body retyped.
+
+        C15a rewrite of the Car K pin. ``updated_at`` is deliberately FRESH
+        (1 day) while ``completed_at`` is old (120 days): the row completed
+        long ago and was merely edited yesterday, which §14.2 says must not
+        reset the retention clock. Under Car K's ``updated_at`` policy this
+        row survived the sweep; it must now archive.
+        """
+        task = _task_row(
+            id_=42,
+            body_slug="p_r_task-42",
+            completed_at=_ago(120),
+            updated_at=_ago(1),
+        )
         sql = _FakeSqlStorage(task_rows=[task])
         surreal = _FakeSurrealStorage(
             pages=[_body_page(id_=100, slug="p_r_task-42", page_type="task")]
@@ -403,10 +444,74 @@ class TestTaskArchivePolicy:
         # the ordering test is in class 7 below).
         assert surreal.updates  # page retype happened
 
+    async def test_archive_sweep_ages_off_completed_at_not_updated_at(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A freshly-completed task with an OLD ``updated_at`` is NOT archived.
+
+        The RED the Car K plan promised at its ``:151`` and never wrote. This
+        is the whole point of the ``completed_at`` column: without this
+        assertion the column is decorative, because every other task test
+        would still pass with the sweep reading ``updated_at``.
+
+        The row completed 10 days ago (well inside the 90-day window) but
+        carries an ``updated_at`` of 100 days — the shape a row acquires when
+        it is created and edited long before it is finally completed. Aging
+        off ``updated_at`` archives it; aging off ``completed_at`` does not.
+        """
+        task = _task_row(
+            id_=43,
+            body_slug="p_r_task-43",
+            completed_at=_ago(10),
+            updated_at=_ago(100),
+        )
+        sql = _FakeSqlStorage(task_rows=[task])
+        surreal = _FakeSurrealStorage(
+            pages=[_body_page(id_=430, slug="p_r_task-43", page_type="task")]
+        )
+        _patch_sql(monkeypatch, sql)
+        _patch_surreal(monkeypatch, surreal)
+
+        result = await run_nightly_archive_sweep(
+            {"retention_days": 90, "now": datetime.now(UTC).timestamp()}
+        )
+
+        assert result["archived_tasks"] == 0, (
+            "the sweep archived a task completed 10 days ago — it is aging off "
+            "updated_at, not completed_at"
+        )
+        assert sql.task_updates == []
+        assert surreal.updates == []
+
+    async def test_task_with_null_completed_at_is_never_archived(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``completed`` row with no ``completed_at`` stamp is left alone.
+
+        NULL is not "infinitely old". A row whose completion clock never
+        started cannot have run out, and archiving on a missing timestamp
+        would make an unstamped corpus sweep itself away on the first run.
+        """
+        task = _task_row(id_=44, body_slug="p_r_task-44", updated_at=_ago(365))
+        task["completed_at"] = None
+        sql = _FakeSqlStorage(task_rows=[task])
+        surreal = _FakeSurrealStorage(
+            pages=[_body_page(id_=440, slug="p_r_task-44", page_type="task")]
+        )
+        _patch_sql(monkeypatch, sql)
+        _patch_surreal(monkeypatch, surreal)
+
+        result = await run_nightly_archive_sweep(
+            {"retention_days": 90, "now": datetime.now(UTC).timestamp()}
+        )
+
+        assert result["archived_tasks"] == 0
+        assert sql.task_updates == []
+
     async def test_completed_task_within_retention_is_not_archived(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A task with updated_at inside the retention window stays put."""
+        """A task with completed_at inside the retention window stays put."""
         task = _task_row(id_=7, updated_at=_ago(10))
         sql = _FakeSqlStorage(task_rows=[task])
         surreal = _FakeSurrealStorage()
@@ -508,8 +613,20 @@ class TestAdrArchivePolicy:
     async def test_superseded_adr_past_retention_is_archived(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An ADR with status='superseded' and old created_at is flipped + retype."""
-        adr = _adr_row(id_=100, body_slug="p_r_adr-100", created_at=_ago(120))
+        """An ADR superseded past retention is flipped + retyped.
+
+        C15a rewrite of the Car K pin, analogous to the task pin above.
+        ``created_at`` is deliberately FRESH (1 day) while ``superseded_at``
+        is old (120 days) — an ADR written yesterday and superseded 120 days
+        ago is not a real history, but it is the only arrangement that proves
+        the sweep reads ``superseded_at`` rather than ``created_at``.
+        """
+        adr = _adr_row(
+            id_=100,
+            body_slug="p_r_adr-100",
+            created_at=_ago(1),
+            superseded_at=_ago(120),
+        )
         sql = _FakeSqlStorage(adr_rows=[adr], task_rows_all_projects=[])
         surreal = _FakeSurrealStorage(
             pages=[_body_page(id_=110, slug="p_r_adr-100", page_type="adr")]
@@ -531,6 +648,80 @@ class TestAdrArchivePolicy:
         assert sql.adr_flips == [(100, "archived")]
         # Body retyped
         assert surreal.updates
+
+    async def test_recently_superseded_old_adr_gets_grace(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OLD ADR superseded TODAY is not archived on the next sweep.
+
+        C15a item 2. Under Car K's ``created_at`` policy an ADR written 120
+        days ago and superseded today was archived on the very next nightly
+        run — zero grace, and the retention window silently measured the
+        wrong interval (age-since-authoring, not age-since-retirement).
+        """
+        adr = _adr_row(
+            id_=102,
+            body_slug="p_r_adr-102",
+            created_at=_ago(120),
+            superseded_at=_ago(1),
+        )
+        sql = _FakeSqlStorage(adr_rows=[adr], task_rows_all_projects=[])
+        surreal = _FakeSurrealStorage(
+            pages=[_body_page(id_=112, slug="p_r_adr-102", page_type="adr")]
+        )
+        _patch_sql(monkeypatch, sql)
+        _patch_surreal(monkeypatch, surreal)
+
+        result = await run_nightly_archive_sweep(
+            {
+                "retention_days": 90,
+                "project_id": "p/r",
+                "now": datetime.now(UTC).timestamp(),
+            }
+        )
+
+        assert result["archived_adrs"] == 0, (
+            "an ADR superseded 1 day ago was archived — the sweep is aging off "
+            "created_at, so supersession grants no grace period at all"
+        )
+        assert sql.adr_flips == []
+        assert surreal.updates == []
+
+    async def test_rejected_adr_without_superseded_at_ages_off_created_at(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``rejected`` ADR with no ``superseded_at`` still ages off ``created_at``.
+
+        The fallback is load-bearing, not tidiness. Two of the three sweep
+        statuses (``rejected``, ``deprecated``) are never stamped with a
+        ``superseded_at`` — nothing supersedes them. A strict
+        ``superseded_at``-only policy would silently stop archiving them
+        forever while every other test in this class stayed green.
+        """
+        adr = _adr_row(
+            id_=103,
+            status="rejected",
+            body_slug="p_r_adr-103",
+            created_at=_ago(120),
+        )
+        adr["superseded_at"] = None
+        sql = _FakeSqlStorage(adr_rows=[adr], task_rows_all_projects=[])
+        surreal = _FakeSurrealStorage(
+            pages=[_body_page(id_=113, slug="p_r_adr-103", page_type="adr")]
+        )
+        _patch_sql(monkeypatch, sql)
+        _patch_surreal(monkeypatch, surreal)
+
+        result = await run_nightly_archive_sweep(
+            {
+                "retention_days": 90,
+                "project_id": "p/r",
+                "now": datetime.now(UTC).timestamp(),
+            }
+        )
+
+        assert result["archived_adrs"] == 1
+        assert sql.adr_flips == [(103, "archived")]
 
     async def test_accepted_adr_is_not_archived(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An accepted ADR is never sweep-eligible (D7 — accepted stays open)."""
@@ -759,3 +950,151 @@ class TestDefaultRetention:
         result = await run_nightly_archive_sweep({"retention_days": 90})
 
         assert result["archived_tasks"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 10. Observability rationale honesty (C15a item 4 / ADR-0074)
+# ---------------------------------------------------------------------------
+
+
+def _observe_call(node: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.Call | None:
+    """Return the ``@observe(...)`` decorator call on *node*, if any."""
+    for dec in node.decorator_list:
+        if isinstance(dec, ast.Call):
+            fn = dec.func
+            name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", None)
+            if name == "observe":
+                return dec
+    return None
+
+
+def _observe_kwarg(call: ast.Call, key: str) -> ast.expr | None:
+    """Return the value node for keyword *key* on an ``@observe(...)`` call."""
+    for kw in call.keywords:
+        if kw.arg == key:
+            return kw.value
+    return None
+
+
+def _scan_span_claims(source: str) -> tuple[list[str], dict[str, bool], list[str]]:
+    """Return ``(violations, span_map, exempt_names)`` for a module's source.
+
+    ``span_map`` maps each module-level function name to whether it actually
+    OPENS an ``@observe`` span: a bare ``@observe`` or one with ``span=True``
+    does; ``exempt=`` (a pure passthrough — ``observe.py`` returns the
+    undecorated function) and ``span=False`` do not.
+
+    A violation is an ``exempt=`` rationale that uses the word "span" while
+    some observed function it delegates to opens none. "Delegates to" is
+    read two ways, because a false claim comes in both shapes:
+
+      * the rationale NAMES the callee ("…their own @observe on
+        ``_retype_body_page``"), or
+      * the rationale claims it generically ("each leaf already carries its
+        own @observe span") and the callee is resolved from the function
+        body instead.
+
+    Only module-local names resolve; a dotted ``sql.foo`` lives on another
+    module and is out of reach by construction. Callees carrying no
+    ``@observe`` at all are out of scope — a bare one-line shorthand like
+    ``_days`` is not what "leaf" means, and flagging it would bury the real
+    finding in noise.
+
+    This is the I33 blind spot the scan exists for: the coverage lint counts
+    ``exempt=`` as satisfied and never reads the prose, so a rationale can
+    point at spans that do not exist while it reports ``MISSING=0``.
+    """
+    tree = ast.parse(source)
+    functions = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    span_map: dict[str, bool] = {}
+    observed: set[str] = set()
+    rationales: dict[str, str] = {}
+    bodies: dict[str, ast.AST] = {}
+    for node in functions:
+        bodies[node.name] = node
+        call = _observe_call(node)
+        if call is None:
+            span_map[node.name] = False
+            continue
+        observed.add(node.name)
+        exempt = _observe_kwarg(call, "exempt")
+        if exempt is not None:
+            span_map[node.name] = False
+            rationales[node.name] = ast.literal_eval(exempt)
+            continue
+        span_kw = _observe_kwarg(call, "span")
+        span_map[node.name] = not (isinstance(span_kw, ast.Constant) and span_kw.value is False)
+
+    violations: list[str] = []
+    for name, text in sorted(rationales.items()):
+        if "span" not in text.lower():
+            continue
+        named = {
+            other
+            for other in span_map
+            if other != name and re.search(rf"(?<![\w.]){re.escape(other)}\b", text)
+        }
+        called = {
+            child.func.id
+            for child in ast.walk(bodies[name])
+            if isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id in observed
+            and child.func.id != name
+        }
+        for other in sorted(named | called):
+            if not span_map[other]:
+                violations.append(
+                    f"{name}'s exempt rationale claims a span on {other}, "
+                    f"but {other} opens none (it is exempt or span=False)"
+                )
+    return violations, span_map, sorted(rationales)
+
+
+class TestObservabilityRationaleHonesty:
+    """C15a item 4 — an ``exempt=`` rationale may not name a span that is absent."""
+
+    def test_no_exempt_rationale_claims_a_span_that_does_not_exist(self) -> None:
+        """Every ``exempt=`` span claim in nightly_sweep.py resolves to a real span.
+
+        Before C15a, ``_sweep_tasks_and_adrs`` was exempt "because each leaf
+        already carries its own @observe span" while both leaves
+        (``_sweep_project_tasks`` / ``_sweep_project_adrs``) were themselves
+        exempt no-ops — zero spans anywhere below the boundary, and I33
+        reporting MISSING=0 throughout. Per ADR-0074 those loop helpers now
+        use ``span=False``, which keeps the metric and the lint sentinel
+        while opening no per-item span.
+        """
+        source = Path(nightly_sweep.__file__).read_text(encoding="utf-8")
+        violations, span_map, exempt_names = _scan_span_claims(source)
+
+        # Guard against a vacuous pass: the scan must have parsed real
+        # decorators, or an empty result would prove nothing at all.
+        assert span_map, "the AST scan found no module-level functions"
+        assert exempt_names, "the AST scan found no exempt= rationales to check"
+        assert span_map.get("run_nightly_archive_sweep") is True, (
+            "the boundary op should open a span; the scan is misreading decorators"
+        )
+        assert not violations, "\n".join(violations)
+
+    def test_the_scan_reports_a_planted_false_span_claim(self) -> None:
+        """The scan is not vacuous — a planted violation IS reported.
+
+        Without this, the assertion above would keep passing if the matcher
+        silently stopped matching (the exact shape of 031's dead idempotency
+        filter, which never projected the column it filtered on).
+        """
+        planted = (
+            "from yadgar._shared.observability.observe import observe\n"
+            "\n"
+            "@observe(tier='hot', span=False)\n"
+            "def _leaf():\n"
+            "    return 1\n"
+            "\n"
+            "@observe(exempt='dispatch only; _leaf carries its own @observe span')\n"
+            "def _caller():\n"
+            "    return _leaf()\n"
+        )
+        violations, _, _ = _scan_span_claims(planted)
+        assert violations, "the scan failed to report a planted false span claim"
+        assert "_leaf" in violations[0]

@@ -140,6 +140,35 @@ def test_seed_task_from_pages_dry_run_does_not_write():
     assert callable(sig)
 
 
+def test_seed_passes_null_body_slug_never_empty_string():
+    """C15a — the seed must pass ``body_slug=None``, not ``""``.
+
+    ``002_ledger_tables`` now carries ``UNIQUE(project_id, body_slug)`` on
+    ``task``. MySQL permits repeated NULLs in a UNIQUE index but not repeated
+    empty strings, and the ``## task:<id>`` section schema above has NO
+    ``body_slug`` field — so every seeded row takes the default. With ``""``
+    the constraint would admit exactly one task per project and silently
+    swallow the rest in the seed's ``except`` clause as "skipped duplicates",
+    breaking D35c's exact-equality gate on the very first run.
+
+    Asserted on the source rather than a round-trip because the write path
+    needs a live MariaDB, which the yadgar-ci image does not have — the same
+    static-assertion idiom the ledger CRUD tests use.
+    """
+    import inspect
+
+    from yadgar.backend.admin_exec import seed
+
+    src = inspect.getsource(seed.seed_task_from_pages)
+    assert 'body_slug=_fields.get("body_slug", "")' not in src, (
+        'the seed passes body_slug="" — UNIQUE(project_id, body_slug) will '
+        "collapse every task in a project onto one row"
+    )
+    assert 'body_slug=_fields.get("body_slug") or None' in src, (
+        "the seed must pass an explicit None for an absent body_slug"
+    )
+
+
 def test_seed_dispatch_accepts_payload_shape():
     """The dispatch table accepts a dict payload with directory+project_id."""
     from yadgar.backend.admin_exec import _ADMIN_OPS
