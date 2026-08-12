@@ -226,14 +226,19 @@ class TestRecallFullPipeline:
             ["formatting"],
         )
 
-        # Add a hard rule: only show memories with importance > 0.7
+        # Add a hard rule: only show memories with importance > 0.9.
+        # C10 (0047 §5(a)) RETIRED scope="directory" — add_rule now raises on it
+        # rather than minting a rule that is dead on arrival (its scope_value
+        # would hold a filesystem path, which can never equal a project_id).
+        # Re-keyed onto the replacement kind: scope="project", matched by exact
+        # equality against the project_id the recall below is scoped to.
         rule_result = server.add_rule(
             rule_type="hard",
-            scope="directory",
+            scope="project",
             condition="importance > 0.9",
             action="filter",
             priority=10,
-            scope_value="/test/rules",
+            scope_value=_PROJECT,
         )
         assert rule_result["status"] == "created"
 

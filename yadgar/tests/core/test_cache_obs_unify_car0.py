@@ -111,6 +111,13 @@ def test_rules_cache_emits_hit_miss_and_evict():
     eng = RulesEngine.__new__(RulesEngine)
     eng._storage = _FakeStorage()
     eng._applicable_rules_cache = {}
+    # C10 (0047 §5) added the once-per-process legacy-scope census, whose
+    # latch `__init__` initialises. This test bypasses `__init__` on purpose
+    # (it wants no Settings), so the latch has to be set here or
+    # `get_applicable_rules` raises AttributeError before it can emit the
+    # cache metrics under test. `_FakeStorage.get_all_active_rules_by_scope`
+    # already exists for the same reason — this is the second half of it.
+    eng._reported_unmigrated = False
 
     miss0 = metrics.yadgar_cache_miss_total.labels(cache="rules")._value.get()
     hit0 = metrics.yadgar_cache_hit_total.labels(cache="rules")._value.get()
