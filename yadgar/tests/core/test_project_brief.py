@@ -83,6 +83,38 @@ def test_catalog_recent_episode_count_non_negative():
     assert result["recent_episode_count"] >= 0
 
 
+def test_catalog_recent_episode_count_counts_project_scoped_episode(flush_queue):
+    """G2 item 1: recent_episode_count must key off the resolved project_id.
+
+    Car F7 fixed the identical bug for top_anchors/hot_memories in this same
+    file (``_project_scope_key``), but ``_project_brief_catalog_full``'s
+    ``recent_episode_count`` query was missed — it still binds
+    ``directory_context = $dir`` on the raw resolved DIRECTORY PATH, while
+    ``memorize`` (C10f) stamps ``directory_context`` from the resolved
+    project_id only. An episodic memory written under ``project=`` therefore
+    can never match this query's predicate.
+
+    Proves the bucket is non-empty for the RIGHT reason (an episodic row
+    genuinely scoped to this project_id exists) rather than asserting
+    "not present" over an empty bucket — the vacuity trap this train keeps
+    hitting.
+    """
+    directory = "/tmp/recent_episode_count_test_dir"
+    server.memorize(
+        content="recent episode count probe memory",
+        project=TEST_PROJECT_ID,
+    )
+    flush_queue()
+
+    result = server.project_brief(directory, mode="catalog", project=TEST_PROJECT_ID)
+    assert result["recent_episode_count"] >= 1, (
+        "an episodic memory stamped with directory_context=project_id "
+        "(via memorize's project= override) did not surface in "
+        "recent_episode_count — the query is still binding on the raw "
+        "directory path instead of the resolved project scope key"
+    )
+
+
 def test_catalog_init_memory_present_false_when_none():
     result = server.project_brief("/tmp/noproject", project=TEST_PROJECT_ID)
     assert result["init_memory_present"] is False

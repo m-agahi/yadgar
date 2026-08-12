@@ -263,6 +263,41 @@ async def test_mapped_directories_get_their_host_resolved_project_id(fakes):
 
 
 @pytest.mark.asyncio
+async def test_an_empty_string_mapping_target_is_treated_as_unmapped(fakes):
+    """G2 item 5 — an operator-supplied ``""`` target is not a project_id.
+
+    ``_plan_updates`` used ``if target is None:`` to decide unmapped, so a
+    mapping entry like ``{_YADGAR: ""}`` (an operator typo, a stripped
+    value, a bad host-side join) satisfied ``target is not None`` and was
+    bucketed as a real UPDATE carrying ``project_id=""`` — visible in the
+    dry-run manifest as if it were a legitimate target, and (were ``_apply``
+    ever invoked directly, bypassing the registry gate) would have bound the
+    empty string as a real parameter rather than the ``NONE`` literal
+    ``project_id_set_fragment`` uses everywhere else in this train. An empty
+    string is exactly as "no derivable owner" as a mapping key that is
+    simply absent, so it must land in ``unmapped`` (the reviewed/quarantine
+    path), not ``updates``.
+
+    Proves the corpus row genuinely exists first (``_YADGAR`` rows are
+    present in the fixture corpus — memory:1, memory:3, memory:8,
+    wiki_page:1) rather than asserting absence over an empty bucket.
+    """
+    _, _ = fakes
+    bad_mapping = dict(_MAPPING)
+    bad_mapping[_YADGAR] = ""
+    r = await project_id_backfill(_payload(mapping=bad_mapping))
+
+    updated_dcs = {u["directory_context"] for u in r["updates"]}
+    assert _YADGAR not in updated_dcs, (
+        f"an empty-string mapping target was bucketed as an update: {r['updates']}"
+    )
+    unmapped_dcs = {u["directory_context"] for u in r["unmapped"]}
+    assert _YADGAR in unmapped_dcs, (
+        f"an empty-string mapping target must land in unmapped, got: {r['unmapped']}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_global_rows_get_an_owner_and_keep_their_reach(fakes):
     """Decision G: ``global`` gets a project_id owner PLUS the ``global`` tag.
 

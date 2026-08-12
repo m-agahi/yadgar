@@ -31,6 +31,30 @@ blocks; a UNIQUE index over a nullable `directory` is deliberately avoided):
 
 Resolution / fallback (per-dir → global → default) is Car G2's getter, NOT here —
 these methods return the RAW (key, directory) row only.
+
+**``project_id`` is declared on this table (migration 033, C11) and DELIBERATELY
+never stamped by any method here.** This is not an oversight — read this before
+"fixing" it. The two-condition rule for re-keying a directory-scoped table onto
+``project_id`` needs BOTH a column AND a caller that HOLDS a resolved identity;
+condition 1 is met (the column exists), condition 2 is not. Every live caller of
+``config_set``/``config_get``/``config_list``/``config_delete``
+(``core/server/tools/runtime_config.py``) threads a real filesystem path from
+the host client or the CLI — none resolves a ``project_id`` today, and
+``accept_project_param`` (the MCP-boundary guard those tools use) explicitly
+documents this as a "KNOWN, ACCEPTED GAP UNTIL C7": these tools' scope key
+stays ``directory`` until a future car re-keys the WHERE clause AND threads a
+resolved identity end-to-end. Stamping ``project_id`` here now — with no caller
+ever supplying one — would write ``NONE`` on every row, i.e. dead code with no
+observable effect, while giving a false impression that this table is already
+on the project_id migration path. See
+``yadgar/tests/_shared/test_c9a_directory_residue_shared.py``'s
+``_C11_SCHEMA_ONLY`` entries for ``storage/runtime_config.py`` (the
+residue-allowlist's record of this same decision) and migration 033's
+docstring in ``migrations.py`` for why the column was declared anyway (leaving
+one C11 table without it would have re-surfaced the same gap report a fourth
+time). Revisit together with the "zero-directory" follow-up
+(docs/issues/0001-pr40-carryover.md §3.2) that re-keys the whole
+``accept_project_param`` tool class, not in isolation.
 """
 
 from __future__ import annotations

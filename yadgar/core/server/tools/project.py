@@ -2035,9 +2035,17 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     Car F7: ``top_anchors_project``/``hot_memories`` key off
     ``project_scope_key`` (resolved project_id when the caller named one,
     else ``resolved`` — see ``project_brief``'s docstring comment).
-    ``top_anchors_global``, ``key_wiki_pages``, ``wiki_catalog``,
-    ``recent_adrs`` and ``recent_episode_count`` stay on ``resolved`` /
-    the tag-based predicate — unrelated to the bucket this car fixes.
+    ``top_anchors_global``, ``key_wiki_pages``, ``wiki_catalog`` and
+    ``recent_adrs`` stay on ``resolved`` / the tag-based predicate —
+    unrelated to the bucket this car fixes.
+
+    Car G2 item 1: ``recent_episode_count`` ALSO keys off
+    ``project_scope_key`` now. F7 fixed the identical
+    ``directory_context = $dir``-on-a-raw-path bug for the anchor/hot-memory
+    buckets in this same function and missed this one — ``memorize`` (C10f)
+    stamps ``directory_context`` from the resolved project_id, never from a
+    filesystem path, so the query could never match a post-C10f episodic
+    write.
     """
     from datetime import timedelta
 
@@ -2056,7 +2064,7 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     ep_rows = storage._q(
         "SELECT id FROM memory WHERE directory_context = $dir "
         "AND store_type = 'episodic' AND created_at >= $cutoff",
-        {"dir": resolved, "cutoff": cutoff},
+        {"dir": project_scope_key, "cutoff": cutoff},
     )
     result: dict = {
         "_resolved_directory": resolved,
