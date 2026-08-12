@@ -133,7 +133,13 @@ def test_pre_compact_drain_op_delegates_to_replay():
 
     # HOOKS Car 2: op body forwards transcript_path (None when absent).
     # v5.135 drain car: also forwards host-parsed in_flight (None when absent).
-    replay.pre_compact_drain.assert_called_once_with("/proj", transcript_path=None, in_flight=None)
+    # C11: also forwards project_id (None when the payload names none — the
+    # backend body's own docstring says both keys always travel; get_active_
+    # checkpoint falls back to the legacy directory key when it is absent, so
+    # None here is a legitimate "not supplied" sentinel, not an unscoped read).
+    replay.pre_compact_drain.assert_called_once_with(
+        "/proj", transcript_path=None, in_flight=None, project_id=None
+    )
     assert result == {"status": "drained", "epoch": 4, "auto_checkpoint_created": True}
 
 
@@ -149,6 +155,7 @@ def test_pre_compact_drain_op_forwards_transcript_path():
     ):
         resto_mod.pre_compact_drain({"directory": "/proj", "transcript_path": "/tmp/s.jsonl"})
 
+    # C11: project_id also rides this call (None — see the note above).
     replay.pre_compact_drain.assert_called_once_with(
-        "/proj", transcript_path="/tmp/s.jsonl", in_flight=None
+        "/proj", transcript_path="/tmp/s.jsonl", in_flight=None, project_id=None
     )

@@ -22,7 +22,11 @@ class TestForwardRestore:
         payload = {"formatted": "# R", "epoch": 2}
         with patch("yadgar.core.forward._forward_restore", return_value=payload) as fwd:
             result = _shared.forward_restore("/my/proj")
-        fwd.assert_called_once_with("/my/proj")
+        # C10g: forward_restore's project_id defaults to None and is always
+        # threaded through by keyword. _forward_restore's own docstring: None
+        # means "caller named no project" — restore's memory-backed sinks come
+        # back EMPTY rather than widened to the corpus, never unscoped-read.
+        fwd.assert_called_once_with("/my/proj", project_id=None)
         assert result is payload
 
 
