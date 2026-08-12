@@ -327,6 +327,92 @@ jobs:
             -n 0 \
             -q --tb=short
 
+  # ── engine #2 (MariaDB) integration — task #26 ────────────────────────────
+  #
+  # (This comment deliberately writes no `yadgar/tests/<dir>/` path and no
+  # quoted pytest marker: scripts/check_ci_local_parity.py discovers subsystem
+  # legs by SHAPE, over the raw text of the preceding job's block, and either
+  # token in a comment makes it mis-attribute this job's contents to test-perf.)
+  #
+  # WHY THIS JOB EXISTS. The engine-#2 tests carry the integration marker, and
+  # every other job's marker filter excludes it, so this suite had NEVER
+  # executed in CI. That is how a migration
+  # chain that cannot run under production's own grants shipped and stayed
+  # broken for months: the offline tests pinned the DDL text, the grant test
+  # pinned the GRANT text, and nothing ever started a server to discover that
+  # the granted account could not create the tables it was being granted.
+  #
+  # BARE ON THE RUNNER HOST — no `container:`. The other jobs run inside the
+  # yadgar-ci image, which has no podman (that is exactly what the
+  # YADGAR_TEST_SKIP_RUNTIME_CHECK env at the top of this file is for), and
+  # these tests need to start a real mariadb container. The runner host does
+  # have podman.
+  #
+  # A SKIPPED RUN IS NOT A PASS. The fixture calls `pytest.skip` when no
+  # container runtime is found, and a job that skips everything exits 0 and
+  # looks green — the same "green means nothing" failure this job is here to
+  # end. So the runtime is asserted up front, and the run is required to have
+  # COLLECTED tests and reported zero skips.
+  test-engine2-integration:
+    runs-on: [self-hosted, linux, x64, yadgar]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Trust workspace
+        run: git config --global --add safe.directory '*'
+
+      - name: Assert a container runtime is present (a skip here is a failure)
+        run: |
+          set -euo pipefail
+          command -v podman >/dev/null 2>&1 || command -v docker >/dev/null 2>&1 || {
+            echo "no podman/docker on the runner host — the engine-#2 suite cannot run," >&2
+            echo "and a silent skip is what let a broken migration ship. Failing loudly." >&2
+            exit 1
+          }
+
+      - name: Install uv
+        run: python3 -m pip install --quiet --disable-pip-version-check uv==0.9.7
+
+      - name: Sync the sql + test extras
+        # The `sql` extra (sqlalchemy + asyncmy + alembic) is NOT baked into
+        # yadgar-ci, and this job does not use that image anyway.
+        run: python3 -m uv sync --extra sql --extra test
+
+      - name: Run the engine-#2 integration suite
+        run: |
+          set -o pipefail
+          python3 -m uv run --extra sql --extra test python -m pytest \
+            yadgar/tests/integration/test_mariadb_migrations.py \
+            yadgar/tests/integration/test_mariadb_connection.py \
+            yadgar/tests/integration/test_mariadb_dump_arm.py \
+            yadgar/tests/integration/test_mariadb_restore_arm.py \
+            -m integration \
+            -n 0 \
+            -q -rf --tb=short \
+            2>&1 | tee pytest-engine2.txt
+
+      - name: Gate on tests having actually RUN
+        # `0 passed` and `N skipped` both exit 0. Neither is evidence.
+        run: |
+          set -euo pipefail
+          if grep -qE '[0-9]+ skipped' pytest-engine2.txt; then
+            echo "the engine-#2 suite skipped tests — a skipped privilege test is not a pass:" >&2
+            grep -E '[0-9]+ skipped' pytest-engine2.txt >&2
+            exit 1
+          fi
+          grep -qE '[1-9][0-9]* passed' pytest-engine2.txt || {
+            echo "the engine-#2 suite collected nothing" >&2
+            exit 1
+          }
+
+      - name: Upload output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: pytest-engine2
+          path: pytest-engine2.txt
+          retention-days: 1
+
   check-skip-inventory:
     runs-on: [self-hosted, linux, x64, yadgar]
     # Wave 3 — validates the four legs' pytest -rs skip summaries WITHOUT
@@ -482,6 +568,7 @@ jobs:
         test-backend,
         test-core,
         test-perf,
+        test-engine2-integration,
         check-skip-inventory,
         invariant-checks,
         viz-tests,
@@ -509,6 +596,10 @@ jobs:
           fi
           if [ "${{ needs.test-perf.result }}" != "success" ]; then
             echo "test-perf failed (result: ${{ needs.test-perf.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-engine2-integration.result }}" != "success" ]; then
+            echo "test-engine2-integration failed (result: ${{ needs.test-engine2-integration.result }})"
             exit 1
           fi
           if [ "${{ needs.check-skip-inventory.result }}" != "success" ]; then

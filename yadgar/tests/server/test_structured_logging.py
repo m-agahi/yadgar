@@ -131,6 +131,60 @@ class TestJSONLogFormatter:
         assert len(tb) <= TRACEBACK_MAX_CHARS + 50  # +50 for truncation marker
         assert "RuntimeError" in tb  # type must survive
 
+    def test_truncation_keeps_the_exception_message_at_the_tail(self):
+        """The DIAGNOSIS fix: an over-long traceback must not lose its last line.
+
+        Truncation used to be ``tb_text[:TRACEBACK_MAX_CHARS]`` — head only.
+        A Python traceback puts the frames first and the exception's own
+        message LAST, so over the cap the one line naming the failure was the
+        one line deleted. An engine-#2 migration that died on
+        ``OperationalError: (1142, "CREATE command denied …")`` logged
+        ``"error": "OperationalError"`` and a traceback that stopped short of
+        the errno — indistinguishable from every other OperationalError.
+        """
+        from yadgar._shared.observability.log_config import TRACEBACK_MAX_CHARS, JSONLogFormatter
+
+        fmt = JSONLogFormatter()
+        # A deep stack of DISTINCT frames so the frames alone overflow the
+        # budget, the way a SQLAlchemy/greenlet/alembic traceback does. They
+        # must be distinct: Python collapses repeated identical frames into
+        # "[Previous line repeated N more times]", so plain recursion stays
+        # short no matter how deep it goes.
+        namespace: dict = {}
+        exec(  # noqa: S102 — building distinct frames is the point
+            "\n".join(f"def _frame_{i}(nxt):\n    return nxt()" for i in range(80)),
+            namespace,
+        )
+
+        def _boom():
+            raise RuntimeError(
+                '(asyncmy.errors.OperationalError) (1142, "CREATE command '
+                "denied to user 'yadgar_app'@'localhost' for table "
+                '`yadgar`.`task`")'
+            )
+
+        chain = _boom
+        for i in range(80):
+            chain = (lambda fn, nxt: lambda: fn(nxt))(namespace[f"_frame_{i}"], chain)
+
+        try:
+            chain()
+        except RuntimeError:
+            import sys
+
+            exc_info = sys.exc_info()
+
+        record = _make_record(
+            exc_info=exc_info,
+            extra={"component": "c", "action": "a", "outcome": "error"},
+        )
+        tb = json.loads(fmt.format(record))["traceback"]
+        assert len(tb) > TRACEBACK_MAX_CHARS - 100, "precondition: the traceback overflowed"
+        assert "[truncated]" in tb, "precondition: it was actually truncated"
+        assert "1142" in tb, "the errno must survive truncation"
+        assert "CREATE command denied" in tb, "the driver's message must survive truncation"
+        assert tb.startswith("Traceback"), "the head is still the head"
+
     def test_no_content_field_in_output(self):
         """Memory content must never appear in JSON output."""
         from yadgar._shared.observability.log_config import JSONLogFormatter

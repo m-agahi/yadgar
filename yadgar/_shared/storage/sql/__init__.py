@@ -33,6 +33,7 @@ hard import would break every CI test until that image is rebuilt.
 
 from yadgar._shared.storage.sql.config import (
     MariaClientConfig,
+    default_migrate_option_file_path,
     default_option_file_path,
     read_client_option_file,
 )
@@ -41,6 +42,7 @@ from yadgar._shared.storage.sql.mariadb import MariaStorageEngine
 __all__ = [
     "MariaClientConfig",
     "MariaStorageEngine",
+    "default_migrate_option_file_path",
     "default_option_file_path",
     "read_client_option_file",
 ]
