@@ -957,6 +957,13 @@ class TestDefaultRetention:
 # ---------------------------------------------------------------------------
 
 
+#: A rationale that asserts something about its callees while naming none —
+#: "each leaf already carries its own @observe span". Only these need the
+#: function body walked; a rationale that names its callees is checked
+#: against those names directly.
+_GENERIC_PLURAL_CLAIM = re.compile(r"\b(each|every|both|all)\b|\btheir own\b", re.IGNORECASE)
+
+
 def _observe_call(node: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.Call | None:
     """Return the ``@observe(...)`` decorator call on *node*, if any."""
     for dec in node.decorator_list:
@@ -989,10 +996,19 @@ def _scan_span_claims(source: str) -> tuple[list[str], dict[str, bool], list[str
     read two ways, because a false claim comes in both shapes:
 
       * the rationale NAMES the callee ("…their own @observe on
-        ``_retype_body_page``"), or
-      * the rationale claims it generically ("each leaf already carries its
-        own @observe span") and the callee is resolved from the function
-        body instead.
+        ``_retype_body_page``"), which is checked always; or
+      * the rationale claims it GENERICALLY and in the plural ("each leaf
+        already carries its own @observe span"), naming nobody — then and
+        only then are the callees resolved from the function body.
+
+    The body arm is deliberately gated on that plural marker rather than run
+    for every span-mentioning rationale. Ungated, it fires on a rationale
+    that is TRUE: ``_resolve_projects`` is correctly exempt and calls
+    ``_dedupe_projects`` (``span=False``), so the moment someone reworded
+    its "carries the boundary metric" to "…span" the scan would report a
+    defect that is not there — measured, not assumed. A generic plural claim
+    is the one shape that asserts something about callees while naming none,
+    which is exactly why it needs the body to be checkable at all.
 
     Only module-local names resolve; a dotted ``sql.foo`` lives on another
     module and is out of reach by construction. Callees carrying no
@@ -1034,14 +1050,16 @@ def _scan_span_claims(source: str) -> tuple[list[str], dict[str, bool], list[str
             for other in span_map
             if other != name and re.search(rf"(?<![\w.]){re.escape(other)}\b", text)
         }
-        called = {
-            child.func.id
-            for child in ast.walk(bodies[name])
-            if isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Name)
-            and child.func.id in observed
-            and child.func.id != name
-        }
+        called: set[str] = set()
+        if _GENERIC_PLURAL_CLAIM.search(text):
+            called = {
+                child.func.id
+                for child in ast.walk(bodies[name])
+                if isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id in observed
+                and child.func.id != name
+            }
         for other in sorted(named | called):
             if not span_map[other]:
                 violations.append(
@@ -1098,3 +1116,31 @@ class TestObservabilityRationaleHonesty:
         violations, _, _ = _scan_span_claims(planted)
         assert violations, "the scan failed to report a planted false span claim"
         assert "_leaf" in violations[0]
+
+    def test_a_true_span_claim_naming_no_callee_is_not_flagged(self) -> None:
+        """The scan does not fire on a rationale that is TRUE.
+
+        ``_resolve_projects`` is correctly exempt and calls
+        ``_dedupe_projects`` (``span=False``). Its rationale currently says
+        "carries the boundary metric"; an earlier version of this scan walked
+        the body of EVERY span-mentioning rationale, so merely rewording that
+        to "span" — a plausible tidy-up — reported a defect that is not
+        there. The body walk is now gated on a generic PLURAL claim ("each
+        leaf…"), which is the only shape that asserts something about callees
+        while naming none. A precise scan nobody has to work around beats a
+        broad one the next car learns to ignore.
+        """
+        source = Path(nightly_sweep.__file__).read_text(encoding="utf-8")
+        reworded = source.replace(
+            "carries the boundary metric for the whole sweep",
+            "carries the boundary span for the whole sweep",
+        )
+        assert reworded != source, (
+            "the _resolve_projects rationale moved; re-point this probe at the "
+            "current text rather than deleting the test"
+        )
+        violations, _, _ = _scan_span_claims(reworded)
+        assert not violations, (
+            "the scan flagged a rationale whose only sin is the word 'span': "
+            + "\n".join(violations)
+        )
