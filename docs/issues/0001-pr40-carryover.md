@@ -85,6 +85,33 @@ WARNING that lets a dead container come up.
 only `mysql_native_password` / `caching_sha2_password` / `sha256_password` / `client_ed25519` and
 cannot authenticate against MariaDB's `unix_socket` auth plugin.
 
+### VERIFIED END-TO-END on a clean VM, 2026-08-13
+
+Debian 13 VM, datadir wiped to empty, backend image rebuilt from this branch (`5.72.34`), core
+`5.181.43`, started via the same systemd units `yadgar daemon install-service` renders.
+
+| | before (5.72.33) | after (5.72.34) |
+|---|---|---|
+| `/health` | `{"status":"degraded", … "ledger":false}` → HTTP 503 | `{"status":"ok","db":true,"model":true,"drainer":true,"ledger":true}` |
+| container | `unhealthy`, `FailingStreak: 23`, never green | `(healthy)` in **54 s** |
+| ledger tables | **0** (`db.opt` only) | **13** — `adr adr_supersedes agent_discipline agent_pattern agent_pattern_composes agent_pattern_model alembic_version client config project task task_blocked_by` |
+| alembic | never ran | `engine #2 migrated to alembic head 004_agent_pattern_model_client` |
+| core | never started | `active`, MCP answers 401 (auth required, correct) |
+| `1146` / bootstrap-failed in the run | present | **0** |
+
+### Testing-environment traps hit while proving this (worth knowing, cost real time)
+
+- **`Linger=no` on a fresh VM kills the unit when the SSH session ends.** A poll loop that reconnects
+  per iteration tears down the user systemd manager each time — the unit dies every cycle and reads as
+  a product crash. Symptom: the systemd user-manager PID changes between checks. Fix:
+  `loginctl enable-linger root`. This is already documented in the wiki page
+  `connecting-to-libvirt-test-vms-debian-13-dev-etc-ssh-gotcha` and was read past anyway.
+- **`yadgar daemon install-service` before `yadgar setup`** renders a unit with
+  `EnvironmentFile=~/.config/yadgar/secrets.env` (no `-` prefix) that `setup` has not created yet, so
+  systemd aborts the unit before any `Exec*` runs and reports a misleading "failed to spawn start-pre".
+  Correct order is `setup` → `install-service` → `start`; `install-service` warns about neither.
+- The template's `pipx` is at `/usr/bin/pipx`, not `/root/.local/bin/pipx` as that wiki page states.
+
 **Blocking observability defect found while diagnosing:** the failure logs the exception TYPE
 (`"error": "OperationalError"`) and a traceback truncated before the MySQL error, so **the one string
 that identifies the fault is never recorded**. `logger.exception` drops `str(exc)` here. Fix this
