@@ -14,6 +14,28 @@ so a fifth writer added later is caught the moment it lands rather than the
 next time someone audits the file by hand. Adjacent string literals fold into
 one ``ast.Constant`` at parse time, which is what makes "the SET clause names
 ``project_id``" answerable from the constant alone.
+
+Car F7: that folding claim stopped being universally true the moment an
+f-string joined the concatenation. Car F1 rewrote ``memory.py``'s SQL builder
+so the ``embedding = ...`` fragment is computed and interpolated:
+
+    "CREATE type::record('memory', $id) SET "
+    f"content = $content, {emb_assign}, tags = $tags, "
+    "source_episode_id = $source_episode_id, "
+    ...
+
+Adjacent string/f-string literals still fold into ONE node at parse time, but
+that node is now ``ast.JoinedStr``, not ``ast.Constant`` — and ``ast.walk``
+still visits the ``ast.Constant`` fragments NESTED inside it (before and after
+the interpolation) as separate nodes. Matching bare ``ast.Constant`` against
+``_RAW_MEMORY_CREATE`` therefore finds only the FIRST fragment (up to
+``{emb_assign}``), which never reaches ``project_id = $project_id`` further
+down the same statement — a false positive that flags a correctly-bound write
+as a bypass. ``_joined_str_text`` reconstructs the JoinedStr's full logical
+text (each interpolation replaced with a placeholder, since its runtime value
+is not statically knowable) so the guard sees the whole statement either way —
+an f-string must not be able to hide a real bypass, and must not be able to
+manufacture a fake one either.
 """
 
 from __future__ import annotations
@@ -36,15 +58,69 @@ _STORAGE_ROOT = _REPO_ROOT / "yadgar" / "_shared" / "storage"
 _RAW_MEMORY_CREATE = "CREATE type::record('memory'"
 
 
-def _raw_memory_create_sites() -> list[tuple[pathlib.Path, int, str]]:
-    """Every folded string constant under ``_shared/storage`` that CREATEs a memory."""
+#: Placeholder substituted for each f-string interpolation when reconstructing
+#: a ``JoinedStr``'s logical text. Never collides with real SQL: it contains
+#: neither ``project_id`` nor the CREATE signature, so it can only ever make a
+#: match FAIL to trigger less often, never more — a bypass hiding an
+#: interpolated ``project_id = $project_id`` fragment is not a pattern any
+#: writer in this codebase uses, and this guard does not need to model it.
+_INTERPOLATION_PLACEHOLDER = "�"
+
+
+def _joined_str_text(node: ast.JoinedStr) -> str:
+    """Reconstruct a ``JoinedStr``'s full logical text.
+
+    Constant fragments are used verbatim; each ``FormattedValue``
+    (an f-string interpolation, e.g. ``{emb_assign}``) is replaced with
+    ``_INTERPOLATION_PLACEHOLDER`` since its runtime value is not statically
+    knowable from the AST alone. This is what lets the substring checks below
+    see the WHOLE statement, not just the fragment before the first
+    interpolation.
+    """
+    parts: list[str] = []
+    for value in node.values:
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            parts.append(value.value)
+        else:
+            parts.append(_INTERPOLATION_PLACEHOLDER)
+    return "".join(parts)
+
+
+def _raw_memory_create_sites(
+    root: pathlib.Path = _STORAGE_ROOT,
+) -> list[tuple[pathlib.Path, int, str]]:
+    """Every folded string (``Constant`` or reconstructed ``JoinedStr``) under
+    *root* that CREATEs a memory.
+
+    ``root`` defaults to ``_STORAGE_ROOT`` (the guard's real target) and is
+    only overridden by the discrimination tests below, which scan a synthetic
+    ``tmp_path`` module instead of the real chokepoint.
+    """
     sites: list[tuple[pathlib.Path, int, str]] = []
-    for path in sorted(_STORAGE_ROOT.rglob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        # Car F7: Constant fragments that live INSIDE a JoinedStr are visited
+        # twice by ast.walk — once as a child of the JoinedStr, once directly.
+        # Skip the direct visit for those (id()-keyed, since Constant nodes
+        # aren't hashable-by-value-safe across positions) so each concatenated
+        # statement is matched exactly once, via whichever node covers its
+        # FULL text: the JoinedStr when an interpolation is present, the bare
+        # Constant otherwise.
+        joined_str_child_ids = {
+            id(part)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.JoinedStr)
+            for part in node.values
+        }
         for node in ast.walk(tree):
-            if (
+            if isinstance(node, ast.JoinedStr):
+                text = _joined_str_text(node)
+                if _RAW_MEMORY_CREATE in text:
+                    sites.append((path, node.lineno, text))
+            elif (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
+                and id(node) not in joined_str_child_ids
                 and _RAW_MEMORY_CREATE in node.value
             ):
                 sites.append((path, node.lineno, node.value))
@@ -78,6 +154,56 @@ class TestRawMemoryCreateGuard:
         assert not offenders, (
             "raw memory CREATE routes around the _resolve_project_id_for_write "
             f"chokepoint (no bound project_id in the SET clause): {offenders}"
+        )
+
+
+class TestGuardHandlesFStringConcatenation:
+    """Car F7: the guard must discriminate an f-string BOTH ways.
+
+    ``memory.py:120``'s real builder folds an f-string into the concatenation
+    (Car F1's ``emb_assign`` interpolation) and DOES bind ``project_id``
+    further down the same statement — the guard must not flag it. A raw
+    CREATE that hides an unbound write behind an f-string interpolation must
+    still be caught — the guard must not let the f-string launder it either.
+    Each test writes a synthetic module to ``tmp_path`` and scans THAT
+    (``_raw_memory_create_sites(root=tmp_path)``), not the real
+    ``_shared/storage`` tree, so this is independent of what happens to land
+    in the real chokepoint later.
+    """
+
+    def test_fstring_builder_with_bound_project_id_passes(self, tmp_path):
+        """The real F1 pattern: project_id is bound, just past the interpolation."""
+        (tmp_path / "fake_storage.py").write_text(
+            "emb_assign = 'embedding = $embedding'\n"
+            "sql = (\n"
+            "    \"CREATE type::record('memory', $id) SET \"\n"
+            '    f"content = $content, {emb_assign}, tags = $tags, "\n'
+            '    "project_id = $project_id, "\n'
+            '    "is_protected = $is_protected"\n'
+            ")\n",
+            encoding="utf-8",
+        )
+        sites = _raw_memory_create_sites(root=tmp_path)
+        assert sites, "guard must still find the site through the JoinedStr"
+        offenders = [f"{p}:{ln}" for p, ln, sql in sites if "project_id = $" not in sql]
+        assert not offenders, f"legitimate f-string builder false-flagged as a bypass: {offenders}"
+
+    def test_fstring_disguised_bypass_is_still_caught(self, tmp_path):
+        """A genuine bypass hiding behind an f-string interpolation must still fail."""
+        (tmp_path / "fake_bypass.py").write_text(
+            "owner = 'hardcoded-owner'\n"
+            "sql = (\n"
+            "    \"CREATE type::record('memory', $id) SET \"\n"
+            '    f"content = $content, owner = {owner!r}, tags = $tags"\n'
+            ")\n",
+            encoding="utf-8",
+        )
+        sites = _raw_memory_create_sites(root=tmp_path)
+        assert sites, "guard must find the site at all (positive control)"
+        offenders = [f"{p}:{ln}" for p, ln, sql in sites if "project_id = $" not in sql]
+        assert offenders, (
+            "a raw CREATE with no bound project_id must be caught even when "
+            "assembled via an f-string interpolation"
         )
 
 

@@ -420,13 +420,24 @@ def test_restore_mode_global_anchor_has_global_scope(flush_queue):
 
     INVERTED by C5: the reach marker is the ``global`` TAG, not an empty
     ``directory_context`` (§1.4 — ownership is project_id, reach is a tag).
+
+    Car F7: the anchor is now written under a DIFFERENT project than the one
+    project_brief queries. The original wrote and read under the SAME
+    ``project=``, so once the project bucket was genuinely keyed on
+    project_id (this car's fix — it was silently broken before, matching
+    nothing), the row legitimately satisfied BOTH predicates (global tag AND
+    owning project) and classified as scope='both' — correctly, since it
+    really is owned by the querying project. To isolate the PURE global-reach
+    case this test means to pin, the anchor must be owned by a project the
+    caller is not asking about, reachable ONLY via the 'global' tag.
     """
+    _other_project_id = "other-owner/restore-global-repo"
     server.memorize(
         content="global scope anchor",
         context="/tmp/restore_global_owner",
         tags=["_anchor", "global"],
         is_protected=True,
-        project=TEST_PROJECT_ID,
+        project=_other_project_id,
     )
     flush_queue()
 

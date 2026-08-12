@@ -39,7 +39,10 @@ def test_remember_creates_memory():
     result = memorize_sync("pytest is great", "/tmp/project", ["testing"], project=_TEST_PROJECT_ID)
     assert result["id"] is not None
     assert result["content"] == "pytest is great"
-    assert result["directory_context"] == "/tmp/project"
+    # C10f (0047 PR#40 §5): directory_context is stamped from the resolved
+    # project_id ONLY — `context` ("/tmp/project" here) is an optional
+    # staleness-hash path, never a scope key. See memorize()'s docstring.
+    assert result["directory_context"] == _TEST_PROJECT_ID
     assert result["tags"] == ["testing"]
     assert result["heat"] == 1.0
     assert result["is_stale"] is False
@@ -222,7 +225,11 @@ def test_project_brief_returns_hot_memories_in_full_mode(flush_queue):
     server.memorize("hot memory", "/projects/d", ["test"], project=_TEST_PROJECT_ID)  # heat=1.0
     flush_queue()
 
-    result = server.project_brief("/projects/d", mode="full")
+    # C10f: memorize() stamps directory_context from the resolved project_id,
+    # never the literal directory — so project_brief must be told the SAME
+    # project_id via project= to find its own write (matching every sibling
+    # call in test_project_brief.py / test_project_brief_modes.py).
+    result = server.project_brief("/projects/d", mode="full", project=_TEST_PROJECT_ID)
     assert "hot_memories" in result
     contents = [m["content"] for m in result["hot_memories"]]
     assert any("hot memory" in c for c in contents)

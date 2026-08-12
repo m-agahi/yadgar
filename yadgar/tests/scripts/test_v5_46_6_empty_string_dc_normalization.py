@@ -149,7 +149,7 @@ class TestEmptyStringDCNormalization:
                 "project_id": _TEST_PROJECT_ID,
             }
         )
-        result = storage.get_anchored_memories_scoped(directory="/some/project", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="/some/project", limit=20)
         assert "dc-global anchor" not in [r["content"] for r in result], (
             "directory_context='global' must NOT buy global reach: C5 keys the "
             "global bucket on the 'global' TAG"
@@ -171,5 +171,5 @@ class TestEmptyStringDCNormalization:
                 "project_id": _TEST_PROJECT_ID,
             }
         )
-        result = storage.get_anchored_memories_scoped(directory="/some/project", limit=20)
+        result = storage.get_anchored_memories_scoped(project_id="/some/project", limit=20)
         assert "tagged global anchor" in [r["content"] for r in result]

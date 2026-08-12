@@ -491,17 +491,24 @@ def _render_wiki_catalog(catalog: dict, resolved: str) -> list[str]:
 
 
 @observe(tier="stage", metric="tools.project._build_hot_memories")
-def _build_hot_memories(storage, resolved: str, limit: int, snippet: int) -> list[dict]:
+def _build_hot_memories(storage, project_scope_key: str, limit: int, snippet: int) -> list[dict]:
     """Fetch hot memories excluding anchored entries.
 
     Filters: heat > 0 AND 'anchor' NOTINSIDE tags AND '_anchor' NOTINSIDE tags.
+
+    Car F7: ``project_scope_key`` is the resolved project_id when the caller
+    named one, else the resolved directory path — see ``project_brief``'s
+    ``_project_scope_key`` comment. ``memorize``/``anchor`` (C10f) always
+    stamp ``directory_context`` from the resolved project_id now, so binding
+    on the raw directory path here silently returned zero rows for anything
+    written after that car landed.
     """
     rows = storage._q(
         "SELECT id, content, heat, tags FROM memory "
         "WHERE directory_context = $dir AND heat > 0 "
         "AND 'anchor' NOTINSIDE tags AND '_anchor' NOTINSIDE tags "
         f"ORDER BY heat DESC LIMIT {limit}",
-        {"dir": resolved},
+        {"dir": project_scope_key},
     )
     return [
         {
@@ -515,10 +522,15 @@ def _build_hot_memories(storage, resolved: str, limit: int, snippet: int) -> lis
 
 
 @observe(tier="stage", metric="tools.project._build_anchor_rows_catalog")
-def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
+def _build_anchor_rows_catalog(storage, project_scope_key: str) -> tuple:
     """Fetch global + project anchor rows for catalog/full modes.
 
     Returns (top_anchors_global, top_anchors_project, top_anchors_union).
+
+    Car F7: the project bucket's ``$dir`` is ``project_scope_key`` (resolved
+    project_id when supplied, else the resolved directory path) — matching
+    what C10g already did for ``get_anchored_memories_scoped``, the sibling
+    reader of this same ``_anchor``-tagged bucket used by ``restore()``.
     """
     _now = storage._now_iso()
     global_rows = storage._q(
@@ -555,7 +567,7 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
         "AND directory_context = $dir "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
-        {"dir": resolved, "now": _now},
+        {"dir": project_scope_key, "now": _now},
     )
     top_anchors_project = []
     for row in project_rows:
@@ -580,8 +592,14 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
 
 
 @observe(tier="stage", metric="tools.project._build_anchor_rows_restore")
-def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
-    """Fetch anchors for restore mode: merged list with scope field, truncated."""
+def _build_anchor_rows_restore(storage, project_scope_key: str) -> list[dict]:
+    """Fetch anchors for restore mode: merged list with scope field, truncated.
+
+    Car F7: the project bucket's ``$dir`` is ``project_scope_key`` (resolved
+    project_id when supplied, else the resolved directory path) — matching
+    what C10g already did for ``get_anchored_memories_scoped``, the sibling
+    reader of this same ``_anchor``-tagged bucket used by ``restore()``.
+    """
     max_anchors = _get_max_anchors()
     _now = storage._now_iso()
 
@@ -607,7 +625,7 @@ def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
         "AND directory_context = $dir "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
-        {"dir": resolved, "now": _now},
+        {"dir": project_scope_key, "now": _now},
     )
 
     # Schema note: directory_context is binary (global OR project) today.
@@ -1930,13 +1948,30 @@ def _project_brief_restore(
     mode: str,
     storage,
     checkpoint_rows: list,
+    project_scope_key: str | None = None,
 ) -> dict:
-    """Build restore mode payload (<800 tokens)."""
+    """Build restore mode payload (<800 tokens).
+
+    Car F7: ``top_anchors``/``hot_memories`` key off ``project_scope_key``
+    (resolved project_id when the caller named one, else ``resolved`` — see
+    ``project_brief``'s docstring comment). Every OTHER field here
+    (``key_wiki_pages``, ``wiki_catalog``, ``adr_log``, ``recent_writes``,
+    ``checkpoint``) stays on ``resolved`` — those buckets are directory-keyed
+    by design (matching ``TestProjectBriefWikiScoping``'s documented reasons).
+
+    ``project_scope_key`` defaults to ``None`` (falling back to ``resolved``
+    below) so the direct-call test fixtures in ``test_fresh_memory_restore.py``
+    — which construct this payload from a mocked storage without threading
+    the new parameter — keep working unchanged; ``project_brief()`` itself
+    always passes it explicitly.
+    """
+    if not project_scope_key:
+        project_scope_key = resolved
     out = {
         "_resolved_directory": resolved,
         "_mode": mode,
-        "top_anchors": _build_anchor_rows_restore(storage, resolved),
-        "hot_memories": _build_hot_memories(storage, resolved, limit=5, snippet=150),
+        "top_anchors": _build_anchor_rows_restore(storage, project_scope_key),
+        "hot_memories": _build_hot_memories(storage, project_scope_key, limit=5, snippet=150),
         "checkpoint": _build_checkpoint_dict(checkpoint_rows),
         "key_wiki_pages": _build_wiki_pages(storage, limit=3, directory=resolved),
         # v5.53.0: grouped wiki catalog (metadata-only, length-capped).
@@ -1959,7 +1994,15 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
 
     catalog mode is DEPRECATED as of v5.7.12. Kept for back-compat until v5.8.
     ctx keys: resolved, mode, project, storage, init_rows, active_rows,
-              init_memory_present, active_work_present, checkpoint_rows.
+              init_memory_present, active_work_present, checkpoint_rows,
+              project_scope_key.
+
+    Car F7: ``top_anchors_project``/``hot_memories`` key off
+    ``project_scope_key`` (resolved project_id when the caller named one,
+    else ``resolved`` — see ``project_brief``'s docstring comment).
+    ``top_anchors_global``, ``key_wiki_pages``, ``wiki_catalog``,
+    ``recent_adrs`` and ``recent_episode_count`` stay on ``resolved`` /
+    the tag-based predicate — unrelated to the bucket this car fixes.
     """
     from datetime import timedelta
 
@@ -1969,9 +2012,10 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     init_rows = ctx["init_rows"]
     active_rows = ctx["active_rows"]
     checkpoint_rows = ctx["checkpoint_rows"]
+    project_scope_key = ctx["project_scope_key"]
 
     top_anchors_global, top_anchors_project, top_anchors = _build_anchor_rows_catalog(
-        storage, resolved
+        storage, project_scope_key
     )
     cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
     ep_rows = storage._q(
@@ -1992,7 +2036,7 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
         "recent_episode_count": len(ep_rows),
         # v5.53.1: real stale count (TTL-cached).
         "stale_wiki_count": _compute_stale_wiki_count(resolved),
-        "hot_memories": _build_hot_memories(storage, resolved, limit=3, snippet=100),
+        "hot_memories": _build_hot_memories(storage, project_scope_key, limit=3, snippet=100),
         "key_wiki_pages": _build_wiki_pages(storage, limit=3, directory=resolved),
         "checkpoint": _build_checkpoint_dict(checkpoint_rows),
         # v5.53.0: grouped wiki catalog (metadata-only, length-capped).
@@ -2003,7 +2047,9 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     if mode == "full":
         result["init_memory"] = init_rows[0].get("content") if init_rows else None
         result["active_work"] = active_rows[0].get("content") if active_rows else None
-        result["hot_memories"] = _build_hot_memories(storage, resolved, limit=10, snippet=200)
+        result["hot_memories"] = _build_hot_memories(
+            storage, project_scope_key, limit=10, snippet=200
+        )
         result["key_wiki_pages"] = _build_wiki_pages(storage, limit=5, directory=resolved)
         result["wiki_catalog"] = _build_wiki_catalog(storage, resolved)
     # §28 — add _render for catalog+full (back-compat); signals+restore omit it
@@ -2026,14 +2072,24 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
 _PROJECT_BRIEF_CACHE_TTL = 300.0
 
 
-def _project_brief_key(resolved: str, mode: str) -> tuple:
-    """Effective cache key: (git-root, mode, structural epoch).
+def _project_brief_key(resolved: str, mode: str, project_scope_key: str) -> tuple:
+    """Effective cache key: (git-root, mode, structural epoch, project scope).
 
     Reads the epoch under the SAME resolved git-root the bump callers normalize
-    to, so a structural write busts the entry (not a decorative no-op)."""
+    to, so a structural write busts the entry (not a decorative no-op).
+
+    Car F7: ``project_scope_key`` joins the tuple so two callers sharing the
+    same ``resolved`` directory but naming DIFFERENT ``project=`` overrides
+    never collide on the same cache entry — the anchor/hot_memories builders
+    below now read ``directory_context`` keyed on the resolved project_id
+    (when supplied), so a stale hit would leak one project's rows into
+    another's brief. When no ``project=`` is supplied this equals ``resolved``,
+    so the key is byte-identical to the pre-F7 shape for that (still the
+    common) call pattern.
+    """
     from yadgar._shared.runtime.cache_epoch import _current_epoch  # noqa: PLC0415
 
-    return (resolved, mode, _current_epoch(resolved))
+    return (resolved, mode, _current_epoch(resolved), project_scope_key)
 
 
 @observe(tier="stage", metric="tools.project._make_project_brief_cache")
@@ -2087,10 +2143,29 @@ def project_brief(directory: str, mode: str = "catalog", *, project: str | None 
             Default "catalog" is kept only for back-compat — prefer "signals" or
             "restore" for all new callers.
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; a full C7 re-key
+    # of this tool's scope from ``directory`` onto the resolved project_id is
+    # still future work for the anchor/hot_memories BUCKET-CHOICE queries
+    # below (key_wiki_pages / wiki_catalog / adr_log / presence rows stay
+    # directory-keyed on purpose — see TestProjectBriefWikiScoping).
+    #
+    # Car F7: the validated value used to be computed and discarded here —
+    # ``get_anchored_memories_scoped`` (the sibling reader of this same
+    # ``_anchor``-tagged bucket, used by the ``restore()`` tool) was re-keyed
+    # onto the resolved project_id in lockstep with its writer (C10g), but
+    # this tool's OWN duplicate anchor/hot_memories queries were not, because
+    # ``memorize``/``anchor`` (C10f) now ALWAYS stamp ``directory_context``
+    # from the resolved project_id — never the literal directory a caller
+    # passed as ``context``. A caller who names the SAME ``project=`` on both
+    # the write and this read got zero rows back, not "their current
+    # project's rows" (accept_project_param's documented interim gap) — the
+    # predicate simply could not match either identity convention.
+    # ``_project_scope_key`` prefers the resolved project_id and falls back to
+    # ``resolved`` (old behaviour) when no ``project=`` was supplied, matching
+    # accept_project_param's contract of not resolving in that case.
+    _scope_project_id = accept_project_param(project, directory)
     resolved = _resolve_project_root(directory)
+    _project_scope_key = _scope_project_id if _scope_project_id else resolved
 
     # Car 1: whole-payload cache for the query-agnostic modes (catalog/restore/full).
     # Checked BEFORE any storage round-trip so a hit skips _fetch_presence_rows +
@@ -2099,7 +2174,7 @@ def project_brief(directory: str, mode: str = "catalog", *, project: str | None 
     # tolerates no staleness; its age numerics are recomputed every call.
     _cacheable = mode != "signals"
     if _cacheable:
-        _key = _project_brief_key(resolved, mode)
+        _key = _project_brief_key(resolved, mode, _project_scope_key)
         _hit = _project_brief_cache.get(_key)
         if _hit is not None:
             return _hit
@@ -2135,6 +2210,7 @@ def project_brief(directory: str, mode: str = "catalog", *, project: str | None 
             mode=mode,
             storage=storage,
             checkpoint_rows=checkpoint_rows,
+            project_scope_key=_project_scope_key,
         )
     else:
         # catalog / full modes (back-compat)
@@ -2149,6 +2225,7 @@ def project_brief(directory: str, mode: str = "catalog", *, project: str | None 
                 "init_memory_present": init_memory_present,
                 "active_work_present": active_work_present,
                 "checkpoint_rows": checkpoint_rows,
+                "project_scope_key": _project_scope_key,
             }
         )
 
