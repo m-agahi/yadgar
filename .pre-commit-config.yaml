@@ -305,14 +305,16 @@ repos:
         always_run: true
 
       - id: check-ci-local-parity
-        name: Check `make ci-local` matches ci-pr.yml's CI subsystem test selection (Car F5, PR #40 postmortem)
+        name: Check `make ci-local` matches ci-pr.yml's CI subsystem test selection + leg structure (Car F5/F10, PR #40 postmortem)
         language: system
         entry: python scripts/check_ci_local_parity.py
         pass_filenames: false
         # Narrow files: is correct here (unlike the always_run checks above) — this
-        # script reads exactly these two files and nothing else, so a filter on them
-        # is not narrower than the read set.
-        files: ^(Makefile|\.github/workflows/ci-pr\.yml)$
+        # script reads exactly these files and nothing else, so a filter on them is
+        # not narrower than the read set. Car F10 widened the read set to
+        # scripts/ci-local-legs.sh (the leg runner it now also validates) and to
+        # itself (editing the guard's own discovery logic should re-run it too).
+        files: ^(Makefile|\.github/workflows/ci-pr\.yml|scripts/ci-local-legs\.sh|scripts/check_ci_local_parity\.py)$
 
       - id: check-e2e-assertions
         name: Assert every e2e test_* fn has ≥1 real assertion (#52)

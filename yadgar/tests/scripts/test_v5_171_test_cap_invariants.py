@@ -165,6 +165,49 @@ class TestMakefileCapInvariant:
 
 
 # ---------------------------------------------------------------------------
+# ci-local (Car F10) — the generic scan above cannot see this target anymore
+# ---------------------------------------------------------------------------
+
+CI_LOCAL_LEG_RUNNER = REPO_ROOT / "scripts" / "ci-local-legs.sh"
+
+
+class TestCiLocalDelegatesToTestCapped:
+    """Car F10 rewrote `ci-local`'s recipe to delegate to
+    scripts/ci-local-legs.sh (one `run_leg`/pytest process per CI subsystem
+    job) instead of invoking `pytest` directly. The Makefile recipe text no
+    longer contains the literal word "pytest", so `_invokes_test_runner`
+    above returns False for it and `test_every_runner_target_routes_through_
+    test_capped` silently stops looking at `ci-local` at all — the exact
+    vacuous-pass shape Car 0108 exists to prevent, just one level removed
+    (a delegated script, not a bare Makefile recipe). This class closes that
+    specific gap by following the delegation instead of widening the generic
+    regex (which would have to special-case "recipe merely mentions a shell
+    script" — too broad, and this repo's Makefile has none of those besides
+    this one today).
+    """
+
+    def test_ci_local_recipe_delegates_to_leg_runner(self, recipes):
+        assert "ci-local" in recipes, "the `ci-local` target is gone or renamed"
+        assert "scripts/ci-local-legs.sh" in recipes["ci-local"], (
+            "`ci-local`'s recipe no longer delegates to scripts/ci-local-legs.sh. "
+            "If it now invokes pytest directly again, add 'ci-local' to the "
+            "expected list in test_parser_sees_the_known_runner_targets so the "
+            "generic scan covers it, and this delegation-specific test can go."
+        )
+
+    def test_leg_runner_wraps_every_leg_in_test_capped(self):
+        text = CI_LOCAL_LEG_RUNNER.read_text()
+        assert _PYTEST_RE.search(text), (
+            "scripts/ci-local-legs.sh no longer invokes pytest — has the leg "
+            "runner been rewritten? Update this test to match its new shape."
+        )
+        assert "test-capped.sh" in text, (
+            "scripts/ci-local-legs.sh invokes pytest without routing through "
+            "scripts/test-capped.sh — a leg could run with no CPUQuota/MemoryMax."
+        )
+
+
+# ---------------------------------------------------------------------------
 # scripts/test-capped.sh — fail CLOSED when the resource cap is unavailable
 # ---------------------------------------------------------------------------
 

@@ -355,37 +355,47 @@ test-ci:
 	    -m "not integration and not e2e" -p no:randomly -n auto -q $(PYTEST_ARGS)'
 
 ## ci-local: Reproduce CI's four subsystem test jobs (test-fast/test-shared/test-backend/test-core in
-## .github/workflows/ci-pr.yml) — same dirs + marker CI actually gates a PR on. PR #40 shipped on a green
-## `make e2e`, a target that runs a DISJOINT directory+marker from CI (yadgar/tests/e2e/ -m e2e) — CI then
-## found 49 failures. This is the target that would have caught them. It is NOT `test-ci` (broader,
-## unfiltered directory set incl. e2e/integration/restoration dirs, no perf exclusion) and NOT `e2e`.
+## .github/workflows/ci-pr.yml) as FOUR SEPARATE SEQUENTIAL pytest processes — mirrors CI's per-job
+## PROCESS boundary (each subsystem job is its own container) so peak per-process memory stays bounded
+## to one job's tests, not the union of all eight dirs. A single lumped invocation over all 8 dirs was
+## measured OOM-killed (MemoryMax=20G) 1h32m in even at TEST_TIMEOUT=18000 — CI itself never accumulates
+## that much in one process, because the four jobs are four processes (Car F10, PR #40 remediation).
+## PR #40 shipped on a green `make e2e`, a target that runs a DISJOINT directory+marker from CI
+## (yadgar/tests/e2e/ -m e2e) — CI then found 49 failures. This is the target that would have caught
+## them. It is NOT `test-ci` (broader, unfiltered directory set incl. e2e/integration/restoration
+## dirs, no perf exclusion) and NOT `e2e`.
 ## INTEGRATION-STEP TARGET, NOT A CAR TARGET: ADR-0218 forbids a car ever running the full unit suite —
 ## a car's obligation stays targeted tests over changed symbols; run this at the PR/push seam instead.
-## Subset for mid-work use: `make ci-local DIRS=yadgar/tests/_shared`. Full run covers all 8 CI dirs.
-## Anti-drift: scripts/check_ci_local_parity.py (pre-commit hook check-ci-local-parity) parses BOTH this
-## Makefile and ci-pr.yml independently and fails if their dirs/marker ever disagree — the exact silent
-## drift that produced PR #40's gap, closed by comparing live files instead of trusting a copied snapshot.
-CI_LOCAL_DIRS := yadgar/tests/scripts/ yadgar/tests/server/ yadgar/tests/hooks/ yadgar/tests/_meta/ \
-                 yadgar/tests/clients/ yadgar/tests/_shared/ yadgar/tests/backend/ yadgar/tests/core/
+## DIRS= override: `make ci-local DIRS=yadgar/tests/_shared` runs EXACTLY those dirs as ONE leg (the
+## mid-work subset use case) — bypasses the four-leg split entirely; it is not a way to run a subset of
+## the four-leg run. Full run (no DIRS) covers all 8 CI dirs across the four legs below.
+## TEST_TIMEOUT (scripts/test-capped.sh's own env var) applies PER LEG, not to the whole run: each leg
+## is its own test-capped.sh invocation, so e.g. `TEST_TIMEOUT=18000 make ci-local` gives EACH of the
+## four legs an 18000s budget, not the four-leg run as a whole.
+## Aggregation: every leg runs to completion even if an earlier leg failed (one run gives the full
+## picture, never a first-failure abort); scripts/ci-local-legs.sh prints a per-leg PASS/FAIL summary
+## and the target exits non-zero iff ANY leg failed — never green because the last leg happened to pass.
+## Anti-drift: scripts/check_ci_local_parity.py (pre-commit hook check-ci-local-parity) parses ci-pr.yml,
+## this Makefile, AND scripts/ci-local-legs.sh independently and fails if the dirs, the marker, OR the
+## LEG STRUCTURE (one leg per CI subsystem job, not one lump) ever disagree — the exact silent-drift
+## class that produced PR #40's gap, and that a dirs/marker-only comparison could not have caught here.
+CI_LOCAL_DIRS_fast    := yadgar/tests/scripts/ yadgar/tests/server/ yadgar/tests/hooks/ yadgar/tests/_meta/ yadgar/tests/clients/
+CI_LOCAL_DIRS_shared  := yadgar/tests/_shared/
+CI_LOCAL_DIRS_backend := yadgar/tests/backend/
+CI_LOCAL_DIRS_core    := yadgar/tests/core/
 CI_LOCAL_MARKER := not integration and not e2e and not perf
-# NOT `DIRS ?= $(CI_LOCAL_DIRS)`: `?=` only fills an UNSET variable, and a
-# generic name like DIRS can already be set from the calling shell's
-# environment — `?=` would then silently keep that inherited value (possibly
-# empty, which pytest treats as "run testpaths", NOT the CI set) instead of
-# CI_LOCAL_DIRS, exactly the silent-narrowing this target exists to prevent.
-# $(origin DIRS) restricts the override to an explicit `make ci-local
-# DIRS=...` command-line invocation and ignores an inherited env var.
-ifeq ($(origin DIRS),command line)
-CI_LOCAL_TEST_DIRS := $(DIRS)
-else
-CI_LOCAL_TEST_DIRS := $(CI_LOCAL_DIRS)
-endif
 ci-local:
-	@test -n "$(strip $(CI_LOCAL_TEST_DIRS))" || { echo "ci-local: DIRS resolved empty — pass a real path, e.g. DIRS=yadgar/tests/_shared" >&2; exit 1; }
-	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
-	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest $(CI_LOCAL_TEST_DIRS) \
-	    -q -rs --tb=short -n 4 --dist loadgroup --reruns 2 --reruns-delay 2 \
-	    -m "$(CI_LOCAL_MARKER)" $(PYTEST_ARGS)'
+	@if [ "$(origin DIRS)" = "command line" ] && [ -z "$(strip $(DIRS))" ]; then \
+	  echo "ci-local: DIRS resolved empty — pass a real path, e.g. DIRS=yadgar/tests/_shared" >&2; exit 1; \
+	fi
+	@CI_LOCAL_MARKER="$(CI_LOCAL_MARKER)" \
+	  TEST_LOCK="$(TEST_LOCK)" \
+	  CI_LOCAL_DIRS_override="$(if $(filter command line,$(origin DIRS)),$(DIRS),)" \
+	  CI_LOCAL_DIRS_fast="$(CI_LOCAL_DIRS_fast)" \
+	  CI_LOCAL_DIRS_shared="$(CI_LOCAL_DIRS_shared)" \
+	  CI_LOCAL_DIRS_backend="$(CI_LOCAL_DIRS_backend)" \
+	  CI_LOCAL_DIRS_core="$(CI_LOCAL_DIRS_core)" \
+	  bash scripts/ci-local-legs.sh
 
 ## e2e: Run the behavior-contract e2e safety-net suite against the local `surreal` binary.
 ## Requires: ~/.local/bin/surreal (or surreal on PATH). See yadgar/tests/e2e/conftest.py.
