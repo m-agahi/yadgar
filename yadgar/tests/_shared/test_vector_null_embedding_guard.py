@@ -182,6 +182,38 @@ class TestScopedVectorSearchSurvivesNullEmbedding:
 
         assert mid in [m for m, _ in results]
 
+    def test_wiki_page_written_with_an_embedding_still_stores_the_array(self, storage):
+        """Positive control for the WIKI writer specifically.
+
+        ``insert_wiki_page`` binds its embedding through a conditional splat
+        (``**({"embedding": ...} if ... else {})``) so the key is absent on the
+        NONE path. If that condition were inverted or the key dropped outright,
+        EVERY new wiki page would silently store no embedding and the corpus
+        would go unsearchable — a failure the NONE-path test above cannot see.
+        """
+        from yadgar._shared.runtime.lifecycle import _get_embeddings
+
+        pid = storage.insert_wiki_page(
+            {
+                "slug": "f1-writer-with-embedding",
+                "title": "f1 writer wiki positive control",
+                "content": "an embedding was supplied",
+                "embedding": _get_embeddings().encode("an embedding was supplied"),
+                "directory_context": _DIR,
+                "project_id": _PROJECT,
+                "tags": [],
+            }
+        )
+
+        rows = storage._q(
+            f"SELECT embedding IS NONE AS is_none, embedding IS NULL AS is_null, "
+            f"array::len(embedding) AS n FROM wiki_page:{pid}"
+        )
+
+        assert rows and rows[0]["is_none"] is False
+        assert rows[0]["is_null"] is False
+        assert rows[0]["n"] == storage._embedding_dim
+
 
 class TestWritersDoNotMintNullEmbeddings:
     """A row written without an embedding must store NONE, never NULL.
