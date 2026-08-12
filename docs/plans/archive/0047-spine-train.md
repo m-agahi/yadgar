@@ -336,3 +336,43 @@ worse than none: it converts a loud failure into a silent one.
 green. Before an operator runs §3 against the live corpus, either the §8 environment is rebuilt
 (a VM, a restored snapshot, the real backend image) or §3 is executed first on a restored
 snapshot with §3.4's queries as the assertions — which is the same rehearsal under another name.
+
+---
+
+## 5. Plan lifecycle — the three breaks, resolved
+
+C16's §5 listed three verified lifecycle breaks. Each is resolved differently, and the
+differences are the point.
+
+| break | resolution |
+|---|---|
+| `archive/0047-spine-train.md` **claimed in the PR body, did not exist** | **Created** — this file. Note this is a *create*, not a `git mv`: there was no source document to move. |
+| `task-table-refactor-2026-07-29.md` — parent plan, unarchived | **Header corrected in place; deliberately NOT archived.** Its §6.2 cutover has never run, so ADR-0081's partial-ship clause applies: the plan stays live with a status header naming exactly what remains. The stale `Status: BUILD-READY … no code exists yet` line is **kept and marked falsified** rather than deleted — it is the record of what was believed, and a reader should be able to see it was overtaken. `ROADMAP.md` updated to match. |
+| `archive/0047-car-K-nightly-archive-sweep.md` — `Status: shipped` while asserting untrue behaviour | **Re-verified and annotated.** C15a made the doc's two central claims true (`task.completed_at` in `002`; the RED test at `test_archive_sweep_car_k.py:447`). The gap is *recorded in the doc* rather than quietly closed, because "shipped" asserted it for three days that it was not. A third divergence C16 found while checking — §2 names `consolidation/archive_sweep.py`, but the sweep shipped as an admin op at `admin_exec/nightly_sweep.py` — is recorded in the same table. |
+
+The remediation plan itself was archived by `git mv` as C16's first commit, per ADR-0082.
+
+### 5.1 `[VERIFY]` — why `check-plan-signature-drift` did not catch the Car K divergence
+
+**Verdict: out of remit, twice over. Both exclusions are deliberate and neither should be
+widened.**
+
+1. **The file is never read.** `scripts/check_plan_signature_drift.py:400` builds its corpus as
+   `plans.rglob("*.md")` filtered by `_ARCHIVE_DIR not in p.relative_to(plans).parts` — so
+   `docs/plans/archive/**` is excluded outright. The Car K doc lives there. The guard never
+   opened it. The exclusion is reasoned in the module docstring (`:43`): archived plans are
+   history and legitimately reference retired signatures, so *"rewriting shipped history to
+   satisfy a lint would be the wrong repair."*
+
+2. **Even in-corpus it would not fire.** The guard's whole mechanism is: build a map of
+   `def NAME(...)` parameter sets from fenced Python blocks, find call sites of those same
+   names, and fail on a kwarg absent from the signature. The Car K divergence is a **prose claim
+   about a test's existence** — *"§4 step 3: RED `test_…`"* — which is neither a `def` nor a
+   call site with kwargs. It is categorically outside what the guard models.
+
+**No fix is warranted, and widening the hook is the wrong response.** A guard that verified prose
+claims about test names against the tree is a different guard with a different failure mode
+(every abbreviated or renamed reference in 60-odd plan docs goes red), and the module docstring
+already records the design rule this train confirmed: *"a gate that cries wolf gets disabled,
+which is strictly worse than no gate."* The class this missed is caught by the C16-style
+re-verification pass instead — a human or agent reading a `shipped` claim against the tree.

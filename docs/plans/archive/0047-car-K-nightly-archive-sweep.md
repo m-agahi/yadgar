@@ -4,6 +4,29 @@
 > Status: shipped (Car K of 0047 spine train — code on car/K-nightly-sweep)
 > Depends on: E, G, I
 > Lifecycle: ADR-0081/0082 — archive this doc as the first commit of the completing branch; mark partial scope in the status header if shipped incomplete.
+>
+> **⚠ RE-VERIFIED 2026-08-12 (C16). This doc said `shipped` while asserting behaviour the tree
+> did not have. It is true NOW — C15a made it true — and the gap is recorded rather than
+> quietly closed, because "shipped" claimed it for three days that it was not.**
+>
+> | this doc claimed | state when C16 checked | resolution |
+> |---|---|---|
+> | §1: retention ages off `completed_at`, **never** `updated_at` | the column did not exist; the sweep could not have used it | **TRUE now.** `task.completed_at DATETIME NULL` added to `002_ledger_tables` by C15a (`:195`); the clock reads it at `admin_exec/nightly_sweep.py:152` `_task_retired_at` |
+> | §4 step 3: RED `test_archive_sweep_ages_off_completed_at_not_updated_at` | **existed nowhere in the tree** | **EXISTS now** — `yadgar/tests/backend/test_archive_sweep_car_k.py:447`, green |
+> | §2: the sweep lives at `yadgar/backend/consolidation/archive_sweep.py` | that file does not exist | **shipped at `yadgar/backend/admin_exec/nightly_sweep.py`** instead — an admin op under the `/admin` dispatch (`admin_exec/__init__.py:212`), not a consolidation-package module. The §2 touched-files table is stale on this row; the behaviour it describes shipped |
+>
+> **Two properties this doc did not state, both load-bearing for an operator.**
+> (1) ADR fallback: only `superseded` ever carries a `superseded_at`, so `rejected` and
+> `deprecated` age off `created_at` (`nightly_sweep.py:164`). Reading `superseded_at` strictly
+> would leave both archiving never, silently.
+> (2) A `NULL completed_at` means the clock **never started**, not "infinitely old" — so
+> pre-existing completed tasks are permanently un-sweepable. That is grace, and it is
+> forward-only. See `archive/0047-spine-train.md` §3.0.5.
+>
+> **The sweep has never selected a row in production.** C15a found why — `_parse_iso` took a
+> `str` while SQLAlchemy returns a `datetime`, and the `TypeError` was swallowed, so every age
+> comparison fell through. Its first post-deploy run is its first real execution; the runbook
+> (§3.3 step 9) says measure candidate counts before letting it run.
 
 ## 1. Scope
 
