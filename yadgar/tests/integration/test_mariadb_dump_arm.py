@@ -40,6 +40,7 @@ from pathlib import Path
 import pytest
 
 from yadgar.backend.admin_exec import backup_sql
+from yadgar.tests.integration._podman import podman_env
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -81,7 +82,7 @@ def _mariadb_client(runtime: str, name: str, sql: str) -> subprocess.CompletedPr
             runtime, "exec", name, "mariadb", "--socket=/sockets/mysqld.sock",
             f"-u{_APP_USER}", f"-p{_APP_PASS}", _DB, "-e", sql,
         ],
-        capture_output=True, text=True, check=False, timeout=60,
+        capture_output=True, text=True, check=False, timeout=60, env=podman_env(),
     )  # fmt: skip
 
 
@@ -109,7 +110,7 @@ def _remove_socket_dir(runtime: str, sock_dir: Path) -> None:
     if sock_dir.exists() and Path(runtime).name == "podman":
         subprocess.run(
             [runtime, "unshare", "rm", "-rf", str(sock_dir)],
-            capture_output=True, check=False, timeout=60,
+            capture_output=True, check=False, timeout=60, env=podman_env(),
         )  # fmt: skip
 
 
@@ -144,7 +145,7 @@ def live_mariadb():
             _IMAGE,
             "--socket=/sockets/mysqld.sock",
         ],
-        capture_output=True, text=True, check=False, timeout=300,
+        capture_output=True, text=True, check=False, timeout=300, env=podman_env(),
     )  # fmt: skip
     if started.returncode != 0:
         shutil.rmtree(sock_dir, ignore_errors=True)
@@ -170,8 +171,9 @@ def live_mariadb():
         # -v: the image declares /var/lib/mysql a VOLUME, so every run creates an
         # anonymous one. Without this each run leaks a datadir-sized volume.
         subprocess.run(
-            [runtime, "rm", "-f", "-v", name], capture_output=True, check=False, timeout=120
-        )
+            [runtime, "rm", "-f", "-v", name],
+            capture_output=True, check=False, timeout=120, env=podman_env(),
+        )  # fmt: skip
         _remove_socket_dir(runtime, sock_dir)
 
 

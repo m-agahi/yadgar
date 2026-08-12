@@ -46,6 +46,7 @@ from yadgar._shared.storage.sql import (  # noqa: E402
     MariaStorageEngine,
     default_option_file_path,
 )
+from yadgar.tests.integration._podman import podman_env  # noqa: E402
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -104,7 +105,7 @@ def live_mariadb():
             _IMAGE,
             "--socket=/sockets/mysqld.sock",
         ],
-        capture_output=True, text=True, check=False, timeout=300,
+        capture_output=True, text=True, check=False, timeout=300, env=podman_env(),
     )  # fmt: skip
     if started.returncode != 0:
         shutil.rmtree(sock_dir, ignore_errors=True)
@@ -121,8 +122,9 @@ def live_mariadb():
         # -v: the image declares /var/lib/mysql a VOLUME, so every run creates an
         # anonymous one. Without this each run leaks a datadir-sized volume.
         subprocess.run(
-            [runtime, "rm", "-f", "-v", name], capture_output=True, check=False, timeout=120
-        )
+            [runtime, "rm", "-f", "-v", name],
+            capture_output=True, check=False, timeout=120, env=podman_env(),
+        )  # fmt: skip
         _remove_socket_dir(runtime, sock_dir)
 
 
@@ -139,7 +141,7 @@ def _remove_socket_dir(runtime: str, sock_dir: Path) -> None:
     if sock_dir.exists() and Path(runtime).name == "podman":
         subprocess.run(
             [runtime, "unshare", "rm", "-rf", str(sock_dir)],
-            capture_output=True, check=False, timeout=120,
+            capture_output=True, check=False, timeout=120, env=podman_env(),
         )  # fmt: skip
 
 
