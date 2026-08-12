@@ -473,7 +473,21 @@ class TestRestoreExpiryFilter:
 class TestProjectBriefRestoreExpiry:
     """project_brief(mode='restore') top_anchors excludes expired rows."""
 
-    def _insert_anchor_raw(self, server, content: str, valid_until_str: str | None):
+    def _insert_anchor_raw(
+        self, server, content: str, valid_until_str: str | None, project_scope_key: str
+    ):
+        """Raw-insert an anchor row keyed under ``project_scope_key``.
+
+        Car F7 re-keyed ``_build_anchor_rows_restore``'s project-bucket
+        predicate onto ``directory_context = project_scope_key`` (the
+        resolved project_id), matching what ``memorize``/``anchor`` (C10f/
+        C10g) already stamp — see project.py's ``_build_anchor_rows_restore``
+        docstring. This helper bypasses that writer entirely (raw SQL), so it
+        must mint the SAME identity the reader queries by, not a filesystem
+        path — otherwise the row never enters the bucket and every assertion
+        against it (positive or negative) is meaningless regardless of the
+        anchor's actual expiry state.
+        """
         storage = server._storage
         mid = storage._next_id("memory")
         now = storage._now_iso()
@@ -490,7 +504,7 @@ class TestProjectBriefRestoreExpiry:
             "id": mid,
             "content": content,
             "tags": ["_anchor"],
-            "dir": "/tmp/brief_test",
+            "dir": project_scope_key,
             "ts": now,
             "heat": 1.0,
             "st": "episodic",
@@ -503,16 +517,38 @@ class TestProjectBriefRestoreExpiry:
         storage._q(sql, params)
 
     def test_expired_anchor_not_in_restore_top_anchors(self, engines):
+        """Expired anchor excluded from top_anchors.
+
+        Car F11: seeded under TEST_PROJECT_ID — the SAME project_id
+        project_brief is queried with below — so the row genuinely enters
+        the project bucket and only the valid_until filter can exclude it.
+        Before this car the helper seeded under a literal path
+        (``/tmp/brief_test``) that never matched the project-id-keyed
+        predicate (Car F7), so this negative assertion passed vacuously
+        regardless of expiry filtering — proven by temporarily dropping the
+        production expiry predicate in ``_build_anchor_rows_restore`` and
+        re-running: the test still passed. Mutation-checked after this fix:
+        the same production mutation now fails the test.
+        """
         past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-        self._insert_anchor_raw(engines, "expired project anchor", past)
+        self._insert_anchor_raw(engines, "expired project anchor", past, TEST_PROJECT_ID)
 
         result = engines.project_brief("/tmp/brief_test", mode="restore", project=TEST_PROJECT_ID)
         titles = [a.get("title", "") for a in result.get("top_anchors", [])]
         assert not any("expired project anchor" in t for t in titles)
 
     def test_active_anchor_in_restore_top_anchors(self, engines):
+        """Active anchor included in top_anchors.
+
+        Car F7 re-keyed the project bucket's predicate onto
+        ``directory_context = project_scope_key`` (resolved project_id); this
+        test's raw insert still wrote a filesystem-path ``directory_context``
+        (``/tmp/brief_test``), so the anchor never matched the bucket the
+        reader queries and the test failed. Seed under TEST_PROJECT_ID —
+        the same project_id passed to project_brief below.
+        """
         future = (datetime.now(UTC) + timedelta(days=90)).isoformat()
-        self._insert_anchor_raw(engines, "active project anchor", future)
+        self._insert_anchor_raw(engines, "active project anchor", future, TEST_PROJECT_ID)
 
         result = engines.project_brief("/tmp/brief_test", mode="restore", project=TEST_PROJECT_ID)
         titles = [a.get("title", "") for a in result.get("top_anchors", [])]
