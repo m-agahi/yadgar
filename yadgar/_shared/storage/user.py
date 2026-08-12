@@ -13,6 +13,7 @@ from datetime import datetime
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage._project_id_writer import project_id_set_fragment
 
 _log = logging.getLogger(__name__)
 
@@ -196,13 +197,14 @@ class _UserMixin:
                 invalidate_edge(self, "user_profile", pid)
 
                 new_pid = self._next_id("user_profile")
+                pid_sql, pid_params = project_id_set_fragment(project_id)
                 self._q(
                     "BEGIN TRANSACTION;\n"
                     "CREATE type::record('user_profile', $id) SET "
                     "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
                     "attribute_value = $av, evidence_memory_ids = $evids, "
                     "confidence = $conf, created_at = $now, updated_at = $now, "
-                    "directory_context = $dc, project_id = $pid, "
+                    f"directory_context = $dc, {pid_sql}, "
                     "valid_from = $now, valid_until = NONE;\n"
                     "COMMIT TRANSACTION",
                     {
@@ -215,7 +217,7 @@ class _UserMixin:
                         "conf": confidence,
                         "now": now,
                         "dc": directory_context,
-                        "pid": project_id,
+                        **pid_params,
                     },
                 )
                 return new_pid
@@ -237,13 +239,14 @@ class _UserMixin:
         # No existing currently-valid row — fresh insert
         evidence = [memory_id] if memory_id is not None else []
         pid = self._next_id("user_profile")
+        pid_sql, pid_params = project_id_set_fragment(project_id)
         self._q(
             "BEGIN TRANSACTION;\n"
             "CREATE type::record('user_profile', $id) SET "
             "entity_name = $en, attribute_type = $at, attribute_key = $ak, "
             "attribute_value = $av, evidence_memory_ids = $evids, "
             "confidence = $conf, created_at = $now, updated_at = $now, "
-            "directory_context = $dc, project_id = $pid, "
+            f"directory_context = $dc, {pid_sql}, "
             "valid_from = $now, valid_until = NONE;\n"
             "COMMIT TRANSACTION",
             {
@@ -256,7 +259,7 @@ class _UserMixin:
                 "conf": confidence,
                 "now": now,
                 "dc": directory_context,
-                "pid": project_id,
+                **pid_params,
             },
         )
         return pid

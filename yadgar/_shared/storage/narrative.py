@@ -256,13 +256,14 @@ class _NarrativeMixin:
                         invalidate_edge(self, "derived_belief", prior_id)
 
         bid = self._next_id("derived_belief")
+        pid_sql, pid_params = project_id_set_fragment(record.project_id)
         self._q(
             "CREATE type::record('derived_belief', $id) SET "
             "belief_type = $bt, subject = $subject, content = $content, "
             "evidence_memory_ids = $evids, confidence = $conf, "
             "embedding = $emb, embedding_model = $em, "
-            "created_at = $now, updated_at = $now, directory_context = $dc, "
-            "project_id = $pid, valid_from = $now, valid_until = NONE",
+            f"created_at = $now, updated_at = $now, directory_context = $dc, "
+            f"{pid_sql}, valid_from = $now, valid_until = NONE",
             {
                 "id": bid,
                 "bt": belief_type,
@@ -272,7 +273,7 @@ class _NarrativeMixin:
                 "conf": confidence,
                 "emb": emb_floats,
                 "em": embedding_model,
-                "pid": record.project_id,
+                **pid_params,
                 "now": now,
                 "dc": directory_context,
             },
