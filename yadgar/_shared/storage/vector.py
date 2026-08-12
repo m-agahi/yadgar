@@ -64,11 +64,23 @@ class _VectorMixin:
           ``AND project_id = $p`` would filter what KNN already chose — a silent
           under-return, not a slowdown. Pre-filtering is the only shape that
           cannot starve a scoped recall.
+
+        Car F1 — the scoped arm needs BOTH emptiness guards. SurrealDB's NONE
+        and NULL are different values: ``IS NOT NONE`` ADMITS an explicit NULL,
+        and ``IS NOT NULL`` ADMITS a NONE (see ``backend/graph/graph_api.py``
+        line 320 for the same trap on the other side). Either one alone lets a
+        row through to ``vector::similarity::cosine()``, which rejects it with
+        "Expected ``array<number>`` but found ``NULL``" and kills the WHOLE
+        query — every scoped recall, not just that row. The KNN arm is immune:
+        the HNSW index never offers a non-array row as a neighbour.
         """
         floats = self._bytes_to_floats(query_embedding)
         params: dict = {"qv": floats}
         if scope_sql:
-            where = f"embedding IS NOT NONE AND heat >= $minh AND ({scope_sql})"
+            where = (
+                "embedding IS NOT NONE AND embedding IS NOT NULL "
+                f"AND heat >= $minh AND ({scope_sql})"
+            )
             tail = "ORDER BY sim DESC LIMIT $lim"
             params.update({"minh": min_heat, "lim": top_k, **(scope_params or {})})
         else:

@@ -457,5 +457,16 @@
   "rationale": "Car C13f (0047 PR#40 §5): params 8 -> 9 for project_id. The function was sitting EXACTLY on the HARD cap (8 incl. self), and the added parameter is essential feature surface — one more user_profile column — not logic branching: cyclomatic, nesting and fn_loc are all unchanged. It cannot be dropped or defaulted, because it is the scope key the read path now filters on (search_profiles_fts pushes 'AND project_id = $pid'), and ADR-0227 forbids deriving an identity in-process, so the value has to arrive from the caller. Keyword-only does not help: complexity_audit.param_count sums args + kwonlyargs + posonlyargs, so the count is identical. THE HONEST FIX IS A ProfileRecord DATACLASS — precisely the refactor the SIBLING function already had done to it: insert_belief takes a single BeliefRecord whose docstring says its fields 'map 1-to-1 to the derived_belief table columns', which is what collapsed that signature. Mirroring it here would take insert_profile to 3 params and retire this entry outright. It is deferred because it is a storage-API change with a blast radius of ~17 insert_profile call sites (yadgar/tests/_shared/test_bitemporal_extension.py alone holds 16), and this car is the last blocker on the PR's make-e2e push gate — a broad signature churn here buys nothing for the three production bugs the car exists to fix and risks the gate it exists to turn green. Same deferral shape as the wiki_add Car M entry above (essential parameter surface, extraction owned by a dedicated refactor).",
   "added": "2026-08-12",
   "added_by": "car-c13f-classb-fixes"
+ },
+ {
+  "path": "yadgar/_shared/storage/wiki.py",
+  "function": "<file>",
+  "lineno": 1,
+  "metrics": {
+   "file_loc": 1017
+  },
+  "rationale": "Car F1 (PR #40 CI failure class B): this file sat at EXACTLY 1000 — the HARD cap itself — before this change, so ANY net addition trips the gate. The addition is +17 net for a crash fix, not a feature: SurrealDB NONE and NULL are different values and each emptiness guard ADMITS the other's, so the two brute-force cosine arms here (search_wiki_vectors scoped, search_wiki_vectors_tagged) took a second guard, and the two writers here (insert_wiki_page, update_wiki_page) stopped binding a Python None that lands as SurrealDB NULL over the HTTP transport and then kills every scoped recall with 'Expected `array<number>` but found `NULL`'. Nine of the 17 lines are pure code (the emb_assign branch, the update_wiki_page embedding branch); the rest are the docstring notes that stop the second guard being deleted later as redundant-looking belt-and-braces — which is exactly how the single-guard version shipped in C7. Those comments were ALREADY compressed once to get from +32 to +17, with the full account kept in storage/vector.py::search_vectors (the canonical site) rather than duplicated here. Shedding the remaining 17 would mean deleting unrelated prose from a 1000-line file on a CI-failure branch: churn with no readability gain, and outside this car's remit. The honest fix is the _WikiMixin split, which belongs to the wave N module split alongside its siblings (storage/memory.py, storage/migrations.py) already carrying entries above.",
+  "added": "2026-08-12",
+  "added_by": "car-f1-vector-null"
  }
 ]
