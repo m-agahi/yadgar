@@ -20,6 +20,7 @@ import pytest
 
 from yadgar._shared.storage.sql.config import (
     MariaClientConfig,
+    default_migrate_option_file_path,
     default_option_file_path,
     read_client_option_file,
 )
@@ -157,3 +158,40 @@ def test_dataclass_is_constructible_directly():
         unix_socket="/nowhere/mysqld.sock",
     )
     assert cfg.database == "d"
+
+
+# ── the MIGRATION account's option file ──────────────────────────────────
+
+
+def test_migrate_option_file_explicit_override_wins(monkeypatch, tmp_path):
+    monkeypatch.setenv("YADGAR_MARIADB_MIGRATE_CNF", str(tmp_path / "m.cnf"))
+    monkeypatch.setenv("MARIADB_MIGRATE_CNF", "/ignored")
+    assert default_migrate_option_file_path() == tmp_path / "m.cnf"
+
+
+def test_migrate_option_file_honours_the_entrypoint_variable(monkeypatch, tmp_path):
+    monkeypatch.delenv("YADGAR_MARIADB_MIGRATE_CNF", raising=False)
+    monkeypatch.setenv("MARIADB_MIGRATE_CNF", str(tmp_path / "mariadb" / "migrate.cnf"))
+    assert default_migrate_option_file_path() == tmp_path / "mariadb" / "migrate.cnf"
+
+
+def test_migrate_option_file_is_a_sibling_of_the_app_one(monkeypatch, tmp_path):
+    """The two files are written into the same directory by the same function,
+    so "sibling of client.cnf" is the relationship actually guaranteed."""
+    for var in ("YADGAR_MARIADB_MIGRATE_CNF", "MARIADB_MIGRATE_CNF"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("MARIADB_DATA_DIR", str(tmp_path / "mariadb"))
+    assert default_migrate_option_file_path() == tmp_path / "mariadb" / "migrate.cnf"
+    assert default_migrate_option_file_path().parent == default_option_file_path().parent
+
+
+def test_the_two_option_files_are_never_the_same_path(monkeypatch, tmp_path):
+    """A migration engine pointed at the app credentials cannot create a table.
+
+    The whole credential split collapses to nothing if these ever resolve to
+    one file, and they are resolved by two different ladders.
+    """
+    for var in ("YADGAR_MARIADB_MIGRATE_CNF", "MARIADB_MIGRATE_CNF"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("MARIADB_DATA_DIR", str(tmp_path / "mariadb"))
+    assert default_migrate_option_file_path() != default_option_file_path()

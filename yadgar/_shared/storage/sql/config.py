@@ -50,6 +50,22 @@ CLIENT_GROUP = "client"
 # Basename of the option file inside the MariaDB datadir (car A).
 CLIENT_CNF_NAME = "client.cnf"
 
+# Basename of the MIGRATION account's option file, a sibling of the app's.
+#
+# WHY A SECOND ACCOUNT AND NOT THE APP'S OR THE ADMIN'S. The app account is
+# deliberately DDL-less (D19: SELECT/INSERT/UPDATE/DELETE/REFERENCES per table,
+# no CREATE/ALTER/INDEX/DROP), so `alembic upgrade head` as the app account
+# dies on the first `op.create_table` with
+# ``(1142, "CREATE command denied to user 'yadgar_app'@'localhost' for table
+# `yadgar`.`task`")``. The admin account cannot be used either: it authenticates
+# with MariaDB's ``unix_socket`` plugin and asyncmy implements only
+# mysql_native_password / caching_sha2_password / sha256_password /
+# client_ed25519 (``asyncmy/connection.pyx:1141-1290``), so no asyncmy engine
+# can ever connect as it. The migration account is the narrowest credential
+# that can actually run the chain: password auth, DDL scoped to the engine-#2
+# database, no GRANT OPTION.
+MIGRATE_CNF_NAME = "migrate.cnf"
+
 # Datadir basename — a SIBLING of ``surreal_db`` under the shared data root,
 # never inside the surrealkv tree (ADR-0196: engine #2 leaves the vacuum
 # pipeline, and every vacuum copytree/reap glob is ``surreal_db``-prefixed).
@@ -107,6 +123,28 @@ def default_option_file_path() -> Path:
         return Path(data_root).expanduser() / DATADIR_NAME / CLIENT_CNF_NAME
 
     return Path(_paths.DB_PATH).expanduser().parent / DATADIR_NAME / CLIENT_CNF_NAME
+
+
+@observe(tier="hot")
+def default_migrate_option_file_path() -> Path:
+    """Resolve the MIGRATION account's option file.
+
+    Order (first hit wins):
+
+    1. ``YADGAR_MARIADB_MIGRATE_CNF`` — explicit override (tests, ad-hoc tooling).
+    2. ``MARIADB_MIGRATE_CNF`` — the entrypoint's own variable name.
+    3. ``migrate.cnf`` beside whatever ``default_option_file_path()`` resolved.
+
+    (3) rather than a second copy of the datadir ladder: the two files are
+    written into the same directory by the same entrypoint function, so
+    "sibling of the app's option file" is the relationship that is actually
+    guaranteed, and it stays correct if the ladder above ever changes.
+    """
+    for var in ("YADGAR_MARIADB_MIGRATE_CNF", "MARIADB_MIGRATE_CNF"):
+        override = os.environ.get(var, "").strip()
+        if override:
+            return Path(override).expanduser()
+    return default_option_file_path().parent / MIGRATE_CNF_NAME
 
 
 @observe(tier="stage")

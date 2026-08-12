@@ -66,6 +66,35 @@ from yadgar._shared.config import resolve_knob
 # I14 — max chars for traceback in structured JSON (constant for test import)
 TRACEBACK_MAX_CHARS: int = 2000
 
+# Share of the budget kept from the HEAD of an over-long traceback; the rest is
+# kept from the TAIL. See ``_truncate_traceback``.
+_TRACEBACK_HEAD_SHARE: float = 0.6
+
+_TRACEBACK_ELISION = "\n … [truncated] … \n"
+
+
+def _truncate_traceback(tb_text: str) -> str:
+    """Keep the head AND the tail of an over-long traceback.
+
+    THE BUG THIS FIXES. The old rule was ``tb_text[:TRACEBACK_MAX_CHARS]`` —
+    head only. A Python traceback puts the FRAMES first and the exception's own
+    message LAST, so over the cap the truncation deleted the only line that
+    said what actually went wrong. A failed engine-#2 migration logged
+    ``"error": "OperationalError"`` and a traceback that stopped short of
+    ``OperationalError: (1142, "CREATE command denied …")``: every distinct
+    failure looked identical, and diagnosing one cost a full cycle.
+
+    Frames are still the more useful half when both fit, so the head keeps the
+    larger share. Total length stays within ``TRACEBACK_MAX_CHARS`` plus the
+    elision marker, so the cap this exists to honour is unchanged.
+    """
+    if len(tb_text) <= TRACEBACK_MAX_CHARS:
+        return tb_text
+    head_len = int(TRACEBACK_MAX_CHARS * _TRACEBACK_HEAD_SHARE)
+    tail_len = TRACEBACK_MAX_CHARS - head_len
+    return tb_text[:head_len] + _TRACEBACK_ELISION + tb_text[-tail_len:]
+
+
 # I14 — two-tier denylist for sensitive field names (v5.4.7).
 #
 # Exact-match tier: redact ONLY if the field name IS the word exactly.
@@ -205,9 +234,7 @@ class JSONLogFormatter(logging.Formatter):
     def _append_traceback(self, payload: dict, record: logging.LogRecord) -> None:
         if not record.exc_info:
             return
-        tb_text = self.formatException(record.exc_info)
-        if len(tb_text) > TRACEBACK_MAX_CHARS:
-            tb_text = tb_text[:TRACEBACK_MAX_CHARS] + " … [truncated]"
+        tb_text = _truncate_traceback(self.formatException(record.exc_info))
         payload["traceback"] = tb_text
         exc_type = record.exc_info[0]
         if exc_type is not None:
