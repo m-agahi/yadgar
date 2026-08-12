@@ -1181,7 +1181,11 @@ def wiki_read_version(
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
 
     Returns the full snapshot including: version, title, content, category, tags,
-    confidence, source_memory_ids, branch, change_summary, created_at.
+    confidence, source_memory_ids, change_summary, created_at.
+
+    C12 (ADR-0226): ``branch`` is no longer in that list. Migration 032 dropped the
+    column from ``wiki_page_version`` and every snapshot writer was silenced, so a
+    field list still naming it was a false contract in the surface a model reads.
 
     Error: {"error": "...", "max_version": N} if version not found.
     """
