@@ -50,7 +50,7 @@ class CausalDiscovery:
         self._settings = settings
 
     def build_event_matrix(
-        self, directory: str | None = None, hours: int = 168
+        self, project_id: str | None = None, hours: int = 168
     ) -> tuple[np.ndarray, list[str], list[str]]:
         """Build a time-aligned binary event matrix from recent activity.
 
@@ -59,7 +59,7 @@ class CausalDiscovery:
 
         Returns (data_matrix, variable_names, timestamps).
         """
-        return build_event_matrix(self._storage, self._settings, directory=directory, hours=hours)
+        return build_event_matrix(self._storage, self._settings, project_id=project_id, hours=hours)
 
     def conditional_independence_test(
         self,
@@ -138,7 +138,7 @@ class CausalDiscovery:
     @observe(tier="boundary")
     def discover_dag(
         self,
-        directory: str | None = None,
+        project_id: str | None = None,
         algorithm: str = "pc",
         hours: int = 168,
     ) -> dict:
@@ -147,7 +147,9 @@ class CausalDiscovery:
         Returns the discovered DAG with metadata, and stores directed
         edges in the causal_dag_edges table.
         """
-        data, variable_names, timestamps = self.build_event_matrix(directory=directory, hours=hours)
+        data, variable_names, timestamps = self.build_event_matrix(
+            project_id=project_id, hours=hours
+        )
 
         n_vars = len(variable_names)
         n_windows = len(timestamps)

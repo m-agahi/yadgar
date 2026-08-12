@@ -10,6 +10,11 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.cls_store import DualStoreCLS
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -62,6 +67,7 @@ def _make_memory(
         )
 
     mem = {
+        "project_id": _TEST_PROJECT,
         "content": content,
         "embedding": embedding,
         "tags": tags or ["test"],
@@ -223,7 +229,7 @@ class TestFindRecurringPatterns:
             session_id="session-004",
         )
 
-        patterns = cls.find_recurring_patterns(directory="/tmp/frontend", min_occurrences=3)
+        patterns = cls.find_recurring_patterns(project_id="/tmp/frontend", min_occurrences=3)
         # Should find pattern in frontend, not backend
         if patterns:
             for p in patterns:
@@ -458,6 +464,13 @@ class TestConsolidationCycle:
                 "id": 1,
                 "content": "safe content here",
                 "directory_context": "/proj",
+                # C4 (0047 PR#40 §5): a promotion whose cluster names no single
+                # project_id is skipped and counted rather than collapsed onto
+                # the "global" sentinel. This test's subject is the secret gate,
+                # so the cluster is given a nameable project to keep it on the
+                # promote path; the skip itself is asserted in
+                # test_c4_sessionless_writers.TestClsPromotionSkipsUnnameableClusters.
+                "project_id": "m-agahi/yadgar",
                 "embedding": vec,
             },
         ]
@@ -517,7 +530,7 @@ class TestQueryDual:
             store_type="semantic",
         )
 
-        results = cls.query_dual("error in src/auth/login.py", directory="", prefer="auto")
+        results = cls.query_dual("error in src/auth/login.py", project_id="", prefer="auto")
         assert isinstance(results, list)
         # The specific episodic memory should appear in results
         if results:
@@ -539,7 +552,9 @@ class TestQueryDual:
             store_type="semantic",
         )
 
-        results = cls.query_dual("what architecture pattern do we use", directory="", prefer="auto")
+        results = cls.query_dual(
+            "what architecture pattern do we use", project_id="", prefer="auto"
+        )
         assert isinstance(results, list)
 
     def test_query_dual_prefer_episodic(self, cls, storage, embeddings):
@@ -557,7 +572,7 @@ class TestQueryDual:
             store_type="semantic",
         )
 
-        results = cls.query_dual("authentication", directory="", prefer="episodic")
+        results = cls.query_dual("authentication", project_id="", prefer="episodic")
         assert isinstance(results, list)
 
     def test_query_dual_prefer_semantic(self, cls, storage, embeddings):
@@ -575,7 +590,7 @@ class TestQueryDual:
             store_type="semantic",
         )
 
-        results = cls.query_dual("authentication", directory="", prefer="semantic")
+        results = cls.query_dual("authentication", project_id="", prefer="semantic")
         assert isinstance(results, list)
 
     def test_query_dual_directory_filter(self, cls, storage, embeddings):
@@ -595,7 +610,7 @@ class TestQueryDual:
             store_type="episodic",
         )
 
-        results = cls.query_dual("state management", directory="/tmp/frontend", prefer="auto")
+        results = cls.query_dual("state management", project_id="/tmp/frontend", prefer="auto")
         for r in results:
             assert r.get("directory_context") == "/tmp/frontend"
 
@@ -606,7 +621,7 @@ class TestQueryDual:
         bad_embeddings._unavailable = True
         bad_cls = DualStoreCLS(storage, bad_embeddings, Settings(DB_PATH=str(tmp_path / "bad.db")))
 
-        results = bad_cls.query_dual("test query", directory="", prefer="auto")
+        results = bad_cls.query_dual("test query", project_id="", prefer="auto")
         assert results == []
 
 
@@ -660,6 +675,7 @@ def cls_consolidation_at_scale(tmp_path):
         )
         engine.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content,
                 "embedding": vec,
                 "tags": ["episodic"],
@@ -716,6 +732,7 @@ def test_consolidation_cycle_derived_from_links_created(tmp_path):
         )
         engine.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": content,
                 "embedding": vec,
                 "tags": ["episodic"],
@@ -766,6 +783,7 @@ class TestClsPatternCandidateCap:
             vec /= np.linalg.norm(vec)
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"cls cap test memory {i}",
                     "embedding": vec.tobytes(),
                     "directory_context": "/proj",
@@ -780,9 +798,11 @@ class TestClsPatternCandidateCap:
         original = storage.get_memories_by_store_type
         called_with_limit = []
 
-        def spy(store_type, directory=None, limit=None):
+        # C9c (0047 §5): the spy mirrors the real signature, so it moved with it
+        # when ``get_memories_by_store_type``'s ``directory`` became ``project_id``.
+        def spy(store_type, project_id=None, limit=None):
             called_with_limit.append(limit)
-            return original(store_type, directory=directory, limit=limit)
+            return original(store_type, project_id=project_id, limit=limit)
 
         with patch.object(storage, "get_memories_by_store_type", side_effect=spy):
             cls.find_recurring_patterns()
@@ -834,6 +854,7 @@ class TestActionStreamNotPromoted:
             )
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": clean_content,
                     "embedding": vec,
                     "tags": ["episodic"],
@@ -851,6 +872,7 @@ class TestActionStreamNotPromoted:
         )
         mid5 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": tagged_content,
                 "embedding": vec,
                 "tags": ["_action_stream"],
@@ -915,6 +937,7 @@ class TestActionStreamNotPromoted:
             )
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": clean_content,
                     "embedding": vec,
                     "tags": ["episodic"],
@@ -932,6 +955,7 @@ class TestActionStreamNotPromoted:
         )
         mid5 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": tagged_content,
                 "embedding": vec,
                 "tags": ["semantic", "auto-abstracted"],
@@ -1302,6 +1326,7 @@ class TestDegeneratePatternNotEmitted:
             )
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": content,
                     "embedding": vec,
                     "tags": ["episodic"],
@@ -1354,6 +1379,7 @@ class TestDegeneratePatternNotEmitted:
             )
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": content,
                     "embedding": vec,
                     "tags": ["episodic"],

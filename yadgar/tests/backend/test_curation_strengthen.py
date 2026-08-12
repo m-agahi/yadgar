@@ -31,11 +31,36 @@ from yadgar.backend.curation.strengthen import _memify_derive, _memify_reweight,
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+#: C13 — the project a derived fact INHERITS from its source rows.
+#: C4 re-pointed _memify_derive's ownership vote from dominant_directory (which
+#: collapsed an unnameable pair to the literal "global") onto the sources' own
+#: project_id, and ADR-0227 left no fallback under it: a pair whose sources name
+#: no project is skipped and counted. A derive test therefore has to hand the
+#: fake storage at least one source memory that both mentions the entity names
+#: and names an owner, or it is exercising the skip path by accident.
+_TEST_PROJECT = "m-agahi/yadgar"
+
+
+def _owning_source_mem(*entity_names: str, project_id: str = _TEST_PROJECT) -> dict:
+    """A source memory that mentions *entity_names* and names its project.
+
+    The content deliberately does NOT match the derived-fact sentence
+    ("X and Y are frequently modified together"), which would land it in
+    ``existing_contents`` and short-circuit the dedup check under test.
+    """
+    return {
+        "content": "commit touching " + ", ".join(entity_names),
+        "directory_context": "/proj",
+        "project_id": project_id,
+    }
+
+
 def _make_storage(
     memories=None,
     entities=None,
     relationships=None,
     all_contents=None,
+    source_mems=None,
 ) -> MagicMock:
     storage = MagicMock()
     storage.get_memories_by_heat.return_value = memories or []
@@ -43,8 +68,8 @@ def _make_storage(
     storage.get_all_relationships.return_value = relationships or []
     storage.get_relationships_by_types.return_value = relationships or []
     storage.get_all_memories_with_embeddings.return_value = [
-        {"content": c} for c in (all_contents or [])
-    ]
+        {"content": c, "project_id": _TEST_PROJECT} for c in (all_contents or [])
+    ] + list(source_mems or [])
     storage._now_iso.return_value = "2026-01-01T00:00:00+00:00"
     storage._next_id.return_value = 42
     storage._bytes_to_floats.return_value = [0.0, 0.1]
@@ -293,7 +318,11 @@ def test_derive_creates_derived_fact_for_high_weight():
         {"id": 2, "name": "ModuleB"},
     ]
     rels = [_make_rel(10, 1, 2, weight=12.0)]
-    storage = _make_storage(entities=entity_dicts, relationships=rels)
+    storage = _make_storage(
+        entities=entity_dicts,
+        relationships=rels,
+        source_mems=[_owning_source_mem("ModuleA", "ModuleB")],
+    )
     embeddings = _make_embeddings()
     stats = {"derived": 0}
     _memify_derive(storage, embeddings, stats)
@@ -371,7 +400,11 @@ def test_derive_batch_has_two_ops_per_item():
     """Each derived item creates 2 batch operations: CREATE + UPDATE."""
     entity_dicts = [{"id": 1, "name": "X"}, {"id": 2, "name": "Y"}]
     rels = [_make_rel(10, 1, 2, weight=15.0)]
-    storage = _make_storage(entities=entity_dicts, relationships=rels)
+    storage = _make_storage(
+        entities=entity_dicts,
+        relationships=rels,
+        source_mems=[_owning_source_mem("X", "Y")],
+    )
     embeddings = _make_embeddings()
     stats = {"derived": 0}
     _memify_derive(storage, embeddings, stats)
@@ -382,7 +415,11 @@ def test_derive_batch_has_two_ops_per_item():
 def test_derive_content_format():
     entity_dicts = [{"id": 1, "name": "ServiceA"}, {"id": 2, "name": "ServiceB"}]
     rels = [_make_rel(10, 1, 2, weight=20.0)]
-    storage = _make_storage(entities=entity_dicts, relationships=rels)
+    storage = _make_storage(
+        entities=entity_dicts,
+        relationships=rels,
+        source_mems=[_owning_source_mem("ServiceA", "ServiceB")],
+    )
     embeddings = _make_embeddings()
     stats = {"derived": 0}
     _memify_derive(storage, embeddings, stats)
@@ -398,7 +435,11 @@ def test_derive_dedup_within_run():
         _make_rel(10, 1, 2, weight=15.0),
         _make_rel(11, 1, 2, weight=20.0),
     ]
-    storage = _make_storage(entities=entity_dicts, relationships=rels)
+    storage = _make_storage(
+        entities=entity_dicts,
+        relationships=rels,
+        source_mems=[_owning_source_mem("A", "B")],
+    )
     embeddings = _make_embeddings()
     stats = {"derived": 0}
     _memify_derive(storage, embeddings, stats)
@@ -409,7 +450,11 @@ def test_derive_dedup_within_run():
 def test_derive_uses_embedding_for_content():
     entity_dicts = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
     rels = [_make_rel(10, 1, 2, weight=15.0)]
-    storage = _make_storage(entities=entity_dicts, relationships=rels)
+    storage = _make_storage(
+        entities=entity_dicts,
+        relationships=rels,
+        source_mems=[_owning_source_mem("A", "B")],
+    )
     embeddings = _make_embeddings(encoded_val=b"\x01\x02\x03\x04")
     stats = {"derived": 0}
     _memify_derive(storage, embeddings, stats)
@@ -419,7 +464,11 @@ def test_derive_uses_embedding_for_content():
 def test_derive_none_embedding_passed_as_none_floats():
     entity_dicts = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
     rels = [_make_rel(10, 1, 2, weight=15.0)]
-    storage = _make_storage(entities=entity_dicts, relationships=rels)
+    storage = _make_storage(
+        entities=entity_dicts,
+        relationships=rels,
+        source_mems=[_owning_source_mem("A", "B")],
+    )
     embeddings = _make_embeddings(encoded_val=None)
     stats = {"derived": 0}
     _memify_derive(storage, embeddings, stats)
@@ -435,7 +484,11 @@ def test_derive_none_embedding_passed_as_none_floats():
 def test_derive_model_name_in_batch():
     entity_dicts = [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
     rels = [_make_rel(10, 1, 2, weight=15.0)]
-    storage = _make_storage(entities=entity_dicts, relationships=rels)
+    storage = _make_storage(
+        entities=entity_dicts,
+        relationships=rels,
+        source_mems=[_owning_source_mem("A", "B")],
+    )
     embeddings = _make_embeddings()
     embeddings.get_model_name.return_value = "my-special-model"
     stats = {"derived": 0}

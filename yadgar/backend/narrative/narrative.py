@@ -65,10 +65,10 @@ class NarrativeEngine:
     @observe(tier="boundary")
     def generate_narrative(
         self,
-        directory: str,
+        project_id: str,
         period_hours: int | None = None,
     ) -> dict:
-        """Generate a narrative entry for a directory over a time period.
+        """Generate a narrative entry for a project over a time period.
 
         Returns the inserted narrative entry dict.
         """
@@ -78,8 +78,8 @@ class NarrativeEngine:
         now = datetime.now(UTC)
         period_start = now - timedelta(hours=period_hours)
 
-        # Collect memories for this directory within the time window
-        all_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
+        # Collect memories for this project within the time window
+        all_memories = self._storage.get_memories_for_directory(project_id, min_heat=0.0)
         period_memories = [
             m for m in all_memories if datetime.fromisoformat(m["created_at"]) >= period_start
         ]
@@ -88,11 +88,11 @@ class NarrativeEngine:
         decisions = self._extract_decisions(period_memories)
         events = self._extract_events(period_memories)
         top_entities = self._get_top_entities(period_memories)
-        high_heat_topics = self._get_high_heat_topics(directory)
+        high_heat_topics = self._get_high_heat_topics(project_id)
 
         # Build summary
         period_desc = f"the last {period_hours} hours"
-        parts = [f"In {directory}, during {period_desc}: {count} memories recorded."]
+        parts = [f"In {project_id}, during {period_desc}: {count} memories recorded."]
 
         if decisions:
             parts.append(f"Key decisions: {', '.join(decisions[:5])}.")
@@ -106,7 +106,7 @@ class NarrativeEngine:
         summary = " ".join(parts)
 
         entry = {
-            "directory_context": directory,
+            "directory_context": project_id,
             "summary": summary,
             "period_start": period_start.isoformat(),
             "period_end": now.isoformat(),
@@ -119,11 +119,11 @@ class NarrativeEngine:
         return entry
 
     @observe(tier="boundary")
-    def get_project_story(self, directory: str, max_entries: int = 10) -> str:
-        """Retrieve all narrative entries for a directory and combine into a story."""
-        entries = self._storage.get_narratives_for_directory(directory, limit=max_entries)
+    def get_project_story(self, project_id: str, max_entries: int = 10) -> str:
+        """Retrieve all narrative entries for a project and combine into a story."""
+        entries = self._storage.get_narratives_for_directory(project_id, limit=max_entries)
         if not entries:
-            return f"No narrative entries found for {directory}."
+            return f"No narrative entries found for {project_id}."
 
         # Sort chronologically (ascending by period_start)
         entries.sort(key=lambda e: e["period_start"])
@@ -138,7 +138,7 @@ class NarrativeEngine:
     def auto_narrate(self) -> dict:
         """Auto-generate narratives for active directories during sleep-time compute.
 
-        For each directory with memories having heat > 0.3:
+        For each project with memories having heat > 0.3:
           If no narrative entry in the last NARRATIVE_INTERVAL_HOURS, generate one.
         """
         stats = {"directories_checked": 0, "narratives_generated": 0}
@@ -150,19 +150,19 @@ class NarrativeEngine:
         active_dirs = self._get_active_directories(min_heat=0.3)
         stats["directories_checked"] = len(active_dirs)
 
-        for directory in active_dirs:
+        for project_id in active_dirs:
             # Check if there's a recent narrative
-            existing = self._storage.get_narratives_for_directory(directory, limit=1)
+            existing = self._storage.get_narratives_for_directory(project_id, limit=1)
             if existing:
                 latest_end = datetime.fromisoformat(existing[0]["period_end"])
                 if latest_end >= cutoff:
                     continue
 
             try:
-                self.generate_narrative(directory, period_hours=interval)
+                self.generate_narrative(project_id, period_hours=interval)
                 stats["narratives_generated"] += 1
             except Exception:
-                logger.exception("Failed to generate narrative for %s", directory)
+                logger.exception("Failed to generate narrative for %s", project_id)
 
         return stats
 
@@ -225,9 +225,9 @@ class NarrativeEngine:
         return [name for name, _ in entity_counts.most_common(10)]
 
     @observe(tier="stage")
-    def _get_high_heat_topics(self, directory: str) -> list[str]:
-        """Get topics from high-heat memories in this directory."""
-        hot_memories = self._storage.get_memories_for_directory(directory, min_heat=0.7)
+    def _get_high_heat_topics(self, project_id: str) -> list[str]:
+        """Get topics from high-heat memories in this project."""
+        hot_memories = self._storage.get_memories_for_directory(project_id, min_heat=0.7)
         topics = []
         for mem in hot_memories[:10]:
             # First meaningful sentence

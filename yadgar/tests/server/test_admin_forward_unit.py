@@ -200,11 +200,19 @@ def test_block_create_forwards_payload_after_guards():
     assert len(calls) == 1
     op, payload = calls[0]
     assert op == "block_create"
+    # C11 (0047 PR#40 §5): block_create now KEEPS accept_project_param's
+    # validated return value and puts it on the payload (migration 033 gave
+    # memory_block a project_id column). No project= was passed here, and
+    # accept_project_param deliberately does not resolve when project is
+    # None (it would raise via resolve_effective_project otherwise) — so
+    # project_id: None is the correct forwarded value for this unnamed call,
+    # not a caller that should have supplied one.
     assert payload == {
         "name": "n",
         "content": "c",
         "scope": "global",
         "directory": None,
+        "project_id": None,
         "char_limit": 1234,
     }
 
@@ -433,7 +441,8 @@ def test_wiki_update_disallowed_key_raises_before_forward():
 
 def test_agent_prompt_save_validates_gates_wraps_core_then_forwards():
     """agent_prompt_save keeps directory-validate + I26 gate + content-wrap core,
-    then forwards the composed payload (wiki.add + TOC + anchor backend-side)."""
+    then forwards the composed payload (wiki.add + agent_pattern ledger row —
+    TOC + library anchor retired by 0047 Car I)."""
     import yadgar.core.server.tools.agent_prompts as _ap
 
     calls: list = []
@@ -443,18 +452,41 @@ def test_agent_prompt_save_validates_gates_wraps_core_then_forwards():
         return {"saved": True, "version": 1, "slug": payload["slug"], "page_id": 9}
 
     with patch.object(_ap, "_forward_admin", _fake_forward):
-        _ap.agent_prompt_save("fix-bug", "do the thing", directory="/proj")
+        _ap.agent_prompt_save(
+            "fix-bug",
+            "do the thing",
+            directory="/proj",
+            # C5 (ADR-0227): agent_prompt_save resolves an identity before it
+            # composes the payload, and returns an unresolved_project envelope
+            # instead of forwarding when nothing names one — so without this the
+            # two forwards asserted below never happen.
+            project="owner/repo",
+        )
 
-    assert len(calls) == 1
-    op, payload = calls[0]
-    assert op == "agent_prompt_save"
-    assert payload["slug"] == "agent-prompt-fix-bug"
-    assert payload["pattern"] == "fix-bug"
-    assert payload["directory"] == "/proj"
-    # content wrapped with Purpose/Prompt headings core-side
-    assert "## Purpose" in payload["full_content"]
-    assert "## Prompt" in payload["full_content"]
-    assert "do the thing" in payload["full_content"]
+    # 0047 Car I: page-first then ledger-row mirror (D40 content_hash). Two
+    # forwards, in that order — a crash between them leaves an orphan page
+    # (detected by check_page_row_desync), not an orphan row.
+    assert len(calls) == 2
+    page_op, page_payload = calls[0]
+    row_op, row_payload = calls[1]
+
+    # Forward #1 — the wiki body page (the canonical content).
+    assert page_op == "agent_prompt_save"
+    assert page_payload["slug"] == "agent-prompt-fix-bug"
+    assert page_payload["pattern"] == "fix-bug"
+    assert page_payload["directory"] == "/proj"
+    assert "## Purpose" in page_payload["full_content"]
+    assert "## Prompt" in page_payload["full_content"]
+    assert "do the thing" in page_payload["full_content"]
+
+    # Forward #2 — the agent_pattern ledger row (D40 content_hash pins the row
+    # to the wiki body bytes; the row is the discovery surface for
+    # agent_prompt_list / agent_prompt_get post-Car I).
+    assert row_op == "save_agent_pattern_row"
+    assert row_payload["name"] == "fix-bug"
+    assert row_payload["body_slug"] == "agent-prompt-fix-bug"
+    assert row_payload["status"] == "active"
+    assert "content_hash" in row_payload
 
 
 def test_agent_prompt_save_missing_directory_no_forward():

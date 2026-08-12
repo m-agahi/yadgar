@@ -43,7 +43,9 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
@@ -108,6 +110,7 @@ def _seed_memories(storage) -> None:
                 "directory_context": _DIR,
                 "tags": ["test"],
                 "heat": 1.0,
+                "project_id": TEST_PROJECT_ID,
             },
         )
 
@@ -129,7 +132,7 @@ def _run_backend_recall(query: str) -> list[dict]:
         query=query,
         max_results=5,
         min_heat=0.0,
-        directory=_DIR,
+        recall_scope=RecallScope(project_id=TEST_PROJECT_ID),
         type_filter="all",
         tags=None,
         profile=None,
@@ -239,7 +242,7 @@ def test_slim_landscape_recall_no_crash(tmp_path):
         results = _run_landscape_backend(
             query="slim parity knowledge graph",
             max_results=5,
-            directory=_DIR,
+            project_id=TEST_PROJECT_ID,
             storage=storage,
         )
         assert isinstance(results, list)  # no crash; empty is acceptable

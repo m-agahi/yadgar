@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from yadgar._shared.config import get_settings
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.security.secrets import (
     gate_or_reject,  # noqa: F401 — required by I26 secret-gate check
@@ -20,6 +21,16 @@ from yadgar.core.forward import _forward_admin
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool
 
+# Car M (0047 §7, §16.6): cross-project ``project=`` override. Resolves the
+# effective project_id (override → session → directory → "global").
+# C4b (0047 PR#40 §5): the resolved value is stamped on EVERY enqueued
+# payload, not only when the caller supplied ``project=`` — see ``_enqueue``
+# for why the conditional form left the default path broken.
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    resolve_effective_project,
+)
+
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
@@ -28,10 +39,10 @@ _VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
 
 @_tool(always_load=True)
-def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
+def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
     content: str,
-    context: str,
-    tags: list[str],
+    context: str | None = None,
+    tags: list[str] | None = None,
     is_protected: bool = False,
     provenance_agent: str | None = None,
     tier: str | None = None,
@@ -39,12 +50,51 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     ttl_days: int | None = None,
     reason: str = "",
     wait: bool = False,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Store a new memory with embedding.
 
-    context MUST be the actual working directory path (e.g., '/home/user/projects/myapp'),
-    NOT a description. project_brief() filters by directory path match —
-    descriptive strings will make memories unfindable by project.
+    project is the scope key. ``project`` (or the SessionStart identity) decides
+    which project the memory belongs to, and it is the ONLY thing the stored
+    ``directory_context`` is stamped from.
+
+    context is an OPTIONAL REAL FILE PATH, used for nothing but staleness
+    detection. Supply it when the memory is *about* a specific file and you want
+    the staleness detector to notice when that file changes; omit it otherwise.
+    Omitted (or not a readable file) → no hash is recorded, which is the
+    long-standing best-effort contract. **It is NOT a description and NOT a
+    scope key.**
+
+    C10 (f) (0047 PR#40 §5) split those two roles apart. ``context`` used to be
+    both — the stamp AND the hash input — and its own docstring used to insist
+    it "MUST be the actual working directory path". The live corpus shows that
+    instruction losing: 18 distinct ``directory_context`` values on ``memory``
+    are free-text prose rather than paths (``db_inspect``, 2026-08-10), e.g.
+    ``"debugging opsecrets nixos-quinyx"``. Callers were treating ``context`` as
+    a description because the parameter's name invites it. Splitting the roles
+    is what stops the class; a stricter docstring demonstrably did not. It also
+    removes the two-keys-for-one-concept state ADR-0225 exists to delete —
+    ``memorize`` no longer takes ``project`` AND a directory under another name.
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` parameter is the
+    cross-project override. Precedence: ``project`` (override) >
+    ``session_project`` (Car E) > raise (C5 deleted the derivation and the
+    ``"global"`` fallback). ``context`` is NOT and never was a resolution
+    source — see ``resolve_effective_project``, where it is accepted only so a
+    supplied-and-ignored path stays observable in the log. The non-string /
+    empty guards fire at the type level; the deep registry check lives at the
+    backend write path (`_ensure_project_exists_sync`, §15 / ADR-0078).
+
+    tags carries a ``None`` default purely as a consequence of ``context``
+    becoming optional in front of it: Python forbids a required parameter
+    behind a defaulted one, and reordering the frozen MCP signature would break
+    every positional caller. ``None`` is normalised to ``[]`` — the same value
+    an explicit empty list produces.
+
+    C4b (0047 PR#40 §5): the RESOLVED project_id — override or not — is
+    stamped on the enqueued payload (``payload["project_id"]``) on every
+    call. ``project=`` changes WHICH project is named, never WHETHER one is.
 
     Persistence options:
     - is_protected=True: memory is exempt from heat decay and will never be aged out.
@@ -83,7 +133,7 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     ctx = MemorizeContext(
         content=content,
         context=context,
-        tags=list(tags),
+        tags=list(tags or []),
         is_protected=is_protected,
         provenance_agent=provenance_agent,
         tier=tier,
@@ -104,17 +154,53 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 10-arg signature
     # the SubagentStop footer path too (it calls this same tool).
     # ADR-0215: the branch half of the pair is discarded — nothing downstream
     # reads it any more.
-    ctx.context = normalize_write_context(ctx.context)
+    # C10 (f): guarded on truthiness now that ``context`` is optional. Behaviour
+    # for a supplied context is byte-identical; ``None`` skips the seam rather
+    # than pushing it through a normaliser that has nothing to normalise.
+    if ctx.context:
+        ctx.context = normalize_write_context(ctx.context)
 
-    return _enqueue(ctx, wait=wait)
+    # Car M (0047 §7, §16.6): resolve the effective project_id BEFORE the
+    # enqueue so the wire payload can carry it as ``project_id`` (drainer-side
+    # routing). Type-level guard runs here so a malformed ``project=`` surfaces
+    # as InvalidProjectOverrideError, mapped to the tool's error envelope so
+    # the MCP boundary never raises.
+    #
+    # C10 (f): ``directory=`` is still handed the context so that a caller who
+    # supplies BOTH gets the ignore logged — it is NOT a resolution tier (C5
+    # deleted that), so passing it confers no scoping role on ``context``.
+    try:
+        effective_project_id = resolve_effective_project(
+            project=project,
+            directory=ctx.context,
+            session_project=None,
+            tool="memorize",
+        )
+    except UnresolvedProjectError as exc:
+        return {"stored": False, "ok": False, **exc.payload}
+    except InvalidProjectOverrideError as exc:
+        return {"stored": False, "ok": False, "error": f"memorize: {exc}"}
+
+    return _enqueue(ctx, wait=wait, project_id=effective_project_id)
 
 
 @observe(tier="stage")
-def _enqueue(ctx: MemorizeContext, wait: bool = False) -> dict:
+def _enqueue(ctx: MemorizeContext, wait: bool = False, *, project_id: str | None = None) -> dict:
     """Enqueue a memorize job. Returns the queued result.
 
     wait=True routes through _memorize_wait_path for read-your-writes (mirrors
     wiki_add). wait=False returns the async {stored, queued, queue_id} shape.
+
+    C4b (0047 PR#40 §5): ``project_id`` is stamped on the wire payload
+    UNCONDITIONALLY. Car M stamped it only when the caller passed
+    ``project=``, which left the DEFAULT path — i.e. nearly every call to the
+    highest-volume write path in the system — arriving at the drainer
+    unattributed, to be re-derived inside a container with no git binary and
+    no host project mounts (§1.1 / ADR-0227). The MCP tool call is the only
+    participant that can see the session, so it is the only honest place to
+    resolve. The deep registry check stays backend-side (Car A0
+    ``_ensure_project_exists_sync``, §15 / ADR-0078), which REJECTS unknown
+    project_ids fail-loud at INSERT time — core stays out of the DB.
     """
     payload: dict = {
         "content": ctx.content,
@@ -131,6 +217,8 @@ def _enqueue(ctx: MemorizeContext, wait: bool = False) -> dict:
     # run_memorize_replay can re-validate on the drainer side (R3 write-path).
     if ctx.reason:
         payload["reason"] = ctx.reason
+    if project_id is not None:
+        payload["project_id"] = project_id
 
     if wait:
         return _memorize_wait_path(payload)

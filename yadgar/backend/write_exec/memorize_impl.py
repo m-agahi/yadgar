@@ -31,13 +31,14 @@ logger = logging.getLogger(__name__)
 @observe(tier="boundary", metric="write_exec.memorize_replay")
 def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     content: str,
-    context: str,
-    tags: list[str],
+    context: str | None = None,
+    tags: list[str] | None = None,
     is_protected: bool = False,
     provenance_agent: str | None = None,
     tier: str | None = None,
     valid_until: str | None = None,
     reason: str = "",
+    project_id: str | None = None,
 ) -> dict:
     """Run the full memorize pipeline synchronously (drain-replay).
 
@@ -48,19 +49,32 @@ def run_memorize_replay(  # noqa: PLR0913 — mirrors the memorize MCP signature
     the drainer side can re-check the require-reason invariant without re-calling
     the MCP shell. Defaults to "" for backwards compatibility with payloads that
     don't carry it (non-semantic_immortal tiers never set it).
+
+    ``context`` (C10 (f), 0047 PR#40 §5) is an OPTIONAL REAL PATH used for
+    staleness hashing only — it is no longer the scope key and no longer
+    reaches ``directory_context``. A legacy payload that omits it replays
+    fine; it simply records no file hash.
+
+    ``project_id`` (C4b, 0047 PR#40 §5) is the enqueue-time stamp resolved by
+    the core ``memorize`` tool. It is carried onto ``MemorizeContext`` and
+    reaches ``insert_memory`` as its ``caller_value`` through BOTH store
+    branches — the curator path and the direct-insert fallback. This process
+    cannot derive one (no git binary, no host project mounts; ADR-0227), so a
+    ``None`` here means a legacy payload, not a licence to guess.
     """
     settings = get_settings()
 
     ctx = MemorizeContext(
         content=content,
         context=context,
-        tags=list(tags),
+        tags=list(tags or []),
         is_protected=is_protected,
         provenance_agent=provenance_agent,
         tier=tier,
         valid_until=valid_until,
         ttl_days=None,  # valid_until already computed before enqueue
         reason=reason,
+        project_id=project_id,
     )
 
     result = phase_validate(ctx, settings)

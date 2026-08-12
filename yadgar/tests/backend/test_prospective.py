@@ -63,7 +63,7 @@ class TestDirectoryTrigger:
         )
 
         context = {
-            "directory": "/home/proj/db/migrations",
+            "project_id": "/home/proj/db/migrations",
             "content": "something unrelated",
             "entities": [],
             "current_time": datetime.now(UTC),
@@ -82,7 +82,7 @@ class TestDirectoryTrigger:
         )
 
         context = {
-            "directory": "/home/other/frontend",
+            "project_id": "/home/other/frontend",
             "content": "",
             "entities": [],
             "current_time": datetime.now(UTC),
@@ -101,7 +101,7 @@ class TestKeywordTrigger:
         )
 
         context = {
-            "directory": "/proj",
+            "project_id": "/proj",
             "content": "Working on the API endpoint and updating docs",
             "entities": [],
             "current_time": datetime.now(UTC),
@@ -118,7 +118,7 @@ class TestKeywordTrigger:
         )
 
         context = {
-            "directory": "/proj",
+            "project_id": "/proj",
             "content": "Working on frontend styling",
             "entities": [],
             "current_time": datetime.now(UTC),
@@ -137,7 +137,7 @@ class TestEntityTrigger:
         )
 
         context = {
-            "directory": "/proj",
+            "project_id": "/proj",
             "content": "",
             "entities": ["StorageEngine", "EmbeddingEngine"],
             "current_time": datetime.now(UTC),
@@ -156,7 +156,7 @@ class TestTimeTrigger:
         )
 
         context = {
-            "directory": "/proj",
+            "project_id": "/proj",
             "content": "",
             "entities": [],
             "current_time": datetime(2026, 3, 2, 14, 30, tzinfo=UTC),
@@ -173,7 +173,7 @@ class TestTimeTrigger:
         )
 
         context = {
-            "directory": "/proj",
+            "project_id": "/proj",
             "content": "",
             "entities": [],
             "current_time": datetime(2026, 3, 2, 10, 0, tzinfo=UTC),
@@ -192,7 +192,7 @@ class TestTriggerDeactivation:
         )
 
         context = {
-            "directory": "/proj",
+            "project_id": "/proj",
             "content": "this is a test of the system",
             "entities": [],
             "current_time": datetime.now(UTC),
@@ -262,7 +262,7 @@ class TestNoFalseTriggers:
         )
 
         context = {
-            "directory": "/frontend/components",
+            "project_id": "/frontend/components",
             "content": "Updated the CSS styles for the button component",
             "entities": ["ButtonComponent", "StyleSheet"],
             "current_time": datetime.now(UTC),

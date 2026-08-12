@@ -22,7 +22,11 @@ class TestForwardRestore:
         payload = {"formatted": "# R", "epoch": 2}
         with patch("yadgar.core.forward._forward_restore", return_value=payload) as fwd:
             result = _shared.forward_restore("/my/proj")
-        fwd.assert_called_once_with("/my/proj")
+        # C10g: forward_restore's project_id defaults to None and is always
+        # threaded through by keyword. _forward_restore's own docstring: None
+        # means "caller named no project" — restore's memory-backed sinks come
+        # back EMPTY rather than widened to the corpus, never unscoped-read.
+        fwd.assert_called_once_with("/my/proj", project_id=None)
         assert result is payload
 
 
@@ -32,12 +36,26 @@ class TestForwardPreCompactDrain:
         with patch("yadgar.core.forward._forward_admin", return_value=payload) as fwd:
             result = _shared.forward_pre_compact_drain("/my/proj")
         # HOOKS Car 2 + fix-drain-inflight: transcript_path (None when omitted) +
-        # a host-parsed in_flight (None when no transcript_path).
+        # a host-parsed in_flight (None when no transcript_path). C11 added
+        # project_id, which is None here because no caller named one — the
+        # payload carries the absence explicitly rather than substituting a key.
         fwd.assert_called_once_with(
             "pre_compact_drain",
-            {"directory": "/my/proj", "transcript_path": None, "in_flight": None},
+            {
+                "directory": "/my/proj",
+                "transcript_path": None,
+                "in_flight": None,
+                "project_id": None,
+            },
         )
         assert result is payload
+
+    def test_forwards_the_project_id_it_is_given(self):
+        """C11: a resolved identity rides the /admin payload verbatim."""
+        payload = {"status": "drained"}
+        with patch("yadgar.core.forward._forward_admin", return_value=payload) as fwd:
+            _shared.forward_pre_compact_drain("/my/proj", None, "acme/widget")
+        assert fwd.call_args.args[1]["project_id"] == "acme/widget"
 
     def test_forwards_transcript_path_when_given(self):
         """HOOKS Car 2: an explicit transcript_path is forwarded to the backend."""

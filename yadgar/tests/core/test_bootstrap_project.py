@@ -3,6 +3,7 @@
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -24,22 +25,26 @@ def _flush(flush_queue):
 
 def test_bootstrap_project_raises_on_overflow():
     with pytest.raises(ValueError, match="2000"):
-        server.bootstrap_project(directory="/tmp/proj", content="x" * 2001)
+        server.bootstrap_project(directory="/tmp/proj", content="x" * 2001, project=TEST_PROJECT_ID)
 
 
 def test_bootstrap_project_rejects_exactly_one_over():
     with pytest.raises(ValueError):
-        server.bootstrap_project(directory="/tmp/proj", content="a" * 2001)
+        server.bootstrap_project(directory="/tmp/proj", content="a" * 2001, project=TEST_PROJECT_ID)
 
 
 def test_bootstrap_project_accepts_exactly_at_cap():
     # Should NOT raise for exactly 2000 chars
-    result = server.bootstrap_project(directory="/tmp/proj", content="x" * 2000)
+    result = server.bootstrap_project(
+        directory="/tmp/proj", content="x" * 2000, project=TEST_PROJECT_ID
+    )
     assert result is not None
 
 
 def test_bootstrap_project_accepts_content_under_cap():
-    result = server.bootstrap_project(directory="/tmp/proj", content="# TOC\n- item1\n- item2")
+    result = server.bootstrap_project(
+        directory="/tmp/proj", content="# TOC\n- item1\n- item2", project=TEST_PROJECT_ID
+    )
     assert result is not None
 
 
@@ -48,9 +53,9 @@ def test_bootstrap_project_accepts_content_under_cap():
 
 def test_bootstrap_project_idempotent_replace(flush_queue):
     directory = "/tmp/idempotent_bootstrap"
-    server.bootstrap_project(directory=directory, content="# Version 1")
+    server.bootstrap_project(directory=directory, content="# Version 1", project=TEST_PROJECT_ID)
     flush_queue()
-    server.bootstrap_project(directory=directory, content="# Version 2")
+    server.bootstrap_project(directory=directory, content="# Version 2", project=TEST_PROJECT_ID)
     flush_queue()
 
     # Exactly one _project_init memory should exist
@@ -77,6 +82,7 @@ def test_bootstrap_project_deletes_all_existing(flush_queue):
             "is_stale": False,
             "is_protected": True,
             "store_type": "semantic",
+            "project_id": TEST_PROJECT_ID,
         }
     )
     storage.insert_memory(
@@ -88,12 +94,13 @@ def test_bootstrap_project_deletes_all_existing(flush_queue):
             "is_stale": False,
             "is_protected": True,
             "store_type": "semantic",
+            "project_id": TEST_PROJECT_ID,
         }
     )
     flush_queue()
 
     # Now bootstrap — should remove both and insert one new
-    server.bootstrap_project(directory=directory, content="# Fresh")
+    server.bootstrap_project(directory=directory, content="# Fresh", project=TEST_PROJECT_ID)
     flush_queue()
 
     rows = storage._q(
@@ -108,7 +115,9 @@ def test_bootstrap_project_deletes_all_existing(flush_queue):
 
 
 def test_bootstrap_project_returns_memory_dict():
-    result = server.bootstrap_project(directory="/tmp/ret_test", content="# Hello")
+    result = server.bootstrap_project(
+        directory="/tmp/ret_test", content="# Hello", project=TEST_PROJECT_ID
+    )
     assert isinstance(result, dict)
     assert "content" in result or "id" in result or "status" in result
 
@@ -118,7 +127,7 @@ def test_bootstrap_project_returns_memory_dict():
 
 def test_bootstrap_project_tags(flush_queue):
     directory = "/tmp/tag_test"
-    server.bootstrap_project(directory=directory, content="# Tagged")
+    server.bootstrap_project(directory=directory, content="# Tagged", project=TEST_PROJECT_ID)
     flush_queue()
 
     storage = server._get_storage()
@@ -134,7 +143,9 @@ def test_bootstrap_project_tags(flush_queue):
 
 def test_bootstrap_project_store_type_semantic(flush_queue):
     directory = "/tmp/store_type_test"
-    server.bootstrap_project(directory=directory, content="# Store type test")
+    server.bootstrap_project(
+        directory=directory, content="# Store type test", project=TEST_PROJECT_ID
+    )
     flush_queue()
 
     storage = server._get_storage()
@@ -148,7 +159,7 @@ def test_bootstrap_project_store_type_semantic(flush_queue):
 
 def test_bootstrap_project_is_protected(flush_queue):
     directory = "/tmp/protected_test"
-    server.bootstrap_project(directory=directory, content="# Protected")
+    server.bootstrap_project(directory=directory, content="# Protected", project=TEST_PROJECT_ID)
     flush_queue()
 
     storage = server._get_storage()

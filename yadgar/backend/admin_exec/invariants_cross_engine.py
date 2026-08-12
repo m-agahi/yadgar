@@ -81,6 +81,7 @@ CHECK_ENGINE_TWO_SCHEMA_HEAD = "engine_two_schema_head"
 CHECK_SURREAL_SCHEMA_HEAD = "surreal_schema_head"
 CHECK_CONFIG_ROW_BASELINE = "config_row_baseline"
 CHECK_PAGE_ROW_DESYNC = "page_row_desync"
+CHECK_SUPERSEDED_ADR_EXCLUSION = "superseded_adr_exclusion"
 
 # The arm's own contract with itself. ``run_cross_engine_checks`` compares the
 # names it actually produced against this set and raises a VIOLATION on any gap,
@@ -93,10 +94,13 @@ REQUIRED_CHECKS = frozenset(
         CHECK_SURREAL_SCHEMA_HEAD,
         CHECK_CONFIG_ROW_BASELINE,
         CHECK_PAGE_ROW_DESYNC,
+        CHECK_SUPERSEDED_ADR_EXCLUSION,
     }
 )
 
 CONFIG_TABLE = "config"
+ADR_TABLE = "adr"
+REASON_ADR_TABLE_ABSENT = "adr_table_absent"
 
 # DECLARED BASELINE, not a snapshot. ADR-0203 makes "config ships empty" a
 # load-bearing property of THIS train: task 0095's free-re-key window stays open
@@ -385,30 +389,134 @@ async def check_config_row_baseline(engine: Any, engine_head: dict) -> dict:
     return {"status": STATUS_OK, "detail": {"rows": rows, "expected": EXPECTED_CONFIG_ROWS}}
 
 
-# ── assertion 3: cross-engine page/row desync — SHAPE ONLY (spine-gated) ─────
+# ── assertion 3: cross-engine page/row desync — ADR-0209 LIVE comparison ─────
+
+
+# Tables where ADR-0209's ``content_hash`` is mirrored: a wiki body page (slug
+# keyed) lives next to a ledger row (name keyed). The probe below reads both
+# sides and reports a violation when the hash disagrees. ADR-0198 names the
+# spine ledger tables; only those with a corresponding wiki body participate.
+_HASH_MIRRORED_TABLES: tuple[tuple[str, str, str], ...] = (
+    # (sql_table_name, wiki_slug_prefix, engine_method_name)
+    ("agent_pattern", "agent-prompt-", "list_agent_prompt_rows"),
+    ("agent_discipline", "agent-discipline-", "list_agent_discipline_rows"),
+)
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.compare_page_row")
+def _compare_page_row(*, tbl: str, slug_prefix: str, row: dict, storage: Any) -> dict | None:
+    """Compare one ledger row's ``content_hash`` against its wiki body page.
+
+    Returns one of:
+      - ``{"reason": "matched", ...}`` — hashes agree; caller records it.
+      - ``{"reason": "wiki_page_missing" | "content_hash_mismatch", ...}`` —
+        a real disagreement; caller records a violation.
+      - ``None`` — no row data; caller skips.
+
+    Extracted from ``check_page_row_desync`` to keep the parent's cyclomatic
+    below the 15 HARD cap: each row's branching (lookup, hash, compare) is
+    naturally three-way and would push the orchestrator above the cap if kept
+    inline. The helper preserves the tripwire semantic — each return shape is
+    the same shape ``check_page_row_desync`` previously appended to
+    ``violations`` or ``compared`` — and stays private to this module.
+    """
+    import hashlib
+
+    name = row.get("name")
+    body_slug = row.get("body_slug") or f"{slug_prefix}{name}"
+    row_hash = row.get("content_hash") or ""
+    try:
+        page = storage.get_wiki_page_by_slug(body_slug)
+    except Exception:  # noqa: BLE001
+        page = None
+    if page is None:
+        return {
+            "table": tbl,
+            "name": name,
+            "body_slug": body_slug,
+            "reason": "wiki_page_missing",
+        }
+    content = page.get("content", "")
+    page_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    if page_hash != row_hash:
+        return {
+            "table": tbl,
+            "name": name,
+            "body_slug": body_slug,
+            "reason": "content_hash_mismatch",
+            "page_hash": page_hash[:16],
+            "row_hash": row_hash[:16],
+        }
+    return {"reason": "matched", "name": name, "body_slug": body_slug}
 
 
 @observe(tier="stage", metric="backend.invariants.cross_engine.page_row_desync")
-async def check_page_row_desync(engine: Any) -> dict:
-    """ADR-0209's mirrored ``content_hash`` — the SHAPE, not yet the comparison.
+def _resolve_storage(storage: Any) -> Any:
+    """Resolve the storage handle for the page-row-desync check.
 
-    ADR-0209 defines ``content_hash`` written BOTH as wiki-page metadata and as a
-    ledger-row column, where disagreement between the two copies IS the signal,
-    plus a row-side ``baseline_hash``. NEITHER IS IMPLEMENTED: the ledger tables
-    belong to the spine train (task 0047), and this car deliberately does not
-    invent them.
+    Car J (0047): the module's local import of ``_get_storage`` from
+    ``yadgar._shared.runtime.lifecycle`` is not patchable through the module
+    (local import = unbound symbol on the module). When the orchestrator at
+    ``run_cross_engine_checks`` already has a storage handle in ctx, threading
+    it through the registry entry avoids the unpatchable seam. The
+    live-process path keeps working because the default is None — the runtime
+    production code never passed storage through; pytest passes a fake.
+    """
+    if storage is not None:
+        return storage
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
 
-    So the check runs, probes, and reports honestly that it cannot assert. What it
-    does NOT do is return ok — and it is written as a TRIPWIRE rather than a
-    comment: the moment any spine ledger table APPEARS, the precondition for the
-    real comparison is satisfied and the stub turns itself RED. Without that, the
-    spine train would ship the tables and this arm would keep reporting a
-    comfortable "unavailable" over data it should have been comparing, which is
-    the vacuous pass one layer up.
+    return _get_storage()
 
-    Also spine-gated and covered by this same shape, per ADR-0198's consequences:
-    ``adr.status='superseded'`` must agree with the ``adr_supersedes`` join table
-    (task 0136). It is named here rather than built, for the same reason.
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.compare_table")
+async def _compare_table(
+    *,
+    tbl: str,
+    slug_prefix: str,
+    list_method: str,
+    engine: Any,
+    storage: Any,
+) -> dict | None:
+    """Walk one ledger table's rows and compare each against the wiki body.
+
+    Returns one of:
+      - ``{"violations": [...], "compared": [...]}`` — list complete.
+      - ``{"unavailable": {"table": tbl, "error": str(exc)}}`` — the list
+        call failed; the orchestrator decides how to surface the error.
+    """
+    rows = await getattr(engine, list_method)()
+    violations: list[dict] = []
+    compared: list[dict] = []
+    for row in rows:
+        entry = _compare_page_row(tbl=tbl, slug_prefix=slug_prefix, row=row, storage=storage)
+        if entry is None:
+            continue
+        if entry.get("reason") == "matched":
+            compared.append({"table": tbl, "name": entry["name"], "body_slug": entry["body_slug"]})
+        else:
+            violations.append(entry)
+    return {"violations": violations, "compared": compared}
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.page_row_desync")
+async def check_page_row_desync(engine: Any, storage: Any = None) -> dict:
+    """ADR-0209's mirrored ``content_hash`` — LIVE for 0047 Car I.
+
+    Compares the wiki body page's bytes (sha256 of the content column) against
+    the ledger row's ``content_hash`` column for every ``agent_pattern`` /
+    ``agent_discipline`` row. Disagreement IS the violation (ADR-0209, D40).
+    Probes once per ledger table; surfaces per-row disagreement in ``detail``.
+
+    ``adr`` is listed in ``SPINE_LEDGER_TABLES`` but excluded here because adr
+    pages live in ``wiki_page`` alongside other types and do not carry a
+    ``content_hash`` mirror (the adr→wiki-page invariant lives elsewhere —
+    see ``yadgar.core.server.tools.project._build_adr_log``). Car J keeps the
+    list scoped to the agent-prompt/discipline mirrors where the contract is
+    written.
+
+    Engine-#2 absence still returns ``unavailable`` (car H's vacuous-pass
+    guard — never silently pass on absent data).
     """
     if engine is None:
         return {
@@ -425,29 +533,243 @@ async def check_page_row_desync(engine: Any) -> dict:
             "detail": {"error": str(exc)},
         }
 
-    present = sorted(tables & set(SPINE_LEDGER_TABLES))
-    if present:
+    if not any(tbl in tables for tbl, _slug_prefix, _method in _HASH_MIRRORED_TABLES):
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_SPINE_NOT_SHIPPED,
+            "detail": {
+                "absent_tables": sorted(tbl for tbl, _slug, _method in _HASH_MIRRORED_TABLES),
+                "message": (
+                    "ADR-0209's content_hash mirror tables are absent; spine train "
+                    "table create (0047 Car A / Car I) hasn't shipped."
+                ),
+            },
+        }
+
+    storage = _resolve_storage(storage)
+    violations: list[dict] = []
+    compared: list[dict] = []
+    present_tables: list[str] = []
+    for tbl, slug_prefix, list_method in _HASH_MIRRORED_TABLES:
+        if tbl not in tables:
+            continue
+        present_tables.append(tbl)
+        try:
+            outcome = await _compare_table(
+                tbl=tbl,
+                slug_prefix=slug_prefix,
+                list_method=list_method,
+                engine=engine,
+                storage=storage,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": STATUS_UNAVAILABLE,
+                "reason": REASON_QUERY_FAILED,
+                "detail": {"table": tbl, "error": str(exc)},
+            }
+        if outcome is None:
+            continue
+        violations.extend(outcome["violations"])
+        compared.extend(outcome["compared"])
+
+    if violations:
         return {
             "status": STATUS_VIOLATION,
             "message": (
-                f"spine ledger table(s) {present} exist, so ADR-0209's page/row "
-                "content_hash comparison is now assertable — but it is still STUBBED. "
-                "Implement it (engine-#2 car H left the shape; the spine train owns "
-                "the hashes) rather than letting this arm pass over real data"
+                f"{len(violations)} page/row desync violation(s) across "
+                f"{sorted({v['table'] for v in violations})} — see detail"
             ),
-            "detail": {"present_tables": present},
+            "detail": {
+                "violations": violations,
+                "compared": len(compared),
+                "present_tables": present_tables,
+            },
         }
     return {
-        "status": STATUS_UNAVAILABLE,
-        "reason": REASON_SPINE_NOT_SHIPPED,
+        "status": STATUS_OK,
         "detail": {
-            "absent_tables": sorted(SPINE_LEDGER_TABLES),
-            "message": (
-                "ADR-0209's content_hash / baseline_hash are not implemented; the ledger "
-                "tables are the spine train's (task 0047). This check is shape-only."
-            ),
+            "compared": len(compared),
+            "tables": [t for t, _slug, _method in _HASH_MIRRORED_TABLES],
+            "present_tables": present_tables,
         },
     }
+
+
+# ── assertion 4: the superseded-ADR exclusion set matches SQL (Car C8) ───────
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.superseded_sql_truth")
+async def _superseded_rows_by_project(engine: Any) -> dict[str, list[dict]]:
+    """Read EVERY superseded ``adr`` row, grouped by project, with its OWN SQL.
+
+    THE INDEPENDENCE IS THE POINT. The recall path loads its exclusion set
+    through ``list_adr_rows``; this reads ``list_superseded_adr_rows``, a
+    SEPARATELY WRITTEN corpus-wide query that exists for this check alone. A
+    check calling the same accessor the mechanism calls would compare a
+    function against itself and pass for every bug that function can have —
+    the vacuous-pass shape this module was written to eliminate. The two
+    queries live in the same class only because D20 requires every ledger row
+    access to go through ``MariaStorageEngine``.
+
+    Grouping by project also comes free: the loader is project-scoped, so the
+    check must be able to enumerate the projects it should be asked about
+    rather than being told which ones to look at.
+    """
+    rows = await engine.list_superseded_adr_rows()
+
+    by_project: dict[str, list[dict]] = {}
+    for row in rows:
+        by_project.setdefault(str(row.get("project_id") or ""), []).append(row)
+    return by_project
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.superseded_project")
+async def _check_superseded_for_project(
+    engine: Any, project_id: str, rows: list[dict]
+) -> list[str]:
+    """Return this project's violation messages (empty list = agreement).
+
+    Three assertions, each its own message because each has a different fix:
+
+    (a) COVERAGE — ``adr.body_slug`` is ``nullable=True`` in migration 002. A
+        superseded row with no slug CANNOT be excluded by a slug predicate; the
+        exclusion silently does not apply to it. The fix is stamping the row.
+    (b) ROUND-TRIP — the params the PRODUCTION path actually binds must equal
+        this check's own slug set. The scope is walked through the SAME two
+        re-construction hops recall walks (``Scope.to_recall_scope``, then
+        ``RecallScope.with_default_opt_in``) rather than being built here: a
+        check that constructed the ``RecallScope`` itself would agree with
+        itself while a hop silently dropped ``excluded_slugs``, which is the
+        one failure this whole car is written around. Verified by sabotage —
+        removing the field from ``to_recall_scope`` turns this red.
+    (c) EMISSION — a non-empty set must produce a ``slug NOT IN`` fragment. The
+        fix is restoring the arm a refactor deleted.
+    """
+    from yadgar.backend.retrieval.providers.base import Scope  # noqa: PLC0415
+    from yadgar.backend.retrieval.superseded import load_superseded_slugs  # noqa: PLC0415
+
+    violations: list[str] = []
+    expected = {str(r["body_slug"]) for r in rows if r.get("body_slug")}
+
+    # (a) coverage
+    unstamped = sorted(str(r.get("id")) for r in rows if not r.get("body_slug"))
+    if unstamped:
+        violations.append(
+            f"{len(unstamped)} superseded adr row(s) in {project_id!r} carry no body_slug "
+            f"and therefore CANNOT be excluded from recall (adr ids {unstamped}) — "
+            "they rank normally today"
+        )
+
+    loaded = await load_superseded_slugs(engine, project_id=project_id)
+
+    # (b) round-trip THROUGH THE PRODUCTION HOPS, not around them.
+    #
+    #   Scope (what _fanout_recall builds)
+    #     → .to_recall_scope()      hop 2, shared with WikiProvider
+    #     → .with_default_opt_in()  hop 1, shared with WikiStore.query
+    #     → .clause()               the emitted WHERE
+    #
+    # The probe tag forces ``with_default_opt_in`` down its COPYING branch (it
+    # returns self early when there is nothing to default), so the hop is
+    # actually exercised rather than skipped. It is a name no policy declares
+    # as an opt-in key, so it cannot unlock a page_type and perturb (c).
+    provider_scope = Scope(project_id=project_id, excluded_slugs=tuple(loaded))
+    sql, params = provider_scope.to_recall_scope(None).with_default_opt_in(["_c8_probe"]).clause()
+    bound: set[str] = set()
+    for key, value in params.items():
+        if key.endswith("_excl_slugs"):
+            bound = {str(v) for v in value}
+    if bound != expected:
+        missing = sorted(expected - bound)
+        extra = sorted(bound - expected)
+        violations.append(
+            f"superseded-ADR exclusion for {project_id!r} DISAGREES with the ledger: "
+            f"SQL says {len(expected)} superseded page(s), the recall clause binds "
+            f"{len(bound)}; missing={missing} unexpected={extra} — superseded ADRs "
+            "matching 'missing' rank normally in recall right now"
+        )
+
+    # (c) emission
+    if expected and "slug NOT IN" not in sql:
+        violations.append(
+            f"the recall scope clause for {project_id!r} emits no slug-exclusion arm "
+            f"while {len(expected)} superseded ADR(s) exist — the WHERE arm is gone"
+        )
+    return violations
+
+
+@observe(tier="stage", metric="backend.invariants.cross_engine.superseded_adr_exclusion")
+async def check_superseded_adr_exclusion(engine: Any) -> dict:
+    """Car C8 (0047 §5 C8) — SQL status ↔ recall exclusion consistency.
+
+    NOTHING ELSE ENFORCES THIS, AND THE FAILURE IS INVISIBLE. A stale or
+    silently-empty exclusion set does not raise, does not empty a result list,
+    and does not look wrong: superseded ADRs simply rank normally again. Every
+    other symptom this repo has learned to watch for is absent. That is the
+    ADR-0080 lesson applied to C8's own mechanism, which is why the check is a
+    first-class member of ``REQUIRED_CHECKS`` (nightly) rather than a unit test.
+
+    Absence stays ``unavailable``, never ``ok`` — same rule as every sibling.
+    """
+    if engine is None:
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_ENGINE_TWO_ABSENT,
+            "detail": {"message": "engine #2 is not composed — adr.status is unreadable"},
+        }
+    try:
+        tables = set(await engine.list_tables())
+    except Exception as exc:  # noqa: BLE001 — a read failure is UNAVAILABLE, not ok
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_QUERY_FAILED,
+            "detail": {"error": str(exc)},
+        }
+    if ADR_TABLE not in tables:
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_ADR_TABLE_ABSENT,
+            "detail": {"message": f"the {ADR_TABLE!r} ledger table does not exist"},
+        }
+
+    try:
+        by_project = await _superseded_rows_by_project(engine)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": STATUS_UNAVAILABLE,
+            "reason": REASON_QUERY_FAILED,
+            "detail": {"error": str(exc)},
+        }
+
+    violations: list[str] = []
+    for project_id in sorted(by_project):
+        try:
+            violations.extend(
+                await _check_superseded_for_project(engine, project_id, by_project[project_id])
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": STATUS_UNAVAILABLE,
+                "reason": REASON_QUERY_FAILED,
+                "detail": {"project_id": project_id, "error": str(exc)},
+            }
+
+    rows_total = sum(len(v) for v in by_project.values())
+    detail = {
+        "superseded_rows": rows_total,
+        "projects": sorted(by_project),
+    }
+    if violations:
+        return {
+            "status": STATUS_VIOLATION,
+            "message": "; ".join(violations),
+            "detail": {**detail, "violations": violations},
+        }
+    # A zero-row corpus reports ok WITH the count, not on silence: the read ran
+    # and returned evidence. "No superseded ADRs" and "the read never happened"
+    # must not look the same, which is this module's founding complaint.
+    return {"status": STATUS_OK, "detail": detail}
 
 
 # ── orchestrator ─────────────────────────────────────────────────────────────
@@ -485,7 +807,9 @@ _CHECK_REGISTRY: tuple[tuple[str, Callable[[dict], dict | Awaitable[dict]]], ...
             ctx["results"].get(CHECK_ENGINE_TWO_SCHEMA_HEAD, _NEVER_REPORTED),
         ),
     ),
-    (CHECK_PAGE_ROW_DESYNC, lambda ctx: check_page_row_desync(ctx["engine"])),
+    (CHECK_PAGE_ROW_DESYNC, lambda ctx: check_page_row_desync(ctx["engine"], ctx["storage"])),
+    # Car C8 (0047 §5 C8): SQL adr.status ↔ the recall exclusion set.
+    (CHECK_SUPERSEDED_ADR_EXCLUSION, lambda ctx: check_superseded_adr_exclusion(ctx["engine"])),
 )
 
 

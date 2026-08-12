@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.security.secrets import SecretLeakBlocked, check_secrets
+from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
+from yadgar._shared.storage.directory import build_project_scope_clause
 
 _log = logging.getLogger(__name__)
 
@@ -88,19 +90,38 @@ class _MemoryMixin:
 
     @observe(tier="hot")
     def _build_memory_insert_clause(
-        self, memory: dict, mid: int, now: str, branch: str | None, emb_floats
+        self, memory: dict, mid: int, now: str, emb_floats
     ) -> tuple[str, dict]:
         """Build the CREATE SQL and params dict for a new memory row.
 
         Pure computation — no I/O, no side-effects.  Optional fields
-        (branch, tier, valid_until, migration_grace) are appended only
-        when present so SurrealDB does not store explicit NULLs for them.
+        (tier, valid_until, migration_grace) are appended only when present
+        so SurrealDB does not store explicit NULLs for them.
+
+        C12 (ADR-0226): ``branch`` was the fourth such optional field and it is
+        GONE. Migration 029 dropped ``memory.branch``, but ``memory`` is
+        SCHEMALESS — so this append was a live path that RE-CREATED the dropped
+        column untyped on every write that passed the kwarg, with
+        ``INFO FOR TABLE`` still reporting clean. *"The kwargs were kept for test
+        convenience and are in fact the exact mechanism by which the dropped
+        column comes back."*
+
+        Car F1: ``embedding`` joins that convention. Binding a Python ``None``
+        into ``embedding = $embedding`` is not a no-op — over the HTTP transport
+        it serialises to JSON ``null`` and lands as SurrealDB **NULL**, which is
+        a DIFFERENT value from NONE and passes ``embedding IS NOT NONE``. The
+        row then reaches ``vector::similarity::cosine()`` and the whole query
+        dies with "Expected `array<number>` but found `NULL`". A literal
+        ``embedding = NONE`` stores the same absence the rest of this builder
+        already stores for its optional fields.
         """
+        emb_assign = "embedding = $embedding" if emb_floats is not None else "embedding = NONE"
         sql = (
             "CREATE type::record('memory', $id) SET "
-            "content = $content, embedding = $embedding, tags = $tags, "
+            f"content = $content, {emb_assign}, tags = $tags, "
             "source_episode_id = $source_episode_id, "
             "directory_context = $directory_context, "
+            "project_id = $project_id, "
             "created_at = $created_at, last_accessed = $last_accessed, "
             "heat = $heat, is_stale = $is_stale, file_hash = $file_hash, "
             "embedding_model = $embedding_model, "
@@ -117,10 +138,22 @@ class _MemoryMixin:
             "embedding": emb_floats,
             "tags": memory.get("tags", []),
             "source_episode_id": memory.get("source_episode_id"),
-            # v5.46.6: normalise empty-string directory_context to 'global' so it
-            # surfaces in the global anchor bucket without relying on '' equality
-            # (SurrealDB 2 embedded may not round-trip '' reliably in comparisons).
-            "directory_context": memory["directory_context"] or "global",
+            # C5 (0047 PR#40 §5): the v5.46.6 ``or "global"`` normalisation is
+            # DELETED. It was written to make an empty directory_context surface
+            # in the global anchor bucket, but the bucket it fed is keyed on the
+            # ``global`` TAG now (§1.4: reach is a tag, ownership is project_id),
+            # and the same expression was the second of two sites minting the
+            # sentinel inside one dict literal. An empty directory_context is
+            # stored as it arrived; nothing is invented on its behalf.
+            "directory_context": memory["directory_context"],
+            # Car L (0047 §16.9): project_id alongside directory_context. C5:
+            # the caller's value or a raise — there is no classifier seam left
+            # to fall back to, and directory_context is passed only so the
+            # raise can name the write.
+            "project_id": _resolve_project_id_for_write(
+                caller_value=memory.get("project_id"),
+                directory_context=memory.get("directory_context"),
+            ),
             "created_at": memory.get("created_at", now),
             "last_accessed": memory.get("last_accessed", now),
             "heat": memory.get("heat", 1.0),
@@ -139,9 +172,10 @@ class _MemoryMixin:
             "vector_clock": memory.get("vector_clock", "{}"),
             "is_protected": bool(memory.get("is_protected", False)),
         }
-        if branch is not None:
-            sql += ", branch = $branch"
-            params["branch"] = branch
+        if emb_floats is None:
+            # ``embedding = NONE`` is a literal — leaving a dead $embedding bind
+            # behind would emit ``LET $embedding = null`` for no reader.
+            params.pop("embedding")
         # v5.8.0: tier / valid_until / migration_grace (optional, nullable)
         if memory.get("tier") is not None:
             sql += ", tier = $tier"
@@ -266,16 +300,14 @@ class _MemoryMixin:
             logging.getLogger(__name__).warning("Enrichment failed: %s", e)
 
     @observe(tier="boundary", metric="storage.memory.insert_memory")
-    def insert_memory(
-        self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
-    ) -> int:
+    def insert_memory(self, memory: dict, embeddings_engine=None, settings=None) -> int:
         now = self._now_iso()
         mid = self._next_id("memory")
         embedding = memory.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if embedding else None
 
         self._validate_memory_secrets(memory)
-        sql, params = self._build_memory_insert_clause(memory, mid, now, branch, emb_floats)
+        sql, params = self._build_memory_insert_clause(memory, mid, now, emb_floats)
         self._q(sql, params)
         self._enrich_memory_if_enabled(mid, memory, settings, embeddings_engine, embedding)
 
@@ -513,12 +545,30 @@ class _MemoryMixin:
             {"id": memory_id},
         )
 
-    def get_memories_for_directory(self, directory: str, min_heat: float = 0.1) -> list[dict]:
+    def get_memories_for_directory(self, project_id: str, min_heat: float = 0.1) -> list[dict]:
+        """Rows this project owns, hottest first.
+
+        C10g (0047 PR#40 §5) — the PARAMETER is re-keyed onto ``project_id``;
+        the PREDICATE deliberately stays on ``directory_context``. That is not
+        an oversight: C10f moved ``memorize``'s stamp so a new ``memory`` row
+        stores the resolved ``owner/repo`` in ``directory_context``, so this
+        column IS the project key today. Re-keying the predicate onto the
+        separate ``project_id`` column is C11's table work, and doing it here
+        would strand every row written by C10f.
+
+        C9a's ``_C9C_SEMANTIC_SPLIT`` deferral is discharged by this rename:
+        the predictive_coding / narrative / restoration callers all pass a
+        resolved project_id. ONE caller does not —
+        ``backend/admin_exec/staleness.py`` passes a changed file's parent
+        directory. It is left deliberately (its directory arm degrades to
+        no-match; its ``file_hash`` arm is unaffected) and the rename is what
+        makes that mismatch visible at the call site instead of silent.
+        """
         rows = self._q(
             "SELECT * FROM memory WHERE directory_context = $dir AND heat >= $min "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC",
-            {"dir": directory, "min": min_heat, "now": self._now_iso()},
+            {"dir": project_id, "min": min_heat, "now": self._now_iso()},
         )
         return self._rows_to_dicts(rows)
 
@@ -615,15 +665,29 @@ class _MemoryMixin:
 
     @observe(tier="stage")
     def get_memories_by_ids_projected(self, ids: list[int]) -> list[dict]:
-        """Return id, embedding, and content for a given list of memory ids.
+        """Return id, embedding, content and project_id for a list of memory ids.
 
         Projected (not SELECT *) — returns only the fields dream_replay needs:
-          - id        → _build_connected_pair_index_by_ids, _ensure_memory_entity
-          - embedding → similarity check
-          - content   → _create_dream_insight
+          - id         → _build_connected_pair_index_by_ids, _ensure_memory_entity
+          - embedding  → similarity check
+          - content    → _create_dream_insight
+          - project_id → _create_dream_insight's resolve_project_id_from_rows
         Rows pass through _rows_to_dicts so id is a bare int and embedding is
         bytes — identical to the row format produced by get_all_memories_with_embeddings.
         Used by C3 two-phase fetch: phase-2 fetch for only the ~40 sampled ids.
+
+        **C13: ``project_id`` joins the projection because C4 gave this fetch's
+        sole consumer a fourth need and the SELECT was not widened with it.**
+        ``_create_dream_insight`` (``sleep_compute/dream.py``) resolves the
+        insight's owner from the PAIR's own rows — inheritance, the sanctioned
+        substitute for the derivation ADR-0227 deleted. A projection that omits
+        the column makes ``resolve_project_id_from_rows`` see two rows naming no
+        project, so it returns ``None`` and every single dream insight is
+        skipped and counted. The rows carry the value in the DB; only this
+        SELECT lost it. The failure is invisible in ``dream_replay``'s stats,
+        which count candidate pairs rather than committed writes — a projected
+        column is exactly the kind of dependency that goes stale silently, so
+        the list above is a contract, not a comment.
 
         Note: inlines record ids directly into the query (WHERE id IN [memory:N, ...])
         because parameterised IN with string values is not supported by the embedded
@@ -634,7 +698,8 @@ class _MemoryMixin:
             return []
         id_list = ", ".join(f"memory:{i}" for i in ids)
         rows = self._q(
-            f"SELECT meta::id(id) AS id, embedding, content FROM memory WHERE id IN [{id_list}]"
+            f"SELECT meta::id(id) AS id, embedding, content, project_id "
+            f"FROM memory WHERE id IN [{id_list}]"
         )
         return self._rows_to_dicts(rows)
 
@@ -764,14 +829,26 @@ class _MemoryMixin:
         query: str,
         min_heat: float = 0.1,
         limit: int = 50,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> list[tuple[int, float]]:
-        """FTS search returning (memory_id, bm25_score) tuples. Higher = better."""
+        """FTS search returning (memory_id, bm25_score) tuples. Higher = better.
+
+        Car C7: ``scope_sql`` carries the project predicate + ``global`` reach
+        tag. The FTS arm composes safely — ``LIMIT`` is applied AFTER the
+        ``WHERE``, so the limit is spent on in-scope rows.
+        """
         fts_query = self._preprocess_fts_query(query)
         params: dict = {"q": fts_query, "min": min_heat, "lim": limit}
+        where = "content @1@ $q AND heat >= $min"
+        if scope_sql:
+            where = f"{where} AND ({scope_sql})"
+            params.update(scope_params or {})
         rows = self._q(
-            "SELECT id, heat, search::score(1) AS score "
-            "FROM memory WHERE content @1@ $q AND heat >= $min "
-            "ORDER BY score DESC LIMIT $lim",
+            f"SELECT id, heat, search::score(1) AS score "
+            f"FROM memory WHERE {where} "
+            f"ORDER BY score DESC LIMIT $lim",
             params,
         )
         results = []
@@ -887,12 +964,22 @@ class _MemoryMixin:
         params: dict = {
             "id": memory_id,
             "content": content,
-            "emb": floats,
             "level": compression_level,
         }
+        # Car F1: clearing the embedding must write NONE, not NULL. A Python
+        # ``None`` bound here becomes JSON ``null`` → SurrealDB NULL over the
+        # HTTP transport, which passes ``IS NOT NONE`` and then crashes
+        # ``vector::similarity::cosine()``. Assigning is kept (rather than
+        # omitted) so a compression that drops the embedding still CLEARS the
+        # stale one rather than leaving it attached to rewritten content.
+        if floats is None:
+            emb_assign = "embedding = NONE"
+        else:
+            emb_assign = "embedding = $emb"
+            params["emb"] = floats
         sql = (
             "UPDATE type::record('memory', $id) SET "
-            "content = $content, embedding = $emb, compression_level = $level, "
+            f"content = $content, {emb_assign}, compression_level = $level, "
             "compressed = true"
         )
         if original_content is not None:
@@ -906,37 +993,46 @@ class _MemoryMixin:
     def get_memories_by_store_type(
         self,
         store_type: str,
-        directory: str | None = None,
+        project_id: str | None = None,
         limit: int | None = None,
     ) -> list[dict]:
-        """Return memories for a store type.
+        """Return memories for a store type, optionally scoped to one project.
 
         When `limit` is given, returns the most-recently-accessed memories up
         to that count (ORDER BY last_accessed DESC).  Callers that build pairwise
         similarity matrices should pass limit=CLS_PATTERN_MAX_CANDIDATES to avoid
         allocating an unbounded N×N matrix.
+
+        C9c (0047 §5): ``directory`` renamed to ``project_id`` AND the predicate
+        re-keyed off ``directory_context`` in the SAME change, per ADR-0225.
+        Doing only the rename would ship a caller-facing lie — the caller passes
+        ``owner/repo`` into ``WHERE directory_context = $dir``, matches zero rows,
+        and nothing raises. ``memory`` carries ``project_id`` (migration 031), so
+        there is a column to re-key ONTO here; the C11 tables have none yet.
+
+        The predicate is ``build_project_scope_clause`` rather than a hand-rolled
+        ``project_id = $pid`` so this arm agrees BY CONSTRUCTION with the Car C7
+        retrieval arm — same two arms (project match OR the global reach tag),
+        same treatment of unstamped rows. Unstamped rows (``project_id`` IS NONE,
+        i.e. everything the C6 operator backfill has not reached) DELIBERATELY do
+        not match: admitting them would rebuild the permissive fallback ADR-0227
+        exists to delete. Zero results over an un-backfilled corpus is the
+        sanctioned cost of that window, recorded in the plan's §8 step 5b runbook.
         """
         order_clause = " ORDER BY last_accessed DESC" if limit is not None else ""
         limit_clause = " LIMIT $lim" if limit is not None else ""
-        if directory:
-            params: dict = {"st": store_type, "dir": directory}
-            if limit is not None:
-                params["lim"] = int(limit)
-            rows = self._q(
-                f"SELECT * FROM memory WHERE store_type = $st "
-                f"AND heat > 0 AND embedding IS NOT NONE "
-                f"AND directory_context = $dir{order_clause}{limit_clause}",
-                params,
-            )
-        else:
-            params = {"st": store_type}
-            if limit is not None:
-                params["lim"] = int(limit)
-            rows = self._q(
-                f"SELECT * FROM memory WHERE store_type = $st "
-                f"AND heat > 0 AND embedding IS NOT NONE{order_clause}{limit_clause}",
-                params,
-            )
+        # Empty/None project_id yields ("", {}) — an unscoped, corpus-wide read.
+        scope_clause, scope_params = build_project_scope_clause(project_id)
+        scope_sql = f" AND {scope_clause}" if scope_clause else ""
+        params: dict = {"st": store_type, **scope_params}
+        if limit is not None:
+            params["lim"] = int(limit)
+        rows = self._q(
+            f"SELECT * FROM memory WHERE store_type = $st "
+            f"AND heat > 0 AND embedding IS NOT NONE"
+            f"{scope_sql}{order_clause}{limit_clause}",
+            params,
+        )
         return self._rows_to_dicts(rows)
 
     # ------------------------------------------------------------------ Generic helpers
@@ -1142,19 +1238,46 @@ class _MemoryMixin:
     @observe(tier="stage")
     def get_anchored_memories_scoped(
         self,
-        directory: str,
+        project_id: str,
         limit: int = 20,
     ) -> list[dict]:
-        """Return anchors in scope priority order: global first, then project.
+        """Return anchors in scope priority order: global-reach first, then project.
 
         Two queries, hard cap `limit` each (safety cap 50 per design).
-        Global = directory_context IN ('', 'global').
-        Project = directory_context = directory (exact repo root match).
+        Global = ``'global' IN tags`` (**C5**).
+        Project = ``directory_context = project_id`` (**C10g**).
+
+        **C10g (0047 PR#40 §5) re-keyed the project bucket onto the project_id,
+        together with its writer.** ``CheckpointRestore.anchor_memory`` now
+        stamps ``directory_context`` from the resolved project_id instead of the
+        caller's ``context`` path, matching what C10f did to ``memorize``. The
+        two halves are ONE change: C10f attempted the stamp alone, watched this
+        reader's tests go red, and reverted rather than ship a bucket whose
+        writer it no longer agreed with. The PREDICATE stays on
+        ``directory_context`` for the same reason as
+        ``get_memories_for_directory`` — that column is where the write path
+        puts the identity today; moving onto the ``project_id`` column is C11's.
         v5.65: 'system' removed from global bucket (mis-stamp sink; v5.64 stopped new writes).
         Deduplicates by memory id. Returns global anchors first, then project.
         No rank-filter applied — anchors surface unconditionally (design §2).
 
         v5.19.0: replaces flat get_anchored_memories() in restore() path.
+
+        **C5 (0047 PR#40 §5) re-keyed the global bucket from
+        ``directory_context IN ('', 'global')`` to the ``global`` TAG.** §1.4
+        splits ownership from reach: ``project_id`` is always a real registered
+        project and ``"global"`` is never one, so a *reader* keyed on
+        ``directory_context = 'global'`` reads a concept that no longer exists
+        on the write side — C5 deleted every site that minted it.
+
+        **Known, quantified consequence — this bucket is NARROW until C6.** The
+        plan measured the live corpus (§1.5 D2, 2026-08-10): **7** memory rows
+        already carry a ``global`` tag against **~349** stamped
+        ``directory_context = 'global'``. Until C6's operator-invoked backfill
+        re-keys those 349 rows to a real owner + the reach tag, this query
+        returns the 7, not the 349. That is deliberate — surfacing rows through
+        a predicate the write path can no longer produce is how the sentinel
+        stayed alive — but it is a C6 dependency, not a free rename.
         """
         _now = self._now_iso()
         _cap = min(limit, 50)  # hard safety cap
@@ -1162,7 +1285,7 @@ class _MemoryMixin:
         global_rows = self._q(
             "SELECT * FROM memory "
             "WHERE '_anchor' INSIDE tags AND is_protected = true "
-            "AND (directory_context = '' OR directory_context = 'global') "
+            "AND 'global' INSIDE tags "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC LIMIT $lim",
             {"now": _now, "lim": _cap},
@@ -1173,7 +1296,7 @@ class _MemoryMixin:
             "AND directory_context = $dir "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC LIMIT $lim",
-            {"dir": directory, "now": _now, "lim": _cap},
+            {"dir": project_id, "now": _now, "lim": _cap},
         )
 
         seen: set[int] = set()

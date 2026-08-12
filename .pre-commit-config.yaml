@@ -7,6 +7,17 @@ repos:
       - id: mixed-line-ending
       - id: check-added-large-files
         args: [--maxkb=2048]
+      # PARSE GATES (0047 C1). scripts/check_versions.py reads
+      # docker-compose.yml as TEXT and regexes it, so a file PyYAML cannot
+      # parse at all still exits 0 — and that is exactly what happened: an
+      # `image:` key landed at column 0 inside `services: -> backend:` and every
+      # version gate stayed green over a compose file no runtime could load.
+      # That is not a bug in check_versions.py; it is a missing hook, and
+      # converting that script to a full YAML parse adds no coverage once these
+      # two exist. Same argument for JSON — server.json took the same column-0
+      # damage in the same PR.
+      - id: check-yaml
+      - id: check-json
 
   - repo: local
     hooks:
@@ -102,6 +113,14 @@ repos:
         pass_filenames: false
         files: ^yadgar/.*\.py$
 
+      - id: check-ledger-chokepoint
+        name: "Check ledger chokepoint (D20: every ledger table access goes through MariaStorageEngine)"
+        language: system
+        entry: python scripts/check_ledger_chokepoint.py
+        types: [python]
+        pass_filenames: false
+        files: ^yadgar/.*\.py$
+
       - id: check-secret-gate
         name: Check I26 secret-gate invariant (all write tools call gate_or_reject)
         language: system
@@ -189,6 +208,23 @@ repos:
         # filter is narrower than the read set.
         always_run: true
 
+      - id: check-directory-residue
+        name: Check ADR-0225 `directory` residue sweep (both directions + sibling allowlists)
+        language: system
+        entry: python scripts/check_directory_residue.py
+        pass_filenames: false
+        # always_run, and this one is the POINT of the hook rather than a nit.
+        # Three tree-scoped predecessors exist as PYTEST modules (C9a/_shared,
+        # C9b/backend), so `pre-commit run --all-files` — the standing per-car
+        # requirement — never ran them, and ADR-0218 forbids the full unit suite.
+        # A car sweeping `backend` was therefore structurally unable to see
+        # `_shared`'s module go red, which is how a sweep stranded a sibling's
+        # allowlist entry twice on this train. One whole-repo run against one
+        # allowlist, at every car boundary, is what closes that class; this
+        # script also parses the two sibling dicts so their entries cannot be
+        # stranded unseen either. Measured ~1.5s on this tree (506 files).
+        always_run: true
+
       - id: check-registry-prose-liveness
         name: Check I32 prose-token liveness (registry cites no dead identifiers)
         language: system
@@ -267,6 +303,18 @@ repos:
         # keyed on staged paths would skip the hook on the very commits where an
         # earlier commit's weakening is the thing to catch.
         always_run: true
+
+      - id: check-ci-local-parity
+        name: Check `make ci-local` matches ci-pr.yml's CI subsystem test selection + leg structure (Car F5/F10, PR #40 postmortem)
+        language: system
+        entry: python scripts/check_ci_local_parity.py
+        pass_filenames: false
+        # Narrow files: is correct here (unlike the always_run checks above) — this
+        # script reads exactly these files and nothing else, so a filter on them is
+        # not narrower than the read set. Car F10 widened the read set to
+        # scripts/ci-local-legs.sh (the leg runner it now also validates) and to
+        # itself (editing the guard's own discovery logic should re-run it too).
+        files: ^(Makefile|\.github/workflows/ci-pr\.yml|scripts/ci-local-legs\.sh|scripts/check_ci_local_parity\.py)$
 
       - id: check-e2e-assertions
         name: Assert every e2e test_* fn has ≥1 real assertion (#52)

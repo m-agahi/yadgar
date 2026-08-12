@@ -16,6 +16,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import yadgar._shared.paths as _paths
+from yadgar._shared.storage._project_id_writer import observe_project_id_skip
 from yadgar._shared.wiki.wiki_meta import (
     PAGE_TYPE_AGENT_DISCIPLINE,
     PAGE_TYPE_AGENT_INDEX,
@@ -408,7 +409,15 @@ def _migration_013_wiki_page_version(storage) -> None:
             "tags": page.get("tags", []),
             "confidence": page.get("confidence"),
             "source_memory_ids": page.get("source_memory_ids", []),
-            "branch": page.get("branch"),
+            # C12 (ADR-0226): ``"branch": page.get("branch")`` removed. This seeder
+            # is a wiki_page_version WRITER, and migration 032 retires that column;
+            # the table is SCHEMALESS, so leaving the write in place would re-create
+            # it untyped with INFO FOR TABLE still reporting clean. The source read
+            # was already dead besides — 029 dropped ``wiki_page.branch``, so
+            # ``page.get("branch")`` could only ever yield None. The key MUST leave
+            # both SQL strings below at the same time: the server-mode branch
+            # derives its LET preamble from ``row.items()``, so dropping the key
+            # alone would leave ``$branch`` unbound and crash the seeder.
             "change_summary": "initial version",
             "created_at": now,
             "provenance_agent": "migration_seed",
@@ -425,7 +434,7 @@ def _migration_013_wiki_page_version(storage) -> None:
                         "page_id = $page_id, version = $version, title = $title, "
                         "content = $content, category = $category, tags = $tags, "
                         "confidence = $confidence, "
-                        "source_memory_ids = $source_memory_ids, branch = $branch, "
+                        "source_memory_ids = $source_memory_ids, "
                         "change_summary = $change_summary, created_at = $created_at, "
                         "provenance_agent = $provenance_agent"
                     ]
@@ -443,7 +452,7 @@ def _migration_013_wiki_page_version(storage) -> None:
                 "page_id = $page_id, version = $version, title = $title, "
                 "content = $content, category = $category, tags = $tags, "
                 "confidence = $confidence, "
-                "source_memory_ids = $source_memory_ids, branch = $branch, "
+                "source_memory_ids = $source_memory_ids, "
                 "change_summary = $change_summary, created_at = $created_at, "
                 "provenance_agent = $provenance_agent",
                 {k: v for k, v in row.items()},
@@ -991,7 +1000,7 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
 
     # Fetch all agent-prompt wiki pages
     rows = storage._q(
-        "SELECT id, slug, content, tags, title, directory_context, "
+        "SELECT id, slug, content, tags, title, directory_context, project_id, "
         "category, confidence, source_memory_ids FROM wiki_page "
         "WHERE tags CONTAINS 'agent-prompt'"
     )
@@ -1018,6 +1027,10 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
         if prev is None or row["_ver"] > prev["_ver"]:
             best[pat] = row
 
+    #: Patterns whose bare slug is present after this pass — the only ones
+    #: whose -vN sources are safe to delete.
+    collapsed: set[str] = set()
+
     for pattern_slug, row in best.items():
         bare_slug = pattern_slug  # already "agent-prompt-<pattern>"
         existing = storage.get_wiki_page_by_slug(bare_slug)
@@ -1027,8 +1040,31 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
         title = row.get("title", "").split(" v")[0]  # strip " v2" from title if present
         category = row.get("category", "reference")
         confidence = row.get("confidence", "high")
+        # C13 (0047 PR#40 §5): the collapse INHERITS the -vN row's owner. This
+        # is not a derivation — the value was stamped by whoever wrote the
+        # source page, and reading it back is what "travels as an explicit
+        # caller parameter" means for a write built from another row (see
+        # ``resolve_project_id_from_rows``). The column was not even in the
+        # SELECT before this car; the insert below then reached the chokepoint
+        # unstamped, which after C5 is a raise inside the migration chain.
+        project_id = row.get("project_id")
 
         if existing is None:
+            if not project_id:
+                # Skip-and-count, C4's declared failure path for a sessionless
+                # writer: a pre-Car-L -vN row names no owner, and a migration
+                # that dies on one legacy row is worse than one that reports
+                # it. The source pages are LEFT IN PLACE (see the delete guard
+                # below) so an operator-invoked backfill can still collapse
+                # them once they carry an identity — deleting them here would
+                # destroy the only copy of the content.
+                observe_project_id_skip("migration_025")
+                _log.warning(
+                    "migration_025: %s names no project_id — collapse skipped, "
+                    "versioned pages retained",
+                    bare_slug,
+                )
+                continue
             page_id = storage.insert_wiki_page(
                 {
                     "slug": bare_slug,
@@ -1040,6 +1076,7 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
                     "confidence": confidence,
                     "source_memory_ids": row.get("source_memory_ids", []),
                     "directory_context": directory_context,
+                    "project_id": project_id,
                     "page_type": "agent_prompt",
                     "wiki_schema_version": 1,
                 }
@@ -1047,9 +1084,14 @@ def _migration_025_agent_prompt_slug_collapse(storage) -> None:
             _log.info("migration_025: created %s (page_id=%s)", bare_slug, page_id)
         else:
             _log.info("migration_025: bare slug %s already exists — skipping insert", bare_slug)
+        collapsed.add(pattern_slug)
 
-    # Delete all versioned pages
+    # Delete the versioned pages whose pattern actually collapsed. A pattern
+    # skipped for want of an owner keeps its -vN rows: the bare slug does not
+    # exist, so deleting them would lose the content outright.
     for row in versioned:
+        if row["_pattern"] not in collapsed:
+            continue
         page_id = storage._extract_id(row.get("id"))
         if page_id is not None:
             storage.delete_wiki_page(page_id)
@@ -1364,8 +1406,17 @@ def _migration_029_drop_branch_column(storage) -> None:
     Migrations 004 (which defined the field) and 015 (which defined it on the
     since-dropped ``wiki_draft`` table) are untouched: migration 026's docstring
     sets the precedent that shipped migrations are immutable and removal is a new
-    forward migration. ``wiki_page_version.branch`` is an audit-trail snapshot and
-    is deliberately out of scope.
+    forward migration.
+
+    ``wiki_page_version.branch`` was left in scope as an audit-trail snapshot when
+    this migration shipped. **That survivor is revoked** — ADR-0226 rules that a
+    history table holding a column the system has otherwise retired is a second
+    source of truth for a concept that no longer exists. It is dropped by
+    ``_migration_032_drop_wiki_page_version_branch``, a NEW forward revision (029
+    never touched that table, so this is not an in-place edit). 029's own blast
+    radius is unchanged and still stops at ``memory`` + ``wiki_page`` — both the
+    unit and e2e boundary tests still assert exactly that, alongside new siblings
+    asserting 032 does the rest.
 
     NOTE — both tables are SCHEMALESS (see ``_init_schema``), so ``REMOVE FIELD``
     removes only the FIELD DEFINITION; it neither deletes stored values (hence the
@@ -1385,6 +1436,277 @@ def _migration_029_drop_branch_column(storage) -> None:
     storage._q("REMOVE FIELD IF EXISTS branch ON TABLE memory;")
     storage._q("REMOVE FIELD IF EXISTS branch ON TABLE wiki_page;")
     _log.info("migration_029: dropped branch field definition on memory + wiki_page (ADR-0215)")
+
+
+def _migration_030_wiki_mutability_override(storage) -> None:
+    """Add nullable ``mutability_override`` column to wiki_page (Car J, 0047 §7 D25).
+
+    D25 closes the well-intentioned-repair vector (rewriting a derived
+    rollup, stripping an ADR's superseded tag) and the dangling-pointer
+    vector (deleting a locked page). D26 sets the per-type defaults:
+    ``adr``/``adr_superseded`` → locked, ``task``/``agent_prompt*`` → free,
+    ``wiki_rollup`` → derived. Per-page ``mutability_override`` wins over
+    the per-type default; the storage chokepoint (``_WikiMixin.update_wiki_page``
+    + insert/delete for symmetry) enforces the resolved value and exposes
+    a ``_sanctioned=True`` seam for server-side lifecycle transitions (Car G
+    supersede retype, Car K nightly sweep).
+
+    Schema:
+    - ``mutability_override TYPE option<string>`` — nullable; absent (NONE) →
+      fall back to per-type default. Set to one of ``"free"``, ``"locked"``,
+      ``"derived"`` to override.
+    - No backfill: pre-migration rows have NONE → default (adr→locked,
+      task/agent→free, else→free). The plan §9 confirms this is intentional.
+
+    DEFINE FIELD IF NOT EXISTS is idempotent — safe to call twice. The table
+    is SCHEMALESS but the field definition makes the type contract visible
+    to readers (downgrade-style migrations would need REMOVE FIELD here).
+    """
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS mutability_override ON TABLE wiki_page TYPE option<string>;"
+    )
+    _log.info("migration_030: added mutability_override field on wiki_page (Car J)")
+
+
+# ── Car L — project_id backfill (0047 §7 D32 ① / §16.8 + §16.9) ────────────
+
+
+# C5 (0047 PR#40 §5): ``_L031_CLASSIFY_CACHE`` and
+# ``_classify_directory_for_migration`` are DELETED. C4 removed their only
+# consumers (031's Phase D/E per-row backfill), leaving a classifier that
+# lazy-imported ``yadgar.core.identity.derive_project_id`` and swallowed its
+# failure into ``'unresolved'`` — both of the things ADR-0227 deletes, sitting
+# in a module the daemon imports at boot. The operator-invoked backfill (C6)
+# takes a host-resolved value and derives nothing.
+
+
+def _migration_031_project_id_backfill(storage) -> None:
+    """Declare project_id + legacy_directory on wiki_page + memory. **No backfill.**
+
+    Car L introduced this migration with an in-migration corpus backfill that
+    classified every distinct ``directory_context`` through
+    ``yadgar.core.identity.derive_project_id``.
+
+    **C4 (0047 PR#40 §5) removed the backfill (Phases D and E).** ADR-0227:
+    "Migration 031's in-migration backfill cannot stand, since the migration
+    runs inside the container that may not derive; the backfill moves to an
+    operator-invoked path with the host-resolved value." Neither image
+    installs git and neither mounts a host project directory, so the
+    classifier could not have produced a correct answer in production — it
+    would have stamped ``local/<basename>`` on every row, silently and
+    always, which is a well-formed key that passes every type check and is
+    indistinguishable at read time from a correct one.
+
+    **The migration now derives NOTHING.** It declares the two columns and
+    their indexes and stops. Pre-existing rows keep whatever value they have
+    (including none) until the operator runs the C6 backfill op with a
+    host-resolved project_id.
+
+    **C6 (0047 PR#40 §5) shipped that backfill** as
+    ``admin_exec/project_backfill.project_id_backfill`` — an operator-invoked
+    admin op that takes a host-resolved ``directory_context → project_id``
+    mapping, returns a manifest UN-APPLIED, and writes only when re-run with
+    ``dry_run=False``. Rows written before it runs carry no project_id, which
+    readers treat as unscoped rather than as a phantom project.
+
+    Schema (unchanged):
+      - ``project_id TYPE option<string>`` — nullable through the transition.
+      - ``legacy_directory TYPE option<string>`` — the QUARANTINE column. Set
+        by the C6 op on rows whose ``directory_context`` the host mapping
+        cannot resolve: the free-text-prose class (18 distinct values,
+        ``memorize(context=)`` used as a description, which its own docstring
+        forbids). Those rows have no derivable owner, so the original value is
+        preserved for human adjudication and ``project_id`` is deliberately
+        LEFT UNSET — a quarantined row must never carry a guessed identity.
+        Until C6 the column had no writer at all and this paragraph described
+        a behaviour the code did not have; the choice made was to implement
+        the arm rather than delete the column, because the prose class is real
+        and measured and needs somewhere to land.
+
+    Idempotent: every statement is ``IF NOT EXISTS``, so a re-run is a no-op.
+    """
+    # Phase A: define wiki_page.project_id (option<string>)
+    storage._q("DEFINE FIELD IF NOT EXISTS project_id ON TABLE wiki_page TYPE option<string>;")
+    # Phase B: define wiki_page.legacy_directory (option<string>)
+    storage._q(
+        "DEFINE FIELD IF NOT EXISTS legacy_directory ON TABLE wiki_page TYPE option<string>;"
+    )
+    # Phase C: same pair on memory
+    storage._q("DEFINE FIELD IF NOT EXISTS project_id ON TABLE memory TYPE option<string>;")
+    storage._q("DEFINE FIELD IF NOT EXISTS legacy_directory ON TABLE memory TYPE option<string>;")
+
+    # Phases D and E (the per-row backfill) are DELETED — see the docstring.
+    # C6 owns the operator-invoked replacement.
+
+    # Phase F: indexes (DEFINE INDEX IF NOT EXISTS — safe to re-call)
+    storage._q(
+        "DEFINE INDEX IF NOT EXISTS wiki_page_project_id_idx ON TABLE wiki_page FIELDS project_id;"
+    )
+    storage._q(
+        "DEFINE INDEX IF NOT EXISTS memory_project_id_idx ON TABLE memory FIELDS project_id;"
+    )
+
+    _log.info(
+        "migration_031: declared project_id + legacy_directory on wiki_page + memory "
+        "(C4: no in-migration backfill — the container cannot derive an identity; "
+        "the operator backfill op is C6)"
+    )
+
+
+# ── C12 (0047 PR#40 §5) — branch's last survivor (ADR-0226) ────────────────
+
+
+class Migration032Abort(RuntimeError):
+    """Raised when 032 refuses to drop ``branch`` while stored values survive."""
+
+
+def _migration_032_drop_wiki_page_version_branch(storage) -> None:
+    """Retire ``wiki_page_version.branch`` — branch scoping's last survivor (ADR-0226).
+
+    ADR-0215 removed branch scoping and migration 029 dropped the column from
+    ``memory`` and ``wiki_page``. Car 9 deliberately kept ``wiki_page_version.branch``
+    as an "audit-trail snapshot" and shipped a boundary test asserting 029 leaves it
+    alone. ADR-0226 revokes that survivor: *"a history table holding a column the
+    system has otherwise retired is a second source of truth for a concept that no
+    longer exists, and the boundary test asserting 029 leaves it alone actively pins
+    the survivor in place."* 029 did not touch this table, so this is a NEW forward
+    revision, not an in-place edit of an unreleased one (migration 026's precedent).
+
+    **Why this has a DATA step where 033 deliberately had none.** ``wiki_page_version``
+    is SCHEMALESS (``_migration_013_wiki_page_version`` defines the table, never a
+    ``DEFINE FIELD branch``), so on most databases there is NO field definition to
+    remove and a body consisting only of ``REMOVE FIELD IF EXISTS`` would be a **no-op
+    that still satisfies an ``INFO FOR TABLE`` assertion**. That is migration 031's
+    failure shape — a filter on a column it never projected — in different clothing.
+    The substance is the stored VALUES, so this mirrors 029's order:
+
+      1. count the rows still carrying a value
+      2. ``UPDATE … SET branch = NONE`` on exactly those rows
+      -. assert none survive — BEFORE the drop, while the column is still queryable
+      3. ``REMOVE FIELD IF EXISTS`` for symmetry and ``INFO FOR TABLE`` cleanliness
+
+    ``SET branch = NONE`` assigns the literal SurrealDB ``NONE``, which is what
+    ``IS NONE`` / ``!= NONE`` match. Routing a Python ``None`` through a bind
+    parameter would store an explicit null and the sweep would miss it — the trap
+    documented on ``_m029_null_branch`` and ``set_wiki_page_metadata``.
+
+    **The schema statement is NOT the safety property.** Because the table is
+    SCHEMALESS, any surviving writer re-creates the column untyped and
+    ``INFO FOR TABLE`` still looks clean (ADR-0225/0226). Killing the writers is the
+    guarantee, and it is done in code in this same car: the ``ver_branch`` binding is
+    gone from all three ``wiki_page_version`` snapshot paths in
+    ``_shared/storage/wiki.py``, from ``insert_wiki_page_version``'s
+    ``snapshot.get("branch")``, and from this module's own 013 seeder. The seeding
+    kwargs ``insert_memory(branch=)`` / ``insert_wiki_page(branch=)`` /
+    ``anchor_memory(branch=)`` — which re-created the column on ``memory`` and
+    ``wiki_page`` AFTER 029 dropped it — are gone with them.
+
+    Rows are NULLED, never deleted: the version row is the audit trail ADR-0226
+    preserves; only the retired concept leaves.
+
+    Idempotent end-to-end: on replay the count is 0 so the UPDATE is skipped, and
+    ``REMOVE FIELD IF EXISTS`` is a no-op.
+    """
+    n = _m029_count(storage, "wiki_page_version", "branch != NONE")
+    if n:
+        storage._q("UPDATE wiki_page_version SET branch = NONE WHERE branch != NONE")
+    _log.info("migration_032: nulled branch on %d wiki_page_version row(s)", n)
+
+    remaining = _m029_count(storage, "wiki_page_version", "branch != NONE")
+    if remaining:
+        raise Migration032Abort(
+            f"migration_032: {remaining} wiki_page_version row(s) still carry a "
+            f"non-null branch after the nulling sweep — refusing to drop the field "
+            f"while values survive."
+        )
+
+    storage._q("REMOVE FIELD IF EXISTS branch ON TABLE wiki_page_version;")
+    _log.info("migration_032: retired wiki_page_version.branch (ADR-0226)")
+
+
+# ── C11 (0047 PR#40 §5) — the OTHER directory-bearing tables ───────────────
+
+#: Tables that 033 declares ``project_id`` on. Ordered, deduplicated, and named
+#: ONCE so the statement list, the index list and the test's expectation cannot
+#: drift apart.
+#:
+#: Three of these carry their own legacy ``directory`` COLUMN (``memory_block``,
+#: ``episode``, ``action_log``); the rest are the SCHEMALESS ``directory_context``
+#: users that no ``DEFINE FIELD`` ever covered (``checkpoint``,
+#: ``narrative_entry``, ``user_profile``, ``derived_belief``,
+#: ``wiki_page_version``). ``runtime_config`` is the sixth-table GAP C9a/C9c/C10
+#: reported upward: it carries its own ``directory`` column, has no
+#: ``project_id``, and is absent from the plan's four-table list. It is declared
+#: here because leaving one directory-bearing table without the column is how
+#: the next car inherits the same report a fourth time.
+#:
+#: **The plan's fourth table, ``queue``, DOES NOT EXIST.** The cited site
+#: (``_shared/storage/queue.py:81``) is inside ``insert_action_log``'s docstring,
+#: and the queue itself is FILE-backed (``_shared/file_queue/``) — there is no
+#: ``DEFINE TABLE queue``, no writer and no row. Declaring a column on it to
+#: satisfy a table count would create a phantom.
+_C11_PROJECT_ID_TABLES: tuple[str, ...] = (
+    "memory_block",
+    "episode",
+    "action_log",
+    "checkpoint",
+    "narrative_entry",
+    "user_profile",
+    "derived_belief",
+    "wiki_page_version",
+    "runtime_config",
+)
+
+
+def _migration_033_project_id_other_tables(storage) -> None:
+    """Declare ``project_id`` + an index on the other directory-bearing tables.
+
+    C11 (0047 PR#40 §5). **Schema statements ONLY — no data step, no scan, no
+    derivation.** Every statement is ``DEFINE FIELD IF NOT EXISTS`` /
+    ``DEFINE INDEX IF NOT EXISTS``, so a replay issues the identical list and
+    changes nothing. That is the idempotency proof, and it is STRUCTURAL: 031's
+    filter was dead code because it filtered on a column it never projected, and
+    the only way to be sure that shape cannot recur is to have no row-touching
+    statement to get wrong.
+
+    **The legacy ``directory`` / ``directory_context`` columns are NOT dropped
+    here, and their writers are NOT silenced** (plan §5 C11: "add now, drop next
+    PR"). ADR-0225's stated reason for keeping them — *the backfill derives from
+    them* — is load-bearing in both directions: a row written between this car
+    and the drop migration with a ``project_id`` but no ``directory`` would have
+    nothing for the backfill to derive from and nothing for the un-backfilled
+    readers to match, which is strictly worse than the degraded window §8 5b
+    sanctions. So the writers DUAL-WRITE: they stamp ``project_id`` and keep
+    writing the legacy column. Three live consumers make that mandatory rather
+    than merely prudent — ``causal_discovery/pc.py`` filters episodes on
+    ``e["directory"]``, ``consolidation/cls.py`` reads ``ep.get("directory")``,
+    and ``consolidation/cleanup.py`` takes the action-log row's ``directory`` as
+    the summary memory's ``directory_context``.
+
+    **The safety property named in ADR-0225/0226 is about the DROP, not this
+    car.** Every table here is SCHEMALESS, so a future ``REMOVE FIELD`` removes
+    only the type definition while any surviving writer re-creates the column
+    untyped — and ``INFO FOR TABLE`` still looks clean. The next PR must kill
+    the writers, not merely issue the statement.
+
+    ``project_id`` is ``option<string>``: pre-existing rows read as ``None``,
+    NOT as ``"global"``. No backfill covers these tables — ``project_backfill``'s
+    ``_TABLES`` is ``("memory", "wiki_page")`` and §8 names no step for the rest
+    — so every reader that moves onto ``project_id`` here keeps a transitional
+    legacy arm for the historical corpus rather than silently returning nothing.
+    """
+    for table in _C11_PROJECT_ID_TABLES:
+        storage._q(f"DEFINE FIELD IF NOT EXISTS project_id ON TABLE {table} TYPE option<string>;")
+    for table in _C11_PROJECT_ID_TABLES:
+        storage._q(
+            f"DEFINE INDEX IF NOT EXISTS {table}_project_id_idx ON TABLE {table} FIELDS project_id;"
+        )
+    _log.info(
+        "migration_033: declared project_id + index on %d tables (%s) — schema only, "
+        "no backfill, legacy directory columns retained for the next PR's drop",
+        len(_C11_PROJECT_ID_TABLES),
+        ", ".join(_C11_PROJECT_ID_TABLES),
+    )
 
 
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
@@ -1491,6 +1813,22 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "029_drop_branch_column",
         "fn": _migration_029_drop_branch_column,
+    },
+    {
+        "version": "030_wiki_mutability_override",
+        "fn": _migration_030_wiki_mutability_override,
+    },
+    {
+        "version": "031_project_id_backfill",
+        "fn": _migration_031_project_id_backfill,
+    },
+    {
+        "version": "032_drop_wiki_page_version_branch",
+        "fn": _migration_032_drop_wiki_page_version_branch,
+    },
+    {
+        "version": "033_project_id_other_tables",
+        "fn": _migration_033_project_id_other_tables,
     },
 ]
 

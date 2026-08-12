@@ -18,7 +18,18 @@ from yadgar.backend.restoration import ensure_restoration_engines
 def pre_compact_drain(payload: dict) -> dict:
     """Emergency context capture before compaction. Storage-write half.
 
-    payload: {directory, transcript_path?, in_flight?}
+    payload: {directory, transcript_path?, in_flight?, worktree_path?, project_id?}
+
+    C10 (0047 §5, judgement site (b)): ``worktree_path`` is the real filesystem
+    path for the ``git worktree list`` capture, split out from ``directory``
+    (which stays the checkpoint identity until C11 re-keys the
+    ``checkpoint``/``memory`` reads onto ``project_id``). Absent → falls back to
+    ``directory``, preserving the in-container fallback parse verbatim.
+    ``project_id`` already rode this payload from ``forward_pre_compact_drain``
+    and was inert until C11 added ``checkpoint.project_id`` (migration 033); it
+    is now forwarded, stamped on the auto-checkpoint, and used as the FIRST arm
+    of the existing-checkpoint lookup (the legacy path stays as the second arm —
+    no backfill covers this table).
     HOOKS Car 2: optional transcript_path is parsed for in-flight orchestration
     state and stored on the checkpoint. Absent/None degrades to pre-Car-2.
     Car fix-drain-inflight (v5.135): the host-side drain callers parse in_flight
@@ -34,4 +45,5 @@ def pre_compact_drain(payload: dict) -> dict:
         payload.get("directory", ""),
         transcript_path=payload.get("transcript_path"),
         in_flight=payload.get("in_flight"),
+        project_id=payload.get("project_id"),
     )

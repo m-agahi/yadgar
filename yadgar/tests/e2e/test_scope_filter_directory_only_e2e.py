@@ -1,51 +1,36 @@
-"""E2E for ScopeFilter after ADR-0215 — the directory axis, which is all that is left.
+"""E2E for the recall scope clause after Car C7 — RE-POINTED, not deleted.
 
-Provenance: Car 1 of the branch-scoping-removal train deleted
-``yadgar/tests/e2e/test_scope_filter_e2e.py`` (commit ``7bf28dda``) wholesale
-because two of its four tests were built on the branch axis. That left
-``ScopeFilter`` (``yadgar/_shared/storage/scope.py``) with ZERO test references
-anywhere in the suite. This file restores the directory half.
+PROVENANCE, in two steps, because the second step is easy to misread as a deletion:
 
-WHAT IS PORTED, and what is not — from the deleted file's four tests:
+1. Car 1 of the branch-scoping-removal train deleted
+   ``yadgar/tests/e2e/test_scope_filter_e2e.py`` (commit ``7bf28dda``) wholesale
+   because two of its four tests were built on the branch axis. That left
+   ``ScopeFilter`` with ZERO test references anywhere in the suite, and this file
+   was written to restore the directory half.
 
-  * ``test_scope_filter_none_is_legacy_noop`` — PORTED (``test_empty_filter_is_legacy_noop``).
-    This was the deleted file's only assertion that touched ``ScopeFilter``
-    directly rather than through the recall pipeline, so it is the one that
-    left a real hole.
+2. Car C7 (0047 §5 C7) then re-keyed recall scoping from ``directory_context``
+   onto ``project_id``, moved it from a Python post-filter INTO the stage-1 SQL
+   ``WHERE``, and deleted ``ScopeFilter`` / ``DirectoryFilter`` /
+   ``_build_directory_clause`` / ``is_directory_eligible`` outright.
 
-  * ``test_db_clause_includes_field_absent_or_proves_none_exist`` — its DB
-    invariant is PORTED (``test_schema_forbids_the_null_and_empty_sentinels_on_memory``).
-    The deleted test branched at runtime between two possible outcomes and
-    documented whichever the live DB showed; this file asserts the one that is
-    actually true today ("option (b)") rather than re-deriving it, and records
-    the consequence for the clause's sentinel arms. Its recall-pipeline half is
-    dropped as duplicate (see below).
+   This file is RE-POINTED onto the replacement (``build_project_scope_clause`` /
+   ``build_recall_scope_clause``) rather than removed. Its SUBJECT is unchanged —
+   "the scope clause, executed against a live SurrealDB" — and that subject still
+   exists; only its key changed. Deleting it would have dropped live-DB coverage
+   of the one predicate the whole read path now depends on, at exactly the moment
+   that predicate became load-bearing.
 
-  * ``test_db_clause_excludes_other_dir`` — DROPPED as duplicate. It asserted
-    that ``recall(directory=A)`` excludes a memory stamped with directory B.
-    ``test_phase1_db_layer.py::TestBCB1::test_excludes_other_project`` asserts
-    exactly that (``assert mid_other not in result_ids``), and
-    ``TestBCB1::test_global_memory_included`` covers its global-sentinel arm.
-    Re-adding it here would test the recall pipeline a third time, not ScopeFilter.
+WHY THESE LIVE IN ``e2e/`` rather than a unit file — and the reason is STRONGER
+after C7, not weaker. Pre-C7 the fragment was documented as "NOT wired into any
+SurrealQL query", so only an e2e run could prove it was even executable. Post-C7
+it IS the production predicate on every scoped recall: a clause that parses but
+selects the wrong set is now a silent correctness failure across the whole read
+path. The pure-string assertions live in
+``yadgar/tests/_shared/test_c7_recall_scope_clause.py``; what belongs HERE is
+executing the fragment against a real DB.
 
-  * ``test_branch_and_directory_compose`` — DROPPED, not portable. It seeded
-    rows via ``insert_memory(..., branch="feature-x")`` and asserted a branch
-    predicate excluded them. ADR-0215 removed the branch axis from
-    ``ScopeFilter`` entirely, so there is no longer a second predicate to
-    compose with. Nothing about it survives translation.
-
-The deleted file's ``_run_fanout_recall`` helper also monkeypatched
-``_detect_branch`` and ``_get_default_branch``; both functions no longer exist
-anywhere in the tree, so a verbatim port could not have run.
-
-WHY THESE LIVE IN ``e2e/`` rather than a unit file: ``_build_directory_clause``
-emits a raw SurrealQL fragment that its own docstring notes is "NOT wired into
-any SurrealQL query" — no production caller executes it today, and
-``ScopeFilter`` has no production caller either (``providers/memory.py`` only
-mentions it in a docstring). A mock test asserting the fragment's *string* shape
-would therefore prove nothing about whether it is executable. These tests run
-the generated fragment against a live SurrealDB, the same rationale
-``test_migration_029_drop_branch_column_e2e.py`` gives for testing DDL live.
+Companion file: ``test_c7_where_clause_equivalence_e2e.py`` carries the
+result-set-equivalence and anti-starvation gates.
 """
 
 from __future__ import annotations
@@ -54,196 +39,197 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
+_PROJECT = "m-agahi/yadgar"
+_OTHER = "m-agahi/aws-work"
 
-def _seed(storage, marker: str, label: str, directory_context: str | None) -> None:
+
+def _seed(storage, marker: str, label: str, project_id: str | None, tags=None) -> None:
     """Insert one memory row tagged with *marker*.
 
-    ``directory_context=None`` means the KEY IS OMITTED (a field-absent row),
-    which is not the same as storing an explicit null — the distinction the
-    ``directory_context IS NONE`` arm of the clause exists to handle.
+    ``project_id=None`` means the KEY IS OMITTED (a field-absent row). That is
+    not the same as storing an explicit null, and the distinction is the whole
+    point post-C6: ``project_id`` is ``option<string>``, so a row the backfill
+    has not reached reads as ``None`` — NOT as ``"global"``.
     """
-    if directory_context is None:
-        storage._q(
-            "INSERT INTO memory {content: $c, heat: 1.0, tags: [$tok]}",
-            {"c": f"{label} {marker}", "tok": marker},
-        )
-    else:
-        storage._q(
-            "INSERT INTO memory {content: $c, heat: 1.0, tags: [$tok], directory_context: $dc}",
-            {"c": f"{label} {marker}", "tok": marker, "dc": directory_context},
-        )
+    fields = {
+        "content": f"{label} {marker}",
+        "heat": 1.0,
+        "tags": [marker, *(tags or [])],
+        "directory_context": "global",
+    }
+    if project_id is not None:
+        fields["project_id"] = project_id
+    assignments = ", ".join(f"{k}: ${k}" for k in fields)
+    _q_retry(storage, f"INSERT INTO memory {{{assignments}}}", fields)
 
 
-def _select_dirs(storage, clause: str, params: dict, marker: str) -> list:
+def _q_retry(storage, surql: str, params: dict, attempts: int = 6):
+    """Run *surql*, retrying SurrealKV's own retryable write conflict.
+
+    SurrealKV raises ``Transaction conflict: … This transaction can be retried``
+    under concurrent load, and its message says so explicitly. Retrying honours
+    that contract: a conflict is a signal about WRITE contention, while every
+    assertion in this file is about the READ predicate. A non-conflict error is
+    re-raised immediately, so a malformed clause still fails loudly on the first
+    attempt — which is the whole reason these tests execute the fragment.
+    """
+    import time as _time
+
+    for attempt in range(attempts):
+        try:
+            return storage._q(surql, params)
+        except RuntimeError as exc:
+            if "onflict" not in str(exc) or attempt == attempts - 1:
+                raise
+            _time.sleep(0.05 * (attempt + 1))
+    return None
+
+
+def _select_labels(storage, clause: str, params: dict, marker: str) -> list:
     """Run *clause* against the live DB, scoped to rows tagged with *marker*.
 
-    Returns the ``directory_context`` of every selected row. Executing the
-    fragment is the point: a syntactically invalid clause raises here.
+    Executing the fragment is the point: a syntactically invalid clause raises
+    here rather than passing a string comparison.
     """
     rows = storage._q(
-        f"SELECT directory_context FROM memory WHERE tags CONTAINS $tok AND ({clause})",
+        f"SELECT content FROM memory WHERE tags CONTAINS $tok AND ({clause})",
         {**params, "tok": marker},
     )
-    return [r.get("directory_context") for r in rows]
+    return [(r.get("content") or "").split(" ")[0] for r in rows]
 
 
-class TestScopeFilterDirectoryContract:
-    """The ``ScopeFilter`` API surface — pure, no DB."""
+class TestScopeClauseContract:
+    """The clause-builder API surface — pure, no DB."""
 
-    def test_empty_filter_is_legacy_noop(self):
-        """``ScopeFilter()`` → ``('', {})``.
+    def test_empty_scope_is_legacy_noop(self):
+        """PORTED from the deleted file's ``test_scope_filter_none_is_legacy_noop``.
 
-        Ported from the deleted file's ``test_scope_filter_none_is_legacy_noop``.
-        Callers branch on the empty string to decide whether to append an AND,
-        so an accidental non-empty fragment here would inject a predicate into
-        every unscoped query.
+        An absent project must produce NO predicate at all, not a predicate that
+        matches nothing — the difference between "no filtering requested" and
+        "filter everything out".
         """
-        from yadgar._shared.storage.scope import ScopeFilter
+        from yadgar._shared.storage.directory import build_project_scope_clause
 
-        sql, params = ScopeFilter().build_clause()
-        assert sql == "", f"Empty ScopeFilter must produce empty SQL, got: {sql!r}"
-        assert params == {}, f"Empty ScopeFilter must produce empty params, got: {params}"
+        sql, params = build_project_scope_clause(None)
+        assert sql == "", f"An empty scope must produce empty SQL, got: {sql!r}"
+        assert params == {}, f"An empty scope must produce empty params, got: {params}"
 
-    def test_from_scope_populates_the_directory_filter(self):
-        """``from_scope`` lifts ``Scope.directory`` into a ``DirectoryFilter``."""
-        from yadgar._shared.storage.directory import DirectoryFilter
-        from yadgar._shared.storage.scope import ScopeFilter
-        from yadgar.backend.retrieval.providers.base import Scope
+    def test_empty_string_project_is_also_a_noop(self):
+        from yadgar._shared.storage.directory import build_project_scope_clause
 
-        sf = ScopeFilter.from_scope(Scope(directory="/home/test/yadgar-project"))
+        sql, params = build_project_scope_clause("")
+        assert sql == ""
+        assert params == {}
 
-        assert isinstance(sf.directory, DirectoryFilter)
-        assert sf.directory.caller_dir == "/home/test/yadgar-project"
+    def test_populated_scope_names_both_arms(self):
+        """Both arms, or the predicate silently narrows the corpus."""
+        from yadgar._shared.storage.directory import build_project_scope_clause
 
-    def test_from_scope_binds_the_caller_dir_as_a_param(self):
-        """The caller directory is a bound param, never interpolated into SQL.
-
-        If ``$df_caller`` were ever inlined into the fragment, a directory path
-        would become SQL text. Assert the path appears in params and NOT in the
-        clause string.
-        """
-        from yadgar._shared.storage.scope import ScopeFilter
-        from yadgar.backend.retrieval.providers.base import Scope
-
-        caller_dir = "/home/test/yadgar-project"
-        clause, params = ScopeFilter.from_scope(Scope(directory=caller_dir)).build_clause()
-
-        assert params == {"df_caller": caller_dir}
-        assert caller_dir not in clause, (
-            f"caller_dir must be bound as a param, not interpolated into {clause!r}"
-        )
-
-    def test_falsy_scope_directory_yields_the_noop_clause(self):
-        """``Scope(directory="")`` → no filter, matching the ``None`` case.
-
-        ``from_scope`` guards on truthiness, so an empty directory must degrade
-        to the legacy no-op rather than producing a clause bound to ``''``.
-        """
-        from yadgar._shared.storage.scope import ScopeFilter
-        from yadgar.backend.retrieval.providers.base import Scope
-
-        sf = ScopeFilter.from_scope(Scope(directory=""))
-
-        assert sf.directory is None
-        assert sf.build_clause() == ("", {})
+        sql, params = build_project_scope_clause(_PROJECT)
+        assert "project_id" in sql, f"project arm absent: {sql!r}"
+        assert "IN tags" in sql, f"'global' reach-tag arm absent: {sql!r}"
+        assert _PROJECT in params.values(), f"project id not bound: {params}"
 
 
-class TestScopeFilterClauseAgainstLiveDB:
+class TestScopeClauseAgainstLiveDB:
     """The generated fragment is executable SurrealQL with the documented semantics."""
 
-    def test_clause_selects_caller_dir_and_sentinels_and_excludes_others(self, e2e_engines):
-        """Live-DB proof of the sentinel contract.
+    def test_clause_selects_own_project_and_global_reach_and_excludes_others(self, e2e_engines):
+        """Live-DB proof of the post-C7 contract.
 
-        ``_ALWAYS_ELIGIBLE`` is ``{'global', '', None}``; the caller directory is
-        additionally eligible. A row in another project directory must not be
-        selected. This executes the fragment, so an invalid clause fails here
-        rather than silently passing a string comparison.
+        Eligible: rows owned by the caller's project, plus rows carrying the
+        ``global`` REACH tag regardless of owner. A row owned by another project
+        without that tag must not be selected.
         """
-        from yadgar._shared.storage.scope import ScopeFilter
-        from yadgar.backend.retrieval.providers.base import Scope
+        from yadgar._shared.storage.directory import build_project_scope_clause
 
         storage = e2e_engines["storage"]
-        caller_dir = e2e_engines["yadgar_dir"]
-        other_dir = e2e_engines["other_dir"]
-        marker = "scope-dir-case-a"
+        marker = "scope-proj-case-a"
 
-        _seed(storage, marker, "caller", caller_dir)
-        _seed(storage, marker, "other", other_dir)
-        _seed(storage, marker, "global", "global")
+        _seed(storage, marker, "mine", _PROJECT)
+        _seed(storage, marker, "theirs", _OTHER)
+        _seed(storage, marker, "reach", _OTHER, tags=["global"])
 
-        clause, params = ScopeFilter.from_scope(Scope(directory=caller_dir)).build_clause()
-        assert clause, "a populated ScopeFilter must produce a non-empty clause"
+        clause, params = build_project_scope_clause(_PROJECT)
+        assert clause, "a populated project scope must produce a non-empty clause"
 
-        selected = _select_dirs(storage, clause, params, marker)
+        selected = _select_labels(storage, clause, params, marker)
 
-        assert other_dir not in selected, (
-            f"row stamped {other_dir!r} must be excluded when caller_dir={caller_dir!r}; "
+        assert "theirs" not in selected, (
+            f"a row owned by {_OTHER!r} must be excluded when scoped to {_PROJECT!r}; "
             f"selected={selected}"
         )
-        assert sorted(selected) == sorted(["global", caller_dir]), (
-            f"expected caller dir + the 'global' sentinel; selected={selected}"
+        assert sorted(selected) == ["mine", "reach"], (
+            f"expected the caller's own rows plus the 'global'-tagged reach row; "
+            f"selected={selected}"
         )
 
-    def test_schema_forbids_the_null_and_empty_sentinels_on_memory(self, e2e_engines):
-        """Two of the clause's three sentinel arms are unreachable on ``memory``.
+    def test_unstamped_rows_are_excluded_not_treated_as_global(self, e2e_engines):
+        """The C7 decision, executed against the real ``option<string>`` column.
 
-        This is the ported substance of the deleted
-        ``test_db_clause_includes_field_absent_or_proves_none_exist``, which
-        branched on whether a schema ASSERT rejects a field-absent INSERT and
-        documented whichever outcome the live DB exhibited. Run against the
-        current schema, the answer is its "option (b)": migration 016 Phase E
-        defines
+        This REPLACES the pre-C7 assertion about ``directory_context IS NONE``
+        sentinels. Under the old scheme a field-absent row was ALWAYS eligible
+        (``_ALWAYS_ELIGIBLE = {'global', '', None}``). Under C7 it is eligible
+        nowhere unless it carries the reach tag — because admitting it would
+        rebuild the permissive fallback ADR-0227 exists to delete, and every
+        un-backfilled row would leak into every project's recall.
 
-            directory_context ON TABLE memory TYPE string
-            ASSERT $value != NONE AND string::len($value) > 0
-
-        so a field-absent row and an empty-string row are BOTH rejected at
-        INSERT. (Phase B applies the identical constraint to ``wiki_page``.)
-
-        Consequence, and the reason this is worth asserting: the
-        ``directory_context IS NONE`` and ``directory_context = ''`` arms of
-        ``_build_directory_clause`` cannot match anything in a post-016 corpus,
-        and ``DirectoryFilter._ALWAYS_ELIGIBLE`` (``{'global', '', None}``) is
-        correspondingly wider than the DB permits — only ``'global'`` is
-        reachable. Both are harmless today, but a future "simplify the clause"
-        change needs this recorded, and if a later migration relaxes the
-        constraint this test fails and says so.
+        The cost is bounded and sanctioned: §8 step 5b names ZERO RESULTS as an
+        acceptable outcome for the window between boot and the C6 backfill.
         """
+        from yadgar._shared.storage.directory import build_project_scope_clause
+
         storage = e2e_engines["storage"]
-        marker = "scope-dir-case-b"
+        marker = "scope-proj-case-b"
 
-        with pytest.raises(RuntimeError, match="directory_context"):
-            _seed(storage, marker, "field-absent", None)
+        _seed(storage, marker, "mine", _PROJECT)
+        _seed(storage, marker, "unstamped", None)
+        _seed(storage, marker, "unstampedreach", None, tags=["global"])
 
-        with pytest.raises(RuntimeError, match="directory_context"):
-            _seed(storage, marker, "empty", "")
+        clause, params = build_project_scope_clause(_PROJECT)
+        selected = _select_labels(storage, clause, params, marker)
 
-        remaining = storage._q(
-            "SELECT directory_context FROM memory WHERE tags CONTAINS $tok",
-            {"tok": marker},
+        assert "unstamped" not in selected, (
+            f"an unstamped row surfaced in a project-scoped read — that is the "
+            f"permissive fallback ADR-0227 deletes; selected={selected}"
         )
-        assert remaining == [], f"neither rejected INSERT may leave a row behind; got {remaining}"
+        assert "unstampedreach" in selected, (
+            "an unstamped row carrying the 'global' reach tag must still be "
+            f"reachable — the reach arm does not depend on project_id; selected={selected}"
+        )
+        assert "mine" in selected
 
-    def test_noop_clause_means_no_filtering(self, e2e_engines):
-        """The empty clause is a genuine no-op: every row remains reachable.
+    def test_composed_recall_clause_is_executable_on_memory_without_page_types(self, e2e_engines):
+        """``page_types=False`` is mandatory for memory — it has no such column.
 
-        Pairs with ``test_empty_filter_is_legacy_noop`` — that one asserts the
-        contract, this one asserts the consequence against real rows.
+        Emitting the ``page_type`` arm against ``memory`` would raise at query
+        time, so this executes the memory-shaped clause to prove the split is
+        real rather than documentary.
         """
+        from yadgar._shared.storage.directory import build_recall_scope_clause
+
         storage = e2e_engines["storage"]
-        caller_dir = e2e_engines["yadgar_dir"]
-        other_dir = e2e_engines["other_dir"]
-        marker = "scope-dir-case-c"
+        marker = "scope-proj-case-c"
 
-        _seed(storage, marker, "caller", caller_dir)
-        _seed(storage, marker, "other", other_dir)
+        _seed(storage, marker, "mine", _PROJECT)
+        _seed(storage, marker, "theirs", _OTHER)
 
-        rows = storage._q(
-            "SELECT directory_context FROM memory WHERE tags CONTAINS $tok",
-            {"tok": marker},
+        clause, params = build_recall_scope_clause(_PROJECT, page_types=False)
+        assert "page_type" not in clause, (
+            f"the memory-shaped clause must omit the page_type arm: {clause!r}"
         )
-        selected = sorted(r.get("directory_context") for r in rows)
 
-        assert selected == sorted([caller_dir, other_dir]), (
-            f"unfiltered select must return both rows; got {selected}"
-        )
+        selected = _select_labels(storage, clause, params, marker)
+        assert sorted(selected) == ["mine"], f"selected={selected}"
+
+    def test_wiki_shaped_clause_carries_the_page_type_arm(self, e2e_engines):
+        """The wiki variant keeps arm 3; it is executable on ``wiki_page``."""
+        from yadgar._shared.storage.directory import build_recall_scope_clause
+
+        storage = e2e_engines["storage"]
+        clause, params = build_recall_scope_clause(_PROJECT)
+        assert "page_type" in clause, f"wiki clause must carry the exclusion arm: {clause!r}"
+
+        # Executes it — an invalid fragment raises rather than silently passing.
+        rows = storage._q(f"SELECT slug FROM wiki_page WHERE ({clause})", params)
+        assert isinstance(rows, list), "the composed wiki clause must execute cleanly"

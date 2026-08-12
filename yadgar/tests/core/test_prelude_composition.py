@@ -21,6 +21,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 # R3 Car 3c: agent_prompt_save forwards to backend /admin.
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -50,14 +52,14 @@ def _seed_all(storage):
         _seed_discipline_pages,
     )
 
-    _seed_contract_page(storage=storage)
-    _seed_discipline_pages(storage=storage)
+    _seed_contract_page(storage=storage, project=TEST_PROJECT_ID)
+    _seed_discipline_pages(storage=storage, project=TEST_PROJECT_ID)
 
 
 def _save_pattern(storage, pattern: str, body: str) -> None:
     from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
-    agent_prompt_save(pattern, body, directory="global", storage=storage)
+    agent_prompt_save(pattern, body, directory="global", storage=storage, project=TEST_PROJECT_ID)
 
 
 class TestParseComposes:
@@ -105,7 +107,9 @@ class TestCompositionAssembly:
             "compose-order-test",
             "PATTERN_BODY_MARKER\n\n## Composes\n- [[agent-discipline-plan-lifecycle]]\n",
         )
-        prelude = agent_dispatch_prelude("compose-order-test", "topic x", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "compose-order-test", "topic x", storage=storage, project=TEST_PROJECT_ID
+        )
 
         assert "ADR-0081" in prelude, "composed discipline body missing from prelude"
         assert "PATTERN_BODY_MARKER" in prelude
@@ -125,7 +129,9 @@ class TestCompositionAssembly:
             "compose-strip-test",
             "BODY_X\n\n## Composes\n- [[agent-discipline-plan-lifecycle]]\n",
         )
-        prelude = agent_dispatch_prelude("compose-strip-test", "topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "compose-strip-test", "topic", storage=storage, project=TEST_PROJECT_ID
+        )
         # The raw composes bullet list must not appear inside the pattern section
         # (the discipline is injected as its own section instead).
         assert "## Composes" not in prelude
@@ -141,7 +147,9 @@ class TestCompositionAssembly:
             "compose-dedup-test",
             f"BODY_Y\n\n## Composes\n- [[{covered}]]\n",
         )
-        prelude = agent_dispatch_prelude("compose-dedup-test", "topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "compose-dedup-test", "topic", storage=storage, project=TEST_PROJECT_ID
+        )
         assert f"## Discipline [{covered}]" not in prelude, (
             "contract-covered discipline must not be re-included"
         )
@@ -168,7 +176,9 @@ class TestCompositionAssembly:
             + "- [[agent-discipline-commit-hygiene]]\n",
         )
         with caplog.at_level(logging.WARNING):
-            prelude = agent_dispatch_prelude("compose-budget-test", "topic", storage=storage)
+            prelude = agent_dispatch_prelude(
+                "compose-budget-test", "topic", storage=storage, project=TEST_PROJECT_ID
+            )
         assert len(prelude) <= _TOTAL_BUDGET
         assert "## Yadgar subagent contract" in prelude
         assert "ZZZZ" in prelude, "pattern body must survive discipline drops"
@@ -197,7 +207,10 @@ class TestCompositionAssembly:
         )
         with caplog.at_level(logging.WARNING):
             prelude = agent_dispatch_prelude(
-                "stacked-car-parallel-build", "car N+1 build", storage=storage
+                "stacked-car-parallel-build",
+                "car N+1 build",
+                storage=storage,
+                project=TEST_PROJECT_ID,
             )
         assert len(prelude) <= _TOTAL_BUDGET
         assert "## Yadgar subagent contract" in prelude
@@ -236,7 +249,9 @@ class TestCompositionAssembly:
             "compose-reseed-test",
             f"BODY_R\n\n## Composes\n- [[{slug}]]\n",
         )
-        prelude = agent_dispatch_prelude("compose-reseed-test", "topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "compose-reseed-test", "topic", storage=storage, project=TEST_PROJECT_ID
+        )
         assert "ADR-0081" in prelude, "seed-on-miss failed: discipline text absent"
         # And the page is back (reseeded), not just genesis-fallback text.
         assert _read_agent_prompt(slug, storage=storage) is not None
@@ -246,7 +261,9 @@ class TestCompositionAssembly:
 
         _seed_all(storage)
         _save_pattern(storage, "compose-none-test", "PLAIN_BODY no refs here")
-        prelude = agent_dispatch_prelude("compose-none-test", "topic", storage=storage)
+        prelude = agent_dispatch_prelude(
+            "compose-none-test", "topic", storage=storage, project=TEST_PROJECT_ID
+        )
         assert "PLAIN_BODY" in prelude
         assert "## Discipline [" not in prelude
 
@@ -255,6 +272,8 @@ class TestMagicMockStorageX1:
     def test_magicmock_storage_never_crashes(self):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
-        result = agent_dispatch_prelude("any-pattern", "any topic", storage=MagicMock())
+        result = agent_dispatch_prelude(
+            "any-pattern", "any topic", storage=MagicMock(), project=TEST_PROJECT_ID
+        )
         assert isinstance(result, str)
         assert "## Yadgar subagent contract" in result

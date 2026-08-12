@@ -20,6 +20,7 @@ from yadgar._shared.wiki.wiki_meta import (
     PAGE_TYPE_AGENT_PATTERN,
 )
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -52,24 +53,65 @@ class TestWritePathStampsSplitTypes:
     def test_agent_prompt_save_stamps_agent_pattern(self, storage):
         from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
-        agent_prompt_save("split-pattern-probe", "Body line.", directory="global")
+        agent_prompt_save(
+            "split-pattern-probe", "Body line.", directory="global", project=TEST_PROJECT_ID
+        )
         assert _page_type(storage, "agent-prompt-split-pattern-probe") == PAGE_TYPE_AGENT_PATTERN
 
     def test_discipline_save_stamps_agent_discipline(self, storage):
         from yadgar.core.server.tools.agent_prompts import discipline_save
 
-        discipline_save("split-discipline-probe", "Rule one.")
+        discipline_save("split-discipline-probe", "Rule one.", project=TEST_PROJECT_ID)
         assert (
             _page_type(storage, "agent-discipline-split-discipline-probe")
             == PAGE_TYPE_AGENT_DISCIPLINE
         )
 
     def test_toc_stamps_agent_index(self, storage):
-        """Task 0134: the TOC carried page_type=null → DEFAULT_POLICY include."""
-        from yadgar.core.server.tools.agent_prompts import agent_prompt_save
+        """Car I (0047 §16.8): the TOC pointer is RETIRED.
 
-        agent_prompt_save("split-toc-probe", "Body.", directory="global")
-        assert _page_type(storage, "agent-prompt-toc") == PAGE_TYPE_AGENT_INDEX
+        Per §S6 the ``agent_pattern`` ledger row IS the discovery surface; the
+        wiki-TOC page is gone. ``_TOC_POINTER_SLUG = "agent-prompt-toc"`` stays
+        in code only as a kept-ignored slug so callers that pin the old slug
+        see an explanatory page (one cycle of soft retire) — but
+        ``agent_prompt_save`` does NOT write the TOC. The original
+        'task 0134: page_type=null → DEFAULT_POLICY include' defect is dead.
+
+        This test pins the positive side of that: the page is NOT created by
+        a normal save (so DEFAULT_POLICY inheritance can no longer bite), AND
+        if it IS created, the type is the agent_index sentinel (not null).
+        Both shapes are the post-Car-I contract.
+        """
+        from yadgar.core.server.tools.agent_prompts import (
+            _TOC_POINTER_SLUG,
+            agent_prompt_save,
+        )
+
+        # 1. agent_prompt_save must NOT create the TOC pointer (Car I retired it).
+        agent_prompt_save("split-toc-probe", "Body.", directory="global", project=TEST_PROJECT_ID)
+        toc_page = storage.get_wiki_page_by_slug(_TOC_POINTER_SLUG)
+        assert toc_page is None, (
+            f"agent_prompt_save must not write the retired TOC pointer "
+            f"(slug={_TOC_POINTER_SLUG!r}); got page_type={toc_page.get('page_type')!r}"
+        )
+
+        # 2. If something DOES create the TOC pointer, the page_type MUST be
+        #    agent_index (the kept-ignored sentinel — not null, not pattern,
+        #    not discipline). This is the defensive back-stop so the
+        #    'page_type=null → DEFAULT_POLICY include' defect stays dead.
+        storage.insert_wiki_page(
+            {
+                "slug": _TOC_POINTER_SLUG,
+                "title": "Agent Prompt TOC (manual — Car I retired)",
+                "content": "Retired discovery surface; see agent_prompt_list.",
+                "tags": ["agent-prompt"],
+                "page_type": PAGE_TYPE_AGENT_INDEX,
+                "wiki_schema_version": 1,
+                "directory_context": "global",
+                "project_id": TEST_PROJECT_ID,
+            }
+        )
+        assert _page_type(storage, _TOC_POINTER_SLUG) == PAGE_TYPE_AGENT_INDEX
 
     def test_contract_is_a_discipline(self, storage):
         """ADR-0209: the contract stays INSIDE the discipline type.
@@ -81,7 +123,7 @@ class TestWritePathStampsSplitTypes:
         """
         from yadgar.core.server.tools.agent_prompts import CONTRACT_SLUG, _seed_contract_page
 
-        _seed_contract_page(storage=storage)
+        _seed_contract_page(storage=storage, project=TEST_PROJECT_ID)
         assert _page_type(storage, CONTRACT_SLUG) == PAGE_TYPE_AGENT_DISCIPLINE
 
 
@@ -96,7 +138,9 @@ class TestSplitTypesAreGloballyScoped:
     def test_pattern_page_is_global(self, storage):
         from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
-        agent_prompt_save("scope-probe", "Body.", directory="/tmp/some-project")
+        agent_prompt_save(
+            "scope-probe", "Body.", directory="/tmp/some-project", project=TEST_PROJECT_ID
+        )
         page = storage.get_wiki_page_by_slug("agent-prompt-scope-probe")
         assert page is not None
         assert page.get("directory_context") == "global"
@@ -104,7 +148,7 @@ class TestSplitTypesAreGloballyScoped:
     def test_discipline_page_is_global(self, storage):
         from yadgar.core.server.tools.agent_prompts import discipline_save
 
-        discipline_save("scope-discipline-probe", "Rule.")
+        discipline_save("scope-discipline-probe", "Rule.", project=TEST_PROJECT_ID)
         page = storage.get_wiki_page_by_slug("agent-discipline-scope-discipline-probe")
         assert page is not None
         assert page.get("directory_context") == "global"
@@ -116,7 +160,9 @@ class TestPreludeStillResolves:
     def test_saved_pattern_is_readable_by_slug(self, storage):
         from yadgar.core.server.tools.agent_prompts import _read_agent_prompt, agent_prompt_save
 
-        agent_prompt_save("readback-probe", "Distinct body text.", directory="global")
+        agent_prompt_save(
+            "readback-probe", "Distinct body text.", directory="global", project=TEST_PROJECT_ID
+        )
         got = _read_agent_prompt("agent-prompt-readback-probe", storage=storage)
         assert got is not None
         assert "Distinct body text." in got["content"]

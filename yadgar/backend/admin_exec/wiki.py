@@ -34,52 +34,24 @@ via ``_st`` — the /admin route builds the slim engine set (which includes
 from __future__ import annotations
 
 import logging
-import re
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.runtime.lifecycle import _get_replay, _get_storage
+from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.wiki.contract import WikiAddOptions
 from yadgar._shared.wiki.wiki_meta import (
-    PAGE_TYPE_AGENT_INDEX,
     PAGE_TYPE_AGENT_PROMPT_LEGACY,
 )
 
 logger = logging.getLogger(__name__)
 
-# ── agent-prompt TOC / anchor constants ───────────────────────────────────────
-# Mirrors of the pure constants in yadgar.core.server.tools.agent_prompts. Kept
-# here (not imported) because the "backend must not import core" import-linter
-# contract forbids a backend→core edge. These are format constants, not logic —
-# if the TOC/anchor shape changes, update both sites.
-_TOC_TITLE = "Agent Prompt TOC"
-_TOC_SLUG = "agent-prompt-toc"
-_TOC_ROW_RE = re.compile(r"^- `(?P<pattern>[^`]+)` → .*$", re.MULTILINE)
-_LIBRARY_ANCHOR_REASON = "agent-prompt-library"
-_LIBRARY_ANCHOR_CONTENT = (
-    "Agent-prompt library: see wiki [[agent-prompt-toc]] for available prompts; "
-    "recall(type='wiki', tags=['agent-prompt']) to search; "
-    "agent_prompt_save to add."
-)
-
-
-# Existing " (uses: N)" suffix on a TOC row (Stage 3.4 usage counter surfacing).
-_TOC_USES_RE = re.compile(r" \(uses: \d+\)\s*$")
-
-
-def _toc_row(pattern: str, purpose: str) -> str:
-    return f"- `{pattern}` → {purpose}"
-
-
-@observe(tier="hot", metric="backend.admin.agent_prompt._toc_with_row")
-def _toc_with_row(body: str, pattern: str, new_row: str) -> str:
-    """Return TOC body with `pattern`'s row upserted (replace if present, else append)."""
-    found = any(m.group("pattern") == pattern for m in _TOC_ROW_RE.finditer(body))
-    if found:
-        return _TOC_ROW_RE.sub(
-            lambda m: new_row if m.group("pattern") == pattern else m.group(0), body
-        )
-    return body.rstrip() + "\n" + new_row + "\n"
+# Car I removed: the agent-prompt TOC machinery (``_TOC_TITLE`` /
+# ``_TOC_SLUG`` / ``_TOC_ROW_RE`` / ``_LIBRARY_ANCHOR_*`` / ``_toc_row`` /
+# ``_toc_with_row`` / ``_upsert_toc_row`` / ``_set_toc_row_count`` /
+# ``_ensure_library_anchor``) and the memory-row ``increment_prompt_usage``
+# op all retired. The agent-prompt library now lives in the
+# ``agent_pattern`` ledger table (see backend/admin_exec/ledger.py and
+# core/server/tools/agent_prompts.py).
 
 
 # ── Layer 0: slug-keyed page ops ──────────────────────────────────────────────
@@ -190,6 +162,35 @@ def wiki_set_metadata(payload: dict) -> dict:
     """
     assert _st._wiki is not None, "WikiStore not initialized"
     return _st._wiki.set_metadata_by_slug(payload["slug"], payload["field"], payload["value"])
+
+
+@observe(tier="boundary", metric="backend.admin.wiki_set_mutability")
+def wiki_set_mutability(payload: dict) -> dict:
+    """Set ``mutability_override`` on ALL rows sharing a slug. Storage-write half.
+
+    Car J (0047 §7 D25/D26). The privileged write path for the per-page
+    mutability override — mirrors ``wiki_set_metadata``'s all-rows shape and
+    delegates to ``WikiStore.set_mutability_by_slug`` (sole writer).
+
+    payload: {"slug": str, "value": str | None, "reason": str}
+    Returns {ok, slug, rows_updated, page_ids} or {ok: False, error}.
+
+    Validation (reason required, value ∈ {free, locked, derived, None}) is
+    enforced at both layers — core shell + backend handler — so a forged
+    payload that bypassed the MCP gate still fails before the storage write.
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    reason = payload.get("reason", "")
+    if not reason or not reason.strip():
+        return {
+            "ok": False,
+            "error": "reason is required for mutability_override audit log",
+        }
+    return _st._wiki.set_mutability_by_slug(
+        payload["slug"],
+        payload.get("value"),
+        reason=reason,
+    )
 
 
 @observe(tier="boundary", metric="backend.admin.wiki_replace_text")
@@ -337,88 +338,35 @@ def wiki_replace_markdown_block(payload: dict) -> dict:
     return result
 
 
-# ── agent_prompt_save (wiki.add + TOC + library anchor) ───────────────────────
-
-
-@observe(tier="stage", metric="backend.admin.agent_prompt._upsert_toc_row")
-def _upsert_toc_row(pattern: str, purpose: str) -> None:
-    """Scan-replace-or-add the `pattern → purpose` row in the global TOC page.
-
-    Backend-side copy of the core helper (the whole read-modify-write runs where
-    storage + wiki live). Idempotent; best-effort — failures logged, never raised.
-    """
-    wiki = _st._wiki
-    if wiki is None:
-        return
-    try:
-        existing = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
-        new_row = _toc_row(pattern, purpose)
-        if existing and existing.get("content"):
-            content = _toc_with_row(existing["content"], pattern, new_row)
-        else:
-            content = (
-                "# Agent Prompt TOC\n\n"
-                "Reusable subagent dispatch prompts. "
-                "recall(type='wiki', tags=['agent-prompt']) to pull one.\n\n"
-                f"{new_row}\n"
-            )
-        wiki.add(
-            title=_TOC_TITLE,
-            content=content,
-            category="reference",
-            tags=["agent-prompt-toc"],
-            opts=WikiAddOptions(
-                source_memory_ids=[],
-                confidence="high",
-                directory_context="global",
-                # Task 0134: the TOC used to be written untyped, so it fell
-                # through to DEFAULT_POLICY include and the library index
-                # ranked in everyday recall. Stamped on every re-upsert (this
-                # runs on every agent_prompt_save) rather than relying on
-                # WikiStore.add's preserve-existing-type behaviour.
-                page_type=PAGE_TYPE_AGENT_INDEX,
-            ),
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.debug("agent_prompt_save: TOC upsert failed: %s", e)
-
-
-@observe(tier="stage", metric="backend.admin.agent_prompt._ensure_library_anchor")
-def _ensure_library_anchor() -> None:
-    """Create the global discovery anchor pointing at the TOC, if absent.
-
-    Backend-side copy of the core helper — ``_get_replay`` is in the slim engine
-    set (built by _ensure_recall_engines), so ``anchor_memory`` runs here.
-    Create-if-absent (keyed by reason tag). Best-effort — failures logged.
-    """
-    try:
-        storage = _st._storage
-        if storage is None:
-            return
-        existing = storage._q(
-            "SELECT id FROM memory WHERE '_anchor' INSIDE tags AND $reason INSIDE tags LIMIT 1",
-            {"reason": f"anchor:{_LIBRARY_ANCHOR_REASON}"},
-        )
-        if existing:
-            return
-        replay = _get_replay()
-        replay.anchor_memory(
-            _LIBRARY_ANCHOR_CONTENT,
-            "global",
-            [f"anchor:{_LIBRARY_ANCHOR_REASON}"],
-            _LIBRARY_ANCHOR_REASON,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.debug("agent_prompt_save: library anchor ensure failed: %s", e)
+# ── agent_prompt_save (wiki.add only — TOC + library anchor retired in Car I) ─
 
 
 @observe(tier="boundary", metric="backend.admin.agent_prompt_save")
 def agent_prompt_save(payload: dict) -> dict:
-    """Upsert an agent-prompt page + TOC row + library anchor. Storage-write half.
+    """Upsert an agent-prompt page (body-only; ledger row is the core wrapper's job).
 
-    payload: {slug, title, full_content, tags, pattern, purpose, directory}
+    payload: {slug, title, full_content, tags, pattern, purpose, directory,
+              project_id}
     Content already secret-gated + directory-validated + wrapped core-side.
     Returns {saved: True, version, slug, page_id}.
+
+    C4b (0047 PR#40 §5) — ``project_id``. This is the ONE op in this module
+    that MINTS a row; every other op here is ``page_id``-keyed and edits a row
+    whose project_id was stamped by whoever inserted it. Before this car the
+    value was absent on both write arms, so ``insert_wiki_page`` fell through
+    to the container-side classifier — the derivation ADR-0227 deletes. The
+    caller (the core ``agent_prompt_save`` / ``_save_discipline_page``
+    wrappers) resolves it in the process that can see the session and puts it
+    on the payload; this op only forwards it. Both arms are stamped: the
+    ``WikiStore.add`` path and the ``_st._wiki is None`` fallback.
+
+    Car I: this op writes ONLY the wiki body page. The companion
+    ``agent_pattern`` ledger row is written by ``save_agent_pattern_row``
+    (registered in admin_exec/__init__.py under ``ledger``), which the
+    core wrapper calls AFTER this returns — order matters (page first,
+    row second, per §9 of the spine plan): a crash leaves an orphan
+    page, not an orphan row, and ``check_page_row_desync`` is the
+    detection arm.
 
     Touches the ``agent_prompt_prelude`` cache namespace via the wiki.add →
     _bump_wiki_epoch hook (global bump, file-backed cross-process, Car 2) — the
@@ -429,14 +377,14 @@ def agent_prompt_save(payload: dict) -> dict:
     title = payload["title"]
     full_content = payload["full_content"]
     tags = payload["tags"]
-    pattern = payload["pattern"]
-    purpose = payload["purpose"]
     effective_dir = payload["directory"]
     # ADR-0209: the family is decided CORE-side and carried on the payload —
     # this op keys everything else off the slug, but re-deriving the page_type
     # from a slug prefix here would rebuild exactly the string-matching the
     # split removes. Default only covers a payload from a pre-split core.
     page_type = payload.get("page_type") or PAGE_TYPE_AGENT_PROMPT_LEGACY
+    # C4b: forwarded, never recomputed — see the docstring.
+    project_id = payload.get("project_id")
 
     wiki = _st._wiki
     if wiki is not None:
@@ -450,6 +398,7 @@ def agent_prompt_save(payload: dict) -> dict:
                 confidence="high",
                 directory_context=effective_dir,
                 page_type=page_type,
+                project_id=project_id,
             ),
         )
         page_id = result.get("id")
@@ -487,94 +436,14 @@ def agent_prompt_save(payload: dict) -> dict:
                     "directory_context": effective_dir,
                     "page_type": page_type,
                     "wiki_schema_version": 1,
+                    "project_id": project_id,
                 }
             )
             version = 1
-
-    # S6 discovery surface (best-effort; failures never block the save):
-    _upsert_toc_row(pattern, purpose)
-    _ensure_library_anchor()
 
     return {
         "saved": True,
         "version": version,
         "slug": slug,
         "page_id": page_id,
-    }
-
-
-# ── increment_prompt_usage (Stage 3.4 usage counter, #33) ─────────────────────
-
-
-@observe(tier="stage", metric="backend.admin.agent_prompt._set_toc_row_count")
-def _set_toc_row_count(pattern: str, count: int) -> bool:
-    """Stamp ` (uses: N)` on *pattern*'s TOC row (replace any prior suffix).
-
-    Returns True when the TOC row was found + rewritten, False otherwise
-    (pattern not in TOC, TOC absent, wiki uninitialised). Best-effort —
-    failures logged, never raised.
-    """
-    wiki = _st._wiki
-    if wiki is None:
-        return False
-    try:
-        existing = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
-        if not existing or not existing.get("content"):
-            return False
-        content = existing["content"]
-        lines = content.splitlines()
-        updated = False
-        for i, line in enumerate(lines):
-            m = _TOC_ROW_RE.match(line)
-            if m and m.group("pattern") == pattern:
-                base = _TOC_USES_RE.sub("", line)
-                lines[i] = f"{base} (uses: {count})"
-                updated = True
-        if not updated:
-            return False
-        new_body = "\n".join(lines) + ("\n" if content.endswith("\n") else "")
-        wiki.add(
-            title=_TOC_TITLE,
-            content=new_body,
-            category="reference",
-            tags=["agent-prompt-toc"],
-            opts=WikiAddOptions(
-                source_memory_ids=[],
-                confidence="high",
-                directory_context="global",
-            ),
-        )
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.debug("increment_prompt_usage: TOC count update failed: %s", e)
-        return False
-
-
-@observe(tier="boundary", metric="backend.admin.increment_prompt_usage")
-def increment_prompt_usage(payload: dict) -> dict:
-    """Increment the per-pattern prelude-usage counter. Storage-write half.
-
-    payload: {"pattern": str}
-    Called (best-effort) by agent_dispatch_prelude on each assembly that
-    resolved a pattern page. Counts persist in the single global
-    '_prompt_usage' memory row; the pattern's agent-prompt-toc row gains a
-    ` (uses: N)` suffix — THROTTLED to count == 1 or count % 10 == 0 so the
-    TOC page (wiki-versioned) does not churn a version per prelude call.
-    Dead patterns stay visible in the TOC: no suffix = never dispatched.
-
-    Returns {"incremented": bool, "pattern": str, "count": int, "toc_updated": bool}.
-    """
-    pattern = (payload.get("pattern") or "").strip()
-    if not pattern:
-        return {"incremented": False, "pattern": "", "count": 0, "toc_updated": False}
-    storage = _get_storage()
-    count = storage.increment_prompt_usage(pattern)
-    toc_updated = False
-    if count == 1 or count % 10 == 0:
-        toc_updated = _set_toc_row_count(pattern, count)
-    return {
-        "incremented": True,
-        "pattern": pattern,
-        "count": count,
-        "toc_updated": toc_updated,
     }

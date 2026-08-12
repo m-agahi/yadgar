@@ -23,6 +23,11 @@ import pytest
 from yadgar.backend.queue_drainer import FileQueue, QueueDrainer
 from yadgar.core import server
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: wiki_add without it comes back as an unresolved_project envelope.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 _TEST_DIR = "/home/max/git/yadgar"
 
 # ---------------------------------------------------------------------------
@@ -127,6 +132,7 @@ def _write_sync(title: str, content: str, **kwargs) -> dict:
 
     kwargs.setdefault("force", True)
     kwargs.setdefault("directory", _TEST_DIR)
+    kwargs.setdefault("project", _TEST_PROJECT)
     result = server.wiki_add(title=title, content=content, **kwargs)
     if _st._queue_drainer is not None:
         _st._queue_drainer.drain_now()
@@ -158,6 +164,7 @@ class TestWaitFalseDeferredPath:
                 content="warmup content",
                 wait=False,
                 directory=_TEST_DIR,
+                project=_TEST_PROJECT,
             )
 
         t0 = time.perf_counter()
@@ -166,6 +173,7 @@ class TestWaitFalseDeferredPath:
             content="Content for testing the deferred similarity check path.",
             wait=False,
             directory=_TEST_DIR,
+            project=_TEST_PROJECT,
         )
         elapsed_ms = (time.perf_counter() - t0) * 1000
         assert result.get("queued") is True
@@ -187,6 +195,7 @@ class TestWaitFalseDeferredPath:
             content=_ROADMAP_CONTENT_B,
             wait=False,
             directory=_TEST_DIR,
+            project=_TEST_PROJECT,
         )
         # Must NOT return sync rejection.
         assert result.get("reason") != "duplicate_detected", (
@@ -217,6 +226,7 @@ class TestWaitTrueSyncRejection:
             content=_ROADMAP_CONTENT_B,
             wait=True,
             directory=_TEST_DIR,
+            project=_TEST_PROJECT,
         )
         assert r2.get("stored") is False, (
             f"Gate should have blocked near-duplicate via wait=True. Got: {r2}"
@@ -246,6 +256,7 @@ class TestWaitTrueSyncRejection:
 """,
             wait=True,
             directory=_TEST_DIR,
+            project=_TEST_PROJECT,
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"False positive: distinct page blocked by gate. Got: {r2}"
@@ -272,6 +283,7 @@ class TestDrainerGateBypass:
             force=True,
             wait=True,
             directory=_TEST_DIR,
+            project=_TEST_PROJECT,
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"force=True should bypass drainer gate. Got: {r2}"
@@ -289,6 +301,7 @@ class TestDrainerGateBypass:
             replace_slug="yadgar-roadmap-future-improvements",
             wait=True,
             directory=_TEST_DIR,
+            project=_TEST_PROJECT,
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"replace_slug should bypass drainer gate. Got: {r2}"
@@ -305,6 +318,7 @@ class TestDrainerGateBypass:
             append=True,
             wait=True,
             directory=_TEST_DIR,
+            project=_TEST_PROJECT,
         )
         assert r2.get("reason") != "duplicate_detected", (
             f"append=True should bypass drainer gate. Got: {r2}"
@@ -344,6 +358,7 @@ class TestDrainerRejectionMetric:
             content=_ROADMAP_CONTENT_B,
             wait=True,
             directory=_TEST_DIR,
+            project=_TEST_PROJECT,
         )
         assert r2.get("reason") == "duplicate_detected"
 

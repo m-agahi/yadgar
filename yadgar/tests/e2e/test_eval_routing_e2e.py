@@ -16,6 +16,15 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
+#: The identity the wiki seed in this file names. C5/ADR-0227 made
+#: ``project_id`` mandatory at the storage write chokepoint, so the seeded page
+#: cannot be inserted unnamed. Naming the SEED is not sufficient: the READ must
+#: be named too. Car C13f gave ``benchmarks/run_eval.evaluate_pair_unified`` a
+#: ``project`` parameter and forwards it to ``recall``, closing the harness-side
+#: gap C13e reported here — every eval pair had been raising and being swallowed
+#: into ``{"error": ...}``, so every v6 metric was an error row.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 class TestEvalRoutesViaMCPTool:
     """Step 0: evaluate_pair routes through MCP recall tool when unified=True.
@@ -48,6 +57,7 @@ class TestEvalRoutesViaMCPTool:
         opts = WikiAddOptions(
             source_memory_ids=[],
             directory_context=e2e_engines["yadgar_dir"],
+            project_id=_TEST_PROJECT,
         )
         page = _st._wiki.add(
             title="Step0 Eval Routing Test",
@@ -80,6 +90,13 @@ class TestEvalRoutesViaMCPTool:
                 directory=e2e_engines["yadgar_dir"],
                 k_values=[1, 5, 10],
                 max_results=20,
+                # C13f: the harness-side gap this file's module docstring
+                # reported is now closed — ``evaluate_pair_unified`` takes a
+                # ``project`` and forwards it to ``recall``. Without it the call
+                # raises (C5/ADR-0227) and the harness swallows the raise into
+                # ``{"error": ...}``, which is what made every v6 eval metric an
+                # error row rather than a measurement.
+                project=_TEST_PROJECT,
             )
             assert "error" not in metrics, f"evaluate_pair_unified error: {metrics.get('error')}"
             assert metrics.get("recall@10", 0.0) > 0, (
@@ -108,7 +125,19 @@ class TestEvalRoutesViaMCPTool:
         }
 
         from yadgar._shared.runtime import state as _st
+        from yadgar.backend.retrieval import ensure_retrieval_engine
 
+        # C13 (e): compose the retriever explicitly instead of inheriting it
+        # from whichever earlier test in this module happened to drive a recall.
+        # ``_st._retriever`` is a process-global composed LAZILY on the first
+        # backend recall, so this test was silently order-dependent: it passed
+        # only because the sibling above it ran a full recall first. When that
+        # sibling started failing early (C5 made its unnamed recall raise), this
+        # test failed on its own precondition — reporting a missing retriever
+        # for a reason that has nothing to do with the legacy path it tests.
+        # The assertion below is kept, not replaced: composition must actually
+        # produce an engine.
+        ensure_retrieval_engine()
         assert _st._retriever is not None, "Retriever must be initialized"
 
         metrics = evaluate_pair(pair, _st._retriever, k_values=[1, 5, 10], max_results=20)

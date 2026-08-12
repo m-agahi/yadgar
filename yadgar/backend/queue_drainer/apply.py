@@ -74,13 +74,25 @@ class _ApplyMixin:
 
             run_memorize_replay(
                 content=p["content"],
-                context=p["context"],
+                # C10 (f): ``context`` is optional now — a payload without one is
+                # valid, not malformed, so this must not KeyError.
+                context=p.get("context"),
                 tags=p.get("tags", []),
                 is_protected=p.get("is_protected", False),
                 provenance_agent=p.get("provenance_agent"),
                 tier=p.get("tier"),
                 valid_until=p.get("valid_until"),
                 reason=p.get("reason", ""),  # R3: semantic_immortal tier requires reason
+                # C4b (0047 PR#40 §5): FORWARD the enqueue-time stamp; never
+                # recompute. ``memorize`` is the highest-volume write path in
+                # the system, and until this car it reached the write path
+                # unstamped on every call that omitted ``project=`` — leaving
+                # the storage chokepoint to derive an identity inside a
+                # container that provably cannot (ADR-0227 §1.1). No default is
+                # substituted for a payload that arrives unstamped: the key
+                # stays None, the chokepoint sees ``caller_value=None``, and C5
+                # turns that into a raise.
+                project_id=p.get("project_id"),
                 # ttl_days not needed: valid_until already computed before enqueue
             )
             return
@@ -93,22 +105,21 @@ class _ApplyMixin:
                 reason=p.get("reason", ""),
                 tier=p.get("tier"),
                 valid_until=p.get("valid_until"),
+                # C4b (0047 PR#40 §5): same forward-don't-derive contract as
+                # ``memorize`` above — an anchor is a memory row like any other.
+                project_id=p.get("project_id"),
                 # ttl_days not needed: valid_until already computed before enqueue
             )
             return
         if op == "checkpoint":
             from yadgar.backend.write_exec import run_checkpoint_replay
 
-            run_checkpoint_replay(
-                directory=p["directory"],
-                current_task=p.get("current_task", ""),
-                files_being_edited=p.get("files_being_edited"),
-                key_decisions=p.get("key_decisions"),
-                open_questions=p.get("open_questions"),
-                next_steps=p.get("next_steps"),
-                active_errors=p.get("active_errors"),
-                custom_context=p.get("custom_context", ""),
-            )
+            # C11: the whole payload, exactly like ``run_action_log_replay``
+            # below. The old per-key kwarg list is what silently dropped
+            # ``project_id`` — misc.py::checkpoint has always put it on the
+            # payload and the drainer validated it, but this call did not
+            # forward it and the table had no column for it anyway.
+            run_checkpoint_replay(p)
             return
         if op == "action_log":
             from yadgar.backend.write_exec import run_action_log_replay
@@ -124,7 +135,19 @@ class _ApplyMixin:
             p = self._fill_wiki_add_defaults(dict(p))
             # directory_context falls back to the enqueue-time directory
             p["directory_context"] = p.get("directory_context") or p.get("directory")
-
+            # C4 (0047 PR#40 §5): the enqueue-time stamp is FORWARDED, not
+            # recomputed. Car L called the write chokepoint here with
+            # ``caller_value=p.get("project_id")``, which meant an unstamped
+            # payload fell through to the container-side classifier — the one
+            # thing this container provably cannot do (no git binary, no host
+            # project mounts; ADR-0227 §1.1). C3 made every core caller stamp
+            # the value at enqueue time, and ``_validate_project_id`` now DLQs
+            # any job that arrives without one, so reaching a derivation from
+            # this line is no longer a fallback but a bug.
+            #
+            # No default is substituted for a payload that somehow arrives
+            # unstamped: the key is left absent, the storage chokepoint sees
+            # ``caller_value=None``, and C5 turns that into a raise.
             run_wiki_add_replay(p)
             return
         logger.debug("Unknown queue op %r — skipping", op)

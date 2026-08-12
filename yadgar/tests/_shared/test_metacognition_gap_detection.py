@@ -215,12 +215,16 @@ def test_stale_region_severity_clamped():
     assert stale[0]["severity"] == pytest.approx(0.9, abs=0.01)
 
 
-def test_stale_region_with_directory_filter():
+def test_stale_region_with_project_filter():
+    """C10g: the filter is a project_id — ``detect_gaps`` forwards into
+    ``get_memories_for_directory``, which moved onto that key with its writer."""
     mems = [_make_memory(i, heat=0.1) for i in range(1, 3)]
     mixin = _build_mixin(dir_memories=mems)
     mixin._storage.get_memories_for_directory.return_value = mems
-    gaps = mixin.detect_gaps(directory="/myproject")
-    mixin._storage.get_memories_for_directory.assert_called_once_with("/myproject", min_heat=0.0)
+    gaps = mixin.detect_gaps(project_id="acme/myproject")
+    mixin._storage.get_memories_for_directory.assert_called_once_with(
+        "acme/myproject", min_heat=0.0
+    )
     stale = [g for g in gaps if g["type"] == "stale_region"]
     assert len(stale) == 1
 

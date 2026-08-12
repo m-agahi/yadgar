@@ -9,16 +9,22 @@ class _GapDetectionMixin:
     """Metacognitive gap detection (MetaRAG signal 2)."""
 
     @observe(tier="boundary")
-    def detect_gaps(self, directory: str = "") -> list[dict]:
-        """Analyze knowledge completeness for a directory/project.
+    def detect_gaps(self, project_id: str = "") -> list[dict]:
+        """Analyze knowledge completeness for a project.
 
         Returns a list of knowledge gaps with type, description,
         severity, affected entities, and remediation suggestions.
+
+        C10g (0047 PR#40 §5): re-keyed onto ``project_id``. This function is a
+        COUPLED PASS-THROUGH — it queries nothing itself, it forwards into
+        ``get_memories_for_directory``, so it moves exactly when that callee
+        moves. C9a allowlisted it under ``_C9C_COUPLED_PASSTHROUGH`` for that
+        reason; the callee moved in this car, so the deferral is discharged.
         """
         all_entities = self._storage.get_all_entities(min_heat=0.0, include_archived=False)
 
-        if directory:
-            dir_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
+        if project_id:
+            dir_memories = self._storage.get_memories_for_directory(project_id, min_heat=0.0)
         else:
             dir_memories = self._storage.get_all_memories_for_decay()
 

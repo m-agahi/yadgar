@@ -163,12 +163,18 @@ async def test_migration_upgrades_the_composed_engine(monkeypatch):
     assert seen == [fake.engine], "the composed engine must be the one migrated"
 
 
-async def test_migration_failure_is_non_fatal_and_logged(monkeypatch, caplog):
-    """Non-fatal matches cars A and C — but it is LOGGED with its traceback.
+async def test_migration_failure_is_FATAL_and_logged(monkeypatch, caplog):
+    """The precondition ``_migrate_engine_two``'s own docstring wrote down.
 
-    PR #32's review flagged the silently-swallowed version: the server started
-    with no schema and every op failed later with "table doesn't exist" instead
-    of one clear boot error.
+    It read "THE MOMENT THE KNOB TRAIN REPOINTS READS THIS MUST BECOME FATAL, or
+    the daemon serves defaults from a schema-less database" — and cars D/F/G/I/K
+    of PR #40 repointed exactly those reads. So the swallow this test used to
+    pin is now the defect: with ``004``'s FK order broken, ``upgrade head`` died
+    at boot and the daemon continued onto a database with no tables, which is
+    the ADR-0222 shape (logged, health-green, running BROKEN).
+
+    Still LOGGED with its traceback before it propagates — PR #32's review
+    flagged the silent version, and re-raising must not undo that.
     """
     _st._sql_storage = _FakeSqlStorage()
 
@@ -178,9 +184,55 @@ async def test_migration_failure_is_non_fatal_and_logged(monkeypatch, caplog):
     import yadgar._shared.storage.sql.migrate as _migrate
 
     monkeypatch.setattr(_migrate, "upgrade_to_head", _boom)
-    with caplog.at_level("ERROR"):
-        assert await _migrate_engine_two() is None
+    with caplog.at_level("ERROR"), pytest.raises(RuntimeError, match="mysqld went away"):
+        await _migrate_engine_two()
     assert any("migration FAILED" in r.message for r in caplog.records)
+
+
+async def test_engine_two_absent_is_still_not_an_error(monkeypatch):
+    """ABSENT is not FAILED — the distinction the re-raise must not erase.
+
+    Every host without MariaDB composes no engine #2, and boot there is
+    correct. Only a migration that RAN and failed is fatal. Asserted next to
+    the fatal case so a later "make it consistent" cannot collapse the two.
+    """
+    _st._sql_storage = None
+
+    async def _never_called(engine):  # pragma: no cover — must not run
+        raise AssertionError("upgrade_to_head called with no engine #2")
+
+    import yadgar._shared.storage.sql.migrate as _migrate
+
+    monkeypatch.setattr(_migrate, "upgrade_to_head", _never_called)
+    assert await _migrate_engine_two() is None
+
+
+def test_the_lifespan_does_not_swallow_the_migration_failure():
+    """Re-raising is decorative if the CALLER catches it.
+
+    ``_migrate_engine_two`` propagating only stops boot while nothing wraps the
+    await. Handlers are cheap to add and this one would be invisible — the
+    daemon would go back to running BROKEN with every test in this file still
+    green. So the absence of a surrounding ``try`` is pinned structurally: walk
+    every ``Try`` node in ``lifespan``'s body and assert none of them contains
+    the call.
+    """
+    source = inspect.getsource(lifespan)
+    tree = ast.parse(source.lstrip())
+    guarded = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(inner, ast.Name) and inner.id == "_migrate_engine_two"
+            for inner in ast.walk(node)
+        )
+    ]
+    assert not guarded, (
+        "lifespan wraps _migrate_engine_two in a try/except — a failed migration "
+        "would be swallowed at the call site and boot would continue onto a "
+        "schema-less database, which is what making it fatal was for"
+    )
 
 
 async def test_dispose_releases_the_pool():

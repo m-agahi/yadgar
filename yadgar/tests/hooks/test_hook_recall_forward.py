@@ -117,7 +117,19 @@ class TestPromptRecallForwards:
 class TestForwardHookRecallTimeout:
     def test_passes_short_hook_timeout(self):
         """_forward_hook_recall must pass timeout_s == HOOK_RECALL_TIMEOUT_S to
-        _forward_to_backend (NOT the 120s MCP default) — #81 starvation guard."""
+        _forward_to_backend (NOT the 120s MCP default) — #81 starvation guard.
+
+        Car C7 (0047 §5 C7): ``_forward_hook_recall`` now also resolves
+        ``project_id`` via ``hook_project_id(directory)`` before forwarding —
+        and ``hook_project_id`` raises ``UnresolvedProjectError`` for ANY
+        directory that is not a registered identity (ADR-0227: a directory is
+        a filesystem hint, never a resolution source, on its own — see
+        ``_project_param.resolve_effective_project``). This test is about
+        FORWARDING (timeout_s / profile / directory / type_filter), not
+        project resolution, so ``hook_project_id`` is monkeypatched to a fixed
+        id — mirroring how ``yadgar.tests.core.conftest.TEST_PROJECT_ID``
+        sidesteps the same resolver elsewhere in the suite.
+        """
         import yadgar.core.server.http as _http
         from yadgar._shared.config import get_settings
 
@@ -127,8 +139,9 @@ class TestForwardHookRecallTimeout:
             captured.update(kwargs)
             return []
 
-        with patch(
-            "yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend
+        with (
+            patch("yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend),
+            patch.object(_http, "hook_project_id", return_value="test-owner/test-repo"),
         ):
             _http._forward_hook_recall(
                 "q",
@@ -146,7 +159,12 @@ class TestForwardHookRecallTimeout:
 
     def test_directory_normalized_trailing_slash(self):
         """A trailing-slash directory is stripped before forwarding, so backend
-        exact-string is_directory_eligible scoping does not silently return empty."""
+        exact-string is_directory_eligible scoping does not silently return empty.
+
+        ``hook_project_id`` monkeypatched for the same reason documented in
+        ``test_passes_short_hook_timeout`` above — this test is about
+        directory normalization, not project resolution.
+        """
         import yadgar.core.server.http as _http
 
         captured: dict = {}
@@ -155,8 +173,9 @@ class TestForwardHookRecallTimeout:
             captured.update(kwargs)
             return []
 
-        with patch(
-            "yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend
+        with (
+            patch("yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend),
+            patch.object(_http, "hook_project_id", return_value="test-owner/test-repo"),
         ):
             _http._forward_hook_recall(
                 "q",
@@ -176,19 +195,27 @@ class TestForwardHookRecallTimeout:
 
 class TestDirectoryFilterStillApplied:
     def test_ineligible_rows_dropped(self):
-        """_filter_prompt_recall_results drops rows whose directory_context does
-        not match the caller dir (idempotent atop backend scoping)."""
+        """_filter_prompt_recall_results drops rows whose project_id does not
+        match the caller's project (idempotent atop backend scoping).
+
+        Car C7 (0047 §5 C7) re-keyed this filter from ``directory_context``
+        onto ``project_id`` + the ``'global'`` REACH TAG (was: the literal
+        string ``directory_context="global"``). The row data below is
+        updated to match: eligibility is now ``project_id`` equality OR
+        ``"global" in tags`` — a plain ``directory_context`` field, if a row
+        happened to carry one, is no longer read by this filter at all.
+        """
         import yadgar.core.server.http as _http
 
         rows = [
-            {"content": "keep", "directory_context": "/home/user/project"},
-            {"content": "drop", "directory_context": "/some/other/project"},
-            {"content": "global", "directory_context": "global"},
+            {"content": "keep", "project_id": "/home/user/project"},
+            {"content": "drop", "project_id": "/some/other/project"},
+            {"content": "global", "project_id": "/some/other/project", "tags": ["global"]},
         ]
         out = _http._filter_prompt_recall_results(rows, "/home/user/project")
         contents = {r["content"] for r in out}
         assert "keep" in contents
-        assert "global" in contents  # sentinel always eligible
+        assert "global" in contents  # sentinel (reach tag) always eligible
         assert "drop" not in contents
 
 
@@ -376,7 +403,11 @@ class TestNoInCoreRetrieverInHookPaths:
 class TestForwardHookRecallDeadline:
     def test_passes_deadline_ms_budget(self):
         """_forward_hook_recall must pass deadline_ms == HOOK_RECALL_TIMEOUT_S in
-        ms so the backend aborts stages once the client has given up."""
+        ms so the backend aborts stages once the client has given up.
+
+        ``hook_project_id`` monkeypatched for the same reason documented in
+        ``TestForwardHookRecallTimeout.test_passes_short_hook_timeout`` above.
+        """
         import yadgar.core.server.http as _http
         from yadgar._shared.config import get_settings
 
@@ -386,8 +417,9 @@ class TestForwardHookRecallDeadline:
             captured.update(kwargs)
             return []
 
-        with patch(
-            "yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend
+        with (
+            patch("yadgar.core.server.tools.recall._forward_to_backend", side_effect=_fake_backend),
+            patch.object(_http, "hook_project_id", return_value="test-owner/test-repo"),
         ):
             _http._forward_hook_recall(
                 "q",

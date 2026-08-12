@@ -22,6 +22,8 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
+from yadgar._shared.storage.directory import RecallScope
+
 _DIR = "/home/test/yadgar-project"
 
 
@@ -79,9 +81,11 @@ class TestBackendRouteThreadsDeadline:
     def test_recall_request_accepts_deadline_ms(self):
         from yadgar.backend.embed_service import RecallRequest
 
-        req = RecallRequest(query="q", directory=_DIR, deadline_ms=1500)
+        # Car C7 (0047 §5 C7): project_id is now REQUIRED on RecallRequest
+        # (it is the scope key; directory is retained but optional/non-scoping).
+        req = RecallRequest(query="q", directory=_DIR, project_id="t/r", deadline_ms=1500)
         assert req.deadline_ms == 1500
-        assert RecallRequest(query="q", directory=_DIR).deadline_ms is None
+        assert RecallRequest(query="q", directory=_DIR, project_id="t/r").deadline_ms is None
 
     def test_route_converts_deadline_ms_to_monotonic_deadline(self, monkeypatch):
         import asyncio
@@ -121,7 +125,12 @@ class TestBackendRouteThreadsDeadline:
                 async with httpx.AsyncClient(transport=transport, base_url="http://b") as c:
                     return await c.post(
                         "/recall",
-                        json={"query": "q", "directory": _DIR, "deadline_ms": 5000},
+                        json={
+                            "query": "q",
+                            "directory": _DIR,
+                            "project_id": "t/r",
+                            "deadline_ms": 5000,
+                        },
                     )
 
             t0 = time.monotonic()
@@ -172,7 +181,10 @@ class TestBackendRouteThreadsDeadline:
             async def _post():
                 transport = httpx.ASGITransport(app=app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://b") as c:
-                    return await c.post("/recall", json={"query": "q", "directory": _DIR})
+                    return await c.post(
+                        "/recall",
+                        json={"query": "q", "directory": _DIR, "project_id": "t/r"},
+                    )
 
             resp = asyncio.run(_post())
         finally:
@@ -207,7 +219,7 @@ def _fanout_with_deadline(deadline):
             query="architecture decisions",
             max_results=5,
             min_heat=0.0,
-            directory=_DIR,
+            recall_scope=RecallScope(project_id=_DIR),
             type_filter="all",
             tags=None,
             profile=None,

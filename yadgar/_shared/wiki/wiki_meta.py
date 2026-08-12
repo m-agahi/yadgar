@@ -56,6 +56,20 @@ PAGE_TYPE_AGENT_INDEX = "agent_index"
 #: migration 028 — they must keep resolving to the same routing policy.
 PAGE_TYPE_AGENT_PROMPT_LEGACY = "agent_prompt"
 
+#: Task list pages. Car C7 (0047, absorbing C8 item 4) flipped this type from
+#: C2's ``downweight`` to ``recall_disposition="exclude"`` with
+#: ``opt_in_tag=None``. The downweight it used to carry was applied as a
+#: MULTIPLY on a score containing a raw cross-encoder logit, which is commonly
+#: negative — so the penalty inverted into a promotion. Excluding is also the
+#: shape C7's stage-1 WHERE can act on: an excluded type is never fetched, so
+#: it cannot consume a pool slot. The page stays reachable by exact key
+#: (``wiki_read`` / ``wiki_get`` / ``wiki_list``, and the session-start restore
+#: nudge), which is how every real consumer reads it — exclusion is a SEARCH
+#: rule only. Car D (task tools) + Car E (task seed) move tasks to SQL and
+#: delete the task-list markdown page; surviving ``task_list`` pages
+#: (e.g. re-created post-spine) inherit the exclusion for free.
+PAGE_TYPE_TASK_LIST = "task_list"
+
 
 @observe(tier="stage")
 def _load_page_type_schemas() -> dict:

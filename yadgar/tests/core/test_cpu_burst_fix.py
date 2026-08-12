@@ -50,7 +50,19 @@ class TestHookLightweightProfile:
         from yadgar.core.server.http import hook_prompt_recall
 
         class _FakeRequest:
-            query_params = {"query": "test query", "directory": "/tmp"}
+            # Car C7 (0047 §5 C7): ``project`` is now REQUIRED on the hook query
+            # string. C5 deleted ``derive_project_id``, so a directory can no
+            # longer produce an identity (ADR-0227) — a directory-only hook
+            # request raises and the handler degrades to an empty injection
+            # rather than forwarding an UNSCOPED recall, which would inject
+            # another project's memories into this project's prompt (the v5.65
+            # leak). Without ``project`` here the forward never happens and this
+            # test's profile assertion could never be reached.
+            query_params = {
+                "query": "test query",
+                "directory": "/tmp",
+                "project": "m-agahi/yadgar",
+            }
 
         async def _run():
             with patch(

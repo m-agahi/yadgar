@@ -74,7 +74,6 @@ from yadgar._shared.storage.ops import _OpsMixin
 from yadgar._shared.storage.queue import _QueueMixin
 from yadgar._shared.storage.rules import _RulesMixin
 from yadgar._shared.storage.runtime_config import _RuntimeConfigMixin
-from yadgar._shared.storage.scope import ScopeFilter as ScopeFilter
 from yadgar._shared.storage.user import _UserMixin
 from yadgar._shared.storage.vector import _VectorMixin
 from yadgar._shared.storage.wiki import _WikiMixin

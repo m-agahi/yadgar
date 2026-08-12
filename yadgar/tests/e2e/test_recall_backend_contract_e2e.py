@@ -24,6 +24,14 @@ pytestmark = pytest.mark.e2e
 YADGAR_DIR = "/home/test/yadgar-project"
 _QUERY = "backend contract test memory unique 7x9q"
 
+#: The identity every seed and every recall in this file names. C5/ADR-0227
+#: made ``project_id`` mandatory at the storage write chokepoint and at the
+#: recall scope resolver. It matters doubly here: this file's subject is that
+#: the ON (forwarded) and OFF (in-core) recall paths return the SAME tuples, so
+#: both paths must be given the same identity or the comparison is between two
+#: differently-scoped result sets rather than between two code paths.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 def _insert_mem(storage, embeddings, content: str, heat: float = 1.0) -> int:
     """Insert a memory with real embedding and explicit heat."""
@@ -33,6 +41,7 @@ def _insert_mem(storage, embeddings, content: str, heat: float = 1.0) -> int:
             "content": content,
             "embedding": emb,
             "directory_context": YADGAR_DIR,
+            "project_id": _TEST_PROJECT,
             "tags": [],
             "heat": heat,
         }
@@ -49,6 +58,7 @@ def _insert_wiki(title: str, content: str) -> str:
     opts = WikiAddOptions(
         source_memory_ids=[],
         directory_context=YADGAR_DIR,
+        project_id=_TEST_PROJECT,
     )
     page = _st._wiki.add(
         title=title,
@@ -62,13 +72,19 @@ def _insert_wiki(title: str, content: str) -> str:
 
 def _run_off_path(query: str, max_results: int = 20) -> list[tuple]:
     """Run the in-core _fanout_recall and return (id, score) tuples."""
+    from yadgar._shared.storage.directory import RecallScope
     from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
+    # C13 (e): re-pointed onto the RecallScope signature. This double still
+    # passed ``directory=YADGAR_DIR`` — a keyword C7 deleted when it moved
+    # scoping off ``directory_context`` and onto ``project_id`` inside the
+    # stage-1 WHERE. C7's own sweep re-pointed three doubles and missed this
+    # one, so the OFF path here was calling a signature that no longer exists.
     results = _fanout_recall(
         query=query,
         max_results=max_results,
         min_heat=0.0,
-        directory=YADGAR_DIR,
+        recall_scope=RecallScope(project_id=_TEST_PROJECT),
     )
     # Extract (id, score) tuples — use _retrieval_score as primary, fallback heat.
     return [(r.get("id"), float(r.get("_retrieval_score", r.get("heat", 0.0)))) for r in results]
@@ -89,6 +105,13 @@ def _run_on_path(query: str, max_results: int = 20) -> list[tuple]:
 
     payload = {
         "query": query,
+        # C13 (e): ``project_id`` is a REQUIRED field on ``RecallRequest`` since
+        # C7 made it THE read-path scope key; the model is ``extra="forbid"``,
+        # so a body without it is a 422 rather than an unscoped read. It must be
+        # the same identity ``_run_off_path`` scopes to, or the parity tests
+        # would compare two different corpora and call the difference a
+        # forwarder bug.
+        "project_id": _TEST_PROJECT,
         "directory": YADGAR_DIR,
         "max_results": max_results,
         "min_heat": 0.0,
@@ -278,6 +301,9 @@ class TestRecallBackendBootstrap:
 
         payload = {
             "query": _BOOT_QUERY,
+            # C13 (e): REQUIRED on RecallRequest since C7 (extra="forbid" — an
+            # absent project_id is a 422, never an unscoped read).
+            "project_id": _TEST_PROJECT,
             "directory": YADGAR_DIR,
             "max_results": 10,
             "min_heat": 0.0,
@@ -415,6 +441,7 @@ class TestRecallCoreForwarderE2E:
                 query=_FWD_QUERY,
                 directory=YADGAR_DIR,
                 max_results=20,
+                project=_TEST_PROJECT,
             )
 
         # Assert 1: non-empty results with correct shape.
@@ -506,6 +533,7 @@ class TestRecallCoreForwarderE2E:
                 query=_PAR2_QUERY,
                 directory=YADGAR_DIR,
                 max_results=20,
+                project=_TEST_PROJECT,
             )
 
         on_results = [
@@ -611,6 +639,12 @@ class TestRecallBackendProdEnvBootstrap:
 
         payload = {
             "query": _PROD_QUERY,
+            # C13 (e): REQUIRED on RecallRequest since C7 (extra="forbid" — an
+            # absent project_id is a 422, never an unscoped read). Without it
+            # the request never reaches the route, so the bootstrap this test
+            # asserts on could not run and the failure read as "bootstrap did
+            # not run" rather than "the body was rejected".
+            "project_id": _TEST_PROJECT,
             "directory": YADGAR_DIR,
             "max_results": 10,
             "min_heat": 0.0,

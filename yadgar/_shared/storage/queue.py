@@ -67,12 +67,29 @@ class _QueueMixin:
         directory: str,
         session_id: str,
         timestamp: str,
+        project_id: str = "",
     ):
+        """Insert one action_log row.
+
+        C4 (0047 PR#40 §5): ``project_id`` carries the value the PRODUCING
+        session minted host-side. The consumer is
+        ``consolidation.cleanup._group_rows_by_window``, which groups on it —
+        so a row that arrives without one is skipped and counted there rather
+        than being bucketed under a guess. Empty string is the honest "the
+        producer did not stamp one" marker; nothing here derives a value.
+
+        C11: ``action_log`` is SCHEMALESS, so this write needs no migration to
+        land — but migration 033 must still add
+        ``DEFINE FIELD project_id ON TABLE action_log TYPE option<string>``
+        plus an index, so the column is declared and queryable rather than
+        merely present on rows written after this car.
+        """
         aid = self._next_id("action_log")
         self._q(
             "CREATE type::record('action_log', $id) SET "
             "tool_name = $tool_name, tool_input_summary = $tis, "
             "directory = $directory, session_id = $sid, "
+            "project_id = $project_id, "
             "timestamp = $ts, processed = false",
             {
                 "id": aid,
@@ -80,6 +97,7 @@ class _QueueMixin:
                 "tis": tool_input_summary,
                 "directory": directory,
                 "sid": session_id,
+                "project_id": project_id,
                 "ts": timestamp,
             },
         )

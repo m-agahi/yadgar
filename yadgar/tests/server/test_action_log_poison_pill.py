@@ -38,20 +38,32 @@ def _make_consolidation_engine(tmp_path):
     return _FakeEngine()
 
 
-def _make_rows(n: int, base_id: int = 1) -> list[dict]:
-    """Produce n fake action_log rows in a single directory/time-window group."""
+def _make_rows(n: int, base_id: int = 1, project_id: str | None = "owner/repo") -> list[dict]:
+    """Produce n fake action_log rows in a single directory/time-window group.
+
+    ``project_id`` is stamped by default because C4 (0047 PR#40 §5) gave
+    ``_process_action_log`` a skip-and-count path for rows that name no
+    project: they are counted under ``actions_skipped_no_project``, marked
+    processed and never bucketed under a guess. Rows without one therefore
+    never reach ``insert_memory``, which is where this file's SecretLeakBlocked
+    poison pill has to fire. Pass ``project_id=None`` to exercise the skip path
+    deliberately.
+    """
 
     ts = "2026-05-30T10:15:00"
-    return [
-        {
+    rows = []
+    for i in range(n):
+        row = {
             "id": base_id + i,
             "tool_name": "Bash",
             "tool_input_summary": f"cmd_{i}",
             "directory": "/home/user/proj",
             "timestamp": ts,
         }
-        for i in range(n)
-    ]
+        if project_id is not None:
+            row["project_id"] = project_id
+        rows.append(row)
+    return rows
 
 
 class TestSecretLeakBlockedDoesNotCrashCycle:
@@ -108,16 +120,25 @@ class TestSecretLeakBlockedDoesNotCrashCycle:
 
         engine = _make_consolidation_engine(tmp_path)
 
-        # Two groups: group A is poisoned (rows 1-5), group B is clean (rows 6-10)
-        # Use different timestamps to force separate groups
-        rows_a = _make_rows(5, base_id=1)  # directory /home/user/proj, 10:15
+        # Two groups: group A is poisoned (rows 1-5), group B is clean (rows 6-10).
+        #
+        # C4 (0047 PR#40 §5) re-keyed _group_rows_by_window from row["directory"]
+        # to (project_id, 30-min window) — one project checked out twice used to
+        # split into two unrelated summaries. So a DIFFERENT DIRECTORY no longer
+        # makes a different group, and the two sets below would collapse into a
+        # single group of 10 that the first SecretLeakBlocked quarantines whole,
+        # which is exactly the shape this test exists to rule out. Group B is now
+        # separated by the key that actually separates groups: its project_id.
+        rows_a = _make_rows(5, base_id=1)  # project owner/repo, 10:15
         rows_b = [
             {
                 "id": 10 + i,
                 "tool_name": "Read",
                 "tool_input_summary": f"file_{i}",
-                "directory": "/home/user/other",  # different dir → different group
+                "directory": "/home/user/other",
                 "timestamp": "2026-05-30T10:15:00",
+                # different project → different group (C4's key)
+                "project_id": "owner/other-repo",
             }
             for i in range(5)
         ]

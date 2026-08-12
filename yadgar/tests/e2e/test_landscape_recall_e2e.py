@@ -86,6 +86,15 @@ _UNIQUE_TAG = "xzlandscape801"
 _YADGAR_DIR = "/home/test/yadgar-project"
 _OTHER_DIR = "/home/test/other-project"
 
+#: The two identities this file needs. C5/ADR-0227 made ``project_id``
+#: mandatory at the storage write chokepoint and at the recall scope resolver.
+#: The pair is load-bearing, not decorative: the foreign-exclusion test below
+#: proves landscape recall does not leak another project's rows, and post-C7
+#: that exclusion is decided by ``project_id`` — NOT by ``directory_context``.
+#: Seeding both dirs under one project would make that test pass vacuously.
+_PROJECT = "m-agahi/yadgar"
+_OTHER_PROJECT = "m-agahi/other-project"
+
 # Domain-crossing content: code keywords (def/class/function) + error keywords
 # (error/bug/exception) → assigned to both "code-patterns" and "errors" domains.
 _CROSS_DOMAIN_CONTENT = (
@@ -99,7 +108,13 @@ _FOREIGN_CONTENT = (
 )
 
 
-def _insert_and_assign(e2e_engines, content: str, directory: str, heat: float = 0.9) -> int:
+def _insert_and_assign(
+    e2e_engines,
+    content: str,
+    directory: str,
+    heat: float = 0.9,
+    project_id: str = _PROJECT,
+) -> int:
     """Insert a memory with embedding and assign it to the astrocyte pool.
 
     Mirrors test_astrocyte_pool.py seeding: insert via storage.insert_memory(),
@@ -119,6 +134,7 @@ def _insert_and_assign(e2e_engines, content: str, directory: str, heat: float = 
             "content": content,
             "embedding": emb,
             "directory_context": directory,
+            "project_id": project_id,
             "heat": heat,
             "tags": [_UNIQUE_TAG],
             "last_accessed": now,
@@ -155,6 +171,7 @@ def _run_landscape_recall(
         directory=directory,
         max_results=max_results,
         mode="landscape",
+        project=_PROJECT,
     )
 
 
@@ -228,7 +245,9 @@ class TestLandscapeRecallE2E:
         # Seed a memory in the target directory.
         target_mid = _insert_and_assign(e2e_engines, _CROSS_DOMAIN_CONTENT, _YADGAR_DIR)
         # Seed an otherwise-matching memory in a foreign directory.
-        foreign_mid = _insert_and_assign(e2e_engines, _FOREIGN_CONTENT, _OTHER_DIR)
+        foreign_mid = _insert_and_assign(
+            e2e_engines, _FOREIGN_CONTENT, _OTHER_DIR, project_id=_OTHER_PROJECT
+        )
 
         results = _run_landscape_recall(
             monkeypatch,
@@ -265,6 +284,10 @@ class TestLandscapeRecallE2E:
                 query="any query",
                 directory=_YADGAR_DIR,
                 mode="bogus",
+                # C13 (e): named so the ValueError this test is ABOUT is the one
+                # that fires. C5/ADR-0227 resolves project_id ahead of the mode
+                # gate, so an unnamed call raises UnresolvedProjectError first.
+                project=_PROJECT,
             )
 
     def test_none_mode_uses_normal_recall(self, e2e_engines, monkeypatch, recall_backend_bypass):
@@ -287,6 +310,7 @@ class TestLandscapeRecallE2E:
                 "content": f"default mode normal recall content {unique}",
                 "embedding": emb,
                 "directory_context": _YADGAR_DIR,
+                "project_id": _PROJECT,
                 "heat": 0.9,
                 "tags": [],
                 "last_accessed": now,
@@ -306,6 +330,7 @@ class TestLandscapeRecallE2E:
             directory=_YADGAR_DIR,
             max_results=10,
             mode=None,
+            project=_PROJECT,
         )
         # Verify it doesn't break (returns a list).
         assert isinstance(results, list), f"recall(mode=None) must return list; got {type(results)}"

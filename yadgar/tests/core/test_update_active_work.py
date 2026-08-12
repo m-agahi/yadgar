@@ -3,6 +3,7 @@
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # R3 Car 3d: this tool's write half forwards to the backend /admin op.
 # Route forwards through run_admin_op against the shared _st storage (no HTTP)
@@ -23,18 +24,24 @@ def _engines(tmp_path_factory):
 
 
 def test_update_active_work_returns_dict():
-    result = server.update_active_work(directory="/tmp/aw_test", content="## Working on X")
+    result = server.update_active_work(
+        directory="/tmp/aw_test", content="## Working on X", project=TEST_PROJECT_ID
+    )
     assert isinstance(result, dict)
     assert "new_memory" in result
 
 
 def test_update_active_work_previous_content_none_on_first_call():
-    result = server.update_active_work(directory="/tmp/aw_fresh", content="## Fresh start")
+    result = server.update_active_work(
+        directory="/tmp/aw_fresh", content="## Fresh start", project=TEST_PROJECT_ID
+    )
     assert result["previous_content"] is None
 
 
 def test_update_active_work_new_memory_has_content():
-    result = server.update_active_work(directory="/tmp/aw_content", content="## Task alpha")
+    result = server.update_active_work(
+        directory="/tmp/aw_content", content="## Task alpha", project=TEST_PROJECT_ID
+    )
     new_mem = result["new_memory"]
     assert isinstance(new_mem, dict)
     # content should be present in new_memory
@@ -47,9 +54,9 @@ def test_update_active_work_new_memory_has_content():
 def test_update_active_work_atomic_replace(flush_queue):
     directory = "/tmp/aw_atomic"
 
-    server.update_active_work(directory=directory, content="## Step 1")
+    server.update_active_work(directory=directory, content="## Step 1", project=TEST_PROJECT_ID)
     flush_queue()
-    server.update_active_work(directory=directory, content="## Step 2")
+    server.update_active_work(directory=directory, content="## Step 2", project=TEST_PROJECT_ID)
     flush_queue()
 
     # Only one _active_work memory should exist
@@ -64,10 +71,12 @@ def test_update_active_work_atomic_replace(flush_queue):
 
 def test_update_active_work_previous_content_returned(flush_queue):
     directory = "/tmp/aw_prev"
-    server.update_active_work(directory=directory, content="## First")
+    server.update_active_work(directory=directory, content="## First", project=TEST_PROJECT_ID)
     flush_queue()
 
-    result = server.update_active_work(directory=directory, content="## Second")
+    result = server.update_active_work(
+        directory=directory, content="## Second", project=TEST_PROJECT_ID
+    )
     flush_queue()
 
     assert result["previous_content"] is not None
@@ -78,7 +87,9 @@ def test_update_active_work_idempotent_three_calls(flush_queue):
     """Multiple updates — always exactly one _active_work row."""
     directory = "/tmp/aw_idem"
     for i in range(3):
-        server.update_active_work(directory=directory, content=f"## Iteration {i}")
+        server.update_active_work(
+            directory=directory, content=f"## Iteration {i}", project=TEST_PROJECT_ID
+        )
         flush_queue()
 
     storage = server._get_storage()
@@ -95,7 +106,9 @@ def test_update_active_work_idempotent_three_calls(flush_queue):
 
 def test_update_active_work_tags(flush_queue):
     directory = "/tmp/aw_tags"
-    server.update_active_work(directory=directory, content="## Tagged work")
+    server.update_active_work(
+        directory=directory, content="## Tagged work", project=TEST_PROJECT_ID
+    )
     flush_queue()
 
     storage = server._get_storage()
@@ -110,7 +123,7 @@ def test_update_active_work_tags(flush_queue):
 
 def test_update_active_work_store_type_episodic(flush_queue):
     directory = "/tmp/aw_store"
-    server.update_active_work(directory=directory, content="## Episodic")
+    server.update_active_work(directory=directory, content="## Episodic", project=TEST_PROJECT_ID)
     flush_queue()
 
     storage = server._get_storage()
@@ -124,7 +137,7 @@ def test_update_active_work_store_type_episodic(flush_queue):
 
 def test_update_active_work_is_protected(flush_queue):
     directory = "/tmp/aw_prot"
-    server.update_active_work(directory=directory, content="## Protected")
+    server.update_active_work(directory=directory, content="## Protected", project=TEST_PROJECT_ID)
     flush_queue()
 
     storage = server._get_storage()
@@ -143,5 +156,7 @@ def test_update_active_work_no_char_cap():
     """update_active_work has no character cap — large content is accepted."""
     big_content = "## Work\n" + ("- item\n" * 500)
     # Should not raise
-    result = server.update_active_work(directory="/tmp/aw_big", content=big_content)
+    result = server.update_active_work(
+        directory="/tmp/aw_big", content=big_content, project=TEST_PROJECT_ID
+    )
     assert result is not None

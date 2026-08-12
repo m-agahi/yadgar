@@ -92,8 +92,14 @@ def ensure_restoration_engines() -> None:
 
 
 @observe(tier="boundary", metric="restoration.run_restore")
-def run_restore(directory: str = "") -> dict:
+def run_restore(directory: str = "", project_id: str | None = None) -> dict:
     """Run the restore compute backend-side (the POST /restore body).
+
+    C10g (0047 PR#40 §5): carries BOTH scope values. ``restore`` fans out to
+    five sinks and they key on different columns — see
+    ``CheckpointRestore.restore`` for the per-sink routing table. This container
+    cannot derive a project_id (ADR-0227 §1.1), so ``None`` means the caller
+    named none, and the memory-backed sinks return empty rather than widening.
 
     Invalidates the SR matrix first: transitions are recorded in the CORE
     process (DB writes via the recall session seam), so the backend-resident
@@ -113,4 +119,4 @@ def run_restore(directory: str = "") -> dict:
         )
     if _st._cognitive_map is not None:
         _st._cognitive_map.invalidate()
-    return _st._replay.restore(directory=directory)
+    return _st._replay.restore(directory=directory, project_id=project_id)

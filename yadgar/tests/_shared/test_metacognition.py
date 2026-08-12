@@ -10,6 +10,12 @@ from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.metacognition import MetaCognition
 from yadgar._shared.storage import StorageEngine
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 
@@ -52,6 +58,7 @@ def _make_memory(
             "embedding": embedding,
             "tags": tags or [],
             "directory_context": directory,
+            "project_id": _PROJECT,
             "heat": heat,
             "is_stale": False,
             "file_hash": None,
@@ -672,6 +679,7 @@ def gap_detection_at_scale(tmp_path, settings, embeddings):
                 "embedding": embedding,
                 "tags": [],
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.5,
                 "is_stale": False,
                 "embedding_model": embeddings.get_model_name(),
@@ -713,6 +721,7 @@ def test_detect_gaps_correctness_missing_connection_found(tmp_path, settings, em
                 "embedding": embedding,
                 "tags": [],
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.5,
                 "is_stale": False,
                 "embedding_model": embeddings.get_model_name(),

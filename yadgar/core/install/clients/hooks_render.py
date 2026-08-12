@@ -331,6 +331,20 @@ const YadgarHooksPlugin: Plugin = async ({{ directory }}) => ({{
   //                       (post-compact-rehydrate), NOT session-start-context.
   // - session.idle (Stop) is deliberately not dispatched here — see the header
   //   comment above.
+  //
+  // KNOWN LIMITATION (Car C2, ADR-0227) — the project_id banner is minted but
+  // NOT injected on this transport. Both handlers below mint the session's
+  // project_id host-side and print `yadgar: project_id=<owner/repo>` on stdout,
+  // and both forward it to the daemon as `project=` (so the daemon still writes
+  // the `current_project` memory block). But opencode's generic `event` hook
+  // takes no `output` parameter — unlike `experimental.session.compacting`
+  // above, which pushes `r.stdout` into `output.context` — so there is nowhere
+  // to put the line. This is the SAME pre-existing gap that already drops the
+  // whole project-brief render on this transport, not a new one: opencode users
+  // get no SessionStart context injection at all today. It closes when the
+  // deferred `chat.message` parts[] mutation lands (see the DEFERRED note
+  // below); until then an opencode user must pass `project=` from the block or
+  // from their own knowledge of the repo.
   event: async ({{ event }}) => {{
     if (event.type === "session.created") {{
       await YADGAR("session-start-context", directory, {{ cwd: directory, source: "startup" }})

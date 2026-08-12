@@ -47,11 +47,14 @@ def test_forward_restore_payload_and_auth():
             {"YADGAR_EMBED_URL": "http://backend:8001", "YADGAR_MCP_AUTH_TOKEN": "tok123"},
         ),
     ):
-        result = _forward_restore("/my/project")
+        result = _forward_restore("/my/project", project_id="acme/widgets")
 
     assert captured["url"] == "http://backend:8001/restore"
     assert captured["headers"]["Authorization"] == "Bearer tok123"
-    assert captured["json"] == {"directory": "/my/project"}
+    # C10g: BOTH scope values go on the wire. restore fans out to sinks
+    # keyed on different columns — the memory-backed ones on the
+    # project_id, the checkpoint + memory-block ones still on the path.
+    assert captured["json"] == {"directory": "/my/project", "project_id": "acme/widgets"}
     # Envelope unwrapped: caller gets the inner restore payload dict.
     assert result == {"formatted": "# Restored", "epoch": 3}
 
@@ -77,10 +80,28 @@ def test_restore_tool_forwards_to_backend():
 
     payload = {"formatted": "# Restored", "anchored_memories": 2}
     with patch.object(misc_mod, "_forward_restore", return_value=payload) as fwd:
+        result = misc_mod.restore(directory="/proj", project="acme/widgets")
+
+    # C10g: the tool resolves the project and forwards it alongside the path.
+    fwd.assert_called_once_with("/proj", project_id="acme/widgets")
+    assert result is payload
+
+
+def test_restore_tool_returns_envelope_when_no_project_is_named():
+    """C10g: PROMOTED from accept_project_param to a real resolution.
+
+    restore's anchor / hot-memory / gap sinks are keyed on the resolved
+    project_id, so a call that names none cannot be scoped. ADR-0227 forbids
+    guessing one, and the MCP boundary must not raise — so the tool returns its
+    structured error envelope and never reaches the forward.
+    """
+    import yadgar.core.server.tools.misc as misc_mod
+
+    with patch.object(misc_mod, "_forward_restore") as fwd:
         result = misc_mod.restore(directory="/proj")
 
-    fwd.assert_called_once_with("/proj")
-    assert result is payload
+    fwd.assert_not_called()
+    assert result["ok"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +133,13 @@ def test_pre_compact_drain_op_delegates_to_replay():
 
     # HOOKS Car 2: op body forwards transcript_path (None when absent).
     # v5.135 drain car: also forwards host-parsed in_flight (None when absent).
-    replay.pre_compact_drain.assert_called_once_with("/proj", transcript_path=None, in_flight=None)
+    # C11: also forwards project_id (None when the payload names none — the
+    # backend body's own docstring says both keys always travel; get_active_
+    # checkpoint falls back to the legacy directory key when it is absent, so
+    # None here is a legitimate "not supplied" sentinel, not an unscoped read).
+    replay.pre_compact_drain.assert_called_once_with(
+        "/proj", transcript_path=None, in_flight=None, project_id=None
+    )
     assert result == {"status": "drained", "epoch": 4, "auto_checkpoint_created": True}
 
 
@@ -128,6 +155,7 @@ def test_pre_compact_drain_op_forwards_transcript_path():
     ):
         resto_mod.pre_compact_drain({"directory": "/proj", "transcript_path": "/tmp/s.jsonl"})
 
+    # C11: project_id also rides this call (None — see the note above).
     replay.pre_compact_drain.assert_called_once_with(
-        "/proj", transcript_path="/tmp/s.jsonl", in_flight=None
+        "/proj", transcript_path="/tmp/s.jsonl", in_flight=None, project_id=None
     )

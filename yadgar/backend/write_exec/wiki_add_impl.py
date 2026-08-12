@@ -71,8 +71,21 @@ def run_wiki_add_replay(payload: dict) -> dict:
     # Car B (#83): explicit-slug + upsert. slug=None → title-derived (legacy).
     explicit_slug = payload.get("slug")
     upsert = payload.get("upsert", True)
+    # C3 (0047 PR#40 §5.C3): the enqueue-time project_id stamped by the core
+    # tool (the only process that can see the session). Carried to
+    # WikiAddOptions on BOTH construction sites below — the replace_slug branch
+    # is a real write path — AND (C13) into ``ingest``, the append branch that
+    # reaches ``WikiStore.add`` indirectly and was missed when this comment was
+    # written. So ``insert_wiki_page`` receives it as ``caller_value`` and never
+    # reaches the classifier this container cannot run (§1.1). None only for a
+    # legacy payload enqueued before this car.
+    project_id = payload.get("project_id")
 
     # replace_slug: overwrite a named existing page (gate already bypassed)
+    # Car F (0047 §7): server-side sanctioned token threads from _wiki_write_canonical
+    # so mutability='locked' page_types (e.g. ``adr``) can be first-inserted AND
+    # updated by the canonical write seam.
+    _sanctioned = bool(payload.get("_sanctioned", False))
     if replace_slug is not None:
         existing = _st._wiki._storage.get_wiki_page_by_slug(replace_slug)
         if existing is not None:
@@ -86,6 +99,8 @@ def run_wiki_add_replay(payload: dict) -> dict:
                     confidence=confidence,
                     directory_context=directory_context,
                     page_type=page_type,
+                    sanctioned=_sanctioned,
+                    project_id=project_id,
                 ),
             )
             result.pop("embedding", None)
@@ -104,7 +119,14 @@ def run_wiki_add_replay(payload: dict) -> dict:
             return result
 
     if append:
-        result = _st._wiki.ingest(content, title, tags, source_memory_ids)
+        # C13 (0047 PR#40 §5): the THIRD write path, missed when C3 threaded
+        # "both construction sites". ``ingest`` had no project_id parameter at
+        # all, so an ``append=True`` write whose slug did not exist yet fell
+        # through to ``WikiStore.add`` unstamped — and after C5 deleted the
+        # derivation, that is a hard ``UnresolvedProjectError`` on a call whose
+        # caller supplied ``project=``. The value is held right here; dropping
+        # it was the defect.
+        result = _st._wiki.ingest(content, title, tags, source_memory_ids, project_id=project_id)
     else:
         result = _st._wiki.add(
             title,
@@ -118,6 +140,8 @@ def run_wiki_add_replay(payload: dict) -> dict:
                 page_type=page_type,
                 slug=explicit_slug,  # Car B (#83): store at caller slug, no title fallback
                 upsert=upsert,
+                sanctioned=_sanctioned,
+                project_id=project_id,
             ),
         )
     # Car C (#83): upsert=False collision → surface synchronously.

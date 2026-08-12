@@ -87,7 +87,26 @@ class TestCmdRestoreForward:
     def test_forwards_directory(self):
         with _patched(forward_return={"formatted": "x"}) as fwd:
             cmd_restore(_make_args(directory="/my/proj"))
-        fwd.assert_called_once_with("/my/proj")
+        # C10g: the CLI threads its host-resolved project_id through too.
+        # It resolves non-fatally, so an unresolvable tree forwards None
+        # and loses only the memory buckets, never the checkpoint.
+        fwd.assert_called_once_with("/my/proj", project_id=None)
+
+    def test_forwards_resolved_project_id(self):
+        """C10g: a resolvable tree's project_id reaches the backend.
+
+        The sibling test above only proves the ARGUMENT exists — it passes
+        ``None`` because ``/my/proj`` is not a real tree and the mint declines.
+        This one patches the resolver so the wiring itself is pinned: restore's
+        anchor / hot-memory / gap sinks are keyed on this value, so a CLI that
+        resolved it and then dropped it would restore empty buckets forever.
+        """
+        with (
+            patch("yadgar.core.cli._shared.resolve_cli_project", return_value="acme/widgets"),
+            _patched(forward_return={"formatted": "x"}) as fwd,
+        ):
+            cmd_restore(_make_args(directory="/my/proj"))
+        fwd.assert_called_once_with("/my/proj", project_id="acme/widgets")
 
     def test_no_output_when_formatted_empty(self, capsys):
         with _patched(forward_return={"formatted": ""}):

@@ -11,16 +11,29 @@ def cmd_drain(args):
     """Pre-compaction drain: forward to the backend before Claude compacts."""
     import json
 
-    from yadgar.core.cli._shared import forward_pre_compact_drain, silence_logging
+    from yadgar.core.cli._shared import (
+        forward_pre_compact_drain,
+        resolve_cli_project,
+        silence_logging,
+    )
 
     silence_logging()
-    result = forward_pre_compact_drain(args.directory, getattr(args, "transcript_path", None))
+    # C4: host-side resolve, non-fatal. This runs inside pre-compact-drain.sh —
+    # an unresolvable tree must still get its checkpoint written (see
+    # ``resolve_cli_project``'s ``required`` note). C11 consumes the value.
+    project_id = resolve_cli_project(getattr(args, "project", None), args.directory, required=False)
+    result = forward_pre_compact_drain(
+        args.directory, getattr(args, "transcript_path", None), project_id
+    )
     # Output JSON to stdout so hook can parse it if needed
     print(json.dumps(result))
 
 
 def register(subparsers):
+    from yadgar.core.cli._shared import add_project_argument
+
     p = subparsers.add_parser("drain", help="Pre-compaction context drain")
+    add_project_argument(p)
     p.add_argument("directory", help="Project directory")
     # HOOKS Car 2: optional transcript path for in-flight orchestration capture.
     p.add_argument(

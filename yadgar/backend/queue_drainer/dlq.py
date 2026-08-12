@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.security.enforcement import _enforcement_on, _inc_relaxed
 
 logger = logging.getLogger(__name__)
 
@@ -134,18 +133,89 @@ class _DLQMixin:
 
         # 4. v5.42.5: directory_context required for all writes.
         # _internal=True carve-out applies here too.
+        # C5 (0047 PR#40 §5): the ``YADGAR_DIRECTORY_ENFORCEMENT`` escape hatch is
+        # DELETED — "relaxed enforcement" is the mode in which unscoped rows
+        # entered the corpus, and ADR-0225's end condition for the knob (the
+        # registry check being wired) is met by C6 in this same PR.
         if not p.get("_internal"):
             dc = p.get("directory_context") or p.get("directory")
             if not dc or not str(dc).strip():
-                if _enforcement_on("YADGAR_DIRECTORY_ENFORCEMENT"):
-                    return "missing_directory: wiki_add payload lacks directory_context."
-                logger.warning(
-                    "wiki_add: directory enforcement OFF — missing directory_context allowed "
-                    "(YADGAR_DIRECTORY_ENFORCEMENT=false)"
-                )
-                _inc_relaxed("directory")
+                return "missing_directory: wiki_add payload lacks directory_context."
 
-        return None
+        # 5. C4 (0047 PR#40 §5): the enqueue-time project_id stamp is required.
+        return self._validate_project_id(p, "wiki_add")
+
+    #: project_id values treated as ABSENT rather than as an identity.
+    #:
+    #: ``"unresolved"`` had exactly one producer — the classifier-failure arm of
+    #: ``_resolve_project_id_for_write`` — so it can only ever have meant "a
+    #: derivation was attempted and failed". C5 deleted the producer; the
+    #: sentinel stays listed because the DLQ also sees jobs enqueued before this
+    #: car by an older client.
+    #:
+    #: **``"global"`` joins the set here (C4b handoff #3).** C4 deliberately left
+    #: it accepted: at that point it was still a LIVE scope value that
+    #: ``resolve_effective_project`` produced for every unresolvable tree, so
+    #: rejecting it one car early would have DLQ'd every legitimate global-scoped
+    #: write. C5 deletes the tier that produced it (§1.4: ``"global"`` is never a
+    #: project_id — cross-project reach is a separate TAG), so the same edit that
+    #: removes ``GLOBAL_FALLBACK`` and ``_project_id_writer``'s ``return
+    #: "global"`` branch adds it to the sentinel set. Doing one without the other
+    #: in either order is a live breakage.
+    _SENTINEL_PROJECT_IDS: frozenset[str] = frozenset({"", "global", "unresolved"})
+
+    @observe(tier="stage", metric="drainer.dlq.validate_project_id")
+    def _validate_project_id(self, payload: dict, op_type: str = "wiki_add") -> str | None:
+        """Return a rejection reason when the enqueue-time project_id is missing.
+
+        C4 (0047 PR#40 §5). The drainer runs inside the backend container,
+        which has no git binary and no host project mounts, so it cannot mint
+        an identity and must not invent one. C3 made the core tool stamp
+        ``payload["project_id"]`` at enqueue time — in the one process that
+        can see the session — so by the time a job reaches here the value is
+        either present or the job is unattributable.
+
+        The declared failure path is the **DLQ**, reusing the v5.42.0
+        taxonomy (``failure_reason="missing_project_id"``) rather than
+        inventing a path or falling back to a default. DLQ, not skip-and-count:
+        unlike a nightly-cycle row, a queued write is the user's own content
+        and is recoverable — it sits in the DLQ with an actionable hint and can
+        be requeued once the caller passes ``project=``.
+
+        The ``_internal=True`` carve-out does NOT apply. ``_internal`` is a
+        server-only token set by ``_wiki_write_canonical``, whose two callers
+        (``adr_add``, ``wiki_write_task_list``) run in the process that HAS a
+        session — they have no more excuse for an unnamed project than any
+        other tool. Exempting them would leave the canonical page types as the
+        one hole through which sentinels keep entering the corpus.
+
+        C5 (0047 PR#40 §5): ``op_type`` is a parameter rather than the hardcoded
+        ``"wiki_add"`` it used to be (C4b handoff #2). The gate now runs for every
+        queued op, so a message naming ``wiki_add`` would misreport a ``memorize``
+        or ``anchor`` rejection to the one reader who has to act on it.
+        """
+        raw = payload.get("project_id")
+        if isinstance(raw, str) and raw.strip() not in self._SENTINEL_PROJECT_IDS:
+            return None
+        return f"missing_project_id: {op_type} payload lacks a usable project_id (got {raw!r})."
+
+    def _build_missing_project_id_metadata(self, record: dict, op_type: str) -> dict:
+        """Build failure_metadata for missing_project_id DLQ entries (C4).
+
+        C5: the hint is built from ``op_type`` rather than hardcoding
+        ``wiki_add`` (C4b handoff #2) — it goes stale the moment the gate widens,
+        and C5 is the car that widens it.
+        """
+        return {
+            "field": "project_id",
+            "payload_op_type": op_type,
+            "hint": (
+                f'Re-issue the {op_type} call with project="owner/repo" so the '
+                "enqueue stamps an identity, then requeue. The drainer cannot "
+                "resolve one: it runs in a container with no git and no project "
+                "mounts (ADR-0227)."
+            ),
+        }
 
     @observe(tier="stage", metric="drainer.dlq.validate_directory_context")
     def _validate_directory_context(self, record: dict) -> str | None:
@@ -223,18 +293,39 @@ class _DLQMixin:
         if payload.get("append"):
             return None
 
-        # Car C (#83): upsert=False slug-collision check.
-        # Runs before the gate so it applies regardless of gate mode. When an
-        # explicit slug is present and upsert=False, a collision must be rejected
-        # synchronously (wait=True) or routed to DLQ (wait=False) rather than
-        # being silently swallowed inside _apply() → WikiStore.add().
-        #
-        # (Car B, #83 originally dispatched here on page_type policy gate_mode —
-        # "identity" mode for repo_wiki vs "similarity" for everything else. The
-        # identity gate + its repo_wiki_schema-backed validator were removed with
-        # repo_wiki's decommission (#33/ADR-0162); no page_type sets gate_mode=
-        # "identity" any more, so every wiki_add now runs the similarity gate.)
+        # Car C3 (0047 §7 D21): policy dispatch — identity vs similarity. The
+        # identity gate is a pass-through for deterministic-slug page types
+        # (adr, task_list, agent_prompt library) where content similarity is
+        # structurally near-identical by design. The slug IS the identity; a
+        # re-write of the same slug is an update, not a duplicate. The
+        # upsert=False slug-collision check at WikiStore.add handles real
+        # collisions — the identity gate does not duplicate it.
+        from yadgar._shared.wiki.policy import get_policy  # noqa: PLC0415
+
+        if get_policy(payload.get("page_type")).gate_mode == "identity":
+            return self._identity_gate_for_drainer(payload)
         return self._similarity_gate_for_drainer(payload)
+
+    @observe(tier="stage", metric="drainer.dlq.identity_gate_for_drainer")
+    def _identity_gate_for_drainer(self, payload: dict) -> dict | None:
+        """D21 identity gate: slug-based identity, no content-similarity check.
+
+        For page_types with deterministic slugs (``adr``, ``task_list``,
+        ``agent_pattern``/``agent_discipline``/legacy ``agent_prompt``), a
+        page's identity IS its slug — content similarity is structurally
+        near-identical by design (canonical writers all generate the same
+        shape). The gate is a pass-through: a re-write of the same slug is
+        an UPDATE, not a duplicate. The upsert=False slug-collision case is
+        already enforced at ``WikiStore.add`` → ``slug_exists``
+        (``__init__.py:365-374,419``).
+
+        Car C3 (0047 §7 D21): replaces the canonical ``force=True`` /
+        ``replace_slug`` bypasses used pre-C3 by ``_canonical_adr_payload``
+        and ``wiki_write_task_list``. Those bypasses are no longer required
+        — the gate path is now policy-driven, and identity-gated types pass
+        without a bypass flag.
+        """
+        return None
 
     @observe(tier="stage", metric="drainer.dlq.similarity_gate_for_drainer")
     def _similarity_gate_for_drainer(self, payload: dict) -> dict | None:

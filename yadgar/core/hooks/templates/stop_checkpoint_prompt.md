@@ -1,7 +1,15 @@
 <!-- YADGAR CHECKPOINT PROTOCOL
      Substitute these placeholders throughout this file before following instructions:
        {directory}      = your current working directory (absolute path; the project root)
-       {project}        = basename of {directory}
+       {project}        = the session's minted project_id — the `owner/repo` value
+                          emitted at SessionStart as `yadgar: project_id=<owner/repo>`.
+                          It is NOT the basename of {directory}: the basename is not an
+                          identity (two checkouts named `yadgar` are two projects), and
+                          the task ledger is keyed on the minted value (ADR-0227).
+                          If you cannot find that line, scroll for the `current_project`
+                          memory block, which carries the same value. If NEITHER exists,
+                          the mint failed — say so and SKIP the ledger steps below rather
+                          than inventing a key.
 -->
 
 Yadgar checkpoint. CAPTURE FIRST (steps 1-5), THEN maintenance (steps 6-7).
@@ -21,14 +29,20 @@ and a checkpoint built on a remembered pointer instead of the live bytes is the
 exact failure this protocol exists to prevent. On-disk paths → the Read tool;
 wiki slugs → wiki_read; the tagged agent-prompt library → recall.
 
-1. ADR CAPTURE (always run; the Yadgar wiki is the source of truth — no file,
-   works for non-git projects too).
-   Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
+1. ADR CAPTURE (always run; the Yadgar ADR ledger is the source of truth —
+   no file, works for non-git projects too).
    - Read existing ADRs FIRST — actually CALL it now and dedup against the
-     RETURNED content, not your memory of it: wiki_read("{project}-adr-log",
-     directory="{directory}"). If the page is
-     absent the log is empty — no prior ADRs to dedup against. Do NOT create the
-     log manually; adr_add handles creation automatically.
+     RETURNED content, not your memory of it: adr_list(directory="{directory}",
+     project="{project}", status="open"). If the list is empty there are no
+     open ADRs to dedup
+     against. Do NOT create the log manually; adr_add handles creation
+     automatically.
+   <!-- Car G (0047 §7): step 1's read-first-dedup now reaches the SQL ADR
+        ledger via adr_list(directory=...) above. Pre-G the instruction
+        pointed at a wiki page whose slug followed the deleted-monolith
+        shape; that read path is gone. adr_list reads the ledger, NOT a
+        wiki page. Historical note only — do not re-introduce the legacy
+        wiki_read call. -->
    - Scan THIS session for durable decisions since the last checkpoint.
      KEEP (precision over recall): a clear durable decision — architecture, a
      tool/config choice, an approach committed-to, a scope cut; a conclusion we
@@ -43,6 +57,7 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    - For each new decision call:
        adr_add(
            directory="{directory}",
+           project="{project}",
            title=<short human-readable title>,
            status=<open|accepted|superseded|rejected|deprecated>,
            date=<ISO date>,
@@ -63,9 +78,12 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    the topic (wiki_list → slug → wiki_read the slug NOW and edit the content it
    RETURNS — do NOT rewrite a page from memory; update via
    wiki_add(replace_slug=<slug>, ..., directory="{directory}",
-   wait=True); no near-duplicate pages). If no
+   project="{project}", wait=True); no near-duplicate pages). If no
    page fits, create one with wiki_add(tags=[...], directory="{directory}",
-   wait=True).
+   project="{project}", wait=True).
+   EVERY scoped call in this protocol carries project="{project}". Since C5 an
+   identity is never derived, so a call that omits it is REJECTED with
+   {{"error": "unresolved_project"}} rather than scoped to a guess.
    Verify wiki_history. Facts/structure only — decisions go in step 1.
 
 3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
@@ -73,15 +91,16 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    refined — one worth reusing for a recurring task shape (review, debug, explore,
    implement, etc.). Skip one-offs and trivial prompts.
    - Read existing patterns FIRST — actually CALL recall now and judge from the
-     RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"]) (or
+     RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"],
+     directory="{directory}", project="{project}") (or
      wiki_read the agent-prompt-toc page). See which task-shapes already have a
      pattern.
    - If an EXISTING pattern already covers this task-shape, IMPROVE/extend it:
      agent_prompt_save the SAME pattern slug — agent_prompt_save versions it.
    - Only create a NEW slug when no existing pattern fits. NEVER mint a
      near-duplicate: a differently-named clone of an existing shape.
-   - Call agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
-     content=<the prompt>, purpose=<one line>) — same slug to extend a match,
+   - Call agent_prompt_save(directory="{directory}", project="{project}",
+     pattern=<kebab-task-shape>, content=<the prompt>, purpose=<one line>) — same slug to extend a match,
      a new slug only when genuinely new.
 
 4. SUBAGENT FINDINGS CURATION (always run; findings sit in on-disk
@@ -94,7 +113,8 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
        repo structure/convention   → wiki_add / update owning page (step 2)
        reusable dispatch prompt     → agent_prompt_save (step 3)
        useful working fact          → memorize(content=REWRITTEN in your words,
-                                        context="{directory}", tags=[...])
+                                        context="{directory}", project="{project}",
+                                        tags=[...])
                                         — never store the raw bullet verbatim
        noise/status/one-off/dup     → DISCARD (do nothing)
      Dedup vs what you wrote this checkpoint + existing ADRs/wiki. Storing nothing is valid + common.
@@ -102,87 +122,50 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      only — never rm under ~/.claude/projects). Then: yadgar pending-findings --advance-state
      --transcript-path "<session transcript_path>" (batch-advance all just-listed).
 
-5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to the
-   wiki so it survives session exit / /clear. Page: slug "{project}-task-list",
-   tag "task-list", scoped to this directory. Page format = the SCHEMA block at
-   the bottom of this step; each task is a UNIQUE "## task:<id>" section.
+5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to
+   the task ledger so it survives session exit / /clear. The ledger is the
+   source of truth (0047 spine train Car E); the legacy wiki task-list page
+   is read-only marker-only.
    - Step 5a — RECONCILE YOUR OWN LIST FIRST. Call TaskList. TaskUpdate anything
      completed or blocked this session; TaskCreate any follow-ups you discovered.
      This is the every-checkpoint "update your task list" pass — do it before you
-     mirror, so the page reflects reality.
-   - Step 5b — READ THE PAGE FOR REAL: CALL wiki_read("{project}-task-list",
-     directory="{directory}") NOW and reconcile against the tasks + updated_at it
-     RETURNS — never against a remembered copy of the page. Absent = no saved list
-     yet.
-   - Step 5c — BRANCH on {have open tasks after reconcile?} × {page exists?}:
-     (The task-list page is CANONICAL — one call lands it via the sanctioned
-     wiki_write_task_list writer, so the session-start restore-nudge resolves it
-     from any project, including a non-git project. You do NOT craft a
-     wiki_add — the writer handles placement server-side.)
-     - have tasks · NO page → CREATE. wiki_write_task_list(project="{project}",
-       content=<full page: ## Meta + one ## task:<id> section each>,
-       directory="{directory}").
-     - NO tasks · NO page → SKIP. Nothing to do.
-     - NO tasks · page EXISTS → CATCH-UP SYNC. The page has tasks you don't.
-       Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your harness
-       via TaskCreate — recovers a missed session-start restore or a concurrent
-       session's work. GUARD: never adopt a completed task; if ALL page tasks are
-       completed, OR the page's DB updated_at (from the wiki_read metadata) is
-       older than 14 days, do NOT adopt — note "stale/finished saved list" and
-       leave it. Adopt by judgment: open tasks relevant to the work you are about
-       to do; skip ones clearly from a finished or unrelated effort.
-     - have tasks · page EXISTS → MERGE + WRITE BACK. Reconcile the page's open
-       tasks with yours (union; your live status wins for tasks you own; keep
-       page-only open tasks). Default write = FULL REWRITE:
-       wiki_write_task_list(project="{project}", content=<merged full page>,
-       directory="{directory}"). OPTIONAL surgical path (only when your change is
-       confined to ONE task): wiki_append_section(slug="{project}-task-list",
-       section_heading="task:<id>", position="replace_section", heading_type="h2",
-       content=<that task's body>, directory="{directory}") — the "## task:<id>"
-       heading is UNIQUE so this is section-atomic and will not clobber a
-       concurrent edit to a DIFFERENT task's section.
-   - PER-TASK BODY: render fields as "- key: value" flat bullets UNDER the
-     "## task:<id>" heading — subject, status, active_form (optional),
-     description, context, blockedBy, blocks, modified. Multi-line values
-     (description, context) MUST indent continuation lines 2 spaces so an
-     embedded "##" line or ``` fence cannot be mis-parsed as a section boundary
-     (same discipline as the ADR to_markdown_body renderer). The "context" field
-     carries related-context pointers to where the task's work lives: file paths ·
-     [[wiki-slug]] · docs/plans/*.md · mem:<id>. The "modified" field is
-     ISO-8601 UTC, bumped ONLY on a real change to that task (per-task freshness).
-     Do NOT hand-write a page-level "updated:" stamp — the age gate reads the DB
-     updated_at column. Verify wiki_history after writing.
-   - SCHEMA (page body):
-     ```markdown
-     <!-- yadgar task-list page — schema v1. One "## task:<id>" section per task.
-          Fields are "- key: value" bullets; multi-line values indent 2 spaces.
-          status ∈ {pending, in_progress, completed}. Restore: recreate open
-          tasks via TaskCreate. -->
+     mirror, so the ledger reflects reality.
+   - Step 5b — READ THE LEDGER FOR REAL: CALL task_list(project_id="{project}")
+     NOW and reconcile against the tasks + updated_at it RETURNS — never against
+     a remembered copy. D37 default is open-only (status ∈ {pending,
+     in_progress}); closed/archived require an explicit filter. Absent = no
+     saved ledger yet.
+   - Step 5c — BRANCH on {have open tasks after reconcile?} × {ledger has
+     open tasks?}:
+     - have tasks · NO ledger rows → CREATE. For each open task call
+       task_write(project_id="{project}", title=<subject>, status=<status>,
+       state=<state>, active_form=<active_form>). One call per task.
+     - NO tasks · NO ledger rows → SKIP. Nothing to do.
+     - NO tasks · ledger has rows → CATCH-UP SYNC. The ledger has tasks you
+       don't. Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your
+       harness via TaskCreate — recovers a missed session-start restore or a
+       concurrent session's work. GUARD: never adopt a completed task; if ALL
+       ledger tasks are completed, OR the ledger's updated_at is older than 14
+       days, do NOT adopt — note "stale/finished saved list" and leave it. Adopt
+       by judgment: open tasks relevant to the work you are about to do; skip
+       ones clearly from a finished or unrelated effort.
+     - have tasks · ledger has rows → MERGE + WRITE BACK. Reconcile the ledger's
+       open tasks with yours (union; your live status wins for tasks you own;
+       keep ledger-only open tasks). For each task call task_write with the
+       merged fields. project_id is a caller parameter (ADR-0202) — use the
+       same {project} for every call this step.
+   - The harness `TaskCreate` subject must preserve the `[N]` prefix from the
+     ledger so the next session's reconcile can match it (D11). The task
+     ledger ids are Crockford base32 (digits + a-z minus i,l,o,u) with an
+     optional origin/ prefix for foreign tasks; the prefix is preserved in
+     the subject verbatim.
 
-     # {project} task list
-
-     ## Meta
-     - project: {project}
-     - open: <N> · completed: <M>
-
-     ## task:0003
-     - subject: <one line>
-     - status: in_progress
-     - active_form: <present-tense label>
-     - description: <text; continuation lines indent 2 spaces>
-     - context: src/foo.py · [[some-wiki-slug]] · docs/plans/x.md · mem:4821
-     - blockedBy: 0005
-     - blocks:
-     - modified: 2026-07-14T18:20:32Z
-     ```
-     Zero-pad each <id> to 4 digits ("task:0001" ≠ "task:0012") so the section
-     matcher is exact. status is the harness value VERBATIM, enum
-     {pending, in_progress, completed} — there is NO "blocked" status (blocking
-     is the blockedBy array).
-
-6. Call project_brief("{directory}", mode="signals"). UNCONDITIONAL — this call
-   is how you LEARN whether maintenance applies; it is cheap and you may never
-   skip it. Its recommended_actions list drives step 7.
+6. Call project_brief("{directory}", mode="signals", project="{project}").
+   UNCONDITIONAL — this call is how you LEARN whether maintenance applies; it is
+   cheap and you may never skip it. Its recommended_actions list drives step 7.
+   `project=` is not optional decoration: the session-end sentinel signal is
+   keyed on the project_id, so a call that omits it silently loses that action
+   (yadgar will not derive one from the directory — ADR-0227).
 
 7. MAINTENANCE — MANDATORY. You MUST work the recommended_actions list from
    step 6 to completion. It is NOT optional and NOT droppable under length, time,
@@ -208,10 +191,12 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      consider_refresh_checkpoint, extract_last_session_findings, update_roadmap,
      review_rejections.)
    - bootstrap_project (no suggested_call): propose a <=1500-char project-summary
-     memory, then bootstrap_project("{directory}", content).
+     memory, then bootstrap_project("{directory}", content, project="{project}").
+     (C5b: bootstrap_project raises without project= — this line is the one
+     place the protocol used to omit it, against its own rule at the top.)
    - Any action type NOT covered above AND with no suggested_call → SKIP and flag
      it in your reply (do not improvise the mechanics).
 
 [yadgar] Checkpoint cadence reached — capture, then continue. If you were
 mid-thought, repeat your last question so the conversation continues. Resume after
-/clear or session end: restore(directory="{directory}").
+/clear or session end: restore(directory="{directory}", project="{project}").

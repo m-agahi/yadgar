@@ -315,8 +315,8 @@ async def _tempo_fallback_mesh(base: str, trace_id: str) -> dict | None:
         if resp.status_code != 200:
             return None
         traces = resp.json().get("traces", [])
-    except httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError:
-        return None
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError):  # fmt: off
+        return None  # fmt: on
     except ValueError:
         return None
     except Exception:  # noqa: BLE001 — fallback must never raise (graceful degrade)

@@ -1,7 +1,13 @@
 """v5.65 Fix D — TDD tests (red-first).
 
 Part 1: recall() and wiki_query() must raise ValueError when directory is omitted or empty.
-Part 2: hook_prompt_recall must post-filter retriever results by caller directory.
+        Still true, and still directory-keyed: the tool surface rejects a blank
+        directory independently of scoping (ADR-0225 retired directory as a
+        SCOPE key, not as a required parameter).
+Part 2: hook_prompt_recall must post-filter retriever results by caller PROJECT.
+        Was "by caller directory" — see ``TestHookPromptRecallProjectFiltering``
+        for why the premise moved (Car C7 re-keyed the filter onto
+        ``project_id`` + the ``'global'`` reach tag).
 
 These tests are written BEFORE implementation — they start RED.
 """
@@ -13,6 +19,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from yadgar._shared.errors import UnresolvedProjectError
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
@@ -56,7 +64,31 @@ def _make_mock_retriever(memories: list[dict] | None = None) -> Any:
 
 
 class TestRecallDirectoryRequired:
-    """recall() must raise ValueError immediately when directory not supplied."""
+    """recall() must fail loud immediately when nothing names a scope.
+
+    CONTRACT MOVED, NOT DROPPED (C5 / ADR-0227). v5.65 Fix D added a
+    ``ValueError("recall: directory is required")`` because the container
+    cannot see the caller's tree, so a directory-less recall used to run in a
+    legacy all-pass mode that returned another project's rows. C5 put the
+    identity resolver AHEAD of that guard: ``_resolve_project_for_recall``
+    resolves first and raises ``UnresolvedProjectError`` when neither
+    ``project`` nor a session value names an identity, so the ValueError below
+    it can no longer be reached (``project`` truthy short-circuits its second
+    condition; ``project`` absent never gets there).
+
+    These tests therefore assert the SAME property against the SAME inputs —
+    a recall that names no scope fails immediately, before any storage or
+    retriever access, rather than silently answering from the whole DB — with
+    the exception type the boundary now raises. What is deliberately NOT done
+    here is relaxing them to ``pytest.raises(Exception)``: the point of the
+    v5.65 file is that this specific input is refused, and a test that accepts
+    any exception would keep passing if the refusal became an unrelated crash.
+
+    A directory alone is no longer sufficient (``test_recall_directory_without_project_raises``)
+    and a project alone now IS (``test_recall_project_without_directory_is_accepted``);
+    both are new, and together they pin which of the two arguments carries
+    identity — the distinction the whole car exists to draw.
+    """
 
     def _call_recall(self, **kwargs):
         import yadgar._shared.runtime.state as _st
@@ -79,50 +111,64 @@ class TestRecallDirectoryRequired:
             return recall_fn(**kwargs)
 
     def test_recall_no_directory_raises(self):
-        """RED: recall(query) without directory must raise ValueError.
+        """recall(query) with nothing naming a scope must fail loud.
 
-        Pre-fix: silently returns results.
-        Post-fix: raises immediately with "directory is required".
+        Pre-v5.65: silently returned results from the whole DB.
+        Pre-C5: ValueError("directory is required").
+        Post-C5: UnresolvedProjectError — the identity gate fires first.
         """
-        with pytest.raises(ValueError, match="directory is required"):
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
             self._call_recall(query="test query")
 
     def test_recall_directory_none_raises(self):
-        """RED: recall(query, directory=None) must raise ValueError.
-
-        Pre-fix: silently runs legacy all-pass mode.
-        Post-fix: raises immediately.
-        """
-        with pytest.raises(ValueError, match="directory is required"):
+        """recall(query, directory=None) must fail loud, not run a legacy all-pass."""
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
             self._call_recall(query="test query", directory=None)
 
     def test_recall_directory_empty_string_raises(self):
-        """RED: recall(query, directory='') must raise ValueError.
-
-        Empty string after strip is not a valid directory.
-        """
-        with pytest.raises(ValueError, match="directory is required"):
+        """Empty string after strip is not a valid scope."""
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
             self._call_recall(query="test query", directory="")
 
     def test_recall_directory_whitespace_raises(self):
-        """recall(query, directory='   ') must raise ValueError.
-
-        Whitespace-only after strip equals empty.
-        """
-        with pytest.raises(ValueError, match="directory is required"):
+        """Whitespace-only after strip equals empty."""
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
             self._call_recall(query="test query", directory="   ")
 
+    def test_recall_directory_without_project_raises(self):
+        """A directory is a filesystem hint, not an identity (ADR-0227).
+
+        This is the assertion v5.65 could not make and C5 makes mandatory: the
+        directory is well-formed and present, and the call is still refused,
+        because the process answering it cannot see the tree that path names.
+        """
+        with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
+            self._call_recall(query="test query", directory="/home/max/git/yadgar")
+
+    def test_recall_project_without_directory_is_accepted(self):
+        """The converse: naming the identity alone is sufficient.
+
+        The dead ValueError's second condition (``and not project``) encoded
+        this before C5 and is the reason it can never fire now. Pinning it here
+        keeps the two-argument contract explicit rather than implied by absence.
+        """
+        result = self._call_recall(query="test query", project="owner/repo")
+        assert isinstance(result, list)
+
     def test_recall_valid_directory_does_not_raise(self):
-        """recall(query, directory='/home/max/git/yadgar') must NOT raise."""
-        # Should return a list (possibly empty)
-        result = self._call_recall(query="test query", directory="/home/max/git/yadgar")
+        """recall(directory=..., project=...) must NOT raise."""
+        result = self._call_recall(
+            query="test query", directory="/home/max/git/yadgar", project="owner/repo"
+        )
         assert isinstance(result, list)
 
     def test_recall_raises_before_storage_access(self):
-        """ValueError must fire BEFORE any storage/retriever access.
+        """The refusal must fire BEFORE any storage/retriever access.
 
-        Verify: if storage is None, directory-missing should still raise (not a
-        storage-not-init error).
+        Verified by nulling storage AND retriever: a scope-less recall must
+        still produce the scope error, never a storage-not-initialised one.
+        This property is what makes the guard a boundary check rather than a
+        late failure after work has already been done.
         """
         import yadgar._shared.runtime.state as _st
         from yadgar.core.server.tools.recall import recall as recall_fn
@@ -132,7 +178,7 @@ class TestRecallDirectoryRequired:
             patch.object(_st, "_retriever", None),
             patch.object(_st, "_consolidation", None),
         ):
-            with pytest.raises(ValueError, match="directory is required"):
+            with pytest.raises(UnresolvedProjectError, match="no project_id was supplied"):
                 recall_fn(query="test", directory=None)
 
 
@@ -174,8 +220,16 @@ class TestWikiQueryDirectoryRequired:
             self._call_wiki_query(query="test query", directory="")
 
     def test_wiki_query_valid_directory_does_not_raise(self):
-        """wiki_query with valid directory must NOT raise."""
-        result = self._call_wiki_query(query="test", directory="/home/max/git/yadgar")
+        """wiki_query with a valid directory AND a project must NOT raise.
+
+        Unlike ``recall``, wiki_query's own ``directory is required`` guard is
+        still REACHABLE — it runs ahead of the resolver, which is why the three
+        raise-cases above still assert ValueError. The identity is what this
+        call additionally needs since C5, so it names one.
+        """
+        result = self._call_wiki_query(
+            query="test", directory="/home/max/git/yadgar", project="owner/repo"
+        )
         assert isinstance(result, list)
 
     def test_wiki_query_raises_before_wiki_access(self):
@@ -193,6 +247,14 @@ class TestWikiQueryDirectoryRequired:
 # ---------------------------------------------------------------------------
 
 
+#: The caller's project, and the other one. Car C7 re-keyed
+#: ``_filter_prompt_recall_results`` from ``directory_context`` onto
+#: ``is_project_eligible(row_project_id, row_tags, caller_project)``, so these —
+#: not the ``directory_context`` values below — are what admit or exclude a row.
+CALLER_PROJECT_ID = "test-owner/test-repo"
+AWS_PROJECT_ID = "other-owner/aws-work"
+
+
 def _make_yadgar_memory() -> dict:
     return {
         "id": 200,
@@ -202,6 +264,7 @@ def _make_yadgar_memory() -> dict:
         "branch": None,
         "_retrieval_score": 0.8,
         "directory_context": "/home/max/git/yadgar",
+        "project_id": CALLER_PROJECT_ID,
     }
 
 
@@ -214,26 +277,46 @@ def _make_aws_memory() -> dict:
         "branch": None,
         "_retrieval_score": 0.7,
         "directory_context": "/home/max/aws-work",
+        "project_id": AWS_PROJECT_ID,
     }
 
 
 def _make_global_memory() -> dict:
+    """A cross-project row: admitted by the ``'global'`` REACH TAG, not by value.
+
+    Its ``project_id`` is deliberately the OTHER project. Under Car C7 the row
+    is visible from every project because ``GLOBAL_REACH_TAG`` is in ``tags`` —
+    the arm that replaced the old ``directory_context='global'`` sentinel VALUE.
+    Stamping ``project_id='global'`` instead would test a key ADR-0227 abolished.
+    """
     return {
         "id": 300,
         "content": "global yadgar rule",
         "heat": 0.6,
-        "tags": [],
+        "tags": ["global"],
         "branch": None,
         "_retrieval_score": 0.6,
         "directory_context": "global",
+        "project_id": AWS_PROJECT_ID,
     }
 
 
-class TestHookPromptRecallDirectoryFiltering:
-    """hook_prompt_recall must apply directory filter to retriever results.
+class TestHookPromptRecallProjectFiltering:
+    """hook_prompt_recall must apply the PROJECT filter to retriever results.
 
-    RED: pre-fix, aws-work memory leaks into prompt-recall when caller is /home/max/git/yadgar.
-    GREEN: post-fix, only yadgar + global memories appear.
+    Was ``TestHookPromptRecallDirectoryFiltering``, and the rename records a
+    changed premise, not a tidy-up. The RED this class was written against
+    (v5.65 Fix D) was "hook_prompt_recall forwards retriever results with no
+    scoping at all", and it proved the fix by seeding rows that differed only in
+    ``directory_context``. Car C7 re-keyed ``_filter_prompt_recall_results``
+    onto ``project_id`` + the ``'global'`` reach tag, and ADR-0225 retired
+    ``directory`` as a scope key, so that seeding could no longer distinguish
+    anything: the rows carried no ``project_id`` at all and the request carried
+    no ``?project=``, which makes ``hook_project_id`` raise, which makes the
+    handler skip the filter by design — and the aws row came back.
+
+    The leak the class exists to catch is unchanged and so are its assertions.
+    Only the axis the corpus varies has moved onto the key the filter reads.
     """
 
     def _run_hook_prompt_recall(
@@ -241,17 +324,28 @@ class TestHookPromptRecallDirectoryFiltering:
         query: str,
         directory: str | None,
         retriever_results: list[dict],
+        project: str | None = CALLER_PROJECT_ID,
     ) -> dict:
-        """Call hook_prompt_recall with given directory + given recall results.
+        """Call hook_prompt_recall with given directory/project + given recall results.
+
+        ``project`` is threaded as the ``?project=`` query param because it is
+        the ONLY signal that can scope a hook recall: hooks carry no session
+        transport, and C5 deleted every directory-derivation tier, so a request
+        with a directory and no project makes ``hook_project_id`` raise and the
+        handler degrade to unfiltered rows.
 
         v5.113.0: prompt-recall now FORWARDS to the backend (via
         _HookRecallForwarder) when a directory is present, so injecting via
         mock_retriever.recall no longer reaches the result set. Patch
         _recall_with_timeout instead — the ONE seam both the forward path and the
         directory=None in-core fallback funnel through. This tests exactly what
-        TestHookPromptRecallDirectoryFiltering asserts: that
-        _filter_prompt_recall_results drops directory-ineligible rows, regardless
-        of which recall path produced them.
+        this class asserts: that _filter_prompt_recall_results drops
+        project-ineligible rows, regardless of which recall path produced them.
+
+        The seam has a cost, recorded because it decides where a contract can be
+        pinned: patching it also bypasses ``_forward_hook_recall``, where the
+        project guard lives. Any assertion ABOUT that guard therefore belongs on
+        the guard itself — see ``test_no_project_param_raises_before_any_forward``.
 
         Returns the JSON response body dict.
         """
@@ -263,6 +357,8 @@ class TestHookPromptRecallDirectoryFiltering:
         query_params: dict[str, str] = {"query": query}
         if directory is not None:
             query_params["directory"] = directory
+        if project is not None:
+            query_params["project"] = project
 
         class _FakeRequest:
             def __init__(self):
@@ -294,12 +390,12 @@ class TestHookPromptRecallDirectoryFiltering:
             return json.loads(raw)
         return raw
 
-    def test_aws_work_memory_excluded_when_caller_is_yadgar(self):
-        """RED: aws-work memory must NOT appear in prompt-recall scoped to yadgar dir.
+    def test_other_project_memory_excluded_when_caller_is_yadgar(self):
+        """RED: other-project memory must NOT appear in prompt-recall scoped to the caller.
 
         Pre-fix: retriever.recall returns mixed results; hook writes all of them
-        into the response text, including aws-work content.
-        Post-fix: directory filter excludes aws-work memory.
+        into the response text, including the other project's content.
+        Post-fix: the project filter excludes it.
         """
         results_mixed = [_make_aws_memory(), _make_yadgar_memory(), _make_global_memory()]
         body = self._run_hook_prompt_recall(
@@ -309,13 +405,81 @@ class TestHookPromptRecallDirectoryFiltering:
         )
         text = body.get("text", "")
         assert "aws IAM policy config" not in text, (
-            f"BUG: aws-work memory leaked into prompt-recall scoped to /home/max/git/yadgar.\n"
+            f"BUG: {AWS_PROJECT_ID} memory leaked into prompt-recall "
+            f"scoped to project={CALLER_PROJECT_ID}.\n"
             f"Response text: {text!r}\n"
-            "hook_prompt_recall does not apply directory filter to retriever results."
+            "hook_prompt_recall does not apply the project filter to retriever results."
         )
 
-    def test_yadgar_and_global_memory_retained(self):
-        """yadgar-dir and global memories must appear when caller is yadgar dir."""
+    def test_no_project_param_raises_before_any_forward(self):
+        """A directory with NO ``?project=`` must RAISE, not forward unscoped.
+
+        This is the case Car C7 changed, and it is pinned at the seam that
+        actually enforces it rather than through the handler: the guard lives in
+        ``_forward_hook_recall``, which evaluates ``hook_project_id(directory,
+        project)`` as an ARGUMENT to the backend forward, so the raise happens
+        before any request is issued. The handler's own post-filter cannot be
+        that guard — reaching it with ``_scoped=None`` makes
+        ``_filter_prompt_recall_results`` skip filtering by design (a container
+        must not guess a project), which is safe only BECAUSE nothing scoped can
+        get that far. Patching ``_recall_with_timeout``, as the sibling tests in
+        this class do to inject a corpus, bypasses the guard entirely and would
+        pin a state production cannot reach.
+
+        The documented trade: losing an injection beats leaking another
+        project's memories into this project's prompt (the v5.65 leak).
+        """
+        from yadgar.core.server.http import _forward_hook_recall
+
+        with pytest.raises(UnresolvedProjectError):
+            _forward_hook_recall(
+                "yadgar scoping test",
+                max_results=5,
+                min_heat=0.0,
+                directory="/home/max/git/yadgar",
+                project=None,
+            )
+
+    def test_forward_failure_degrades_to_empty_injection(self):
+        """When the scoped forward raises, the hook injects NOTHING.
+
+        The second half of the contract above: the raise is only an acceptable
+        guard because the handler turns it into an empty injection rather than
+        into a broken prompt or an unscoped fallback.
+        """
+        import yadgar._shared.runtime.state as _st
+        from yadgar.core.server.http import hook_prompt_recall
+
+        class _FakeRequest:
+            query_params = {
+                "query": "yadgar scoping test",
+                "directory": "/home/max/git/yadgar",
+            }
+
+        async def _run():
+            with (
+                patch.object(_st, "_retriever", MagicMock()),
+                patch.object(_st, "_last_session_context", {}),
+                patch.object(_st, "_last_prompt_recall", {}),
+                patch("yadgar.core.server.http._build_dlq_alert_text", return_value=""),
+                patch(
+                    "yadgar.core.server.http._recall_with_timeout",
+                    side_effect=UnresolvedProjectError("no project"),
+                ),
+            ):
+                resp = await hook_prompt_recall(_FakeRequest())
+                return resp.body if hasattr(resp, "body") else {}
+
+        raw = asyncio.run(_run())
+        import json
+
+        body = json.loads(raw) if isinstance(raw, bytes) else raw
+        assert body.get("text", "") == "", (
+            f"An unscoped-forward failure must inject nothing; got {body!r}"
+        )
+
+    def test_caller_project_and_reach_tagged_memory_retained(self):
+        """Caller-project and reach-tagged memories must appear for the caller's project."""
         results_mixed = [_make_aws_memory(), _make_yadgar_memory(), _make_global_memory()]
         body = self._run_hook_prompt_recall(
             query="yadgar scoping test",

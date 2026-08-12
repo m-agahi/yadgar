@@ -26,6 +26,15 @@ pytestmark = pytest.mark.e2e
 
 YADGAR_DIR = "/home/test/yadgar-project"
 
+#: The identity every seed and every recall in this file names. C5/ADR-0227
+#: made ``project_id`` mandatory at both boundaries — the storage write
+#: chokepoint and the recall scope resolver — so a fusion corpus that names no
+#: project cannot be written, and a recall that names none cannot read it back.
+#: Seeds and reads MUST agree: post-C7 the stage-1 WHERE filters on
+#: ``project_id``, so a mismatch here would silently return an empty pool and
+#: the fusion assertions would fail for the wrong reason.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 def _insert_mem(storage, embeddings, content: str, heat: float = 1.0) -> int:
     """Insert a memory with real embedding."""
@@ -35,6 +44,7 @@ def _insert_mem(storage, embeddings, content: str, heat: float = 1.0) -> int:
             "content": content,
             "embedding": emb,
             "directory_context": YADGAR_DIR,
+            "project_id": _TEST_PROJECT,
             "tags": [],
             "heat": heat,
         }
@@ -53,6 +63,7 @@ def _insert_wiki(title: str, content: str, source_memory_ids: list | None = None
     opts = WikiAddOptions(
         source_memory_ids=source_memory_ids or [],
         directory_context=YADGAR_DIR,
+        project_id=_TEST_PROJECT,
     )
     page = _st._wiki.add(
         title=title,
@@ -75,7 +86,9 @@ def _run_fanout_recall(
         import yadgar.core.server.tools.recall as _rm
 
     recall_fn = _rm.recall
-    return recall_fn(query=query, directory=directory, max_results=max_results)
+    return recall_fn(
+        query=query, directory=directory, max_results=max_results, project=_TEST_PROJECT
+    )
 
 
 class TestFusionE2E:

@@ -387,7 +387,7 @@ class _PatternsMixin:
     # ── Classification ────────────────────────────────────────────────────
 
     @observe(tier="boundary", metric="consolidation.cls.classify_memory")
-    def classify_memory(self, content: str, tags: list[str], directory: str) -> str:
+    def classify_memory(self, content: str, tags: list[str], project_id: str) -> str:
         """Classify incoming memory as 'episodic' or 'semantic'.
 
         Rules for semantic classification:

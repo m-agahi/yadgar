@@ -1,7 +1,14 @@
 <!-- YADGAR ANCHOR-AUDIT PROTOCOL
      Substitute these placeholders throughout this file before following instructions:
        {directory}      = your current working directory (absolute path; the project root)
-       {project}        = basename of {directory}
+       {project}        = the session's minted project_id — the `owner/repo` value
+                          emitted at SessionStart as `yadgar: project_id=<owner/repo>`.
+                          It is NOT the basename of {directory}: the basename is not an
+                          identity (two checkouts named `yadgar` are two projects), and
+                          since C5 an identity is never derived (ADR-0227).
+                          If you cannot find that line, scroll for the `current_project`
+                          memory block, which carries the same value. If NEITHER exists,
+                          the mint failed — say so and STOP rather than inventing a key.
 -->
 
 Yadgar anchor-audit maintenance. This is a periodic HYGIENE pass over the
@@ -16,9 +23,11 @@ earlier turn.
 1. GATHER CANDIDATES.
    - Call project_brief("{directory}", mode="signals") and note anchor_count.
    - Call recall("_audit_anchors sentinel anchor hygiene", directory="{directory}",
-     tags=["_anchor"], max_results=25, type="memory") to list this project's
-     `_anchor` memories with their id, content, tags, age (created_at) and
-     access_count.
+     project="{project}", tags=["_anchor"], max_results=25, type="memory") to
+     list this project's `_anchor` memories with their id, content, tags, age
+     (created_at) and access_count. recall is project-keyed: since C5 an
+     identity is never derived, so a call that omits project= is REJECTED with
+     an unresolved_project error rather than scoped to a guess.
 
 2. EMPTY-LIST GATE — NO NAG. If there are NO `_anchor` memories for this project
    (recall returns none, or anchor_count is 0), this pass is INAPPLICABLE:

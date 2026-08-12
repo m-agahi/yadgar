@@ -25,7 +25,13 @@ def run_action_log_replay(payload: dict) -> None:
 
     payload keys: ``tool_name`` (required), ``summary``, ``directory``,
     ``session_id``, ``timestamp`` (ISO string; defaults to now when absent —
-    enqueue normally stamps it, so the default only covers hand-crafted jobs).
+    enqueue normally stamps it, so the default only covers hand-crafted jobs),
+    ``project_id`` (C4: the enqueue-time stamp, forwarded verbatim).
+
+    C4 (0047 PR#40 §5): ``project_id`` is forwarded, never computed. This runs
+    in the backend container, which cannot mint one (ADR-0227). A payload that
+    carries none writes an empty string, and the consolidation summariser skips
+    and counts that row instead of attributing it to a guessed project.
     """
     from datetime import UTC, datetime  # noqa: PLC0415
 
@@ -36,4 +42,5 @@ def run_action_log_replay(payload: dict) -> None:
         directory=payload.get("directory", ""),
         session_id=payload.get("session_id", ""),
         timestamp=payload.get("timestamp") or datetime.now(UTC).isoformat(),
+        project_id=payload.get("project_id") or "",
     )

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 @pytest.fixture
 def storage(tmp_path):
@@ -57,6 +59,7 @@ class TestMemorizeProvenanceDefault:
                 "content": "no provenance arg test",
                 "directory_context": "/tmp",
                 "tags": [],
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT provenance_agent FROM memory:{mid}")
@@ -70,6 +73,7 @@ class TestMemorizeProvenanceDefault:
                 "directory_context": "/tmp",
                 "tags": [],
                 "provenance_agent": "default",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT provenance_agent FROM memory:{mid}")
@@ -86,6 +90,7 @@ class TestMemorizeProvenanceCustom:
                 "directory_context": "/tmp",
                 "tags": [],
                 "provenance_agent": "general-purpose",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT provenance_agent FROM memory:{mid}")
@@ -99,6 +104,7 @@ class TestMemorizeProvenanceCustom:
                 "directory_context": "/tmp",
                 "tags": [],
                 "provenance_agent": "Explore",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT provenance_agent FROM memory:{mid}")
@@ -172,6 +178,7 @@ class TestMigration005:
                 "directory_context": "/tmp",
                 "tags": [],
                 "provenance_agent": "general-purpose",
+                "project_id": TEST_PROJECT_ID,
             }
         )
 
@@ -191,6 +198,7 @@ class TestRecallReturnsProvenance:
                 "directory_context": "/tmp",
                 "tags": ["test"],
                 "provenance_agent": "general-purpose",
+                "project_id": TEST_PROJECT_ID,
             }
         )
         rows = storage._q(f"SELECT * FROM memory:{mid}")

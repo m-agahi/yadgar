@@ -40,6 +40,7 @@ import pytest
 
 from yadgar.backend.queue_drainer import FileQueue
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -147,6 +148,7 @@ def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
                     tags=["perf-warmup"],
                     wait=False,
                     directory=_TEST_DIR,
+                    project=TEST_PROJECT_ID,
                 )
 
             # Measure 100 calls.
@@ -159,6 +161,7 @@ def test_wiki_add_handler_p50_within_i9_budget(tmp_path):
                     tags=["perf"],
                     wait=False,
                     directory=_TEST_DIR,
+                    project=TEST_PROJECT_ID,
                 )
                 latencies_ms.append((time.perf_counter() - t0) * 1000)
 

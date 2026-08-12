@@ -1,11 +1,17 @@
 """WikiProvider — wraps WikiStore.query as a SourceProvider.
 
 Part of v6 T6 (unified-scoped-recall), Step 1 — pure extraction.
-Step 3 (v6 T6): adds directory scoping via is_directory_eligible post-filter.
+Car C7 (0047 §5 C7): scoping moved INTO the query. ``WikiStore.query()`` now
+takes ``project_id`` + ``opt_in_tags`` and pushes both into the stage-1 ``WHERE``
+clause. The Python post-filters this provider used to apply
+(``is_directory_eligible`` on ``directory_context``, and the disposition arm of
+``is_recall_visible``) are subsumed: the rows they would have dropped are no
+longer fetched, so they can no longer consume a pool slot.
 
-WikiStore.query() does not currently accept a directory parameter. Step 3
-applies a Python-side directory post-filter matching the is_directory_eligible
-eligible set, consistent with the legacy recall + wiki_query paths.
+``is_recall_visible`` is still called. That is deliberate, not leftover: it is
+idempotent with the WHERE (both read ``recall_disposition`` + ``opt_in_tag``
+from the same policy), and it remains the row-level guard for any page that
+reaches this provider by a path the clause did not cover.
 """
 
 from __future__ import annotations
@@ -13,7 +19,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.storage.directory import is_directory_eligible
 from yadgar._shared.wiki.policy import is_recall_visible
 from yadgar.backend.retrieval.providers.base import Candidate, Scope, SourceProvider
 
@@ -27,8 +32,8 @@ class WikiProvider(SourceProvider):
     Calls ``WikiStore.query()`` and maps returned wiki page dicts to normalized
     Candidate objects with ``type="wiki"``.
 
-    Step 3: applies is_directory_eligible() post-filter so wiki results are
-    scoped to the caller directory, matching the legacy wiki_query path.
+    Car C7: scoping happens in SQL (``project_id`` + the ``global`` reach tag
+    + the policy-derived ``page_type`` exclusion), not in a post-filter.
 
     The ``raw`` field on each Candidate carries the original wiki page dict
     (including ``_retrieval_score`` from the wiki hybrid search) so the
@@ -62,31 +67,38 @@ class WikiProvider(SourceProvider):
 
         Args:
             query: Search query.
-            scope: Scope carrying directory for the Python-side directory post-filter.
-            limit: Maximum candidates to return from WikiStore before filtering.
+            scope: Scope carrying the caller's ``project_id`` and ``opt_in_tags``,
+                both pushed into the stage-1 WHERE clause.
+            limit: Maximum candidates to return.
 
         Returns:
             List of Candidate(type="wiki", ...) sorted by native_score descending,
-            filtered to scope.directory (same eligible set as is_directory_eligible).
+            already scoped to ``scope.project_id`` by the query itself.
         """
         include_tag = self._tags[0] if self._tags else None
+        # Car C7: the opt-in tags are the caller's requested tags. ``scope`` may
+        # carry them explicitly; fall back to this provider's own ``tags`` so a
+        # caller that only set ``tags=`` keeps reaching the agent-prompt library.
+        opt_in = scope.opt_in_tags if scope.opt_in_tags is not None else self._tags
+        # Car C8: the Scope→RecallScope conversion lives on ``Scope`` rather
+        # than being spelled out here. This is the second of two RecallScope
+        # re-constructions on the hot path (the other is
+        # ``with_default_opt_in``), and dropping a field at either one leaves
+        # every clause-level test green while production excludes nothing.
+        # Sharing the conversion is what lets the C8 nightly invariant traverse
+        # THIS hop instead of re-implementing it and agreeing with itself.
         results = self._wiki.query(
             query,
             max_results=limit,
             include_tag=include_tag,
             exclude_tags=self._exclude_tags,
+            scope=scope.to_recall_scope(opt_in),
         )
 
-        # Step 3: Python-side directory post-filter.
-        # Eligible: {scope.directory, 'global', '', None}. 'system' excluded (v5.65).
-        caller_dir = scope.directory if scope.directory else None
         candidates: list[Candidate] = []
         for page in results:
             pid = page.get("id")
             if pid is None:
-                continue
-            dc = page.get("directory_context")
-            if not is_directory_eligible(dc, caller_dir):
                 continue
             # Car C (#83): policy-driven recall exclusion, shared with
             # wiki_query since task 0134 (both search paths, one rule — see
@@ -96,8 +108,9 @@ class WikiProvider(SourceProvider):
             # (wiki_read / wiki_get / wiki_list) never apply it.
             # The tag opt-in is PER PAGE: passing tags is consent to see the
             # pages carrying them, not a blanket kill-switch for the filter.
-            # Disposition is switchable: one-field flip in policy.py.
-            if not is_recall_visible(page, self._tags):
+            # Disposition is switchable: one-field flip in policy.py — and
+            # C7's anti-drift test proves that flip also moves the emitted SQL.
+            if not is_recall_visible(page, opt_in):
                 continue
             native_score = float(page.get("_retrieval_score", 0.0))
             # Tag raw dict so orchestrator can set _source="wiki" downstream
@@ -110,7 +123,7 @@ class WikiProvider(SourceProvider):
                     title=page.get("title"),
                     content=page.get("content", ""),
                     native_score=native_score,
-                    directory_context=dc,
+                    project_id=page.get("project_id"),
                     raw=raw,
                 )
             )

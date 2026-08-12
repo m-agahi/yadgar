@@ -56,3 +56,21 @@ class WikiAddOptions:
     #                legacy title-derived path always upserts by slug regardless.
     slug: str | None = None
     upsert: bool = True
+    # Car F (0047 §7): server-side sanctioned insert. _wiki_write_canonical sets
+    # ``_sanctioned=True`` on its payload so the storage-layer mutability gate
+    # (mutability_gate.enforce_mutability) does not reject first-time inserts of
+    # mutability='locked' page_types (e.g. ``adr``). The token is threaded via
+    # WikiAddOptions so it survives the canonical-write seam and reaches
+    # ``storage.insert_wiki_page`` as the gate's ``sanctioned`` kwarg.
+    sanctioned: bool = False
+    # C3 (0047 PR#40 remediation §5.C3): enqueue-time project_id stamping.
+    # The value is resolved ONCE by the process that has the session (the core
+    # MCP tool) and stamped on the queue payload; the drainer carries it here
+    # instead of computing one, because neither container can derive an
+    # identity (no git binary, no host project mounts — §1.1 / ADR-0227).
+    # Reaches ``storage.insert_wiki_page`` as its ``caller_value``, so a page
+    # written by the drainer carries the SESSION's project_id, not a
+    # classifier guess. Independent of ``directory_context``: a page whose
+    # page_type policy forces ``storage_scope="global"`` keeps its real
+    # project_id — ownership and reach are different facts (§1.4).
+    project_id: str | None = None

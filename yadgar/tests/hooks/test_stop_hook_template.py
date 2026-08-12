@@ -12,7 +12,8 @@ Pinned here:
 - _resolve_prompt_template_path() returns an existing on-disk path
 - _PROMPT_TEMPLATE_PATH (module-level) is an existing on-disk path
 - template file contains the expected protocol content (adr_add, wiki_add,
-  project_brief, {directory}/{project} placeholders, substitution header)
+  project_brief, adr_list, task_list, task_write, {directory}/{project}
+  placeholders, substitution header)
 - main() reason is the short pointer line, NOT the full protocol
 - decision is still "block" (hook remains blocking)
 - missing/unresolvable template fails LOUD (RuntimeError), never a silent broken pointer
@@ -39,10 +40,22 @@ _TEMPLATE_PATH = _REPO / "core" / "hooks" / "templates" / "stop_checkpoint_promp
 # Deliberately duplicated here, NOT read from the template file — reading the
 # file back would make the assertion circular.  Update this pin ONLY when the
 # protocol text intentionally changes.
+# Car E (0047 §16) and Car G (0047 §7) rewrote the task-list and ADR sections:
+# the task-list mirror now reaches the SQL task ledger (task_list / task_write),
+# and the ADR dedup now reaches the SQL ADR ledger (adr_list). The legacy wiki
+# slug writes for tasks no longer exist and have no corresponding assertions.
 _EXPECTED_TEMPLATE = """<!-- YADGAR CHECKPOINT PROTOCOL
      Substitute these placeholders throughout this file before following instructions:
        {directory}      = your current working directory (absolute path; the project root)
-       {project}        = basename of {directory}
+       {project}        = the session's minted project_id — the `owner/repo` value
+                          emitted at SessionStart as `yadgar: project_id=<owner/repo>`.
+                          It is NOT the basename of {directory}: the basename is not an
+                          identity (two checkouts named `yadgar` are two projects), and
+                          the task ledger is keyed on the minted value (ADR-0227).
+                          If you cannot find that line, scroll for the `current_project`
+                          memory block, which carries the same value. If NEITHER exists,
+                          the mint failed — say so and SKIP the ledger steps below rather
+                          than inventing a key.
 -->
 
 Yadgar checkpoint. CAPTURE FIRST (steps 1-5), THEN maintenance (steps 6-7).
@@ -62,14 +75,20 @@ and a checkpoint built on a remembered pointer instead of the live bytes is the
 exact failure this protocol exists to prevent. On-disk paths → the Read tool;
 wiki slugs → wiki_read; the tagged agent-prompt library → recall.
 
-1. ADR CAPTURE (always run; the Yadgar wiki is the source of truth — no file,
-   works for non-git projects too).
-   Page: slug "{project}-adr-log", tag "adr", scoped to this directory.
+1. ADR CAPTURE (always run; the Yadgar ADR ledger is the source of truth —
+   no file, works for non-git projects too).
    - Read existing ADRs FIRST — actually CALL it now and dedup against the
-     RETURNED content, not your memory of it: wiki_read("{project}-adr-log",
-     directory="{directory}"). If the page is
-     absent the log is empty — no prior ADRs to dedup against. Do NOT create the
-     log manually; adr_add handles creation automatically.
+     RETURNED content, not your memory of it: adr_list(directory="{directory}",
+     project="{project}", status="open"). If the list is empty there are no
+     open ADRs to dedup
+     against. Do NOT create the log manually; adr_add handles creation
+     automatically.
+   <!-- Car G (0047 §7): step 1's read-first-dedup now reaches the SQL ADR
+        ledger via adr_list(directory=...) above. Pre-G the instruction
+        pointed at a wiki page whose slug followed the deleted-monolith
+        shape; that read path is gone. adr_list reads the ledger, NOT a
+        wiki page. Historical note only — do not re-introduce the legacy
+        wiki_read call. -->
    - Scan THIS session for durable decisions since the last checkpoint.
      KEEP (precision over recall): a clear durable decision — architecture, a
      tool/config choice, an approach committed-to, a scope cut; a conclusion we
@@ -84,6 +103,7 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    - For each new decision call:
        adr_add(
            directory="{directory}",
+           project="{project}",
            title=<short human-readable title>,
            status=<open|accepted|superseded|rejected|deprecated>,
            date=<ISO date>,
@@ -104,9 +124,12 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    the topic (wiki_list → slug → wiki_read the slug NOW and edit the content it
    RETURNS — do NOT rewrite a page from memory; update via
    wiki_add(replace_slug=<slug>, ..., directory="{directory}",
-   wait=True); no near-duplicate pages). If no
+   project="{project}", wait=True); no near-duplicate pages). If no
    page fits, create one with wiki_add(tags=[...], directory="{directory}",
-   wait=True).
+   project="{project}", wait=True).
+   EVERY scoped call in this protocol carries project="{project}". Since C5 an
+   identity is never derived, so a call that omits it is REJECTED with
+   {{"error": "unresolved_project"}} rather than scoped to a guess.
    Verify wiki_history. Facts/structure only — decisions go in step 1.
 
 3. AGENT-PROMPT CAPTURE (only if the library is enabled — skip silently otherwise).
@@ -114,15 +137,16 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    refined — one worth reusing for a recurring task shape (review, debug, explore,
    implement, etc.). Skip one-offs and trivial prompts.
    - Read existing patterns FIRST — actually CALL recall now and judge from the
-     RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"]) (or
+     RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"],
+     directory="{directory}", project="{project}") (or
      wiki_read the agent-prompt-toc page). See which task-shapes already have a
      pattern.
    - If an EXISTING pattern already covers this task-shape, IMPROVE/extend it:
      agent_prompt_save the SAME pattern slug — agent_prompt_save versions it.
    - Only create a NEW slug when no existing pattern fits. NEVER mint a
      near-duplicate: a differently-named clone of an existing shape.
-   - Call agent_prompt_save(directory="{directory}", pattern=<kebab-task-shape>,
-     content=<the prompt>, purpose=<one line>) — same slug to extend a match,
+   - Call agent_prompt_save(directory="{directory}", project="{project}",
+     pattern=<kebab-task-shape>, content=<the prompt>, purpose=<one line>) — same slug to extend a match,
      a new slug only when genuinely new.
 
 4. SUBAGENT FINDINGS CURATION (always run; findings sit in on-disk
@@ -135,7 +159,8 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
        repo structure/convention   → wiki_add / update owning page (step 2)
        reusable dispatch prompt     → agent_prompt_save (step 3)
        useful working fact          → memorize(content=REWRITTEN in your words,
-                                        context="{directory}", tags=[...])
+                                        context="{directory}", project="{project}",
+                                        tags=[...])
                                         — never store the raw bullet verbatim
        noise/status/one-off/dup     → DISCARD (do nothing)
      Dedup vs what you wrote this checkpoint + existing ADRs/wiki. Storing nothing is valid + common.
@@ -143,87 +168,50 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      only — never rm under ~/.claude/projects). Then: yadgar pending-findings --advance-state
      --transcript-path "<session transcript_path>" (batch-advance all just-listed).
 
-5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to the
-   wiki so it survives session exit / /clear. Page: slug "{project}-task-list",
-   tag "task-list", scoped to this directory. Page format = the SCHEMA block at
-   the bottom of this step; each task is a UNIQUE "## task:<id>" section.
+5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to
+   the task ledger so it survives session exit / /clear. The ledger is the
+   source of truth (0047 spine train Car E); the legacy wiki task-list page
+   is read-only marker-only.
    - Step 5a — RECONCILE YOUR OWN LIST FIRST. Call TaskList. TaskUpdate anything
      completed or blocked this session; TaskCreate any follow-ups you discovered.
      This is the every-checkpoint "update your task list" pass — do it before you
-     mirror, so the page reflects reality.
-   - Step 5b — READ THE PAGE FOR REAL: CALL wiki_read("{project}-task-list",
-     directory="{directory}") NOW and reconcile against the tasks + updated_at it
-     RETURNS — never against a remembered copy of the page. Absent = no saved list
-     yet.
-   - Step 5c — BRANCH on {have open tasks after reconcile?} × {page exists?}:
-     (The task-list page is CANONICAL — one call lands it via the sanctioned
-     wiki_write_task_list writer, so the session-start restore-nudge resolves it
-     from any project, including a non-git project. You do NOT craft a
-     wiki_add — the writer handles placement server-side.)
-     - have tasks · NO page → CREATE. wiki_write_task_list(project="{project}",
-       content=<full page: ## Meta + one ## task:<id> section each>,
-       directory="{directory}").
-     - NO tasks · NO page → SKIP. Nothing to do.
-     - NO tasks · page EXISTS → CATCH-UP SYNC. The page has tasks you don't.
-       Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your harness
-       via TaskCreate — recovers a missed session-start restore or a concurrent
-       session's work. GUARD: never adopt a completed task; if ALL page tasks are
-       completed, OR the page's DB updated_at (from the wiki_read metadata) is
-       older than 14 days, do NOT adopt — note "stale/finished saved list" and
-       leave it. Adopt by judgment: open tasks relevant to the work you are about
-       to do; skip ones clearly from a finished or unrelated effort.
-     - have tasks · page EXISTS → MERGE + WRITE BACK. Reconcile the page's open
-       tasks with yours (union; your live status wins for tasks you own; keep
-       page-only open tasks). Default write = FULL REWRITE:
-       wiki_write_task_list(project="{project}", content=<merged full page>,
-       directory="{directory}"). OPTIONAL surgical path (only when your change is
-       confined to ONE task): wiki_append_section(slug="{project}-task-list",
-       section_heading="task:<id>", position="replace_section", heading_type="h2",
-       content=<that task's body>, directory="{directory}") — the "## task:<id>"
-       heading is UNIQUE so this is section-atomic and will not clobber a
-       concurrent edit to a DIFFERENT task's section.
-   - PER-TASK BODY: render fields as "- key: value" flat bullets UNDER the
-     "## task:<id>" heading — subject, status, active_form (optional),
-     description, context, blockedBy, blocks, modified. Multi-line values
-     (description, context) MUST indent continuation lines 2 spaces so an
-     embedded "##" line or ``` fence cannot be mis-parsed as a section boundary
-     (same discipline as the ADR to_markdown_body renderer). The "context" field
-     carries related-context pointers to where the task's work lives: file paths ·
-     [[wiki-slug]] · docs/plans/*.md · mem:<id>. The "modified" field is
-     ISO-8601 UTC, bumped ONLY on a real change to that task (per-task freshness).
-     Do NOT hand-write a page-level "updated:" stamp — the age gate reads the DB
-     updated_at column. Verify wiki_history after writing.
-   - SCHEMA (page body):
-     ```markdown
-     <!-- yadgar task-list page — schema v1. One "## task:<id>" section per task.
-          Fields are "- key: value" bullets; multi-line values indent 2 spaces.
-          status ∈ {pending, in_progress, completed}. Restore: recreate open
-          tasks via TaskCreate. -->
+     mirror, so the ledger reflects reality.
+   - Step 5b — READ THE LEDGER FOR REAL: CALL task_list(project_id="{project}")
+     NOW and reconcile against the tasks + updated_at it RETURNS — never against
+     a remembered copy. D37 default is open-only (status ∈ {pending,
+     in_progress}); closed/archived require an explicit filter. Absent = no
+     saved ledger yet.
+   - Step 5c — BRANCH on {have open tasks after reconcile?} × {ledger has
+     open tasks?}:
+     - have tasks · NO ledger rows → CREATE. For each open task call
+       task_write(project_id="{project}", title=<subject>, status=<status>,
+       state=<state>, active_form=<active_form>). One call per task.
+     - NO tasks · NO ledger rows → SKIP. Nothing to do.
+     - NO tasks · ledger has rows → CATCH-UP SYNC. The ledger has tasks you
+       don't. Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your
+       harness via TaskCreate — recovers a missed session-start restore or a
+       concurrent session's work. GUARD: never adopt a completed task; if ALL
+       ledger tasks are completed, OR the ledger's updated_at is older than 14
+       days, do NOT adopt — note "stale/finished saved list" and leave it. Adopt
+       by judgment: open tasks relevant to the work you are about to do; skip
+       ones clearly from a finished or unrelated effort.
+     - have tasks · ledger has rows → MERGE + WRITE BACK. Reconcile the ledger's
+       open tasks with yours (union; your live status wins for tasks you own;
+       keep ledger-only open tasks). For each task call task_write with the
+       merged fields. project_id is a caller parameter (ADR-0202) — use the
+       same {project} for every call this step.
+   - The harness `TaskCreate` subject must preserve the `[N]` prefix from the
+     ledger so the next session's reconcile can match it (D11). The task
+     ledger ids are Crockford base32 (digits + a-z minus i,l,o,u) with an
+     optional origin/ prefix for foreign tasks; the prefix is preserved in
+     the subject verbatim.
 
-     # {project} task list
-
-     ## Meta
-     - project: {project}
-     - open: <N> · completed: <M>
-
-     ## task:0003
-     - subject: <one line>
-     - status: in_progress
-     - active_form: <present-tense label>
-     - description: <text; continuation lines indent 2 spaces>
-     - context: src/foo.py · [[some-wiki-slug]] · docs/plans/x.md · mem:4821
-     - blockedBy: 0005
-     - blocks:
-     - modified: 2026-07-14T18:20:32Z
-     ```
-     Zero-pad each <id> to 4 digits ("task:0001" ≠ "task:0012") so the section
-     matcher is exact. status is the harness value VERBATIM, enum
-     {pending, in_progress, completed} — there is NO "blocked" status (blocking
-     is the blockedBy array).
-
-6. Call project_brief("{directory}", mode="signals"). UNCONDITIONAL — this call
-   is how you LEARN whether maintenance applies; it is cheap and you may never
-   skip it. Its recommended_actions list drives step 7.
+6. Call project_brief("{directory}", mode="signals", project="{project}").
+   UNCONDITIONAL — this call is how you LEARN whether maintenance applies; it is
+   cheap and you may never skip it. Its recommended_actions list drives step 7.
+   `project=` is not optional decoration: the session-end sentinel signal is
+   keyed on the project_id, so a call that omits it silently loses that action
+   (yadgar will not derive one from the directory — ADR-0227).
 
 7. MAINTENANCE — MANDATORY. You MUST work the recommended_actions list from
    step 6 to completion. It is NOT optional and NOT droppable under length, time,
@@ -249,13 +237,15 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      consider_refresh_checkpoint, extract_last_session_findings, update_roadmap,
      review_rejections.)
    - bootstrap_project (no suggested_call): propose a <=1500-char project-summary
-     memory, then bootstrap_project("{directory}", content).
+     memory, then bootstrap_project("{directory}", content, project="{project}").
+     (C5b: bootstrap_project raises without project= — this line is the one
+     place the protocol used to omit it, against its own rule at the top.)
    - Any action type NOT covered above AND with no suggested_call → SKIP and flag
      it in your reply (do not improvise the mechanics).
 
 [yadgar] Checkpoint cadence reached — capture, then continue. If you were
 mid-thought, repeat your last question so the conversation continues. Resume after
-/clear or session end: restore(directory="{directory}").
+/clear or session end: restore(directory="{directory}", project="{project}").
 """
 
 # The short pointer reason emitted by main() — the only thing that changes in
@@ -263,6 +253,13 @@ mid-thought, repeat your last question so the conversation continues. Resume aft
 # by _resolve_prompt_template_path(); the format string here is a pattern test.
 _REASON_PREFIX = "[yadgar] Checkpoint due. Read "
 _REASON_SUFFIX = " and follow all the instructions in it."
+
+# Compile-time assertion: the byte-equal pin must match the on-disk template.
+# This is a defensive check at import time so a drift between the template and
+# the pin surfaces as a MODULE-LOAD error rather than a single test failure.
+assert _EXPECTED_TEMPLATE == _TEMPLATE_PATH.read_text(encoding="utf-8"), (
+    "_EXPECTED_TEMPLATE does not match the on-disk template — regen required"
+)
 
 
 def _load_module():
@@ -308,15 +305,21 @@ def test_template_has_protocol_content():
     # Substitution header present
     assert "{directory}" in content
     assert "{project}" in content
-    # Protocol steps present
+    # Protocol calls present (step 1 ADR capture adr_add + step 2 wiki)
     assert "adr_add(" in content
     assert "wiki_add(" in content
+    # project_brief (step 6 — drives the maintenance pass)
     assert "project_brief(" in content
-    # wiki_append_section reappears in the TASK-LIST MIRROR step (step 4) as the
-    # OPTIONAL surgical single-task path (replace_section on a unique
-    # "## task:<id>" heading). Car B (#74) had removed a hand-rolled ADR append;
-    # this is a different, deliberate reintroduction — assert it is present.
-    assert "wiki_append_section(" in content
+    # Car G (0047 §7): ADR read-first-dedup now reaches the SQL ADR ledger.
+    assert "adr_list(" in content
+    # Car E (0047 §16): task-list mirror now reaches the SQL task ledger.
+    assert "task_list(project_id=" in content
+    assert "task_write(project_id=" in content
+    # The wiki_append_section surgical path was deliberately removed by Car E
+    # (the ledger is row-based, not markdown-section-atomic, so the
+    # replace_section shortcut is gone). The wiki still owns structural
+    # write-back in step 2 step — but not task-list mutation.
+    assert "wiki_append_section(" not in content
 
 
 def test_template_has_substitution_header():
@@ -334,7 +337,12 @@ def test_agent_prompt_step_is_read_first():
     step 3 consistent with the read-first shape of steps 1 (ADR) + 2 (wiki)."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     # Read-existing-first: recall the tagged agent-prompt library before saving.
-    assert 'recall(type="wiki", tags=["agent-prompt"])' in content
+    # C5 (0047 PR#40 §5) split the literal across a line and added the now-required
+    # scope arguments, so the pin is on the two load-bearing fragments rather than
+    # on one contiguous string — a whitespace-sensitive pin would break on every
+    # reflow while a substring-free pin would stop asserting read-first at all.
+    assert 'recall(type="wiki", tags=["agent-prompt"]' in content
+    assert 'project="{project}") (or' in content
     # Extend a match on the SAME slug (versioning) rather than clone it.
     assert "SAME pattern slug" in content
     # Explicit no-near-duplicate guard.
@@ -346,61 +354,65 @@ def test_agent_prompt_step_is_read_first():
 
 
 def test_task_list_mirror_step_present():
-    """Step 4 (TASK-LIST MIRROR) persists the harness task list to the wiki.
-
-    Asserts the step names the harness tools (TaskList/TaskUpdate/TaskCreate),
-    the four state-machine cases, the catch-up guard, the schema shape, the
-    status enum, the related-context pointer, the 2-space continuation-indent
-    rule, and the optional surgical wiki_append_section(replace_section) path.
-    """
+    """Step 5 (TASK-LIST MIRROR) persists the harness task list to the SQL
+    task ledger (Car E, 0047 §16). The wiki task-list page is gone — it is
+    read-only marker-only. Asserts the step names the harness tools
+    (TaskList/TaskUpdate/TaskCreate), the four state-machine cases, the
+    catch-up guard, the ledger read/write call shapes, the id-format rules
+    (Crockford base32 with optional origin/ prefix), the [N] prefix carry,
+    and the 14-day age gate."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
-    # Named step + slug + the sanctioned canonical writer (Car 1). The tag +
-    # page_type are baked into wiki_write_task_list, not named in the template.
+    # Named step + ledger call shapes (Car E).
     assert "TASK-LIST MIRROR" in content
-    assert "{project}-task-list" in content
-    assert 'wiki_write_task_list(project="{project}"' in content
+    assert 'task_list(project_id="{project}")' in content
+    assert 'task_write(project_id="{project}"' in content
     # Reconcile own list FIRST via the harness tools.
     assert "TaskList" in content
     assert "TaskUpdate" in content
     assert "TaskCreate" in content
     assert "RECONCILE YOUR OWN LIST FIRST" in content
-    # Read-before-write.
-    assert 'wiki_read("{project}-task-list"' in content
-    # The FOUR cases of the state machine.
+    # Read-before-write (live ledger call, not a remembered copy).
+    assert "READ THE LEDGER FOR REAL" in content
+    # The FOUR cases of the state machine — CREAT/E/SKIP/CATCH-UP SYNC/MERGE + WRITE BACK.
     assert "CREATE" in content
     assert "SKIP" in content
     assert "CATCH-UP SYNC" in content
     assert "MERGE + WRITE BACK" in content
-    # Catch-up guard: skip completed, all-done→skip, 14-day age gate on DB updated_at.
+    # Catch-up guard: skip completed, all-done→skip, 14-day age gate on ledger updated_at.
     assert "never adopt a completed task" in content
-    assert "ALL page tasks are\n     completed" in content or "ALL page tasks are completed" in (
-        " ".join(content.split())
+    assert "ALL\n       ledger tasks are completed" in content or (
+        "ALL ledger tasks are completed" in " ".join(content.split())
     )
-    assert "14 days" in content
+    assert "14\n       days" in content or "14 days" in " ".join(content.split())
     assert "updated_at" in content
-    # Section-per-task schema + status enum + verbatim.
-    assert "## task:<id>" in content
-    assert "{pending, in_progress, completed}" in content
-    assert 'no "blocked" status' in " ".join(content.split()).replace("NO", "no")
-    # key: value fields under the heading.
-    for field in ("subject", "status", "description", "context", "blockedBy", "blocks", "modified"):
-        assert field in content, f"per-task field {field!r} missing from schema"
-    # Related-context pointers clause.
-    assert "related-context pointers" in content
-    assert "mem:<id>" in content
-    # 2-space continuation-indent rule (section-boundary poisoning defence).
-    assert "indent continuation lines 2 spaces" in content
-    assert "mis-parsed as a section boundary" in content
-    # Zero-pad discipline for exact section matching.
-    assert "Zero-pad each <id> to 4 digits" in content
-    assert '"task:0001" ≠ "task:0012"' in content
-    # Optional surgical single-task path.
-    assert "replace_section" in content
-    assert 'section_heading="task:<id>"' in content
-    # The full-rewrite default write goes through the sanctioned canonical writer
-    # (Car 1) — replace_slug is baked in server-side, so the template no longer
-    # instructs a raw wiki_add(replace_slug=...).
-    assert 'wiki_write_task_list(project="{project}", content=<merged full page>' in content
+    # Ledger two-value status enum (D37: open-only default; closed tasks stay
+    # visible only via explicit filter). The full harness enum
+    # {pending, in_progress, completed} is still referenced for the
+    # CATCH-UP-SYNC adoption guard ("OPEN tasks (status ∈ {pending,
+    # in_progress})").
+    assert "status ∈ {pending,\n     in_progress}" in content or (
+        "status ∈ {pending, in_progress}" in " ".join(content.split())
+    )
+    # Ledger read parity: D37 default is open-only.
+    assert "D37 default is open-only" in content
+    # [N] prefix preservation across the ledger boundary (D11) — the next
+    # session's reconcile matches on the prefix.
+    assert "`[N]` prefix from the\n     ledger" in content or (
+        "`[N]` prefix from the ledger" in " ".join(content.split())
+    )
+    # Crockford base32 id format + optional origin/ prefix for foreign tasks.
+    assert "Crockford base32" in content
+    assert "origin/" in content
+    # project_id is a caller parameter (ADR-0202); the step must call it out.
+    assert "project_id is a caller parameter" in content
+    assert "ADR-0202" in content
+    # The legacy wiki-page artifacts are gone — no slug, no sanctioned writer,
+    # no per-task markdown schema, no zero-pad 4-digit id discipline.
+    assert "{project}-task-list" not in content
+    assert "wiki_write_task_list" not in content
+    assert "## task:<id>" not in content
+    assert "Zero-pad each <id>" not in content
+    assert "wiki_append_section" not in content
 
 
 def test_subagent_findings_curation_step_present():
@@ -430,9 +442,9 @@ def test_subagent_findings_curation_step_present():
 
 
 def test_maintenance_step_is_mandatory_with_closed_allowed_skip_list():
-    """Issue 2 (Car 3): the maintenance pass (steps 5-6) is MANDATORY. The
+    """Issue 2 (Car 3): the maintenance pass (steps 6-7) is MANDATORY. The
     header no longer pre-authorizes dropping maintenance under length pressure,
-    step 5 is UNCONDITIONAL, and step 6 defines a closed allowed-skip list."""
+    step 6 is UNCONDITIONAL, and step 7 defines a closed allowed-skip list."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     normalized = " ".join(content.split())
 
@@ -442,10 +454,10 @@ def test_maintenance_step_is_mandatory_with_closed_allowed_skip_list():
     )
     assert "run ALL seven steps" in normalized
 
-    # Step 5 (project_brief signals) is explicitly unconditional.
+    # Step 6 (project_brief signals) is explicitly unconditional.
     assert "UNCONDITIONAL" in content
 
-    # Step 6 is MANDATORY and states it is not droppable under length pressure.
+    # Step 7 is MANDATORY and states it is not droppable under length pressure.
     assert "MAINTENANCE — MANDATORY" in content
     assert "NOT optional and NOT droppable" in normalized
 
@@ -467,7 +479,11 @@ def test_maintenance_step_is_mandatory_with_closed_allowed_skip_list():
 def test_read_instructions_are_strict_live_reads():
     """Issue 3 (Car 3): every read-a-file/slug/checkpoint instruction strictly
     tells the model to CALL the tool and act on the RETURNED content, not
-    paraphrase from memory. Failure mode: model improvises off a short pointer."""
+    paraphrase from memory. Failure mode: model improvises off a short pointer.
+
+    Car E + Car G re-routed the task-list and ADR read instructions to the SQL
+    ledgers; the per-step strict-read reinforcement must still fire on the
+    NEW live-call shapes (task_list, adr_list), not on the deleted wiki slugs."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     normalized = " ".join(content.split())
 
@@ -482,7 +498,8 @@ def test_read_instructions_are_strict_live_reads():
     assert "agent-prompt library → recall" in normalized
 
     # Per-step strict-read reinforcement.
-    # Step 1 ADR read.
+    # Step 1 ADR read (Car G: now adr_list, not wiki_read).
+    assert "adr_list(" in content
     assert "dedup against the\n     RETURNED content" in content or (
         "dedup against the RETURNED content" in normalized
     )
@@ -494,22 +511,33 @@ def test_read_instructions_are_strict_live_reads():
     assert "judge from the\n     RETURNED patterns" in content or (
         "judge from the RETURNED patterns" in normalized
     )
-    # Step 4b task-list read.
-    assert "READ THE PAGE FOR REAL" in content
+    # Step 5b task-list read (Car E: now task_list, not wiki_read; the old
+    # wiki_read("{project}-task-list" path is gone).
+    assert "READ THE LEDGER FOR REAL" in content
     assert "never against a remembered copy" in normalized
+    assert 'wiki_read("{project}-task-list"' not in content
 
 
 def test_task_list_mirror_status_enum_has_no_blocked():
-    """The status enum is EXACTLY {pending, in_progress, completed} — no 'blocked'
-    status (blocking is expressed via the blockedBy array, per the verified live
-    harness output)."""
+    """The ledger task-status enum is {pending, in_progress} for the open-only
+    default (D37); the closed/archived states require an explicit filter —
+    there is no separate 'blocked' status (the legacy markdown SCHEMA block is
+    gone in the Car E ledger rewrite; the {blockedBy, context, modified, ...}
+    fields used to live there as per-task "- key: value" bullets, but the
+    ledger is now row-based and stores those fields as native columns).
+    Asserting on the surviving enum text + the absence of any "status:
+    blocked" example is the strongest still-applicable guard against an
+    accidental reintroduction of a blocked status value."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
-    assert "{pending, in_progress, completed}" in content
-    # The schema must state blocking is the blockedBy array, not a status value.
     normalized = " ".join(content.split())
-    assert "blockedBy array" in normalized
-    # There must be no "status: blocked" example anywhere in the schema.
+    # The ledger two-value open enum must appear (D37 default).
+    assert "status ∈ {pending, in_progress}" in normalized
+    # There must be no "status: blocked" example anywhere in the template.
     assert "status: blocked" not in content
+    # The full legacy {pending, in_progress, completed} enum (which the
+    # CATCH-UP-SYNC adoption guard still references) must NOT appear — the
+    # ledger two-value open enum is the canonical set.
+    assert "{pending, in_progress, completed}" not in normalized
 
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,10 @@
 import logging
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import (
+    observe_project_id_skip,
+    resolve_project_id_from_rows,
+)
 from yadgar._shared.storage.directory import dominant_directory
 from yadgar.backend.cls_store.patterns import (
     _is_degenerate_auto_abstracted,
@@ -40,6 +44,27 @@ class _PromotionMixin:
     """Mixin: _promote_pattern — promotes one qualifying cluster to a semantic memory."""
 
     @observe(tier="stage", metric="consolidation.cls.promote")
+    def _near_duplicate_semantic_exists(self, schema_embedding) -> bool:
+        """True when a semantic memory already covers this schema.
+
+        Extracted from ``_promote_pattern`` in C4 (0047 PR#40 §5): adding the
+        project-resolution guard pushed that method's cyclomatic complexity to
+        16, one over the I30 hard cap. This block is the natural seam — it is
+        step (c) of the promotion sequence and has no other coupling to the
+        surrounding steps. Behaviour is unchanged.
+        """
+        if schema_embedding is None:
+            return False
+        existing = self._storage.search_vectors(schema_embedding, top_k=3, min_heat=0.0)
+        for mid, _distance in existing:
+            mem = self._storage.get_memory(mid)
+            if mem and mem.get("store_type") == "semantic":
+                sim = self._embeddings.similarity(schema_embedding, mem["embedding"])
+                if sim > self._settings.CURATION_SIMILARITY_THRESHOLD:
+                    return True
+        return False
+
+    @observe(tier="stage", metric="consolidation.cls.promote")
     def _promote_pattern(self, pattern: dict) -> bool:
         """Promote a qualifying cluster to a semantic memory.
 
@@ -67,19 +92,31 @@ class _PromotionMixin:
 
         # c. Check if we already have a similar semantic memory
         schema_embedding = self._embeddings.encode(schema)
-        if schema_embedding is not None:
-            existing = self._storage.search_vectors(schema_embedding, top_k=3, min_heat=0.0)
-            for mid, _distance in existing:
-                mem = self._storage.get_memory(mid)
-                if mem and mem.get("store_type") == "semantic":
-                    sim = self._embeddings.similarity(schema_embedding, mem["embedding"])
-                    if sim > self._settings.CURATION_SIMILARITY_THRESHOLD:
-                        return False
+        if self._near_duplicate_semantic_exists(schema_embedding):
+            return False
 
-        # d. Create semantic memory — derive originating directory from cluster members.
-        # Use dominant_directory() over cluster_mems to get the real project dir
-        # (not directories[0] which is set-ordered and loses counts; not "system").
-        # Cross-cluster or unknown → "global" (safe, cross-cutting).
+        # d. Create semantic memory.
+        #
+        # C4 (0047 PR#40 §5): the cluster's OWN rows name the project. Exactly
+        # one distinct identifying ``project_id`` → the promotion belongs to
+        # that project; zero or two or more → it belongs to none, and the
+        # promotion is SKIPPED and counted. It is never collapsed onto a
+        # sentinel: a semantic memory stamped ``"global"`` because its inputs
+        # disagreed is exactly the phantom-namespace row §1.4 forbids, and
+        # this writer plus ``strengthen.py`` are the two that actually mint it.
+        # Nothing is derived — this runs in the backend container (ADR-0227).
+        primary_project = resolve_project_id_from_rows(cluster_mems)
+        if primary_project is None:
+            observe_project_id_skip("cls_promotion")
+            logger.info(
+                "Skipping promotion: cluster of %d memories names no single "
+                "project_id (0 or >=2 distinct). Not collapsing to a sentinel.",
+                len(cluster_mems),
+            )
+            return False
+
+        # directory_context keeps its own resolution — it is the legacy read key
+        # until C7 re-keys the readers onto project_id.
         cluster_dirs = [m.get("directory_context") for m in cluster_mems]
         primary_dir = dominant_directory(cluster_dirs)
 
@@ -89,6 +126,7 @@ class _PromotionMixin:
                 "embedding": schema_embedding,
                 "tags": ["semantic", "auto-abstracted"],
                 "directory_context": primary_dir,
+                "project_id": primary_project,
                 "heat": 0.8,
                 "is_stale": False,
                 "embedding_model": self._embeddings.get_model_name(),

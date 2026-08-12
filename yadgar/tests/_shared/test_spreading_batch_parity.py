@@ -34,6 +34,12 @@ from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.storage import StorageEngine
 from yadgar.backend.retrieval.core import Retriever
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture
 def seeded(tmp_path):
@@ -90,20 +96,38 @@ def seeded(tmp_path):
     # Memories whose content contains entity names.
     mids = {
         "seed": storage.insert_memory(
-            {"content": "seed memory mentioning Alpha", "directory_context": "/x"}
+            {
+                "content": "seed memory mentioning Alpha",
+                "directory_context": "/x",
+                "project_id": _PROJECT,
+            }
         ),
         "bravo": storage.insert_memory(
-            {"content": "note about Bravo internals", "directory_context": "/x"}
+            {
+                "content": "note about Bravo internals",
+                "directory_context": "/x",
+                "project_id": _PROJECT,
+            }
         ),
         "bravo_charlie": storage.insert_memory(
-            {"content": "Bravo and Charlie interplay", "directory_context": "/x"}
+            {
+                "content": "Bravo and Charlie interplay",
+                "directory_context": "/x",
+                "project_id": _PROJECT,
+            }
         ),
         "delta": storage.insert_memory(
-            {"content": "Delta pathway analysis", "directory_context": "/x"}
+            {"content": "Delta pathway analysis", "directory_context": "/x", "project_id": _PROJECT}
         ),
-        "echo": storage.insert_memory({"content": "Echo leaf details", "directory_context": "/x"}),
+        "echo": storage.insert_memory(
+            {"content": "Echo leaf details", "directory_context": "/x", "project_id": _PROJECT}
+        ),
         "foxtrot": storage.insert_memory(
-            {"content": "Foxtrot unrelated content", "directory_context": "/x"}
+            {
+                "content": "Foxtrot unrelated content",
+                "directory_context": "/x",
+                "project_id": _PROJECT,
+            }
         ),
     }
 

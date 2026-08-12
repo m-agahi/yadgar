@@ -14,6 +14,12 @@ from yadgar._shared.runtime.sr_session import SRTransitionRecorder
 from yadgar.core import server
 from yadgar.tests.conftest import memorize_sync
 
+# C13 (0047 PR#40 §5): seed helpers must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own memory dict still reds, which is the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass", "admin_backend_bypass")
 
 
@@ -48,7 +54,7 @@ def _store_novel_memory(content: str, context: str = "/test/project", tags=None)
     """
     if tags is None:
         tags = ["testing"]
-    return memorize_sync(content, context, tags)
+    return memorize_sync(content, context, tags, project=_PROJECT)
 
 
 # ── Tests: Remember Pipeline ──────────────────────────────────────────
@@ -140,6 +146,7 @@ class TestWriteGate:
             "Discovered critical XSS vulnerability in authentication module",
             "/test/security",
             ["critical", "security"],
+            project=_PROJECT,
         )
         assert result.get("stored", True) is not False
         assert result.get("id") is not None
@@ -194,13 +201,15 @@ class TestRecallFullPipeline:
             "/test/recall",
             ["python", "asyncio"],
         )
-        results = server.recall("asyncio event loop", max_results=5, directory="/test/recall")
+        results = server.recall(
+            "asyncio event loop", max_results=5, directory="/test/recall", project=_PROJECT
+        )
         assert len(results) >= 1
         assert any("asyncio" in r["content"] for r in results)
 
     def test_recall_no_embedding_leak(self):
         _store_novel_memory("embedding leak test data", "/test/recall", ["test"])
-        results = server.recall("embedding leak test", directory="/test/recall")
+        results = server.recall("embedding leak test", directory="/test/recall", project=_PROJECT)
         for r in results:
             assert "embedding" not in r
 
@@ -217,19 +226,24 @@ class TestRecallFullPipeline:
             ["formatting"],
         )
 
-        # Add a hard rule: only show memories with importance > 0.7
+        # Add a hard rule: only show memories with importance > 0.9.
+        # C10 (0047 §5(a)) RETIRED scope="directory" — add_rule now raises on it
+        # rather than minting a rule that is dead on arrival (its scope_value
+        # would hold a filesystem path, which can never equal a project_id).
+        # Re-keyed onto the replacement kind: scope="project", matched by exact
+        # equality against the project_id the recall below is scoped to.
         rule_result = server.add_rule(
             rule_type="hard",
-            scope="directory",
+            scope="project",
             condition="importance > 0.9",
             action="filter",
             priority=10,
-            scope_value="/test/rules",
+            scope_value=_PROJECT,
         )
         assert rule_result["status"] == "created"
 
         # Recall should apply the filter
-        results = server.recall("validate user input", directory="/test/rules")
+        results = server.recall("validate user input", directory="/test/rules", project=_PROJECT)
         # Results from /test/rules should satisfy the rule
         for r in results:
             if r.get("directory_context") == "/test/rules":
@@ -248,7 +262,9 @@ class TestReconsolidationOnRecall:
         mid = result["id"]
 
         # Recall with a very different context — triggers reconsolidation
-        server.recall("completely unrelated quantum physics topic", directory="/test/recon")
+        server.recall(
+            "completely unrelated quantum physics topic", directory="/test/recon", project=_PROJECT
+        )
         # Reconsolidation should have run (updating plasticity at minimum)
         storage = server._get_storage()
         mem = storage.get_memory(mid)
@@ -279,8 +295,8 @@ class TestCognitiveMapUpdates:
         )
 
         # Recall both to trigger transition recording
-        server.recall("first memory cognitive map", directory="/test/cogmap")
-        server.recall("second memory cognitive map", directory="/test/cogmap")
+        server.recall("first memory cognitive map", directory="/test/cogmap", project=_PROJECT)
+        server.recall("second memory cognitive map", directory="/test/cogmap", project=_PROJECT)
 
         # The _last_recalled_ids dict should be populated
         assert len(server._last_recalled_ids) >= 0  # may or may not have recorded yet
@@ -301,7 +317,9 @@ class TestMetacognitionLimitsContext:
                 ["design", "test"],
             )
 
-        results = server.recall("system design patterns", max_results=10, directory="/test/meta")
+        results = server.recall(
+            "system design patterns", max_results=10, directory="/test/meta", project=_PROJECT
+        )
         # Metacognition should limit results to COGNITIVE_LOAD_LIMIT (4)
         # But only if there are more results than the limit
         limit = server._metacognition._chunk_limit
@@ -433,6 +451,7 @@ class TestBackwardCompatibility:
                 "embedding": embedding,
                 "tags": ["legacy"],
                 "directory_context": "/old/project",
+                "project_id": _PROJECT,
                 "heat": 0.8,
                 "is_stale": False,
                 "embedding_model": embeddings.get_model_name(),
@@ -440,7 +459,7 @@ class TestBackwardCompatibility:
         )
 
         # Verify recall still works
-        results = server.recall("old format memory", directory="/old/project")
+        results = server.recall("old format memory", directory="/old/project", project=_PROJECT)
         assert len(results) >= 0  # Should not crash
 
         # Verify validate still works

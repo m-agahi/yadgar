@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -31,7 +32,9 @@ def _engines(tmp_path_factory):
 
 def test_memorize_returns_immediately_with_queued_status():
     """memorize() fast path returns {stored, queued, queue_id} without running heavy work."""
-    result = server.memorize("fast path test content", "/tmp/test", ["test"])
+    result = server.memorize(
+        "fast path test content", "/tmp/test", ["test"], project=TEST_PROJECT_ID
+    )
     assert result["stored"] is True
     assert result["queued"] is True
     assert "queue_id" in result
@@ -40,7 +43,7 @@ def test_memorize_returns_immediately_with_queued_status():
 
 def test_memorize_response_has_no_id_on_fast_path():
     """The fast path does not return an 'id' field — callers must flush to get one."""
-    result = server.memorize("no id on fast path", "/tmp/test", ["test"])
+    result = server.memorize("no id on fast path", "/tmp/test", ["test"], project=TEST_PROJECT_ID)
     assert "id" not in result
 
 
@@ -54,7 +57,7 @@ def test_memorize_too_large_returns_synchronously():
     before_count = len(list(queue_dir.glob("*.json")))
 
     big_content = "x" * (32_768 + 1)
-    result = server.memorize(big_content, "/tmp/test", ["test"])
+    result = server.memorize(big_content, "/tmp/test", ["test"], project=TEST_PROJECT_ID)
 
     after_count = len(list(queue_dir.glob("*.json")))
     assert result["stored"] is False
@@ -71,7 +74,7 @@ def test_memorize_secret_detected_returns_synchronously():
     secret_content = (
         "My AWS key is AKIAIOSFODNN7EXAMPLE and secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
     )
-    result = server.memorize(secret_content, "/tmp/test", ["test"])
+    result = server.memorize(secret_content, "/tmp/test", ["test"], project=TEST_PROJECT_ID)
 
     after_count = len(list(queue_dir.glob("*.json")))
     assert result["stored"] is False
@@ -84,25 +87,28 @@ def test_memorize_secret_detected_returns_synchronously():
 def test_memorize_drain_actually_persists(flush_queue, recall_backend_bypass):
     """memorize() + flush_queue() makes the memory searchable via recall()."""
     content = "drain replay persistence test unique content xyz"
-    result = server.memorize(content, "/tmp/persist", ["test"])
+    result = server.memorize(content, "/tmp/persist", ["test"], project=TEST_PROJECT_ID)
     assert result["queued"] is True
 
     flush_queue()
 
-    hits = server.recall(content[:50], directory="/tmp/persist")
+    hits = server.recall(content[:50], directory="/tmp/persist", project=TEST_PROJECT_ID)
     assert any(h["content"] == content for h in hits), "Memory was not found after drain replay"
 
 
 def test_memorize_drain_preserves_context_and_tags(flush_queue, recall_backend_bypass):
     """After drain, the memory has the correct directory_context and tags."""
     content = "context and tags preservation test content abc"
-    server.memorize(content, "/projects/myapp", ["infra", "v4test"])
+    server.memorize(content, "/projects/myapp", ["infra", "v4test"], project=TEST_PROJECT_ID)
     flush_queue()
 
-    hits = server.recall(content[:50], directory="/projects/myapp")
+    hits = server.recall(content[:50], directory="/projects/myapp", project=TEST_PROJECT_ID)
     match = next((h for h in hits if h["content"] == content), None)
     assert match is not None
-    assert match["directory_context"] == "/projects/myapp"
+    # C10f (0047 PR#40 §5): directory_context is stamped from the resolved
+    # project_id ONLY — "/projects/myapp" here is an optional staleness-hash
+    # path (`context`), never a scope key. See memorize()'s docstring.
+    assert match["directory_context"] == TEST_PROJECT_ID
     assert "infra" in match["tags"]
 
 

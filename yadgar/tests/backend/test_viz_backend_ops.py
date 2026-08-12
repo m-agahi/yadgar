@@ -12,6 +12,11 @@ from __future__ import annotations
 
 import pytest
 
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 
 @pytest.fixture(scope="module")
 def storage(module_storage):
@@ -48,6 +53,7 @@ class TestRunVizOp:
 
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "viz node memory",
                 "directory_context": "/tmp/vizproj",
                 "tags": ["test"],
@@ -73,6 +79,7 @@ class TestRunVizOp:
 
         mem_id = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "hood center",
                 "directory_context": "/tmp/vizproj",
                 "tags": ["test"],
@@ -91,6 +98,7 @@ class TestRunVizOp:
 
         mem_id = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT,
                 "content": "positioned memory",
                 "directory_context": "/tmp/vizproj",
                 "tags": ["test"],
@@ -182,6 +190,7 @@ class TestGraphRelayoutOp:
         for i in range(n):
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT,
                     "content": f"relayout node {i}",
                     "directory_context": "/tmp/relayoutproj",
                     "tags": ["test"],

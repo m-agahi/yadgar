@@ -20,6 +20,7 @@ import json
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # R3 Car 3d: update_active_work / audit_anchors write halves forward to the
 # backend /admin op. Route those forwards through run_admin_op against the
@@ -46,7 +47,7 @@ def test_soft_active_work_emitted_in_warn_window(monkeypatch, flush_queue):
 
     settings = get_settings()
     directory = "/tmp/soft_aw_warn_test"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     flush_queue()
 
     warn_h = settings.ACTIVE_WORK_WARN_HOURS
@@ -65,7 +66,7 @@ def test_soft_active_work_emitted_in_warn_window(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "consider_refresh_active_work" in actions
 
@@ -77,7 +78,7 @@ def test_soft_active_work_not_emitted_below_warn(monkeypatch, flush_queue):
 
     settings = get_settings()
     directory = "/tmp/soft_aw_below_warn"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     flush_queue()
 
     warn_h = settings.ACTIVE_WORK_WARN_HOURS
@@ -89,7 +90,7 @@ def test_soft_active_work_not_emitted_below_warn(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "consider_refresh_active_work" not in actions
 
@@ -101,7 +102,7 @@ def test_soft_active_work_not_emitted_above_stale(monkeypatch, flush_queue):
 
     settings = get_settings()
     directory = "/tmp/soft_aw_above_stale"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     flush_queue()
 
     stale_h = settings.ACTIVE_WORK_STALE_HOURS
@@ -113,7 +114,7 @@ def test_soft_active_work_not_emitted_above_stale(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "consider_refresh_active_work" not in actions
     assert "refresh_active_work" in actions
@@ -126,7 +127,7 @@ def test_soft_active_work_boundary_at_warn_hours(monkeypatch, flush_queue):
 
     settings = get_settings()
     directory = "/tmp/soft_aw_boundary_warn"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     flush_queue()
 
     warn_h = settings.ACTIVE_WORK_WARN_HOURS
@@ -138,7 +139,7 @@ def test_soft_active_work_boundary_at_warn_hours(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "consider_refresh_active_work" not in actions
 
@@ -150,7 +151,7 @@ def test_soft_active_work_boundary_at_stale_hours(monkeypatch, flush_queue):
 
     settings = get_settings()
     directory = "/tmp/soft_aw_boundary_stale"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     flush_queue()
 
     stale_h = settings.ACTIVE_WORK_STALE_HOURS
@@ -162,7 +163,7 @@ def test_soft_active_work_boundary_at_stale_hours(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     # At exactly stale_hours: age > stale is False → no hard; age > warn is True → soft fires
     assert "consider_refresh_active_work" in actions
@@ -184,6 +185,7 @@ def test_soft_checkpoint_emitted_in_warn_window(monkeypatch, flush_queue):
         current_task="test task",
         key_decisions=["d1"],
         next_steps=["s1"],
+        project=TEST_PROJECT_ID,
     )
     flush_queue()
 
@@ -198,7 +200,7 @@ def test_soft_checkpoint_emitted_in_warn_window(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "consider_refresh_checkpoint" in actions
 
@@ -215,6 +217,7 @@ def test_soft_checkpoint_not_emitted_below_warn(monkeypatch, flush_queue):
         current_task="test task",
         key_decisions=["d1"],
         next_steps=["s1"],
+        project=TEST_PROJECT_ID,
     )
     flush_queue()
 
@@ -227,7 +230,7 @@ def test_soft_checkpoint_not_emitted_below_warn(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "consider_refresh_checkpoint" not in actions
 
@@ -244,6 +247,7 @@ def test_soft_checkpoint_not_emitted_above_stale(monkeypatch, flush_queue):
         current_task="test task",
         key_decisions=["d1"],
         next_steps=["s1"],
+        project=TEST_PROJECT_ID,
     )
     flush_queue()
 
@@ -256,7 +260,7 @@ def test_soft_checkpoint_not_emitted_above_stale(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     actions = [a["action"] for a in result["recommended_actions"]]
     assert "consider_refresh_checkpoint" not in actions
     assert "refresh_checkpoint" in actions
@@ -272,7 +276,7 @@ def test_no_double_emit_active_work(monkeypatch, flush_queue):
 
     settings = get_settings()
     directory = "/tmp/no_double_aw"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     flush_queue()
 
     # Test all three zones
@@ -288,7 +292,7 @@ def test_no_double_emit_active_work(monkeypatch, flush_queue):
             return None
 
         monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
-        result = server.project_brief(directory, mode="signals")
+        result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
 
         has_soft = "consider_refresh_active_work" in actions
@@ -310,6 +314,7 @@ def test_no_double_emit_checkpoint(monkeypatch, flush_queue):
         current_task="test task",
         key_decisions=["d1"],
         next_steps=["s1"],
+        project=TEST_PROJECT_ID,
     )
     flush_queue()
 
@@ -325,7 +330,7 @@ def test_no_double_emit_checkpoint(monkeypatch, flush_queue):
             return None
 
         monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
-        result = server.project_brief(directory, mode="signals")
+        result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
         actions = [a["action"] for a in result["recommended_actions"]]
 
         has_soft = "consider_refresh_checkpoint" in actions
@@ -343,7 +348,7 @@ def test_soft_active_work_has_suggested_call(monkeypatch, flush_queue):
 
     settings = get_settings()
     directory = "/tmp/soft_aw_suggested_call"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     flush_queue()
 
     warn_h = settings.ACTIVE_WORK_WARN_HOURS
@@ -357,7 +362,7 @@ def test_soft_active_work_has_suggested_call(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     soft_actions = [
         a for a in result["recommended_actions"] if a["action"] == "consider_refresh_active_work"
     ]
@@ -373,7 +378,7 @@ def test_hard_active_work_has_suggested_call(monkeypatch, flush_queue):
 
     settings = get_settings()
     directory = "/tmp/hard_aw_suggested_call"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     flush_queue()
 
     stale_h = settings.ACTIVE_WORK_STALE_HOURS
@@ -385,7 +390,7 @@ def test_hard_active_work_has_suggested_call(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     hard_actions = [
         a for a in result["recommended_actions"] if a["action"] == "refresh_active_work"
     ]
@@ -406,6 +411,7 @@ def test_soft_checkpoint_has_suggested_call(monkeypatch, flush_queue):
         current_task="test task",
         key_decisions=["d1"],
         next_steps=["s1"],
+        project=TEST_PROJECT_ID,
     )
     flush_queue()
 
@@ -420,7 +426,7 @@ def test_soft_checkpoint_has_suggested_call(monkeypatch, flush_queue):
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     soft_actions = [
         a for a in result["recommended_actions"] if a["action"] == "consider_refresh_checkpoint"
     ]
@@ -434,7 +440,9 @@ def test_soft_checkpoint_has_suggested_call(monkeypatch, flush_queue):
 
 def test_signals_token_budget_empty_dir_still_passes():
     """signals mode empty dir still ≤100 tokens after adding soft action logic."""
-    result = server.project_brief("/tmp/token_budget_empty_dir_v5101", mode="signals")
+    result = server.project_brief(
+        "/tmp/token_budget_empty_dir_v5101", mode="signals", project=TEST_PROJECT_ID
+    )
     tokens = len(json.dumps(result)) // 4
     assert tokens <= 100, f"signals mode empty dir too large: {tokens} tokens (budget: 100)"
 
@@ -461,12 +469,13 @@ def test_signals_token_budget_with_soft_actions_bounded(monkeypatch, flush_queue
 
     settings = get_settings()
     directory = "/tmp/token_budget_soft_test"
-    server.update_active_work(directory=directory, content="work content")
+    server.update_active_work(directory=directory, content="work content", project=TEST_PROJECT_ID)
     server.checkpoint(
         directory=directory,
         current_task="task",
         key_decisions=["d1"],
         next_steps=["s1"],
+        project=TEST_PROJECT_ID,
     )
     flush_queue()
 
@@ -481,7 +490,7 @@ def test_signals_token_budget_with_soft_actions_bounded(monkeypatch, flush_queue
 
     monkeypatch.setattr(proj_mod, "_compute_row_age_hours", mock_age)
 
-    result = server.project_brief(directory, mode="signals")
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
     tokens = len(json.dumps(result)) // 4
     budget = settings.SIGNALS_TOKEN_BUDGET_SOFT
     assert tokens <= budget, (
@@ -515,7 +524,7 @@ def test_update_active_work_writes_registry_marker(tmp_path, monkeypatch, flush_
     )
 
     directory = "/tmp/registry_test_dir"
-    server.update_active_work(directory=directory, content="test content")
+    server.update_active_work(directory=directory, content="test content", project=TEST_PROJECT_ID)
     flush_queue()
 
     expected_hash = hashlib.sha256(directory.encode()).hexdigest()[:12]
@@ -539,7 +548,7 @@ def test_registry_uses_resolved_directory(tmp_path, monkeypatch, flush_queue):
 
     # Use a path that resolves to itself (non-git)
     directory = str(tmp_path / "nonexistent_repo")
-    server.update_active_work(directory=directory, content="test content")
+    server.update_active_work(directory=directory, content="test content", project=TEST_PROJECT_ID)
     flush_queue()
 
     # The resolved dir is directory itself (no git root)

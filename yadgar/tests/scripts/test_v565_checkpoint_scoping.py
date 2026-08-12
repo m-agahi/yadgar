@@ -484,3 +484,103 @@ class TestStopHookStdout:
         data = _json.loads(result.stdout.strip() or "{}")
         # Interval not reached → allow stop (empty dict)
         assert data == {}, f"Hook must emit {{}} when interval not reached, got: {data}"
+
+
+# ── C13 regression — the enqueue-time project_id stamp ───────────────────────
+
+
+class TestCheckpointStampsProjectIdAtEnqueue:
+    """checkpoint() must put the identity it was handed ONTO the queued payload.
+
+    Regression guard for a defect C5 created and nothing caught, because the
+    only end-to-end coverage of it lives in ``yadgar/tests/e2e/`` — which
+    ``addopts`` deselects (``-m 'not integration and not e2e'``), so CI has
+    never run it.
+
+    The defect: ``checkpoint`` called ``accept_project_param(project, directory)``
+    and DISCARDED the return value. C4b had given ``memorize`` / ``anchor`` /
+    ``agent_prompt_save`` an enqueue-time stamp and had not reached
+    ``checkpoint``; C5 then widened the drainer's ``_validate_project_id`` gate
+    from ``wiki_add`` to EVERY op type. Result: every checkpoint job was
+    permanently DLQ'd as ``missing_project_id`` — including those from the
+    stop-hook protocol, which C5 had just taught to pass ``project="{project}"``.
+
+    Asserted on the QUEUED PAYLOAD rather than on the return value, because the
+    return value (``{"queued": True, ...}``) was truthful and unchanged
+    throughout: the tool really did enqueue, and the job really did die in the
+    drainer. A test on the return value would have stayed green.
+    """
+
+    def _pending_payloads(self, base_dir) -> list[dict]:
+        from yadgar._shared.file_queue.queue import FileQueue
+
+        return [json.loads(p.read_text())["payload"] for p in FileQueue(base_dir).pending()]
+
+    def test_named_project_reaches_the_queued_payload(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        from yadgar.core.server.tools.misc import checkpoint
+
+        result = checkpoint(directory="/home/test/proj", current_task="t", project="acme/widget")
+        assert result.get("queued") is True
+
+        (payload,) = self._pending_payloads(tmp_path)
+        assert payload["project_id"] == "acme/widget"
+
+    def test_an_unnamed_project_is_carried_as_none_not_invented(self, tmp_path, monkeypatch):
+        """ADR-0227: the absence is recorded honestly, never substituted.
+
+        ``accept_project_param`` returns ``None`` when the caller names no
+        project (its documented C7 gap — this tool's scope key is still
+        ``directory`` until C7 re-keys it). The payload must carry that ``None``
+        rather than a manufactured key: the drainer's gate then DLQs the job,
+        which is the declared, requeueable failure path for a queued write.
+        """
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        from yadgar.core.server.tools.misc import checkpoint
+
+        checkpoint(directory="/home/test/proj", current_task="t")
+
+        (payload,) = self._pending_payloads(tmp_path)
+        assert payload["project_id"] is None
+
+    def test_the_drainer_gate_accepts_a_stamped_checkpoint(self, tmp_path, monkeypatch):
+        """The two halves meet: what checkpoint stamps is what the gate wants.
+
+        Without this the pair above could both pass while the drainer still
+        rejected the job — the stamp and the gate are in different packages and
+        drifted apart once already.
+        """
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        import yadgar._shared.runtime.state as _st
+        from yadgar.backend.queue_drainer import FileQueue, QueueDrainer
+        from yadgar.core.server.tools.misc import checkpoint
+
+        checkpoint(directory="/home/test/proj", current_task="t", project="acme/widget")
+        (payload,) = self._pending_payloads(tmp_path)
+
+        drainer = QueueDrainer(
+            queue=FileQueue(tmp_path),
+            storage_factory=lambda: _st._storage,
+            drain_interval=9999,
+        )
+        assert drainer._validate_project_id(payload, "checkpoint") is None
+
+    def test_an_unstamped_checkpoint_is_rejected_by_the_gate(self, tmp_path, monkeypatch):
+        """The negative half — otherwise the gate could be inert and both pass."""
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        import yadgar._shared.runtime.state as _st
+        from yadgar.backend.queue_drainer import FileQueue, QueueDrainer
+        from yadgar.core.server.tools.misc import checkpoint
+
+        checkpoint(directory="/home/test/proj", current_task="t")
+        (payload,) = self._pending_payloads(tmp_path)
+
+        drainer = QueueDrainer(
+            queue=FileQueue(tmp_path),
+            storage_factory=lambda: _st._storage,
+            drain_interval=9999,
+        )
+        reason = drainer._validate_project_id(payload, "checkpoint")
+        assert reason is not None
+        assert "missing_project_id" in reason
+        assert "checkpoint" in reason

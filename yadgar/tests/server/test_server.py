@@ -23,14 +23,26 @@ def _engines(tmp_path_factory):
     server.shutdown()
 
 
+#: Identity every write/read in this module names. C5 (ADR-0227) removed the
+#: last tier under the caller's value, so a scoped call that names no project
+#: raises instead of defaulting. Passed at each CALL SITE rather than through a
+#: fixture: a fixture that supplied it invisibly would be the deleted fallback
+#: wearing test clothing, and would hide the next production path that forgets
+#: to thread the value.
+_TEST_PROJECT_ID = "owner/repo"
+
+
 # ── remember ───────────────────────────────────────────────────────────
 
 
 def test_remember_creates_memory():
-    result = memorize_sync("pytest is great", "/tmp/project", ["testing"])
+    result = memorize_sync("pytest is great", "/tmp/project", ["testing"], project=_TEST_PROJECT_ID)
     assert result["id"] is not None
     assert result["content"] == "pytest is great"
-    assert result["directory_context"] == "/tmp/project"
+    # C10f (0047 PR#40 §5): directory_context is stamped from the resolved
+    # project_id ONLY — `context` ("/tmp/project" here) is an optional
+    # staleness-hash path, never a scope key. See memorize()'s docstring.
+    assert result["directory_context"] == _TEST_PROJECT_ID
     assert result["tags"] == ["testing"]
     assert result["heat"] == 1.0
     assert result["is_stale"] is False
@@ -43,14 +55,14 @@ def test_remember_computes_file_hash():
         f.flush()
         filepath = f.name
 
-    result = memorize_sync("file-based memory", filepath, ["file"])
+    result = memorize_sync("file-based memory", filepath, ["file"], project=_TEST_PROJECT_ID)
     assert result["file_hash"] is not None
 
     Path(filepath).unlink()
 
 
 def test_remember_no_file_hash_for_directory():
-    result = memorize_sync("directory memory", "/tmp", ["dir"])
+    result = memorize_sync("directory memory", "/tmp", ["dir"], project=_TEST_PROJECT_ID)
     assert result["file_hash"] is None
 
 
@@ -58,11 +70,11 @@ def test_remember_no_file_hash_for_directory():
 
 
 def test_recall_finds_by_fts(flush_queue, recall_backend_bypass):
-    server.memorize("SQLite full text search is useful", "/tmp", ["db"])
-    server.memorize("Python asyncio event loop", "/tmp", ["async"])
+    server.memorize("SQLite full text search is useful", "/tmp", ["db"], project=_TEST_PROJECT_ID)
+    server.memorize("Python asyncio event loop", "/tmp", ["async"], project=_TEST_PROJECT_ID)
     flush_queue()
 
-    results = server.recall("SQLite search", directory="/tmp")
+    results = server.recall("SQLite search", directory="/tmp", project=_TEST_PROJECT_ID)
     assert len(results) >= 1
     assert any("SQLite" in r["content"] for r in results)
 
@@ -75,7 +87,7 @@ def test_recall_boosts_heat():
     # heat-boost function directly instead — same code path the backend runs.
     from yadgar.backend.retrieval.recall_pipeline import _apply_recall_db_side_effects
 
-    result = memorize_sync("heat boost test", "/tmp", ["test"])
+    result = memorize_sync("heat boost test", "/tmp", ["test"], project=_TEST_PROJECT_ID)
     mid = result["id"]
 
     storage = server._get_storage()
@@ -92,27 +104,33 @@ def test_recall_boosts_heat():
 
 
 def test_recall_respects_min_heat(recall_backend_bypass):
-    r = memorize_sync("low heat memory", "/tmp", ["test"])
+    r = memorize_sync("low heat memory", "/tmp", ["test"], project=_TEST_PROJECT_ID)
     server._get_storage().update_memory_heat(r["id"], 0.05)
 
-    results = server.recall("low heat memory", min_heat=0.5, directory="/tmp")
+    results = server.recall(
+        "low heat memory", min_heat=0.5, directory="/tmp", project=_TEST_PROJECT_ID
+    )
     matching = [r for r in results if r["content"] == "low heat memory"]
     assert len(matching) == 0
 
 
 def test_recall_max_results(flush_queue, recall_backend_bypass):
     for i in range(10):
-        server.memorize(f"memory number {i} test recall", "/tmp", ["bulk"])
+        server.memorize(
+            f"memory number {i} test recall", "/tmp", ["bulk"], project=_TEST_PROJECT_ID
+        )
     flush_queue()
 
-    results = server.recall("memory number test recall", max_results=3, directory="/tmp")
+    results = server.recall(
+        "memory number test recall", max_results=3, directory="/tmp", project=_TEST_PROJECT_ID
+    )
     assert len(results) <= 3
 
 
 def test_recall_no_embedding_in_results(flush_queue, recall_backend_bypass):
-    server.memorize("no embedding leak", "/tmp", ["test"])
+    server.memorize("no embedding leak", "/tmp", ["test"], project=_TEST_PROJECT_ID)
     flush_queue()
-    results = server.recall("no embedding leak", directory="/tmp")
+    results = server.recall("no embedding leak", directory="/tmp", project=_TEST_PROJECT_ID)
     for r in results:
         assert "embedding" not in r
 
@@ -121,7 +139,7 @@ def test_recall_no_embedding_in_results(flush_queue, recall_backend_bypass):
 
 
 def test_forget_deletes_memory(admin_backend_bypass):
-    result = memorize_sync("to be forgotten", "/tmp", ["test"])
+    result = memorize_sync("to be forgotten", "/tmp", ["test"], project=_TEST_PROJECT_ID)
     mid = result["id"]
 
     resp = server.forget(mid)
@@ -141,7 +159,7 @@ def test_forget_not_found(admin_backend_bypass):
 
 
 def test_validate_memory_no_file_hash():
-    result = memorize_sync("no hash memory", "/tmp", [])
+    result = memorize_sync("no hash memory", "/tmp", [], project=_TEST_PROJECT_ID)
     resp = server.validate_memory(result["id"])
     assert resp["is_valid"] is True
     assert "no file" in resp["reason"]
@@ -153,7 +171,7 @@ def test_validate_memory_file_matches():
         f.flush()
         filepath = f.name
 
-    result = memorize_sync("file memory", filepath, ["file"])
+    result = memorize_sync("file memory", filepath, ["file"], project=_TEST_PROJECT_ID)
     resp = server.validate_memory(result["id"])
     assert resp["is_valid"] is True
     assert "unchanged" in resp["reason"] or "matches" in resp["reason"]
@@ -167,7 +185,7 @@ def test_validate_memory_file_changed():
         f.flush()
         filepath = f.name
 
-    result = memorize_sync("tracked file", filepath, ["file"])
+    result = memorize_sync("tracked file", filepath, ["file"], project=_TEST_PROJECT_ID)
 
     # Modify the file
     Path(filepath).write_text("modified content")
@@ -189,7 +207,7 @@ def test_validate_memory_file_deleted():
         f.flush()
         filepath = f.name
 
-    result = memorize_sync("soon gone", filepath, ["file"])
+    result = memorize_sync("soon gone", filepath, ["file"], project=_TEST_PROJECT_ID)
     Path(filepath).unlink()
 
     resp = server.validate_memory(result["id"])
@@ -204,10 +222,14 @@ def test_validate_memory_not_found():
 
 
 def test_project_brief_returns_hot_memories_in_full_mode(flush_queue):
-    server.memorize("hot memory", "/projects/d", ["test"])  # heat=1.0
+    server.memorize("hot memory", "/projects/d", ["test"], project=_TEST_PROJECT_ID)  # heat=1.0
     flush_queue()
 
-    result = server.project_brief("/projects/d", mode="full")
+    # C10f: memorize() stamps directory_context from the resolved project_id,
+    # never the literal directory — so project_brief must be told the SAME
+    # project_id via project= to find its own write (matching every sibling
+    # call in test_project_brief.py / test_project_brief_modes.py).
+    result = server.project_brief("/projects/d", mode="full", project=_TEST_PROJECT_ID)
     assert "hot_memories" in result
     contents = [m["content"] for m in result["hot_memories"]]
     assert any("hot memory" in c for c in contents)
@@ -236,8 +258,8 @@ def test_memory_stats_structure():
 
 
 def test_memory_stats_counts(flush_queue):
-    server.memorize("stat test 1", "/tmp", [])
-    server.memorize("stat test 2", "/tmp", [])
+    server.memorize("stat test 1", "/tmp", [], project=_TEST_PROJECT_ID)
+    server.memorize("stat test 2", "/tmp", [], project=_TEST_PROJECT_ID)
     flush_queue()
 
     stats = server.memory_stats()
@@ -250,7 +272,7 @@ def test_memory_stats_counts(flush_queue):
 
 
 def test_resource_stats(flush_queue):
-    server.memorize("resource stats test", "/tmp", [])
+    server.memorize("resource stats test", "/tmp", [], project=_TEST_PROJECT_ID)
     flush_queue()
     result = server.resource_stats()
     data = json.loads(result)
@@ -258,7 +280,7 @@ def test_resource_stats(flush_queue):
 
 
 def test_resource_hot(flush_queue):
-    server.memorize("hot resource test", "/tmp", [])  # heat=1.0
+    server.memorize("hot resource test", "/tmp", [], project=_TEST_PROJECT_ID)  # heat=1.0
     flush_queue()
     result = server.resource_hot()
     data = json.loads(result)
@@ -267,7 +289,7 @@ def test_resource_hot(flush_queue):
 
 
 def test_resource_stale():
-    r = memorize_sync("stale resource test", "/tmp", [])
+    r = memorize_sync("stale resource test", "/tmp", [], project=_TEST_PROJECT_ID)
     server._get_storage().update_memory_staleness(r["id"], True)
 
     result = server.resource_stale()

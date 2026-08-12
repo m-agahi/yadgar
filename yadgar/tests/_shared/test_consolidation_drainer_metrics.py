@@ -19,6 +19,12 @@ from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
@@ -111,7 +117,19 @@ class TestDrainStageMsMetric:
         q = FileQueue(base_dir=tmp_path)
         # _internal=True: approved carve-out — bypasses branch-context pre-validation
         # so the item reaches _apply_inner (which is patched) and the stage metric fires.
-        q.enqueue("memorize", {"content": "x", "context": "y", "tags": [], "_internal": True})
+        # C13: the DLQ project_id gate runs for EVERY op type since C5 and the
+        # ``_internal`` carve-out deliberately does not cover it — an unstamped
+        # payload is DLQ'd before it reaches _apply_inner, so no stage metric fires.
+        q.enqueue(
+            "memorize",
+            {
+                "content": "x",
+                "context": "y",
+                "tags": [],
+                "_internal": True,
+                "project_id": _PROJECT,
+            },
+        )
 
         with patch.object(QueueDrainer, "_apply_inner"):
             drainer = QueueDrainer(queue=q, storage_factory=MagicMock(), drain_interval=999)
@@ -134,7 +152,19 @@ class TestDrainStageMsMetric:
         q = FileQueue(base_dir=tmp_path)
         # _internal=True: approved carve-out — bypasses branch-context pre-validation
         # so the item reaches _apply_inner (which is patched) and the stage metric fires.
-        q.enqueue("memorize", {"content": "x", "context": "y", "tags": [], "_internal": True})
+        # C13: the DLQ project_id gate runs for EVERY op type since C5 and the
+        # ``_internal`` carve-out deliberately does not cover it — an unstamped
+        # payload is DLQ'd before it reaches _apply_inner, so no stage metric fires.
+        q.enqueue(
+            "memorize",
+            {
+                "content": "x",
+                "context": "y",
+                "tags": [],
+                "_internal": True,
+                "project_id": _PROJECT,
+            },
+        )
 
         with patch.object(QueueDrainer, "_apply_inner"):
             drainer = QueueDrainer(queue=q, storage_factory=MagicMock(), drain_interval=999)
@@ -165,6 +195,7 @@ class TestCuratorMetrics:
     def test_duration_increments_on_curate(self, curator):
         """curate_on_remember() increments yadgar_curator_duration_ms sum."""
         from yadgar._shared.observability.metrics import yadgar_curator_duration_ms
+        from yadgar.backend.curation import CurateParams
 
         before = _hist_sum(yadgar_curator_duration_ms)
 
@@ -174,6 +205,7 @@ class TestCuratorMetrics:
             context="/test",
             tags=["test"],
             embedding=dummy_embedding,
+            params=CurateParams(project_id=_PROJECT),
         )
 
         after = _hist_sum(yadgar_curator_duration_ms)
@@ -184,6 +216,7 @@ class TestCuratorMetrics:
     def test_outcome_counter_increments_on_curate(self, curator):
         """curate_on_remember() increments yadgar_curator_merge_outcome for some outcome."""
         from yadgar._shared.observability.metrics import yadgar_curator_merge_outcome
+        from yadgar.backend.curation import CurateParams
 
         before_total = _counter_total(yadgar_curator_merge_outcome)
 
@@ -193,6 +226,7 @@ class TestCuratorMetrics:
             context="/test",
             tags=["test"],
             embedding=dummy_embedding,
+            params=CurateParams(project_id=_PROJECT),
         )
 
         after_total = _counter_total(yadgar_curator_merge_outcome)
@@ -221,6 +255,7 @@ class TestEngramAllocateMetric:
             {
                 "content": "engram test",
                 "directory_context": "/test",
+                "project_id": _PROJECT,
                 "heat": 0.5,
             }
         )

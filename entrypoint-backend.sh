@@ -433,6 +433,14 @@ _bootstrap_mariadb_accounts() {
     if [ -z "${_pass}" ]; then
         _pass="$(python3 -c 'import secrets; print(secrets.token_hex(24))')" || return 1
     fi
+    # The FIRST grant is the engine-#2 ledger schema's GRANT (D19). Car A of
+    # 0047 spine train narrows the app user's privilege from omnipotent
+    # ``ALL PRIVILEGES ON ${MARIADB_DB}.*`` to a per-table list — every
+    # ledger table + ``config`` (knob train owns the seed; the read op
+    # also needs it) + ``alembic_version`` (alembic manages this row itself).
+    # The replacement GRANT is *idempotent* because GRANT is additive in
+    # MariaDB: the prior broad grant remains until REVOKE removes it.
+    #
     # The SECOND grant is engine-#2 car G's. Its restore verification replays a
     # dump into a throwaway schema named `<db>_restorecheck_<hex>`, and the app
     # account's own grant is scoped to `${MARIADB_DB}` alone — it could not
@@ -451,7 +459,25 @@ _bootstrap_mariadb_accounts() {
 CREATE DATABASE IF NOT EXISTS \`${MARIADB_DB}\`;
 CREATE USER IF NOT EXISTS '${MARIADB_APP_USER}'@'localhost' IDENTIFIED BY '${_pass_esc}';
 ALTER USER '${MARIADB_APP_USER}'@'localhost' IDENTIFIED BY '${_pass_esc}';
-GRANT ALL PRIVILEGES ON \`${MARIADB_DB}\`.* TO '${MARIADB_APP_USER}'@'localhost';
+-- D19: least-privilege grant. The app account owns a per-table list
+-- (every ledger table + ``config`` + ``alembic_version``) rather than
+-- the broad `${MARIADB_DB}.*`. The REVOKE removes the legacy broad grant
+-- that pre-car-A bootstrap left behind — without it, a stale
+-- ``GRANT ALL PRIVILEGES ON \`yadgar\`.*`` would still let the app account
+-- CREATE / DROP tables it should not be able to touch.
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.alembic_version TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.config TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.task TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.adr TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.agent_pattern TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.agent_discipline TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.agent_pattern_model TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.client TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.task_blocked_by TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.adr_supersedes TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.agent_pattern_composes TO '${MARIADB_APP_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.project TO '${MARIADB_APP_USER}'@'localhost';
 GRANT ALL PRIVILEGES ON \`${MARIADB_DB}\\_restorecheck\\_%\`.* TO '${MARIADB_APP_USER}'@'localhost';
 SQLEOF
     # Client credentials as a MySQL option file: asyncmy reads user/password/

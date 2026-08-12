@@ -781,9 +781,10 @@ def test_config_post_write_blocked_knob_returns_400(monkeypatch, tmp_path):
         ("YADGAR_ALLOW_ROOT", "true"),  # privilege escalation
         ("YADGAR_REQUIRE_AUTH", "false"),  # auth bypass
         # YADGAR_BRANCH_ENFORCEMENT dropped from the blocked set with branch
-        # scoping itself (ADR-0215 Car 2); the directory knob it was paired with
-        # survives and is still write-protected.
-        ("YADGAR_DIRECTORY_ENFORCEMENT", "false"),  # enforcement bypass
+        # scoping itself (ADR-0215 Car 2). YADGAR_DIRECTORY_ENFORCEMENT followed
+        # it in C5 (ADR-0227) — it is no longer write-PROTECTED because it is no
+        # longer a knob at all; see the test below, which pins the stronger
+        # property.
     ]
 
     for name, value in blocked_knobs:
@@ -800,6 +801,39 @@ def test_config_post_write_blocked_knob_returns_400(monkeypatch, tmp_path):
         assert "write-protected" in body["error"].lower(), (
             f"Expected 'write-protected' in error for {name!r}, got: {body['error']!r}"
         )
+
+
+def test_config_post_deleted_directory_enforcement_knob_is_unknown(monkeypatch):
+    """C5/ADR-0227: YADGAR_DIRECTORY_ENFORCEMENT is not merely protected — it is GONE.
+
+    It used to sit in the write-protected set above, alongside the auth and
+    privilege knobs, because turning it off disabled a scoping guarantee. C5
+    deleted the knob outright across config.py, config_registry.py,
+    config_yaml.py, queue_drainer/dlq.py, routes/control.py and tools/wiki.py:
+    "relaxed enforcement is the mode in which unscoped rows entered the corpus",
+    and a knob whose OFF position disables a guarantee cannot coexist with an
+    identity contract that is fail-loud by construction.
+
+    So the assertion moves from write-protected to UNKNOWN, which is the
+    stronger of the two: a protected knob still exists and could be unprotected
+    by a one-line registry edit, whereas an unknown one has no reader left to
+    honour it. Still 400 — the API does not silently accept a name it cannot
+    act on, which is how a caller learns the knob is gone rather than believing
+    it took effect.
+    """
+    client = _make_app(monkeypatch, debug_apis_on=True)
+
+    resp = client.post(
+        "/api/control/config",
+        json={"name": "YADGAR_DIRECTORY_ENFORCEMENT", "value": "false"},
+        headers=_auth_headers(),
+    )
+
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert "unknown knob" in body["error"].lower(), (
+        f"expected the deleted knob to be UNKNOWN, not merely protected: {body['error']!r}"
+    )
 
 
 # ===========================================================================

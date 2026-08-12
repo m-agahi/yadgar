@@ -5,20 +5,24 @@ Extracted so hook_runner.py (block-reflect) and http.py (session-context, block-
 endpoint) can render blocks without importing the full restoration module.
 
 Public API:
-    render_blocks_section(blocks, directory) -> str
+    render_blocks_section(blocks, project_id) -> str
 """
 
 from __future__ import annotations
 
 
-def render_blocks_section(blocks: list[dict], directory: str) -> str:
+def render_blocks_section(blocks: list[dict], project_id: str) -> str:
     """Render memory blocks as markdown for hook injection.
 
     Returns "" when blocks is empty — safe to call unconditionally.
 
+    C9a (0047 §5): ``directory`` renamed to ``project_id`` per ADR-0225. The
+    value is presentation-only — it labels the Project-blocks header and is
+    never used to select or scope anything.
+
     Args:
         blocks: List of block dicts with keys: scope, name, content.
-        directory: Project directory string (used in the Project-blocks header).
+        project_id: Project identity string (used in the Project-blocks header).
     """
     if not blocks:
         return ""
@@ -39,8 +43,8 @@ def render_blocks_section(blocks: list[dict], directory: str) -> str:
         lines.append("")
 
     if project_blocks:
-        dir_label = directory or "project"
-        lines.append(f"### Project blocks ({dir_label})")
+        project_label = project_id or "project"
+        lines.append(f"### Project blocks ({project_label})")
         for b in project_blocks:
             content = b.get("content", "")
             name = b.get("name", "")

@@ -5,15 +5,30 @@ filtered only by _retrieval_score and branch — no directory filter.  Wiki page
 stamped directory_context="/home/max/aws-work" leaked into a recall() scoped to
 "/home/max/git/yadgar".
 
-The fix: apply is_directory_eligible() to wiki results inside the wiki-blend
-branch, the same way memories are filtered (~line 248-255).
+The original fix: apply is_directory_eligible() to wiki results inside the
+wiki-blend branch, the same way memories are filtered (~line 248-255).
+
+Car C7 (0047 §5 C7) re-keyed the whole scope predicate from
+``directory_context`` onto ``project_id`` + the ``'global'`` REACH TAG, pushed
+into the stage-1 SQL WHERE (``is_directory_eligible`` / ``DirectoryFilter`` /
+``_build_directory_clause`` are all deleted; ``is_project_eligible`` +
+``build_project_scope_clause`` replace them — see
+``yadgar/_shared/storage/directory.py``). The row fixtures below are updated
+to match: eligibility is ``row["project_id"] == caller_project`` OR
+``"global" in row["tags"]`` — a bare ``directory_context`` field is no longer
+read by the eligibility check at all. Also load-bearing: ``recall()``'s
+scope-of-record is the RESOLVED PROJECT (``project=`` when supplied, which
+``_call_recall_with_wiki`` always passes as ``TEST_PROJECT_ID`` by default —
+``project`` wins over ``directory`` per ``resolve_effective_project``), not
+the literal ``directory=`` string — so "caller-dir-stamped" fixtures now
+stamp ``project_id=TEST_PROJECT_ID``, not the yadgar path string.
 
 Test strategy:
 - Mock _st._wiki.query() to return two wiki dicts:
-    1. aws_wiki: directory_context="/home/max/aws-work"  (must be filtered OUT)
-    2. yadgar_wiki: directory_context="global"           (must stay IN)
+    1. aws_wiki: project_id="other-owner/other-repo"  (must be filtered OUT)
+    2. yadgar_wiki: tags=["global"]                    (must stay IN)
 - Both pass all other gates: branch=None (always eligible), score=0.9.
-- Call recall() with directory="/home/max/git/yadgar".
+- Call recall() with project=TEST_PROJECT_ID (the default).
 - RED: before fix, aws_wiki leaks into results (AssertionError).
 - GREEN: after fix, aws_wiki absent; yadgar_wiki present.
 
@@ -27,6 +42,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass")
 
 # ---------------------------------------------------------------------------
@@ -39,10 +56,12 @@ def _make_fake_memory(mid: int = 1) -> dict:
         "id": mid,
         "content": f"memory {mid}",
         "heat": 0.5,
-        "tags": [],
+        # Car C7: "always eligible regardless of caller project" is now the
+        # 'global' REACH TAG (``GLOBAL_REACH_TAG``), not a
+        # ``directory_context="global"`` sentinel value.
+        "tags": ["global"],
         "branch": None,
         "_retrieval_score": 0.5,
-        "directory_context": "global",
     }
 
 
@@ -69,18 +88,44 @@ def _call_recall_with_wiki(
     directory: str | None,
     wiki_results: list[dict],
     max_results: int = 10,
+    project: str | None = TEST_PROJECT_ID,
 ) -> list[dict]:
     """Call recall() with controlled wiki mock and directory scoping.
 
     Returns the list of results from recall().
+
+    Car C7 (0047 §5 C7): scoping moved OUT of a Python post-filter and INTO
+    ``WikiStore.query()``'s stage-1 SQL WHERE clause — ``WikiProvider`` no
+    longer applies any project/directory eligibility check of its own on the
+    rows ``query()`` hands back (see ``yadgar/backend/retrieval/providers/
+    wiki.py``: only ``is_recall_visible`` — the page_type policy gate —
+    survives as a Python-side check). A ``MagicMock`` that returns
+    ``wiki_results`` unconditionally, ignoring the ``project_id`` /
+    ``scope`` kwarg it was called with, would silently stop exercising
+    the scoping this test suite is FOR: every row would "leak" regardless of
+    fixture intent, and the assertions below would have nothing real to
+    catch. ``mock_wiki.query`` is therefore a ``side_effect`` that filters
+    with ``is_project_eligible`` exactly the way the real stage-1 WHERE does,
+    so the mock's behaviour matches what ``WikiStore.query()`` actually does
+    against a live DB.
     """
     import yadgar._shared.runtime.state as _st
+    from yadgar._shared.storage.directory import is_project_eligible
     from yadgar.core.server.tools.recall import recall as recall_fn
 
     mock_retriever = _make_mock_retriever()
     mock_storage = _make_mock_storage()
     mock_wiki = MagicMock()
-    mock_wiki.query.return_value = wiki_results
+
+    def _fake_wiki_query(*args, scope=None, **kwargs):
+        project_id = getattr(scope, "project_id", None)
+        return [
+            r
+            for r in wiki_results
+            if is_project_eligible(r.get("project_id"), r.get("tags"), project_id)
+        ]
+
+    mock_wiki.query.side_effect = _fake_wiki_query
 
     with (
         patch.object(_st, "_retriever", mock_retriever),
@@ -93,7 +138,7 @@ def _call_recall_with_wiki(
         patch.object(_st, "_wiki", mock_wiki),
         patch.object(_st, "_last_recalled_ids", {}),
     ):
-        return recall_fn(query=query, max_results=max_results, directory=directory)
+        return recall_fn(query=query, max_results=max_results, directory=directory, project=project)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +149,12 @@ _QUERY = "wiki scoping directory test"  # must not be episodic (no temporal keyw
 
 
 def _make_aws_wiki() -> dict:
-    """A wiki page stamped to /home/max/aws-work — must be excluded when caller is yadgar."""
+    """A wiki page owned by a DIFFERENT project — must be excluded when caller is yadgar.
+
+    Car C7: eligibility keys on ``project_id``, not ``directory_context`` — so
+    the "different project" signal is now a mismatching ``project_id``, not a
+    directory path string.
+    """
     return {
         "id": 100,
         "slug": "aws-work-page",
@@ -112,21 +162,24 @@ def _make_aws_wiki() -> dict:
         "content": "AWS infrastructure notes",
         "tags": [],
         "branch": None,  # in _allowed_branches → branch filter passes
-        "directory_context": "/home/max/aws-work",
+        "project_id": "other-owner/other-repo",
         "_retrieval_score": 0.9,  # high score → passes score gate
     }
 
 
 def _make_yadgar_wiki() -> dict:
-    """A global wiki page — always eligible regardless of caller dir."""
+    """A globally-reachable wiki page — always eligible regardless of caller project.
+
+    Car C7: "always eligible" is now the ``'global'`` REACH TAG on ``tags``,
+    not a ``directory_context="global"`` sentinel value.
+    """
     return {
         "id": 200,
         "slug": "yadgar-global-page",
         "title": "Yadgar global page",
         "content": "Yadgar module notes",
-        "tags": [],
+        "tags": ["global"],
         "branch": None,
-        "directory_context": "global",
         "_retrieval_score": 0.8,
     }
 
@@ -138,10 +191,11 @@ def _make_yadgar_wiki() -> dict:
 
 class TestRecallWikiDirectoryScoping:
     def test_cross_project_wiki_does_not_leak(self):
-        """Wiki page from /home/max/aws-work must NOT appear when recall is scoped to yadgar.
+        """Wiki page owned by a different project must NOT appear in a yadgar-scoped recall.
 
-        RED: before fix, aws_wiki leaks because wiki-blend branch has no directory filter.
-        GREEN: after fix, is_directory_eligible() filters it out.
+        RED: before the original v5.65 fix, aws_wiki leaked because wiki-blend
+        had no directory filter. GREEN: after Car C7, ``is_project_eligible()``
+        (via the stage-1 SQL WHERE) filters it out.
         """
         aws_wiki = _make_aws_wiki()
         yadgar_wiki = _make_yadgar_wiki()
@@ -160,9 +214,9 @@ class TestRecallWikiDirectoryScoping:
         )
 
     def test_global_wiki_survives_directory_filter(self):
-        """Wiki page with directory_context='global' must remain after directory filtering.
+        """Wiki page carrying the 'global' reach tag must remain after project filtering.
 
-        Ensures we don't over-filter: the always-eligible sentinel 'global' must pass.
+        Ensures we don't over-filter: the always-eligible 'global' reach tag must pass.
         """
         aws_wiki = _make_aws_wiki()
         yadgar_wiki = _make_yadgar_wiki()
@@ -180,27 +234,72 @@ class TestRecallWikiDirectoryScoping:
             f"'global' directory_context is always eligible."
         )
 
-    def test_directory_none_raises_value_error(self):
-        """v5.65 Fix D: directory=None is no longer silently allowed — must raise ValueError.
+    def test_naming_neither_directory_nor_project_fails_loud(self):
+        """v5.65 Fix D, as amended by C3: a call that names NEITHER scope raises.
 
-        Previous legacy mode (no-filter) is removed: callers MUST supply a directory.
+        The legacy no-filter mode is still gone. What changed is which argument
+        satisfies the guard: ``project=`` now does, so ``directory=None`` alone
+        is a legitimate cross-project call rather than the programming error
+        this test was written to catch. Both are passed as ``None`` here, which
+        is the case that is still a defect — and the case that reds if the
+        guard is ever loosened to accept a call naming no scope at all.
+
+        The EXCEPTION TYPE changed with it, and that is the load-bearing detail:
+        C5 put ``resolve_effective_project`` ahead of recall's own
+        ``directory is required`` ValueError, so with both arguments absent the
+        structured ``UnresolvedProjectError`` fires first and the ValueError
+        branch below it is now unreachable on this path. Asserting the raise
+        that ACTUALLY fires is what keeps this test honest; asserting the older
+        one would pass only by never running the guard it names.
         """
         import pytest
+
+        from yadgar._shared.errors import UnresolvedProjectError
 
         aws_wiki = _make_aws_wiki()
         yadgar_wiki = _make_yadgar_wiki()
 
-        with pytest.raises(ValueError, match="directory is required"):
+        with pytest.raises(UnresolvedProjectError) as ei:
             _call_recall_with_wiki(
                 query=_QUERY,
                 directory=None,
                 wiki_results=[aws_wiki, yadgar_wiki],
+                project=None,
             )
+        assert ei.value.payload["tool"] == "recall"
+
+    def test_project_alone_satisfies_the_scope_guard(self):
+        """The other half of the amended guard: ``project=`` is a scope too.
+
+        Pinned so the inversion above cannot be read as "directory became
+        optional and nothing replaced it". Asserts on the RESULT ROWS rather
+        than on a list merely coming back: an empty list is also what a
+        still-raising path produces, so the mocked memory row has to arrive to
+        prove the call ran end-to-end under a project-only scope. (The wiki row
+        is deliberately NOT expected — its project_id names another project,
+        and the eligibility filter is the subject of the tests above.)
+        """
+        results = _call_recall_with_wiki(
+            query=_QUERY,
+            directory=None,
+            wiki_results=[_make_aws_wiki()],
+        )
+        assert 1 in [r.get("id") for r in results], (
+            f"project-only scope must complete the call and return its rows; got {results}"
+        )
+        assert 100 not in [r.get("id") for r in results], (
+            "the other project's wiki row must still be filtered out"
+        )
 
     def test_caller_dir_wiki_survives_directory_filter(self):
-        """Wiki stamped with the exact caller dir must remain in results.
+        """Wiki stamped with the exact caller PROJECT must remain in results.
 
-        Ensures the filter admits caller-dir-stamped pages, not just global ones.
+        Ensures the filter admits caller-project-stamped pages, not just
+        global ones. Car C7: the caller's scope-of-record is the resolved
+        project (``TEST_PROJECT_ID``, since ``_call_recall_with_wiki``
+        defaults ``project=TEST_PROJECT_ID`` and project wins over
+        ``directory``), so the fixture stamps ``project_id=TEST_PROJECT_ID``
+        rather than the yadgar directory path string.
         """
         yadgar_wiki_stamped = {
             "id": 300,
@@ -209,7 +308,7 @@ class TestRecallWikiDirectoryScoping:
             "content": "Yadgar-specific module notes",
             "tags": [],
             "branch": None,
-            "directory_context": "/home/max/git/yadgar",
+            "project_id": TEST_PROJECT_ID,
             "_retrieval_score": 0.85,
         }
 

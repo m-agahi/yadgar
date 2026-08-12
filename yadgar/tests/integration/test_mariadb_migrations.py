@@ -58,7 +58,7 @@ _APP_USER = "yadgar_app"
 _APP_PASS = "card-integration-password"
 _BOOT_TIMEOUT_SEC = 180.0
 
-EXPECTED_HEAD = "0001_config"
+EXPECTED_HEAD = "004_agent_pattern_model_client"
 
 
 def _cnf_body(socket: str) -> str:

@@ -22,6 +22,7 @@ import time
 import pytest
 
 from yadgar._shared.runtime import cpu as cpu_mod
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.backend.retrieval import recall_pipeline as rp
 
 
@@ -169,7 +170,7 @@ def _mk_candidate(cand_type, cid, content, score):
         title=None if cand_type == "memory" else content[:20],
         content=content,
         native_score=score,
-        directory_context=_DIR,
+        project_id=_DIR,
         raw=(
             {"id": cid, "content": content, "_retrieval_score": score, "heat": score, "tags": []}
             if cand_type == "memory"
@@ -207,7 +208,7 @@ def _run_fanout_at(monkeypatch, ncpu):
         query="python recall design",
         max_results=5,
         min_heat=0.0,
-        directory=_DIR,
+        recall_scope=RecallScope(project_id=_DIR),
         type_filter="all",
     )
 

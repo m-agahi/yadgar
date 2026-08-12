@@ -24,6 +24,7 @@ from unittest.mock import patch
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 _TEST_DIR = "/home/max/git/yadgar"
 
@@ -99,6 +100,7 @@ class TestWikiAddCrossProcessDrain:
                 wait=True,
                 tags=["xproc"],
                 directory=_TEST_DIR,
+                project=TEST_PROJECT_ID,
             )
 
         assert "drain_now" in forward_calls, (
@@ -131,6 +133,7 @@ class TestWikiAddCrossProcessDrain:
                 wait=True,
                 tags=["xproc-fail"],
                 directory=_TEST_DIR,
+                project=TEST_PROJECT_ID,
             )
 
         # Non-fatal: no crash, graceful wait_timeout (still queued, converging).
@@ -158,6 +161,7 @@ class TestMemorizeCrossProcessDrain:
                 context=_TEST_DIR,
                 tags=["xproc-mem"],
                 wait=True,
+                project=TEST_PROJECT_ID,
             )
 
         assert "drain_now" in forward_calls, (

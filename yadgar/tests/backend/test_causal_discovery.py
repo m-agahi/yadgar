@@ -102,35 +102,74 @@ class TestBuildEventMatrix:
         assert names == []
         assert timestamps == []
 
-    def test_directory_filter(self, cd, storage):
+    def test_project_id_filter(self, cd, storage):
+        """C12 (ADR-0226): the scope key is ``project_id``, and it is a real identity.
+
+        REWRITTEN, not deleted. This test used to pass ``project_id="/proj1"`` while
+        seeding ``directory="/proj1"`` — **one string standing in for both keys**,
+        which is precisely the trap ``test_c11_project_id_writers.py`` names: such a
+        test passes under EITHER keying and so proves neither. It was green against
+        a filter (``e["directory"] == project_id``) that matched zero episodes for
+        every real ``owner/repo`` identity.
+
+        The two keys are now deliberately DISTINCT — an ``owner/repo`` identity and
+        an unrelated filesystem path — so a regression back to path-keying makes this
+        red instead of green. The assertion is also sharpened: "both found something"
+        held trivially, so it now checks that each project sees ONLY its own episode.
+        """
         now = datetime.now(UTC)
         storage.insert_entity({"name": "modA", "type": "file"})
+        storage.insert_entity({"name": "modB", "type": "file"})
 
-        # Episode in /proj1
         storage.insert_episode(
             {
                 "session_id": "s1",
-                "directory": "/proj1",
+                "directory": "/home/u/checkout-one",
+                "project_id": "owner/proj1",
                 "raw_content": "modA changed",
                 "timestamp": (now - timedelta(hours=1)).isoformat(),
             }
         )
-        # Episode in /proj2
         storage.insert_episode(
             {
                 "session_id": "s2",
-                "directory": "/proj2",
-                "raw_content": "modA changed",
+                "directory": "/home/u/checkout-two",
+                "project_id": "owner/proj2",
+                "raw_content": "modB changed",
                 "timestamp": (now - timedelta(hours=2)).isoformat(),
             }
         )
 
-        data1, names1, _ = cd.build_event_matrix(directory="/proj1", hours=24)
-        data2, names2, _ = cd.build_event_matrix(directory="/proj2", hours=24)
+        _, names1, _ = cd.build_event_matrix(project_id="owner/proj1", hours=24)
+        _, names2, _ = cd.build_event_matrix(project_id="owner/proj2", hours=24)
 
-        # Both should find the entity but from different episodes
-        assert len(names1) >= 1
-        assert len(names2) >= 1
+        assert "modA" in names1
+        assert "modB" not in names1, "proj1's matrix must not contain proj2's entity"
+        assert "modB" in names2
+        assert "modA" not in names2, "proj2's matrix must not contain proj1's entity"
+
+    def test_a_path_valued_project_id_matches_nothing(self, cd, storage):
+        """The pre-C12 shape would have matched here; the re-keyed filter must not.
+
+        This is the negative half the old test could not express: passing a
+        FILESYSTEM PATH where an identity belongs selects no episodes, because
+        ``directory`` is no longer a scope key.
+        """
+        now = datetime.now(UTC)
+        storage.insert_entity({"name": "modA", "type": "file"})
+        storage.insert_episode(
+            {
+                "session_id": "s1",
+                "directory": "/home/u/checkout-one",
+                "project_id": "owner/proj1",
+                "raw_content": "modA changed",
+                "timestamp": (now - timedelta(hours=1)).isoformat(),
+            }
+        )
+
+        _, names, _ = cd.build_event_matrix(project_id="/home/u/checkout-one", hours=24)
+
+        assert names == [], "a path must not select episodes — directory is not a scope key"
 
 
 class TestConditionalIndependenceTest:

@@ -1,7 +1,12 @@
 <!-- YADGAR CODE-GRAPH-REFRESH PROTOCOL
      Substitute these placeholders throughout this file before following instructions:
        {directory} = your current working directory (absolute path; the project root)
-       {project}   = basename of {directory}
+       {project}   = the session's minted project_id — the `owner/repo` value emitted
+                     at SessionStart as `yadgar: project_id=<owner/repo>`. It is NOT
+                     the basename of {directory}: a basename is not an identity
+                     (ADR-0227). This protocol does not need it — its only writes are
+                     the block_* calls in step 3, whose scope key is still the
+                     directory — so do NOT add project= to them from a basename.
 -->
 
 Yadgar code-graph-refresh maintenance. This keeps the project's `code_graph`
@@ -22,8 +27,13 @@ the OUTPUT IT RETURNS. Do not reconstruct state from an earlier turn.
 
    Output is one of:
      - `{"block_name":"code_graph","skipped":true,"reason":"..."}`
-     - `{"block_name":"code_graph","directory":"<canonical_root>/<subdir>",
+     - `{"block_name":"code_graph[_<subdir>]","directory":"<canonical_root>/<subdir>",
         "content":"<digest>","chars":N,"skipped":false}`
+
+   `block_name` is `code_graph` at a repo root and `code_graph_<subdir>` for a
+   monorepo leaf (e.g. `code_graph_apps_web`). Always use the payload's OWN
+   `block_name` — never hardcode `"code_graph"`, or every leaf in a monorepo
+   overwrites the same block.
 
 2. `skipped` is true → NOTHING TO DO. This is the common no-op (opted out, no
    remote, binary absent, or no change). Say so briefly (e.g. "code_graph
@@ -39,14 +49,15 @@ the OUTPUT IT RETURNS. Do not reconstruct state from an earlier turn.
    Nothing changes for you mechanically — branch on `skipped` exactly as below.
 
 3. `skipped` is false → WRITE THE BLOCK (create-or-update). Use the payload's OWN
-   `directory` field (the canonical_root+subdir, NOT necessarily {directory}) so
-   the digest injects at the exact dir the session runs in:
+   `block_name` AND its OWN `directory` field (the canonical_root+subdir, NOT
+   necessarily {directory}) so the digest injects at the exact dir the session
+   runs in:
 
      a. Try update first:
-          block_update(name="code_graph", scope="project",
+          block_update(name=<payload.block_name>, scope="project",
             directory=<payload.directory>, content=<payload.content>)
      b. If that errors because the block does not exist (not-found), create it:
-          block_create(name="code_graph", scope="project",
+          block_create(name=<payload.block_name>, scope="project",
             directory=<payload.directory>, content=<payload.content>)
 
    Both are secret-gated (same gate as wiki_add) — the digest is a summary

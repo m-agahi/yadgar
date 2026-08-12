@@ -27,7 +27,12 @@ from yadgar._shared.config import Settings
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
-from yadgar.backend.curation import MemoryCurator
+from yadgar.backend.curation import CurateParams, MemoryCurator
+
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: dict without this key is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
 
 
 @pytest.fixture
@@ -80,6 +85,7 @@ def _make_similar_embedding(base: bytes, noise_scale: float = 0.005, seed: int =
 def _seed_with_embedding(storage, content: str, embedding: bytes, *, tags=("test",)) -> int:
     mid = storage.insert_memory(
         {
+            "project_id": _TEST_PROJECT,
             "content": content,
             "embedding": embedding,
             "tags": list(tags),
@@ -161,6 +167,7 @@ def test_default_on_fires_detector(curator, storage, embeddings, monkeypatch):
         context="/test/wtc",
         tags=["db"],
         embedding=new_emb,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
 
     assert _calls, "detect_contradictions was not called from curate_on_remember"
@@ -191,6 +198,7 @@ def test_env_off_skips_detector(curator, storage, monkeypatch):
         context="/test/wtc",
         tags=["db"],
         embedding=new_emb,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
 
     conf = _conf(storage, old_id)
@@ -212,6 +220,7 @@ def test_no_similar_memories_noop(curator, monkeypatch):
         context="/test/wtc",
         tags=["fresh"],
         embedding=new_emb,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
 
     assert result["action"] == "created"
@@ -239,6 +248,7 @@ def test_detector_exception_does_not_block_write(curator, storage, monkeypatch):
             context="/test/wtc",
             tags=["db"],
             embedding=new_emb,
+            params=CurateParams(project_id=_TEST_PROJECT),
         )
 
     assert result["action"] in ("created", "linked", "merged"), (
@@ -272,6 +282,7 @@ def test_metric_increments_on_contradiction(curator, storage, monkeypatch):
         context="/test/wtc",
         tags=["db"],
         embedding=new_emb,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
 
     after_neg = _val("negation_mismatch")
@@ -350,6 +361,7 @@ def test_no_negation_no_action_change_no_decay(curator, storage, monkeypatch):
         context="/test/wtc",
         tags=["db"],
         embedding=new_emb,
+        params=CurateParams(project_id=_TEST_PROJECT),
     )
 
     conf = _conf(storage, old_id)

@@ -61,7 +61,21 @@ class RecallRequest(BaseModel):
     """Request body for POST /recall."""
 
     query: str
-    directory: str
+    # C7 (0047 §5 C7): ``project_id`` is now THE read-path scope key and is
+    # REQUIRED. C3 added it as optional while the pipeline still scoped on
+    # ``directory``; the WHERE clause is now keyed on it, so an absent value
+    # would mean an unscoped corpus-wide read — the exact silent fallback
+    # ADR-0227 exists to delete.
+    #
+    # ``extra="forbid"`` means an old client sending ``directory`` breaks
+    # LOUDLY (HTTP 422) rather than silently reading the whole corpus. That is
+    # correct under ADR-0227 — and it means THE CORE AND BACKEND IMAGES MUST
+    # DEPLOY TOGETHER. The runbook records it.
+    project_id: str
+    # Retained as OPTIONAL, and deliberately NOT deleted: the directory is still
+    # the caller's physical working path, which several response-side consumers
+    # and the action-log correlation still key on. It no longer scopes anything.
+    directory: str | None = None
     max_results: int = 5
     min_heat: float = 0.0
     type: str = "all"  # noqa: A003 — matches MCP schema convention
@@ -94,9 +108,17 @@ class RecallResponse(BaseModel):
 
 
 class RestoreRequest(BaseModel):
-    """Request body for POST /restore."""
+    """Request body for POST /restore.
+
+    C10g (0047 PR#40 §5): carries BOTH scope values, because ``restore``'s
+    sinks key on different columns — ``directory`` still keys the checkpoint
+    and memory-block sinks (neither table has a ``project_id`` column yet),
+    ``project_id`` keys the memory-backed ones. ``extra="forbid"`` is safe for
+    the added optional field: core and backend images deploy together.
+    """
 
     directory: str = ""
+    project_id: str | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -145,9 +167,19 @@ class AdminRequest(BaseModel):
 
 
 class AdminResponse(BaseModel):
-    """Response body for POST /admin."""
+    """Response body for POST /admin.
+
+    ``scope_versions`` (Car B, §15.2 envelope choice): the current
+    ``(scope_kind, scope_id) -> int`` map for the kinds Cars D/F/I care
+    about (``config``, ``ledger``). Core compares this against its own
+    ``scope_versions`` snapshot; a bumped version means its PTC entries
+    for that scope are unreachable — zero extra round-trips in steady
+    state. Defaults to an empty dict so existing direct construction
+    (no ``scope_versions`` kwarg) still works.
+    """
 
     result: dict
+    scope_versions: dict = {}  # noqa: RUF012 — Pydantic model field default
 
 
 class VizRequest(BaseModel):

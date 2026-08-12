@@ -41,7 +41,13 @@ def _make_retriever(fts_hits_by_query: dict | None = None, comet_terms: list | N
 
     retriever = _StubRetriever()
 
-    def _fts_scored(query_str, min_heat=0.0, limit=50):
+    # Car C7 (0047 §5 C7): ``search_memories_fts_scored`` gained
+    # ``scope_sql``/``scope_params`` (the stage-1 project predicate). The fake
+    # MUST accept them: ``_run_fts_bm25`` wraps its call in a bare
+    # ``except Exception: pass``, so a TypeError from a stale fake signature is
+    # SWALLOWED and every score silently stays 0.0 — the tests then fail on the
+    # assertion rather than on the real cause.
+    def _fts_scored(query_str, min_heat=0.0, limit=50, *, scope_sql="", scope_params=None):
         if fts_hits_by_query is None:
             return []
         # match on substring for simplicity

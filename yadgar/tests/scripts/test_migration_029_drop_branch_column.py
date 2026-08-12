@@ -171,7 +171,13 @@ class TestMigration029Registration:
         assert entry["fn"] is _migration_029_drop_branch_column
 
     def test_migration_029_is_at_the_tail(self):
-        assert _MIGRATIONS[-1]["version"] == "029_drop_branch_column"
+        # Car J appended migration 030 (mutability_override) after 029, so 029
+        # is no longer at the absolute tail. The assertion below stays correct
+        # as long as 029 is the most recent migration registered BEFORE the
+        # next car adds one — but to avoid coupling 029's test to that
+        # invariant, we only check 029 is in the list (and 030 is the tail).
+        assert "029_drop_branch_column" in [m["version"] for m in _MIGRATIONS]
+        assert _MIGRATIONS[-1]["version"] != "029_drop_branch_column"
 
     def test_029_registered_after_004_and_015(self):
         versions = [m["version"] for m in _MIGRATIONS]
@@ -229,10 +235,61 @@ class TestMigration029HappyPath:
         assert first_drop > last_delete
 
     def test_does_not_touch_wiki_page_version(self):
-        """029's scope is wiki_page + memory. Version rows are an audit trail."""
+        """029's scope is wiki_page + memory — UNCHANGED by C12.
+
+        REWRITTEN, not deleted (ADR-0226: *"must be rewritten to assert the new
+        boundary rather than deleted, or the coverage is lost silently"*). Only the
+        REASON changed. This used to pin ``wiki_page_version.branch`` in place as a
+        deliberate survivor; that survivor is revoked and migration **032** drops
+        it. 029's own reach is genuinely unchanged, and asserting it still catches
+        the thing worth catching: silent scope creep in a shipped migration.
+
+        The other half of the new boundary — that 032 IS the one that drops it —
+        is asserted by ``TestMigration029_032Boundary`` below and, at the DDL
+        level, in the two e2e modules.
+        """
         s = _healthy_corpus()
         _migration_029_drop_branch_column(s)
         assert not any("wiki_page_version" in x for x in s.statements)
+
+
+class TestMigration029_032Boundary:
+    """The boundary is now a PAIR of claims — 029 stops, 032 continues (ADR-0226)."""
+
+    def test_032_targets_wiki_page_version(self):
+        from yadgar._shared.storage.migrations import (
+            _migration_032_drop_wiki_page_version_branch,
+        )
+        from yadgar.tests.scripts.test_migration_032_drop_wiki_page_version_branch import (
+            _FakeStorage,
+            _ver,
+        )
+
+        s = _FakeStorage(versions=[_ver(1, branch="feat/x")])
+        _migration_032_drop_wiki_page_version_branch(s)
+        assert any("wiki_page_version" in x for x in s.statements), (
+            "032 must be the migration that reaches wiki_page_version"
+        )
+
+    def test_the_two_migrations_have_disjoint_tables(self):
+        """Neither may reach into the other's table — that is what makes it a boundary."""
+        from yadgar._shared.storage.migrations import (
+            _migration_032_drop_wiki_page_version_branch,
+        )
+        from yadgar.tests.scripts.test_migration_032_drop_wiki_page_version_branch import (
+            _FakeStorage,
+            _ver,
+        )
+
+        s029 = _healthy_corpus()
+        _migration_029_drop_branch_column(s029)
+        assert not any("wiki_page_version" in x for x in s029.statements)
+
+        s032 = _FakeStorage(versions=[_ver(1, branch="feat/x")])
+        _migration_032_drop_wiki_page_version_branch(s032)
+        for stmt in s032.statements:
+            assert " TABLE memory" not in stmt
+            assert " TABLE wiki_page;" not in stmt
 
     def test_rerun_is_idempotent(self):
         s = _healthy_corpus()

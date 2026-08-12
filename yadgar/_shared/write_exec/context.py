@@ -15,7 +15,16 @@ class MemorizeContext:
 
     # --- Inputs (set at construction, frozen after validate) ---
     content: str
-    context: str
+    # C10 (f) (0047 PR#40 §5): ``context`` is an OPTIONAL REAL PATH, and
+    # nothing else. It lost its scoping role in this car — ``project_id``
+    # below is the scope key and the sole source of the ``directory_context``
+    # stamp. ``context`` survives only as the staleness-hash input
+    # (``_file_hash`` / ``upsert_file_hash``, carve-out 3); ``None`` means "no
+    # path was supplied", which yields no hash — the pre-existing best-effort
+    # contract, not a new failure mode. It is ``str | None`` rather than a
+    # defaulted field because every constructor names it explicitly and the
+    # dataclass has no other defaulted input to sit behind.
+    context: str | None
     tags: list[str]
     is_protected: bool
     provenance_agent: str | None
@@ -23,6 +32,18 @@ class MemorizeContext:
     valid_until: str | None
     ttl_days: int | None
     reason: str
+
+    # C4b (0047 PR#40 §5): the enqueue-time project_id, resolved by the core
+    # ``memorize`` tool — the only participant that can see the session — and
+    # carried through the drainer replay to ``insert_memory``'s
+    # ``caller_value``. Stamped INDEPENDENTLY of ``context``: a memory whose
+    # directory is collapsed for reach still keeps its real owner (§1.4,
+    # ownership ≠ reach; same treatment C3 gave ``WikiAddOptions``). ``None``
+    # only for a legacy payload enqueued before this car; C5 makes that raise.
+    #
+    # C10 (f): this is now the ONLY scope key on the context object — the
+    # ``directory_context`` stamp reads it, not ``context``.
+    project_id: str | None = None
 
     # --- Derived (set during phases) ---
     computed_valid_until: str | None = None

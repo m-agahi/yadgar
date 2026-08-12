@@ -44,7 +44,7 @@ def engine(storage, settings):
 
 
 def test_get_applicable_rules_cache_hit_skips_db(engine, storage):
-    """Second call for same directory must hit zero DB queries."""
+    """Second call for the same (project_id, path) must hit zero DB queries."""
     engine.get_applicable_rules("/foo")
     # reset counters after first (cold) call
     storage.get_rules_for_scope.reset_mock()
@@ -59,19 +59,34 @@ def test_get_applicable_rules_cache_hit_skips_db(engine, storage):
 # ── test 2: first call issues exactly 3 queries ──────────────────────────
 
 
-def test_get_applicable_rules_first_call_issues_three_queries(engine, storage):
-    """First call for a directory must issue exactly 3 rule-scope queries."""
-    engine.get_applicable_rules("/bar")
+def test_get_applicable_rules_first_call_issues_expected_queries(engine, storage):
+    """First call must issue 1 global query + the project query + the legacy census.
+
+    C10(a): the scope kinds are "project"/"path". ``path`` is None here, so the
+    "path" query is correctly SKIPPED — a filesystem predicate with no file to
+    test cannot match. The two extra reads are the one-shot legacy census
+    (``_report_unmigrated_rules``), which surfaces rows still on the retired
+    "directory"/"file" kinds instead of silently dropping them.
+    """
+    engine.get_applicable_rules("acme/bar")
 
     # 1 call to get_rules_for_scope("global")
     assert storage.get_rules_for_scope.call_count == 1
     storage.get_rules_for_scope.assert_called_once_with("global")
 
-    # 2 calls to get_all_active_rules_by_scope: "directory" + "file"
-    assert storage.get_all_active_rules_by_scope.call_count == 2
+    # "project" + the census pair. No "path" — no path was supplied.
     calls = storage.get_all_active_rules_by_scope.call_args_list
     scopes = {c.args[0] for c in calls}
-    assert scopes == {"directory", "file"}
+    assert scopes == {"project", "directory", "file"}
+    assert "path" not in scopes
+
+
+def test_path_rules_are_queried_only_when_a_path_is_supplied(engine, storage):
+    """C10(a): scope="path" is consulted only with a real path to glob."""
+    engine.get_applicable_rules("acme/bar", "/repo/src/app.ts")
+
+    scopes = {c.args[0] for c in storage.get_all_active_rules_by_scope.call_args_list}
+    assert "path" in scopes
 
 
 # ── test 3: add_rule clears the cache ───────────────────────────────────
@@ -97,16 +112,17 @@ def test_add_rule_clears_cache(engine, storage):
 
     engine.get_applicable_rules("/foo")
 
-    # Must have re-fetched (3 queries again)
+    # Must have re-fetched. The census is one-shot per engine and already ran,
+    # so only the "project" query follows the global one this time.
     assert storage.get_rules_for_scope.call_count == 1
-    assert storage.get_all_active_rules_by_scope.call_count == 2
+    assert storage.get_all_active_rules_by_scope.call_count == 1
 
 
 # ── test 4: cache is keyed per directory ────────────────────────────────
 
 
-def test_cache_separates_directories(engine, storage):
-    """Each directory is cached independently; no cross-contamination."""
+def test_cache_separates_projects(engine, storage):
+    """Each project is cached independently; no cross-contamination."""
     engine.get_applicable_rules("/foo")
     engine.get_applicable_rules("/bar")
 
@@ -121,9 +137,10 @@ def test_cache_separates_directories(engine, storage):
     storage.get_rules_for_scope.assert_not_called()
     storage.get_all_active_rules_by_scope.assert_not_called()
 
-    # Both directories independently present in cache
-    assert "/foo" in engine._applicable_rules_cache
-    assert "/bar" in engine._applicable_rules_cache
+    # Both projects independently present in cache. C10(a): the key is the
+    # (project_id, path) tuple — path participates in cache identity.
+    assert ("/foo", None) in engine._applicable_rules_cache
+    assert ("/bar", None) in engine._applicable_rules_cache
 
 
 # ── test 5: delete_rule also clears the cache ───────────────────────────
@@ -132,7 +149,7 @@ def test_cache_separates_directories(engine, storage):
 def test_delete_rule_clears_cache(engine, storage):
     """delete_rule() must clear the cache so next call re-fetches."""
     engine.get_applicable_rules("/foo")
-    assert "/foo" in engine._applicable_rules_cache
+    assert ("/foo", None) in engine._applicable_rules_cache
 
     engine.delete_rule(1)
 
@@ -177,8 +194,13 @@ def test_memorize_check_write_policy_query_count(settings, tmp_path):
         first_global = call_counts["global"]
         first_by_scope = call_counts["by_scope"]
         assert first_global == 1, f"Expected 1 global query on first call, got {first_global}"
-        assert first_by_scope == 2, (
-            f"Expected 2 by-scope queries on first call, got {first_by_scope}"
+        # C10(a): "project" + "path" + the one-shot legacy census
+        # ("directory", "file"). The "path" query IS issued here because
+        # check_write_policy threads its `context` as the PATH predicate — the
+        # caller (write_exec/validate.py) forwards a working-directory path,
+        # never a project_id.
+        assert first_by_scope == 4, (
+            f"Expected 4 by-scope queries on first call, got {first_by_scope}"
         )
 
         # Reset counters

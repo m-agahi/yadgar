@@ -26,6 +26,7 @@ from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._project_param import accept_project_param
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ def block_create(
     scope: str = "project",
     char_limit: int | None = None,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Create a new memory block. Blocks are always-injected, named text containers.
 
@@ -66,6 +69,12 @@ def block_create(
         {id, name, scope, content, char_limit, created_at, updated_at} on success.
         {ok: False, error: "..."} on validation failure or duplicate.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    # C11: the validated value is KEPT and put on the payload. It was computed
+    # and discarded — the same defect C13 found on ``checkpoint`` — because
+    # ``memory_block`` had no column for it. Migration 033 added one.
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -84,6 +93,7 @@ def block_create(
             "content": content,
             "scope": scope,
             "directory": directory,
+            "project_id": _project_id,
             "char_limit": char_limit,
         },
     )
@@ -94,6 +104,8 @@ def block_get(
     name: str,
     scope: str = "project",
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Fetch a memory block by name and scope.
 
@@ -106,6 +118,9 @@ def block_get(
         {id, name, scope, content, char_limit, created_at, updated_at} on success.
         {ok: False, error: "..."} if not found.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    _project_id = accept_project_param(project, directory)
     storage = _get_storage()
     if storage is None:
         return {"ok": False, "error": "storage_not_initialized"}
@@ -116,7 +131,9 @@ def block_get(
         return _dir_guard
 
     try:
-        result = storage.get_block(name=name, scope=scope, directory=directory)
+        result = storage.get_block(
+            name=name, scope=scope, directory=directory, project_id=_project_id
+        )
     except Exception as exc:
         logger.warning("block_get error name=%s: %s", name, exc)
         return {"ok": False, "error": str(exc)}
@@ -136,6 +153,8 @@ def block_update(
     content: str,
     scope: str = "project",
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Replace a memory block's content (full overwrite, char_limit enforced).
 
@@ -149,6 +168,9 @@ def block_update(
         Updated {id, name, scope, content, char_limit, updated_at} on success.
         {ok: False, error: "..."} on failure.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -162,7 +184,13 @@ def block_update(
     # R3 Car 3a: storage write forwards to backend /admin.
     return _forward_admin(
         "block_update",
-        {"name": name, "content": content, "scope": scope, "directory": directory},
+        {
+            "name": name,
+            "content": content,
+            "scope": scope,
+            "directory": directory,
+            "project_id": _project_id,
+        },
     )
 
 
@@ -171,6 +199,8 @@ def block_delete(
     name: str,
     scope: str = "project",
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Delete a memory block. Idempotent — no error if block doesn't exist.
 
@@ -183,19 +213,27 @@ def block_delete(
         {deleted: True, name: str} on success.
         {ok: False, error: "..."} on unexpected failure.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
         return _dir_guard
 
     # R3 Car 3a: storage write forwards to backend /admin.
-    return _forward_admin("block_delete", {"name": name, "scope": scope, "directory": directory})
+    return _forward_admin(
+        "block_delete",
+        {"name": name, "scope": scope, "directory": directory, "project_id": _project_id},
+    )
 
 
 @_tool(power=True)
 def block_list(
     scope: str | None = None,
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> list[dict]:
     """List memory blocks for a scope and directory.
 
@@ -207,12 +245,17 @@ def block_list(
         List of {name, scope, content, char_limit, updated_at} dicts, ordered by name.
         Empty list on no matches or storage error.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    # C11: the read takes BOTH — project_id for rows written after migration
+    # 033, the legacy path for the historical corpus no backfill reaches.
+    _project_id = accept_project_param(project, directory)
     storage = _get_storage()
     if storage is None:
         return []
 
     try:
-        rows = storage.list_blocks(scope=scope, directory=directory)
+        rows = storage.list_blocks(scope=scope, directory=directory, project_id=_project_id)
     except Exception as exc:
         logger.warning("block_list error scope=%s directory=%s: %s", scope, directory, exc)
         return []
@@ -237,6 +280,8 @@ def block_replace(
     new_text: str,
     scope: str = "project",
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Patch a memory block by replacing one occurrence of old_text with new_text.
 
@@ -254,6 +299,9 @@ def block_replace(
         Updated {id, name, scope, content, char_limit, updated_at} on success.
         {ok: False, error: "..."} on failure (not found, ambiguous, limit exceeded).
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -273,6 +321,7 @@ def block_replace(
             "new_text": new_text,
             "scope": scope,
             "directory": directory,
+            "project_id": _project_id,
         },
     )
 
@@ -283,6 +332,8 @@ def block_append(
     text: str,
     scope: str = "project",
     directory: str | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Append text to a memory block with a newline separator.
 
@@ -299,6 +350,9 @@ def block_append(
         Updated {id, name, scope, content, char_limit, updated_at} on success.
         {ok: False, error: "..."} on failure (block not found, limit exceeded).
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    _project_id = accept_project_param(project, directory)
     # v5.42.5 F3: directory required for scope='project'
     _dir_guard = _require_directory_for_project_scope(scope, directory)
     if _dir_guard is not None:
@@ -312,5 +366,11 @@ def block_append(
     # R3 Car 3a: storage write forwards to backend /admin.
     return _forward_admin(
         "block_append",
-        {"name": name, "text": text, "scope": scope, "directory": directory},
+        {
+            "name": name,
+            "text": text,
+            "scope": scope,
+            "directory": directory,
+            "project_id": _project_id,
+        },
     )

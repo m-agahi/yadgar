@@ -28,6 +28,7 @@ from unittest.mock import patch
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -45,7 +46,9 @@ def _engines(tmp_path_factory):
 
 
 def test_wait_false_default_returns_queued():
-    result = server.memorize("wait false default content", "/tmp/waitfalse", ["test"])
+    result = server.memorize(
+        "wait false default content", "/tmp/waitfalse", ["test"], project=TEST_PROJECT_ID
+    )
     assert result["stored"] is True
     assert result["queued"] is True
     assert "queue_id" in result
@@ -86,7 +89,9 @@ def test_wait_true_returns_committed_after_drain(recall_backend_bypass):
 
     _mem_mod = sys.modules["yadgar.core.server.tools.memorize"]
     with patch.object(_mem_mod.settings, "WIKI_WRITE_WAIT_TIMEOUT_SECONDS", 0.3):
-        result = server.memorize(content, "/tmp/waittrue", ["test"], wait=True)
+        result = server.memorize(
+            content, "/tmp/waittrue", ["test"], wait=True, project=TEST_PROJECT_ID
+        )
 
     assert result.get("committed") is True, f"expected committed, got: {result}"
     assert result["stored"] is True
@@ -94,5 +99,5 @@ def test_wait_true_returns_committed_after_drain(recall_backend_bypass):
 
     # committed must mean the write actually landed — recall finds it with no
     # separate flush_queue() call (the wait path already drained it).
-    hits = server.recall(content[:40], directory="/tmp/waittrue")
+    hits = server.recall(content[:40], directory="/tmp/waittrue", project=TEST_PROJECT_ID)
     assert any(h["content"] == content for h in hits), "committed memory not persisted"

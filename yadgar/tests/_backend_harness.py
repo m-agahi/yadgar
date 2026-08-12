@@ -141,6 +141,8 @@ def patch_admin_bypass(monkeypatch: Any) -> None:
         "yadgar.core.server.tools.admin_invariants",
         "yadgar.core.server.tools.project",
         "yadgar.core.server.tools.dispatch_helper",
+        # Car F: ADR tools forward ledger reads/writes via _forward_admin.
+        "yadgar.core.server.tools.adr",
         # consolidation orchestrator binds _forward_admin (check_invariants tail)
         "yadgar.core.consolidation.orchestrator",
         # nightly step 5b's driver binds _forward_admin at module scope for the
@@ -170,6 +172,7 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
     Args:
         monkeypatch: pytest's monkeypatch fixture (function-scoped).
     """
+    from yadgar._shared.storage.directory import RecallScope
     from yadgar.backend.retrieval.compose import ensure_retrieval_engine
     from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
@@ -185,6 +188,7 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         tags,
         mode=None,
         profile=None,
+        project_id=None,
         **kwargs,
     ):
         if os.environ.get("YADGAR_EMBED_URL"):
@@ -197,6 +201,7 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
                 tags,
                 mode=mode,
                 profile=profile,
+                project_id=project_id,
                 **kwargs,
             )
         if mode is not None:
@@ -205,11 +210,18 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         # T2 Car E2: compose the backend retriever lazily against the test's
         # live engines (idempotent; the shared root no longer builds it).
         ensure_retrieval_engine()
+        # Car C7 (0047 §5 C7): _fanout_recall's scope param is project_id
+        # (required), not directory — mirrors conftest.py's recall_backend_bypass.
+        # Car C8: that param is now a RecallScope. ``excluded_slugs`` is left
+        # EMPTY here deliberately — the superseded-ADR set is loaded in the
+        # async route (``recall_route``), which this bypass replaces, and the
+        # loader is async while this shim is sync. Tests that exercise the
+        # exclusion drive the route or the clause builder directly.
         return _fanout_recall(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
-            directory=directory,
+            recall_scope=RecallScope(project_id=project_id),
             type_filter=type_filter,
             tags=tags,
             profile=profile,
@@ -248,10 +260,14 @@ def patch_restore_bypass(monkeypatch: Any) -> None:
 
     _orig_forward_restore = _forward_module._forward_restore
 
-    def _bypass_restore(directory="", timeout_s=120.0):
+    # C10g (0047 PR#40 §5): mirrors ``_forward_restore``'s signature, which now
+    # carries the project_id alongside the path (restore's sinks key on
+    # different columns). A bypass that dropped it would make every scoped
+    # restore in the test suite silently unscoped.
+    def _bypass_restore(directory="", project_id=None, timeout_s=120.0):
         if os.environ.get("YADGAR_EMBED_URL"):
-            return _orig_forward_restore(directory, timeout_s=timeout_s)
-        return run_restore(directory)
+            return _orig_forward_restore(directory, project_id, timeout_s=timeout_s)
+        return run_restore(directory, project_id)
 
     monkeypatch.setattr(_forward_module, "_forward_restore", _bypass_restore)
     for _consumer in ("yadgar.core.server.tools.misc",):

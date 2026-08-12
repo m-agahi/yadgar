@@ -28,8 +28,13 @@ logger = logging.getLogger(__name__)
 def block_create(payload: dict) -> dict:
     """Create a memory block. Storage-write half.
 
-    payload: {name, content, scope, directory, char_limit?}
+    payload: {name, content, scope, directory, project_id?, char_limit?}
     Directory guard + secret gate already ran core-side.
+
+    C11 (0047 PR#40 §5): ``project_id`` is the value the core tool resolved via
+    ``accept_project_param`` and — until this car — computed and threw away.
+    Migration 033 gives ``memory_block`` a column for it; ``create_block``
+    dual-writes it alongside ``directory``.
     """
     storage = _get_storage()
     kwargs: dict = {
@@ -37,6 +42,7 @@ def block_create(payload: dict) -> dict:
         "content": payload["content"],
         "scope": payload.get("scope", "project"),
         "directory": payload.get("directory"),
+        "project_id": payload.get("project_id"),
     }
     if payload.get("char_limit") is not None:
         kwargs["char_limit"] = payload["char_limit"]
@@ -60,6 +66,7 @@ def block_update(payload: dict) -> dict:
             content=payload["content"],
             scope=payload.get("scope", "project"),
             directory=payload.get("directory"),
+            project_id=payload.get("project_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("block_update error name=%s: %s", payload.get("name"), exc)
@@ -79,6 +86,7 @@ def block_delete(payload: dict) -> dict:
             name=name,
             scope=payload.get("scope", "project"),
             directory=payload.get("directory"),
+            project_id=payload.get("project_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("block_delete error name=%s: %s", name, exc)
@@ -101,6 +109,7 @@ def block_replace(payload: dict) -> dict:
             new_text=payload["new_text"],
             scope=payload.get("scope", "project"),
             directory=payload.get("directory"),
+            project_id=payload.get("project_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("block_replace error name=%s: %s", payload.get("name"), exc)
@@ -121,6 +130,7 @@ def block_append(payload: dict) -> dict:
             text=payload["text"],
             scope=payload.get("scope", "project"),
             directory=payload.get("directory"),
+            project_id=payload.get("project_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("block_append error name=%s: %s", payload.get("name"), exc)

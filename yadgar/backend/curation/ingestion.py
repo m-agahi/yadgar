@@ -33,6 +33,9 @@ class NewMemorySpec:
     surprise: float = 0.0
     importance: float = 0.5
     valence: float = 0.0
+    # C4b (0047 PR#40 §5): enqueue-time project_id; reaches ``insert_memory``
+    # as ``_resolve_project_id_for_write``'s ``caller_value``.
+    project_id: str | None = None
 
 
 @trace_span()
@@ -144,6 +147,14 @@ def insert_new_memory(
 
     embeddings_engine and settings are forwarded to storage.insert_memory so
     that the INDEX_ENRICHMENT_ENABLED pipeline runs when configured.
+
+    ``context`` (C10 (f), 0047 PR#40 §5) is NO LONGER the scope key and no
+    longer reaches the row: ``directory_context`` is stamped from
+    ``spec.project_id``. The parameter is retained because it is positional in
+    ``MemoryCurator.curate_on_remember``'s published signature — deleting it
+    would churn call sites for no behavioural gain — and it still carries the
+    caller's path hint. Anything that needs to know WHICH PROJECT this row
+    belongs to must read ``spec.project_id``.
     """
     s = spec or NewMemorySpec()
     memory_id = storage.insert_memory(
@@ -151,11 +162,17 @@ def insert_new_memory(
             "content": content,
             "embedding": s.embedding,
             "tags": s.tags,
-            "directory_context": context,
+            # C10 (f) (0047 PR#40 §5): THE CURATOR-ARM STAMP — the production
+            # arm's half of the pair whose other half is ``_direct_insert``.
+            # Both now read the same single scope key.
+            "directory_context": s.project_id,
             "heat": s.heat,
             "is_stale": False,
             "file_hash": s.file_hash,
             "embedding_model": s.embedding_model,
+            # C4b (0047 PR#40 §5): stamped independently of ``context`` —
+            # ownership and reach are different facts (§1.4).
+            "project_id": s.project_id,
         },
         embeddings_engine=embeddings_engine,
         settings=settings,

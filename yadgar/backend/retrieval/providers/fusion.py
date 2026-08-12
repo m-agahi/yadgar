@@ -264,6 +264,16 @@ def fuse_candidates(
 
     # Step 3: prepare wiki candidates with placement score
     # (CE + RECALL_WIKI_PRIOR_WEIGHT * native_score), sorted best-first.
+    # Car C7 (0047, absorbing C8 item 5): the C2 "downweight" multiply that
+    # stood here is DELETED, and a verified sign bug with it. It multiplied
+    # ``ce + wiki_prior_weight * native_score`` by a factor in (0, 1) — but
+    # ``ce`` is a raw cross-encoder logit and is commonly NEGATIVE, so the
+    # multiply RAISED the score. The penalty PROMOTED exactly the pages it was
+    # written to sink. Its only user (``task_list``) is now
+    # ``recall_disposition="exclude"``, so those pages are never fetched: the
+    # stage-1 WHERE drops them before they can consume a pool slot, which is
+    # strictly better than re-ranking them afterwards. A future genuine soft
+    # sink must SUBTRACT or CLAMP, never multiply.
     wiki_with_placement: list[tuple[Candidate, float]] = []
     for j, wiki_cand in enumerate(wiki_pool):
         ce = wiki_ce_scores.get(j, wiki_cand.native_score)

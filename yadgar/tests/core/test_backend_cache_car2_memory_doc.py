@@ -42,6 +42,7 @@ from yadgar.backend.cache import (
     NullCache,
     get_memory_doc_cache,
 )
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ── fake storage host ─────────────────────────────────────────────────────────
 
@@ -397,14 +398,19 @@ class TestOmitPortableEmbedded:
         from yadgar._shared.storage import StorageEngine
 
         s = StorageEngine(str(tmp_path / "db"))
+        # ADR-0227: a storage write must NAME its project — C5 deleted every
+        # derivation tier, so an unstamped insert raises UnresolvedProjectError
+        # before the OMIT query under test is ever reached. The identity is
+        # incidental here; the SurrealKV parse of `SELECT * OMIT …` is the point.
         mem = {
             "content": "hello world",
             "embedding": np.ones(384, dtype=np.float32).tobytes(),
             "tags": ["t"],
             "directory_context": "/tmp",
             "heat": 1.0,
+            "project_id": TEST_PROJECT_ID,
         }
-        mid = s.insert_memory(mem, branch="master")
+        mid = s.insert_memory(mem)
         rows = s._q(f"SELECT * OMIT content, embedding FROM memory WHERE id IN [memory:{mid}]")
         assert rows, "OMIT query returned no rows"
         assert "content" not in rows[0]

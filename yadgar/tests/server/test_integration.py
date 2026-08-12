@@ -116,6 +116,14 @@ def server_engines(tmp_path):
 # ── Existing integration tests (preserved) ────────────────────────────
 
 
+#: Identity every write in this module names. C5 (ADR-0227) left no tier under
+#: the caller's value, so a scoped call that names no project raises instead of
+#: defaulting. Passed at each CALL SITE rather than through a fixture: a
+#: fixture supplying it invisibly would be the deleted fallback in test
+#: clothing, and would hide the next production path that forgets to thread it.
+_TEST_PROJECT_ID = "owner/repo"
+
+
 class TestFullRememberRecallCycle:
     def test_store_and_recall_ranked(self, storage, embeddings, buffer):
         """Store 5 memories, recall with a relevant query, verify ranking."""
@@ -144,6 +152,7 @@ class TestFullRememberRecallCycle:
             embedding = embeddings.encode(content)
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": content,
                     "embedding": embedding,
                     "tags": tags,
@@ -188,6 +197,7 @@ class TestRememberCreatesEpisode:
         embedding = embeddings.encode(content)
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": content,
                 "embedding": embedding,
                 "tags": ["fastapi"],
@@ -227,6 +237,7 @@ class TestStalenessIntegration:
 
         mem_id = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "Database config uses SQLite",
                 "directory_context": str(tmp_path),
                 "tags": ["config"],
@@ -259,6 +270,7 @@ class TestConsolidationDecay:
         for i in range(3):
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": f"old memory {i}",
                     "directory_context": "/proj",
                     "heat": 1.0,
@@ -286,6 +298,7 @@ class TestConsolidationArchival:
 
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "ancient memory that should be archived",
                 "directory_context": "/proj",
                 "heat": 0.1,
@@ -308,6 +321,7 @@ class TestMemoryStatsAccurate:
         for i in range(3):
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": f"active memory {i}",
                     "directory_context": "/proj",
                     "heat": 0.8,
@@ -319,6 +333,7 @@ class TestMemoryStatsAccurate:
         for i in range(2):
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": f"stale memory {i}",
                     "directory_context": "/proj",
                     "heat": 0.5,
@@ -330,6 +345,7 @@ class TestMemoryStatsAccurate:
         for i in range(4):
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": f"archived memory {i}",
                     "directory_context": "/proj",
                     "heat": 0.01,
@@ -349,6 +365,7 @@ class TestProjectContext:
         """Memories for different directories should be isolated."""
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "frontend uses React with TypeScript",
                 "directory_context": "/projects/frontend",
                 "heat": 1.0,
@@ -357,6 +374,7 @@ class TestProjectContext:
         )
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "frontend CSS uses Tailwind",
                 "directory_context": "/projects/frontend",
                 "heat": 0.9,
@@ -365,6 +383,7 @@ class TestProjectContext:
         )
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "backend uses FastAPI with SQLAlchemy",
                 "directory_context": "/projects/backend",
                 "heat": 1.0,
@@ -373,6 +392,7 @@ class TestProjectContext:
         )
         storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "cold frontend memory",
                 "directory_context": "/projects/frontend",
                 "heat": 0.3,
@@ -489,6 +509,7 @@ class TestStalenessWatcherIntegration:
 
         mem_id = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "module documentation",
                 "directory_context": str(tmp_path),
                 "heat": 1.0,
@@ -528,6 +549,7 @@ class TestFullRememberWithThermodynamics:
 
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": content,
                 "embedding": embedding,
                 "tags": tags,
@@ -565,6 +587,7 @@ class TestRememberWithCurationMerge:
         # First insert directly
         mid1 = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": content1,
                 "embedding": emb1,
                 "tags": ["python", "fastapi"],
@@ -587,6 +610,10 @@ class TestRememberWithCurationMerge:
                 importance=0.5,
                 valence=0.0,
                 embedding_model=embeddings.get_model_name(),
+                # C4b: CurateParams.project_id forwards onto NewMemorySpec, so a
+                # curator-created row carries the SESSION's identity. It defaults
+                # to None, which C5 made fatal at the storage chokepoint.
+                project_id=_TEST_PROJECT_ID,
             ),
         )
 
@@ -614,6 +641,7 @@ class TestRecallMultiSignal:
             embedding = embeddings.encode(content)
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": content,
                     "embedding": embedding,
                     "tags": ["tech"],
@@ -648,6 +676,7 @@ class TestSynapticTaggingIntegration:
         for i in range(3):
             mid = storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": f"nearby memory {i}",
                     "directory_context": "/proj",
                     "heat": 0.5,
@@ -660,6 +689,7 @@ class TestSynapticTaggingIntegration:
         # Create a high-importance event memory
         event_mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "Critical error fixed in production deployment",
                 "directory_context": "/proj",
                 "heat": 1.0,
@@ -744,6 +774,7 @@ class TestDreamReplayIntegration:
             embedding = embeddings.encode(content)
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": content,
                     "embedding": embedding,
                     "tags": ["tech"],
@@ -808,6 +839,7 @@ class TestNarrativeGeneration:
             embedding = embeddings.encode(content)
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": content,
                     "embedding": embedding,
                     "tags": ["development"],
@@ -836,6 +868,7 @@ class TestAstrocyteDomainAssignment:
         # Code memory
         code_mem = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "Implemented a new function to handle file imports and module loading",
                 "directory_context": "/proj",
                 "heat": 1.0,
@@ -849,6 +882,7 @@ class TestAstrocyteDomainAssignment:
         # Decision memory
         decision_mem = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "Decided to use PostgreSQL instead of MySQL for the trade-off of better JSON support",
                 "directory_context": "/proj",
                 "heat": 1.0,
@@ -862,6 +896,7 @@ class TestAstrocyteDomainAssignment:
         # Error memory
         error_mem = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "Encountered a timeout error in the API. The fix was to increase the connection pool",
                 "directory_context": "/proj",
                 "heat": 1.0,
@@ -878,6 +913,7 @@ class TestMetamemoryFeedback:
         """Rate memories as useful/not useful, verify confidence updates."""
         mid = storage.insert_memory(
             {
+                "project_id": _TEST_PROJECT_ID,
                 "content": "Always run tests before committing code",
                 "directory_context": "/proj",
                 "heat": 1.0,
@@ -910,6 +946,7 @@ class TestFullSleepCycle:
             embedding = embeddings.encode(f"Memory about topic {i} in the codebase")
             storage.insert_memory(
                 {
+                    "project_id": _TEST_PROJECT_ID,
                     "content": f"Memory about topic {i} in the codebase",
                     "embedding": embedding,
                     "tags": ["topic"],
@@ -937,25 +974,28 @@ class TestBackwardCompatibility:
             "backward compat test memory",
             "/tmp/compat",
             ["test"],
+            project=_TEST_PROJECT_ID,
         )
         assert result["id"] is not None
         assert result["content"] == "backward compat test memory"
         assert "embedding" not in result
 
-        results = server.recall("backward compat test", directory="/tmp/compat")
+        results = server.recall(
+            "backward compat test", directory="/tmp/compat", project=_TEST_PROJECT_ID
+        )
         assert len(results) >= 1
         assert any("backward compat" in r["content"] for r in results)
 
     def test_forget_still_works(self, server_engines, admin_backend_bypass):
         """Verify forget still deletes memories."""
-        result = memorize_sync("to be forgotten", "/tmp", ["test"])
+        result = memorize_sync("to be forgotten", "/tmp", ["test"], project=_TEST_PROJECT_ID)
         mid = result["id"]
         resp = server.forget(mid)
         assert resp["status"] == "deleted"
 
     def test_memory_stats_still_works(self, server_engines, flush_queue):
         """Verify stats returns expected structure."""
-        server.memorize("stats test", "/tmp", ["test"])
+        server.memorize("stats test", "/tmp", ["test"], project=_TEST_PROJECT_ID)
         flush_queue()
         stats = server.memory_stats()
         assert "total_memories" in stats
@@ -1043,7 +1083,7 @@ class TestServerStartupShutdown:
         from yadgar.tests._backend_harness import wire_drainer
 
         with wire_drainer(server._get_file_queue):
-            result = memorize_sync("lifecycle test", "/tmp", ["test"])
+            result = memorize_sync("lifecycle test", "/tmp", ["test"], project=_TEST_PROJECT_ID)
             assert result["id"] is not None
 
         # Shutdown
@@ -1072,6 +1112,7 @@ class TestRememberWithAstrocyteAssignment:
             "Implemented a new class with import statements and function definitions",
             "/proj/code",
             ["code", "implementation"],
+            project=_TEST_PROJECT_ID,
         )
         assert result["id"] is not None
         # Pool should have assigned this memory to code-patterns
@@ -1088,7 +1129,9 @@ class TestConsolidateNowWithSleepCycle:
         """Verify consolidate_now runs full consolidation + sleep cycle."""
         # Add some memories for sleep cycle to process
         for i in range(3):
-            server.memorize(f"consolidation test memory {i}", "/proj", ["test"])
+            server.memorize(
+                f"consolidation test memory {i}", "/proj", ["test"], project=_TEST_PROJECT_ID
+            )
         flush_queue()
 
         # mode='full' is required for sleep_cycle to run (v5.10.4+)
@@ -1108,6 +1151,7 @@ class TestRememberProspectiveTrigger:
             "TODO: add input validation for email fields",
             "/proj",
             ["task"],
+            project=_TEST_PROJECT_ID,
         )
         flush_queue()
 
@@ -1124,6 +1168,7 @@ class TestRememberProspectiveTrigger:
             "Added validation for email input fields in the form",
             "/proj",
             ["validation"],
+            project=_TEST_PROJECT_ID,
         )
 
         # At minimum, the memory was created successfully

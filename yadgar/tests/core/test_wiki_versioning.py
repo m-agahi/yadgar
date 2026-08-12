@@ -23,6 +23,7 @@ import pytest
 
 from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -59,8 +60,14 @@ def _insert_page(
     category="reference",
     tags=None,
     confidence="medium",
+    project_id=TEST_PROJECT_ID,
 ):
-    """Helper: insert a wiki page directly via storage layer."""
+    """Helper: insert a wiki page directly via storage layer.
+
+    ``project_id`` is a NAMED parameter with a default rather than a literal
+    buried in the dict: C5 made an unstamped insert raise, and a caller that
+    needs a different owner (cross-project scoping) has to be able to say so.
+    """
     return _storage().insert_wiki_page(
         {
             "slug": slug,
@@ -71,6 +78,7 @@ def _insert_page(
             "confidence": confidence,
             "source_memory_ids": [],
             "links": [],
+            "project_id": project_id,
         }
     )
 

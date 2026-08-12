@@ -130,15 +130,56 @@ def hook_post_tool_capture() -> None:
     else:
         summary = str(tool_input)[:200]
 
-    _http_post(
-        "/hooks/auto-capture",
-        {
-            "tool_name": tool_name,
-            "summary": summary,
-            "directory": cwd,
-            "session_id": session_id,
-        },
+    # C4 (0047 PR#40 §5): stamp the identity HERE. This hook runner is
+    # host-side (the same carve-out ``_emit_project_id`` uses), and the
+    # daemon it POSTs to is not — the container has no git binary and no
+    # project mounts, so a project_id resolved on the far side of this call
+    # could only be manufactured (ADR-0227 §1.1).
+    #
+    # Fail-OPEN, unlike ``yadgar capture``: a PostToolUse hook that exits
+    # non-zero interferes with the user's session, and the row's declared
+    # failure path already exists downstream — an action_log row with no
+    # project_id is skipped and counted by the consolidation summariser
+    # rather than attributed to a guess.
+    _payload: dict = {
+        "tool_name": tool_name,
+        "summary": summary,
+        "directory": cwd,
+        "session_id": session_id,
+    }
+    try:
+        from yadgar.core.hooks._identity_mint import mint_project_id  # noqa: PLC0415
+
+        _payload["project_id"] = mint_project_id(cwd)
+    except Exception:  # noqa: BLE001 — never brick a tool call over identity
+        pass
+
+    _http_post("/hooks/auto-capture", _payload)
+
+
+def _emit_project_id(cwd: str) -> str | None:
+    """Mint the session's project_id, print the banner, return the id (or None).
+
+    Car C2 / ADR-0227: the CLI hook runner is the second host-side SessionStart
+    entry point (the opencode plugin shells out to ``yadgar hook <event>``), so
+    it mints exactly like ``core/hooks/session-start-context.py`` does. Shared
+    wording and shared policy live in ``_identity_mint``; only the printing is
+    duplicated, because the two runners print to different transports.
+
+    Fail-open on a crash: an unresolvable tree still prints a loud notice with
+    no candidate key, but nothing here may prevent the rest of the hook running.
+    """
+    from yadgar.core.hooks._identity_mint import (  # noqa: PLC0415
+        resolve_session_project,
     )
+
+    try:
+        project_id, notice = resolve_session_project(cwd)
+    except Exception:  # noqa: BLE001 — a mint crash must not brick the hook
+        return None
+    if notice:
+        print(notice)
+    return project_id
 
 
 def hook_session_start_context() -> None:
@@ -152,6 +193,9 @@ def hook_session_start_context() -> None:
         source = ""
 
     params: dict = {"directory": cwd}
+    project_id = _emit_project_id(cwd)
+    if project_id:
+        params["project"] = project_id
     if source:
         params["source"] = source
 
@@ -171,6 +215,12 @@ def hook_post_compact_rehydrate() -> None:
         directory = os.getcwd()
 
     params: dict = {"directory": directory}
+    # Car C2: re-emit the identity. Compaction ate the original banner, and the
+    # transport is the line itself (§1.3 T1) — an un-repeated identity is a lost
+    # identity for the whole remainder of the session.
+    project_id = _emit_project_id(directory)
+    if project_id:
+        params["project"] = project_id
 
     result = _http_get("/hooks/post-compact", params)
     if result:

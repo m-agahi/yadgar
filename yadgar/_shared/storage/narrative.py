@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import project_id_set_fragment
 
 _log = logging.getLogger(__name__)
 
@@ -32,6 +33,11 @@ class BeliefRecord:
     confidence: float = 0.5
     embedding_info: tuple[bytes, str] | None = None
     directory_context: str | None = None
+    #: Car C13f (0047 §5): the owning project, STAMPED at write so
+    #: ``search_beliefs_fts`` can scope by it. ``derived_belief`` is SCHEMALESS,
+    #: so this column needs no migration to exist — see ``insert_profile``'s
+    #: docstring for why declaring it here would collide with §C11.
+    project_id: str | None = None
 
 
 class _NarrativeMixin:
@@ -85,17 +91,31 @@ class _NarrativeMixin:
 
     @observe(tier="stage")
     def insert_narrative_entry(self, entry: dict) -> int:
+        """Insert one narrative entry.
+
+        C11 (0047 PR#40 §5): **DUAL-WRITE.** Migration 033 declares
+        ``narrative_entry.project_id``. The sole caller
+        (``backend/narrative/narrative.py``) already held a resolved
+        ``project_id`` and was putting it in ``directory_context``, so both
+        conditions of the two-condition rename rule are met — the column exists
+        and the caller holds an identity. The legacy column is still written
+        because nothing backfills this table and its reader keeps a legacy arm.
+        """
         now = self._now_iso()
         nid = self._next_id("narrative_entry")
+        pid_sql, pid_params = project_id_set_fragment(
+            entry.get("project_id") or entry.get("directory_context")
+        )
         self._q(
             "CREATE type::record('narrative_entry', $id) SET "
-            "directory_context = $dir, summary = $summary, "
+            f"directory_context = $dir, {pid_sql}, summary = $summary, "
             "period_start = $period_start, period_end = $period_end, "
             "key_decisions = $key_decisions, key_events = $key_events, "
             "created_at = $created_at, heat = $heat",
             {
                 "id": nid,
                 "dir": entry["directory_context"],
+                **pid_params,
                 "summary": entry["summary"],
                 "period_start": entry["period_start"],
                 "period_end": entry["period_end"],
@@ -108,8 +128,22 @@ class _NarrativeMixin:
         return nid
 
     def get_narratives_for_directory(self, directory: str, limit: int = 10) -> list[dict]:
+        """Return narrative entries for a caller, newest first.
+
+        C11 (0047 PR#40 §5) — **TWO ARMS.** ``(project_id = $dir OR
+        directory_context = $dir)``. Its one caller already passes a resolved
+        ``project_id`` here, so the first arm is what matches rows written after
+        migration 033; the second keeps entries written before it readable,
+        since no backfill covers ``narrative_entry``.
+
+        The parameter keeps its ``directory`` name deliberately: it takes ONE
+        value that is matched against BOTH columns, so renaming it to
+        ``project_id`` would describe only half of what it does. It is renamed
+        when the legacy arm dies with the column, in the drop PR.
+        """
         rows = self._q(
-            "SELECT * FROM narrative_entry WHERE directory_context = $dir "
+            "SELECT * FROM narrative_entry "
+            "WHERE (project_id = $dir OR directory_context = $dir) "
             "ORDER BY period_end DESC LIMIT $lim",
             {"dir": directory, "lim": limit},
         )
@@ -222,13 +256,14 @@ class _NarrativeMixin:
                         invalidate_edge(self, "derived_belief", prior_id)
 
         bid = self._next_id("derived_belief")
+        pid_sql, pid_params = project_id_set_fragment(record.project_id)
         self._q(
             "CREATE type::record('derived_belief', $id) SET "
             "belief_type = $bt, subject = $subject, content = $content, "
             "evidence_memory_ids = $evids, confidence = $conf, "
             "embedding = $emb, embedding_model = $em, "
-            "created_at = $now, updated_at = $now, directory_context = $dc, "
-            "valid_from = $now, valid_until = NONE",
+            f"created_at = $now, updated_at = $now, directory_context = $dc, "
+            f"{pid_sql}, valid_from = $now, valid_until = NONE",
             {
                 "id": bid,
                 "bt": belief_type,
@@ -238,25 +273,43 @@ class _NarrativeMixin:
                 "conf": confidence,
                 "emb": emb_floats,
                 "em": embedding_model,
+                **pid_params,
                 "now": now,
                 "dc": directory_context,
             },
         )
         return bid
 
+    @observe(tier="stage")
     def search_beliefs_fts(
-        self, query: str, limit: int = 10, include_invalidated: bool = False
+        self,
+        query: str,
+        limit: int = 10,
+        include_invalidated: bool = False,
+        project_id: str | None = None,
     ) -> list[dict]:
-        """FTS over derived_belief.
+        """FTS over derived_belief, scoped to *project_id* when one is supplied.
 
         include_invalidated (v5.29.0): when False (default), excludes
         superseded rows (valid_until IS NOT NONE).
+
+        Car C13f (0047 §5): the scope arm, enforced in the query for the same
+        reason as ``search_profiles_fts`` — the caller's project reached
+        ``_search_profiles_and_beliefs`` and was never read, so beliefs were
+        searched corpus-wide. ``derived_belief`` has no ``tags`` column either,
+        so this is the project arm alone; see ``search_profiles_fts`` for the
+        full rationale. ``None``/empty means no filtering.
         """
         validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
+        params: dict = {"q": query, "lim": limit}
+        scope_clause = ""
+        if project_id:
+            scope_clause = " AND project_id = $pid"
+            params["pid"] = project_id
         rows = self._q(
             f"SELECT * FROM derived_belief WHERE (subject @@ $q "
-            f"OR belief_type @@ $q OR content @@ $q){validity_clause} LIMIT $lim",
-            {"q": query, "lim": limit},
+            f"OR belief_type @@ $q OR content @@ $q){validity_clause}{scope_clause} LIMIT $lim",
+            params,
         )
         return self._rows_to_dicts(rows)
 

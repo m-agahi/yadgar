@@ -3,10 +3,20 @@
 Coverage:
   1. MemoryProvider.candidates() wraps Retriever.recall() → normalized Candidates
   2. WikiProvider.candidates() wraps WikiStore.query() → normalized Candidates
-  3. Candidate fields (type, id, title, content, native_score, directory_context, raw)
-  4. Scope carries the directory field
+  3. Candidate fields (type, id, title, content, native_score, project_id, raw)
+  4. Scope carries the project_id field
   5. MemoryProvider type == "memory", WikiProvider type == "wiki"
   6. No calls to recall() or wiki_query() MCP tools — providers are pure extraction
+
+Car C7 (0047 §5 C7) re-keyed ``Scope.directory`` → ``Scope.project_id`` and
+``Candidate.directory_context`` → ``Candidate.project_id`` (the scope is
+pushed into the stage-1 SQL WHERE rather than applied as a Python
+post-filter — see ``yadgar/backend/retrieval/providers/base.py``). Both
+providers also now thread ``project_id=`` into their underlying store calls
+(``Retriever.recall`` / ``WikiStore.query``), and ``MemoryProvider`` applies
+an ``is_project_eligible`` residual guard on returned rows — so the mock
+memory/wiki dicts below carry ``project_id`` (not ``directory_context``)
+matching the scope under test, or eligibility silently drops them.
 """
 
 from __future__ import annotations
@@ -15,6 +25,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.backend.retrieval.providers.base import Candidate, Scope, SourceProvider
 from yadgar.backend.retrieval.providers.memory import MemoryProvider
 from yadgar.backend.retrieval.providers.wiki import WikiProvider
@@ -30,7 +41,7 @@ def _make_memory_dict(mid: int = 1, score: float = 0.8) -> dict:
         "content": f"memory content {mid}",
         "heat": 0.6,
         "_retrieval_score": score,
-        "directory_context": "/home/user/project",
+        "project_id": "/home/user/project",
         "branch": "master",
         "tags": [],
     }
@@ -43,7 +54,7 @@ def _make_wiki_page(slug: str = "test-page", score: float = 0.75) -> dict:
         "title": f"Test Page: {slug}",
         "content": "wiki page content about testing",
         "_retrieval_score": score,
-        "directory_context": "/home/user/project",
+        "project_id": "/home/user/project",
         "branch": "master",
         "tags": [],
     }
@@ -66,7 +77,7 @@ def mock_wiki():
 @pytest.fixture()
 def default_scope():
     return Scope(
-        directory="/home/user/project",
+        project_id="/home/user/project",
         min_heat=0.0,
     )
 
@@ -79,14 +90,14 @@ def default_scope():
 class TestScope:
     def test_scope_fields(self):
         scope = Scope(
-            directory="/project",
+            project_id="/project",
             min_heat=0.1,
         )
-        assert scope.directory == "/project"
+        assert scope.project_id == "/project"
         assert scope.min_heat == 0.1
 
     def test_scope_optional_defaults(self):
-        scope = Scope(directory="/project")
+        scope = Scope(project_id="/project")
         assert scope.min_heat == 0.0
 
 
@@ -104,7 +115,7 @@ class TestCandidate:
             title=None,
             content="hello",
             native_score=0.9,
-            directory_context="/project",
+            project_id="/project",
             raw=raw,
         )
         assert c.type == "memory"
@@ -112,7 +123,7 @@ class TestCandidate:
         assert c.title is None
         assert c.content == "hello"
         assert c.native_score == 0.9
-        assert c.directory_context == "/project"
+        assert c.project_id == "/project"
         assert c.raw is raw
 
     def test_candidate_wiki_type(self):
@@ -122,7 +133,7 @@ class TestCandidate:
             title="Overview",
             content="Wiki content here",
             native_score=0.7,
-            directory_context=None,
+            project_id=None,
             raw={},
         )
         assert c.type == "wiki"
@@ -170,12 +181,15 @@ class TestMemoryProvider:
         # Phase 2a forward-only: MemoryProvider now threads a `profile` kwarg
         # (None when constructed without one) into Retriever.recall().
         # ADR-0077: it also threads `deadline` (None when constructed without one).
+        # Car C7: it also threads `project_id` (scope.project_id, was the
+        # Python post-filter's `directory` — now the SQL-side scope key).
         mock_retriever.recall.assert_called_once_with(
             "test query",
             max_results=10,
             min_heat=0.0,
             profile=None,
             deadline=None,
+            project_id="/home/user/project",
         )
 
     def test_candidates_returns_candidate_objects(self, mock_retriever, default_scope):
@@ -194,7 +208,7 @@ class TestMemoryProvider:
         assert first.title is None  # memories have no title
         assert first.content == "memory content 1"
         assert first.native_score == pytest.approx(0.9)
-        assert first.directory_context == "/home/user/project"
+        assert first.project_id == "/home/user/project"
 
     def test_candidates_raw_is_original_dict(self, mock_retriever, default_scope):
         provider = MemoryProvider(mock_retriever)
@@ -215,14 +229,23 @@ class TestMemoryProvider:
 
     def test_candidates_falls_back_to_heat_for_score(self, default_scope):
         retriever = MagicMock()
-        mem = {"id": 5, "content": "c", "heat": 0.4, "directory_context": None, "branch": None}
+        # project_id matches default_scope's so the is_project_eligible residual
+        # guard does not drop this row before native_score can be asserted —
+        # this test is about the score fallback, not eligibility.
+        mem = {
+            "id": 5,
+            "content": "c",
+            "heat": 0.4,
+            "project_id": "/home/user/project",
+            "branch": None,
+        }
         retriever.recall.return_value = [mem]
         provider = MemoryProvider(retriever)
         results = provider.candidates("q", default_scope, limit=5)
         assert results[0].native_score == pytest.approx(0.4)
 
     def test_candidates_scope_min_heat_forwarded(self, mock_retriever):
-        scope = Scope(directory="/p", min_heat=0.3)
+        scope = Scope(project_id="/p", min_heat=0.3)
         provider = MemoryProvider(mock_retriever)
         provider.candidates("q", scope, limit=5)
         call_kwargs = mock_retriever.recall.call_args[1]
@@ -242,8 +265,15 @@ class TestWikiProvider:
     def test_candidates_calls_wiki_query(self, mock_wiki, default_scope):
         provider = WikiProvider(mock_wiki)
         provider.candidates("test query", default_scope, limit=5)
+        # Car C7: WikiProvider now also threads project_id (scope.project_id)
+        # and opt_in_tags into WikiStore.query() — pushed into the stage-1
+        # SQL WHERE rather than applied as a post-filter.
         mock_wiki.query.assert_called_once_with(
-            "test query", max_results=5, include_tag=None, exclude_tags=None
+            "test query",
+            max_results=5,
+            include_tag=None,
+            exclude_tags=None,
+            scope=RecallScope(project_id="/home/user/project", opt_in_tags=None),
         )
 
     def test_candidates_returns_candidate_objects(self, mock_wiki, default_scope):
@@ -262,7 +292,7 @@ class TestWikiProvider:
         assert first.title == "Test Page: overview"
         assert first.content == "wiki page content about testing"
         assert first.native_score == pytest.approx(0.85)
-        assert first.directory_context == "/home/user/project"
+        assert first.project_id == "/home/user/project"
 
     def test_candidates_raw_has_source_tag(self, mock_wiki, default_scope):
         provider = WikiProvider(mock_wiki)

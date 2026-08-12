@@ -35,6 +35,7 @@ import pytest
 
 from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # R3 Car 3c: wiki-edit primitives (replace_at, delete_at, insert_at,
 # replace_markdown_block, append_section) forward to backend /admin endpoint.
@@ -68,8 +69,14 @@ def _insert_page(
     tags=None,
     confidence="medium",
     directory_context="global",
-    branch=None,
 ):
+    """Insert page directly via storage. Returns page_id.
+
+    ``project_id`` is stamped from the module constant rather than exposed as
+    a ninth parameter (the I13 arg cap): C5 made an unstamped insert raise, and
+    no test in this file needs a second owner. Ownership is not the same axis
+    as ``directory_context``, so both are written.
+    """
     return _storage().insert_wiki_page(
         {
             "slug": slug,
@@ -80,9 +87,9 @@ def _insert_page(
             "confidence": confidence,
             "source_memory_ids": [],
             "links": [],
+            "project_id": TEST_PROJECT_ID,
             "directory_context": directory_context,
-        },
-        branch=branch,
+        }
     )
 
 

@@ -53,6 +53,10 @@ class CurateParams:
     file_hash: str | None = None
     embedding_model: str | None = None
     contextual_prefix: str | None = None
+    # C4b (0047 PR#40 §5): the enqueue-time project_id, forwarded onto
+    # ``NewMemorySpec`` so a curator-created row carries the SESSION's identity
+    # rather than a container-side guess (ADR-0227).
+    project_id: str | None = None
 
 
 class MemoryCurator:
@@ -134,6 +138,7 @@ class MemoryCurator:
                 surprise=params.surprise,
                 importance=params.importance,
                 valence=params.valence,
+                project_id=params.project_id,
             )
 
             # Moderate similarity → link

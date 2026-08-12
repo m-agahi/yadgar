@@ -1,75 +1,66 @@
-# ruff: noqa: PLR0913  — adr_add / _build_adr_body intentionally have 11 params (ADR schema
+# ruff: noqa: PLR0913  — adr_add intentionally has 11 params (ADR schema
 #   has 10 mandatory content fields; FastMCP derives JSON Schema from flat keyword args).
 #   Collapsing into **kwargs loses schema enforcement. PERMANENT — see .complexity-allowlist.json.
 """ADR (Architecture Decision Record) MCP tool registrations.
 
-Car 2 (ADR-consultable, v5.141.0) made ADRs recall-native. The write-only
-`<project>-adr-log` monolith is replaced by:
+Car F (0047 §7, ADR-tools re-pointed) re-points the three ADR MCP tools onto
+the MariaDB ledger path:
 
-  * one CANONICAL wiki page per ADR — slug `<project>-adr-NNNN`, page_type `adr`,
-    tags `["adr","decisions","adr-status:<status>","adr-<NNNN>"]`, category
-    `decision`. The stored wiki TITLE equals the slug string (so `_slugify(title)`
-    yields the deterministic `<project>-adr-NNNN` slug); the human-readable
-    `ADR-NNNN: <title>` is the content's H1.
-  * one thin CANONICAL index page — slug `<project>-adr-index`, tags
-    `["adr","adr-index"]` — a metadata table (ID source of truth for max+1).
-
-Both are written via the server-side `_wiki_write_canonical` seam (page_type in
-CANONICAL_PAGE_TYPES, `_internal` set server-side, `force=True` to bypass the
-drainer sim gate). Pages resolve by directory alone, so they are readable from
-any working tree AND in non-git dirs — this closes the memory-531352
-default-branch-pin bug (a non-git `aws-work-adr-log` was mis-pinned to a bogus
-"master" and unreadable).
-
-Three tools:
-  adr_add  — assign next ID from the index, write the per-ADR page + index row,
-             flip supersede targets' status tag.
-  adr_get  — read `<project>-adr-NNNN` (direct fetch by slug + directory).
-  adr_list — read the index; optional status filter ("show all open").
+  * ``adr_add``  — forward ``create_adr_row`` to the backend ledger (the new
+    ID source of truth per ADR-0197: AUTO_INCREMENT id IS the ADR number),
+    write the per-ADR wiki body page via the existing ``_wiki_write_canonical``
+    seam (D4 — body stays in SurrealDB), then forward ``set_adr_body_slug`` to
+    link the row to the body page slug. Supersede targets link via
+    ``add_adr_supersedes`` + status flip on the target row.
+  * ``adr_get``  — read the body page from SurrealDB (unchanged, D4), then
+    forward ``get_adr_row`` to merge the ledger row's metadata into the
+    response per D5 (additive-only contract; §4 step 3). Car F adds the
+    ``baseline_hash`` / ``content_hash`` keys per ADR-0209 §14.3.
+  * ``adr_list`` — forward ``list_adr_rows`` (project-scoped, status-filtered)
+    over the core PTC → backend HTTP chain (§15), map the ledger row dict onto
+    the 7-key consumer shape ``{adr_id, status, date, title, supersedes,
+    superseded_by, slug}`` that the §7 live consumers cite. The
+    ``total`` / ``truncated`` / ``next_offset`` envelope semantics are
+    preserved exactly.
 
 Decisions:
 - @_tool(power=True) — write-tool convention (adr_add); reads are also power to
   match the module (adr_get/adr_list are cheap reads but sit next to the write).
-- The index create + first-row write use `wait=True` (read-your-writes) so a
-  subsequent adr_add reads the just-written index when assigning the next ID.
-  The per-ADR page write is async (deterministic slug, does not feed IDs).
-- Per-project threading.Lock (_adr_log_lock) wraps the full read-assign-write
-  sequence to prevent duplicate ID assignment under concurrent adr_add calls
-  (single-process assumption; see docs/plans/archive/adr-add-id-race-2026-07-13.md).
+- @observe decorators — every public method carries one (I33). The body-page
+  write is still core-side (D4 — wiki body stays in SurrealDB); only the
+  metadata/index row moves to MariaDB.
+- IDs come from the ledger ``create_adr_row`` AUTO_INCREMENT (ADR-0197) —
+  no more ``_next_adr_id`` / ``_committed_page_max_id`` / index-page scan.
+- The ``_adr_log_lock`` / ``parse_index_rows`` / ``_build_index_content`` /
+  ``_render_index_row`` / ``_assemble_index_rows`` helpers are now DORMANT in
+  this module; Car G deletes them.
 
-Module layout (car/adr-split):
-  adr_index.py  — slug helpers, ID assignment, index parse/render
-  adr_render.py — body builder, tag helpers, supersede handling, write-path assembly
-  adr.py        — lock, write-ok predicate, MCP tool handlers + backward-compat re-exports
+Module layout (car/adr-split, unchanged):
+  adr_index.py  — slug helpers, ID assignment, index parse/render (DORMANT for adr_add)
+  adr_render.py — body builder, tag helpers, supersede handling (DORMANT for adr_add)
+  adr.py        — MCP tool handlers + lock + write-ok predicate (re-pointed)
 """
 
 from __future__ import annotations
 
-import os
 import re
-import threading
+from typing import Any
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
+from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 
-# Sub-module imports (split seams).
-from yadgar.core.server.tools.adr_index import (
-    _ADR_HEADER_RE,
-    _ADR_PAGE_SLUG_RE,
-    _INDEX_HEADER,
-    _INDEX_ROW_RE,
-    _build_index_content,
-    _committed_page_max_id,
-    _index_max_id,
-    _next_adr_id,
-    _next_adr_id_from_index,
-    _render_index_row,
-    adr_index_slug,
-    adr_log_slug,
-    adr_page_slug,
-    parse_adr_ids,
-    parse_index_rows,
+# Car M (0047 §7, §16.6): cross-project ``project=`` override on the ADR MCP
+# tools. C5 (0047 PR#40 §5) deleted the directory-derived and "global" tiers
+# under it, so the chain is override → session → raise, and the unguarded
+# ``from yadgar.core.identity import derive_project_id`` that forced C2 to be
+# additive went with the three call sites it fed.
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    resolve_effective_project,
 )
+from yadgar.core.server.tools.adr_index import adr_page_slug
 from yadgar.core.server.tools.adr_render import (
     _REQUIRED_FIELDS,
     _VALID_STATUSES,
@@ -86,29 +77,6 @@ from yadgar.core.server.tools.wiki import (
     wiki_read,
 )
 
-# ── Per-project ADR write lock ─────────────────────────────────────────────────
-# The core daemon is a single persistent process (streamable-http). When
-# YADGAR_OFFLOAD_TOOLS=1 the ThreadPoolExecutor can run two adr_add calls
-# concurrently: both would read the same index content, derive the same next ID,
-# and both write — producing duplicate IDs (lost-update).
-#
-# A threading.Lock keyed by resolved project root serializes the full
-# read-index → next-id → write-page → append-index-row sequence. The lock is
-# process-local; single-process single-backend topology is an explicit
-# assumption (see docs/plans/archive/adr-add-id-race-2026-07-13.md).
-_ADR_LOG_LOCKS: dict[str, threading.Lock] = {}
-_ADR_LOG_LOCKS_GUARD = threading.Lock()
-
-
-@observe(exempt="trivial dict-lookup; no I/O, no external call, no error branch worth spanning")
-def _adr_log_lock(resolved: str) -> threading.Lock:
-    """Return the per-project threading.Lock for the ADR write sequence."""
-    with _ADR_LOG_LOCKS_GUARD:
-        if resolved not in _ADR_LOG_LOCKS:
-            _ADR_LOG_LOCKS[resolved] = threading.Lock()
-        return _ADR_LOG_LOCKS[resolved]
-
-
 # A wait=True canonical write that is still QUEUED after wait_timeout WILL commit
 # on the next drain — it is NOT a failure. Only these terminal reasons are fatal.
 _FATAL_WRITE_REASONS: frozenset[str] = frozenset(
@@ -122,9 +90,8 @@ def _write_ok(result: dict) -> bool:
 
     ``_wiki_write_canonical(wait=True)`` returns ``stored:False, reason:wait_timeout,
     queued:True`` when the drainer did not commit within the wait budget — the write
-    is still queued and WILL land. That is NOT a failure for the ADR path (next-ID
-    correctness comes from the committed page-slug scan, not the index). Only a hard
-    terminal rejection (duplicate_detected / blocked / oversize) is fatal.
+    is still queued and WILL land. That is NOT a failure for the ADR body-page
+    write (the row + body_slug link live in the ledger, not the wiki).
     """
     if result.get("stored") is not False:
         return True
@@ -136,9 +103,96 @@ def _write_ok(result: dict) -> bool:
     return reason not in _FATAL_WRITE_REASONS if reason else False
 
 
+# ── Ledger row → consumer-shape mapping (Car F refactor) ───────────────────────
+# Car G's ``_build_adr_log`` re-point and Car I's analogous agent-prompt
+# mapping reuse this helper. Stays in ``adr.py`` (NOT ``project.py`` — avoids
+# the circular import noted at ``project.py:1799-1800``).
+#
+# Each ``row`` dict comes from ``list_adr_rows`` / ``get_adr_row`` (backend
+# ``admin_exec/ledger.py``); schema per §3.5 of the master plan:
+#   {id, project_id, title, status, decided_on, subsystem, tier, body_slug,
+#    created_at, updated_at}
+# Car G populates the ``adr_supersedes`` join table during the seed; F emits
+# empty values for ``supersedes`` / ``superseded_by`` until that join is
+# readable (no ``list_adr_supersedes`` read method exists yet — out of F scope).
+
+
+@observe(tier="stage", metric="tools.adr._row_to_adr_list_entry")
+def _row_to_adr_list_entry(row: dict) -> dict:
+    """Map one ledger ``adr`` row dict onto the 7-key consumer shape.
+
+    Returns ``{adr_id, status, date, title, supersedes, superseded_by, slug}``.
+    The 7-key shape is the load-bearing contract for ``_build_adr_log``
+    (project.py:1787) and ``adr_render._assemble_index_rows`` (Car G re-points
+    it; F preserves the shape so the contract survives the re-point).
+    """
+    adr_id_int = int(row["id"])
+    return {
+        "adr_id": f"ADR-{adr_id_int:04d}",
+        "status": row.get("status") or "open",
+        "date": row.get("decided_on") or "",
+        "title": row.get("title") or "",
+        "supersedes": row.get("supersedes") or "none",
+        "superseded_by": row.get("superseded_by") or "-",
+        "slug": row.get("body_slug") or "",
+    }
+
+
 # ── Tools ──────────────────────────────────────────────────────────────────────
 
 
+@observe(
+    exempt="trivial dict-field validation; no I/O, no external call, no error branch worth spanning"
+)
+def _validate_adr_add_input(provided: dict[str, str]) -> dict | None:
+    """Validate the 10 required schema fields + status. Returns an error dict on
+    failure, None when all checks pass. Extracted from ``adr_add`` for fn_loc
+    (I13) — the validation surface is large but flat (no logic branching)."""
+    for field in _REQUIRED_FIELDS:
+        val = provided.get(field)
+        if not val or not str(val).strip():
+            return {"ok": False, "error": f"missing required field: {field!r}"}
+    status = provided.get("status")
+    if status not in _VALID_STATUSES:
+        return {
+            "ok": False,
+            "error": (f"invalid status {status!r}; must be one of {sorted(_VALID_STATUSES)}"),
+        }
+    return None
+
+
+@observe(
+    exempt="trivial project-root resolve; no I/O, no external call, no error branch worth spanning"
+)
+def _resolve_adr_add_context(directory: str, project: str | None) -> dict | tuple[str, str]:
+    """Resolve ``directory`` → ``project_root`` + ``project_id``. Returns
+    ``(resolved, project_id)`` on success, an error dict on failure.
+    Extracted from ``adr_add`` for fn_loc (I13).
+
+    C5 (0047 PR#40 §5): the ``derive_project_id(cwd=resolved)`` call is gone.
+    ``project_id`` now comes from the caller's ``project=`` and nowhere else —
+    a directory is a filesystem hint, and this process cannot see the tree it
+    names. Absence is an ``UnresolvedProjectError`` returned as the tool's
+    structured envelope so the agent reading it learns what to pass."""
+    try:
+        resolved = _resolve_project_root(directory)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"cannot resolve project root: {exc}"}
+    try:
+        project_id = resolve_effective_project(
+            project=project,
+            directory=resolved,
+            session_project=None,
+            tool="adr_add",
+        )
+    except UnresolvedProjectError as exc:
+        return {"ok": False, **exc.payload}
+    except InvalidProjectOverrideError as exc:
+        return {"ok": False, "error": f"adr_add: {exc}"}
+    return resolved, project_id
+
+
+@observe(tier="hot", metric="tools.adr.adr_add")
 @_tool(power=True)
 def adr_add(
     directory: str,
@@ -152,13 +206,36 @@ def adr_add(
     consequences: str,
     revisit_trigger: str,
     supersedes: str,
+    *,
+    project: str | None = None,
+    tier: str | None = None,
+    subsystem: str | None = None,
 ) -> dict:
     """Create a new Architecture Decision Record (ADR).
 
-    Car 2: writes ONE canonical wiki page per ADR (`<project>-adr-NNNN`,
-    readable from any working tree AND in non-git dirs) plus a row in
-    the canonical `<project>-adr-index`. IDs are assigned sequentially from the
-    index (max+1). Supersede targets' status tag is flipped to `superseded`.
+    Car F: writes one ``adr`` ledger row (MariaDB; ADR-0197: AUTO_INCREMENT id
+    IS the ADR number) + one CANONICAL wiki body page (SurrealDB, D4) linked
+    by ``body_slug``. Supersede targets are linked via ``adr_supersedes`` with
+    the target row's status flipped to ``superseded`` (D23, status-flip only;
+    the page-type retype is Car G).
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override lets a caller
+    write an ADR into another project's namespace without leaving the current
+    working tree. Precedence: ``project`` (override) > ``session_project`` >
+    ``directory``-derived (Car A0 ``derive_project_id``) > ``"global"``. The
+    validated project_id is forwarded to the backend ledger write
+    (``create_adr_row(project_id=...)``) so the row stamps the override
+    namespace; the body page's slug follows the same project_id (D32 ③
+    scheme — ``{project_id}_adr-NNNN``). When BOTH ``project`` and
+    ``directory`` are supplied, ``project`` wins and ``directory`` is logged-
+    and-ignored (§9 [VERIFY]). The deep registry check is backend-side
+    (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
+    type-level guard.
+
+    Car H: accepts ``tier`` (D27 enum: ``binding|historical``) and
+    ``subsystem`` (D28 explicit; §10 Q2 normalizer → lowercase + trim, empty
+    → None). On success the per-subsystem rollup page is regenerated via
+    ``_regenerate_subsystem_rollup`` (§10 Q1 on-write trigger, D29).
 
     Args:
         directory: Absolute path to the project root.
@@ -172,135 +249,296 @@ def adr_add(
         consequences: Known / expected consequences.
         revisit_trigger: Condition that would trigger revisiting this decision.
         supersedes: "none" or a comma-separated list of superseded ADR IDs (e.g. "ADR-0002").
+        tier: D27 tier — ``"binding"`` (default if None; inferred from status
+            when None) or ``"historical"``.
+        subsystem: D28 explicit subsystem value. Normalized to lowercase + trim
+            (§10 Q2); empty after normalize → None (no rollup regen fires).
 
     Returns:
-        {"adr_id": "ADR-NNNN", "slug": "<project>-adr-NNNN"} on success.
+        {"adr_id": "ADR-NNNN", "slug": "<project_id>_adr-NNNN"} on success.
         {"error": "...", "ok": False} on validation failure or storage error.
     """
-    # ── Validation (before any storage access) ─────────────────────────────────
-    provided: dict[str, str] = {
-        "title": title,
-        "status": status,
-        "date": date,
-        "context": context,
-        "decision": decision,
-        "rationale": rationale,
-        "alternatives": alternatives,
-        "consequences": consequences,
-        "revisit_trigger": revisit_trigger,
-        "supersedes": supersedes,
-    }
-    for field in _REQUIRED_FIELDS:
-        val = provided.get(field)
-        if not val or not str(val).strip():
-            return {"ok": False, "error": f"missing required field: {field!r}"}
-    if status not in _VALID_STATUSES:
-        return {
-            "ok": False,
-            "error": (f"invalid status {status!r}; must be one of {sorted(_VALID_STATUSES)}"),
-        }
-
-    try:
-        resolved = _resolve_project_root(directory)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"cannot resolve project root: {exc}"}
-
-    project_name = os.path.basename(resolved)
-    index_slug = adr_index_slug(resolved)
-
-    # ── Serialize the read-assign-write sequence under a per-project lock ───────
-    with _adr_log_lock(resolved):
-        # Read the canonical index (resolves by slug + directory).
-        index_page = wiki_read(index_slug, directory=resolved)
-        index_exists = "error" not in index_page
-        existing_index = index_page.get("content", "") if index_exists else ""
-
-        # ID = max over the index rows AND the COMMITTED per-ADR page slugs. The
-        # page-slug scan makes this resilient to a lagging index (an index write
-        # still queued after wait_timeout): the committed page carries the ID.
-        adr_id = _next_adr_id(resolved, existing_index)
-        page_slug = adr_page_slug(resolved, adr_id)
-
-        # ── Write the per-ADR canonical page — wait=True (ID-bearing artifact) ──
-        # It is written FIRST + synchronously so it is committed WITHIN this lock,
-        # making its slug visible to the next adr_add's _committed_page_max_id scan
-        # even if the index write below only converges later.
-        page_content = _build_adr_body(
-            adr_id=adr_id,
-            title=title,
-            status=status,
-            date=date,
-            context=context,
-            decision=decision,
-            rationale=rationale,
-            alternatives=alternatives,
-            consequences=consequences,
-            revisit_trigger=revisit_trigger,
-            supersedes=supersedes,
-        )
-        # Stored TITLE equals the slug string so _slugify(title) == page_slug.
-        page_payload = _canonical_adr_payload(
-            page_slug, page_content, "decision", _adr_tags(adr_id, status), resolved
-        )
-        page_result = _wiki_write_canonical(page_payload, wait=True)
-        if not _write_ok(page_result):
-            return {
-                "ok": False,
-                "error": f"per-ADR page write failed: {page_result.get('reason', 'unknown')}",
-                "adr_id": adr_id,
-            }
-
-        # ── Append the index row + rebuild the canonical index ─────────────────
-        # The index is a DERIVED convenience view (not the ID source of truth), so a
-        # queued/wait_timeout index write is NOT a failure — it converges on the next
-        # drain, and next-ID correctness is guaranteed by the committed page slug scan
-        # above. Only a hard rejection (duplicate_detected / blocked) is fatal.
-        target_ids = _parse_supersedes(supersedes)
-        new_row = {
-            "adr_id": adr_id,
+    validation_error = _validate_adr_add_input(
+        {
+            "title": title,
             "status": status,
             "date": date,
+            "context": context,
+            "decision": decision,
+            "rationale": rationale,
+            "alternatives": alternatives,
+            "consequences": consequences,
+            "revisit_trigger": revisit_trigger,
+            "supersedes": supersedes,
+        }
+    )
+    if validation_error is not None:
+        return validation_error
+
+    # C5 (0047 PR#40 §5): one resolution, inside ``_resolve_adr_add_context``.
+    # The old shape resolved a directory-derived project_id first and then let
+    # ``project=`` overwrite it; with the derivation tier deleted there is only
+    # the caller's value, so the second pass was dead code that re-ran the same
+    # call. The override is the namespace stamp on the ledger row AND on the
+    # body-page slug; ``directory`` stays as the wiki body's directory_context
+    # (the directory is the file-system hint, the project_id is the namespace).
+    ctx = _resolve_adr_add_context(directory, project)
+    if isinstance(ctx, dict):
+        return ctx
+    resolved, project_id = ctx
+
+    # ── Car H: §10 Q2 subsystem normalizer (lowercase + trim; empty → None).
+    subsystem_normalized = _normalize_subsystem(subsystem)
+
+    # ── Car G: the per-project ``_adr_log_lock`` is GONE. The ledger
+    # ``create_adr_row`` AUTO_INCREMENT serialises ID allocation backend-side
+    # (ADR-0197), so the lock no longer guards a sequence; the body-page write
+    # (wait=True) + ledger row + set_adr_body_slug path is linearised by the
+    # backend INSERT itself.
+    step1 = _allocate_adr_ledger_row(
+        project_id, title, status, date, tier=tier, subsystem=subsystem_normalized
+    )
+    if isinstance(step1, dict):
+        return step1
+    adr_id_int, adr_id = step1
+
+    step2 = _write_adr_body_page(
+        resolved=resolved,
+        project_id=project_id,
+        adr_id=adr_id,
+        adr_id_int=adr_id_int,
+        fields={
             "title": title,
-            "supersedes": supersedes if supersedes.strip().lower() != "none" else "none",
-            "superseded_by": "-",
+            "status": status,
+            "date": date,
+            "context": context,
+            "decision": decision,
+            "rationale": rationale,
+            "alternatives": alternatives,
+            "consequences": consequences,
+            "revisit_trigger": revisit_trigger,
+            "supersedes": supersedes,
+        },
+    )
+    if isinstance(step2, dict):
+        return step2
+    page_slug = step2
+
+    step3 = _link_adr_body_slug(adr_id_int, adr_id, page_slug)
+    if isinstance(step3, dict):
+        return step3
+
+    # Step 4: supersede-link rows + flip target status (D23 status flip).
+    _link_adr_supersede_targets(adr_id_int, supersedes)
+
+    # Step 5: §10 Q1 on-write rollup regen — only when subsystem is set
+    # (a rollup keyed on ``None`` is meaningless; the page-by-subsystem
+    # taxonomy collapses when subsystem is absent).
+    if subsystem_normalized is not None:
+        _trigger_subsystem_rollup_regen(project_id=project_id, subsystem=subsystem_normalized)
+
+    return {"adr_id": adr_id, "slug": page_slug}
+
+
+# ── Car H helpers (extracted for I13 fn_loc + testability) ──────────────────
+
+
+@observe(exempt="trivial string normalisation; no I/O, no error branch worth spanning")
+def _normalize_subsystem(value: str | None) -> str | None:
+    """§10 Q2 subsystem normalizer: lowercase + trim; empty → None.
+
+    The seed reads `subsystem` back from rows already-stamped by this same
+    rule; round-trips are stable. A future migration to a controlled
+    vocabulary would replace this function.
+    """
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized or None
+
+
+@observe(tier="stage", metric="tools.adr._trigger_subsystem_rollup_regen")
+def _trigger_subsystem_rollup_regen(*, project_id: str, subsystem: str) -> None:
+    """§10 Q1 on-write trigger — fire the per-subsystem rollup regen.
+
+    Lazy import: ``_regenerate_subsystem_rollup`` lives in the backend
+    ``admin_exec.rollup`` module (core ↔ backend layering rule forbids a
+    direct import — the import is deferred inside the call so the module
+    loads only when the trigger fires). The seam is the same canonical
+    admin-op forward path the rest of ``adr_add`` uses (``_forward_admin``)
+    so the call carries no extra latency on the hot path.
+    """
+    try:
+        _forward_admin(
+            "run_rollup_regen",
+            {"project_id": project_id, "subsystem": subsystem},
+        )
+    except Exception as exc:  # noqa: BLE001
+        import logging  # noqa: PLC0415
+
+        logging.getLogger(__name__).warning(
+            "adr_add rollup regen failed: project_id=%s subsystem=%s err=%s",
+            project_id,
+            subsystem,
+            exc,
+        )
+
+
+@observe(tier="stage", metric="tools.adr._allocate_adr_ledger_row")
+def _allocate_adr_ledger_row(
+    project_id: str,
+    title: str,
+    status: str,
+    date: str,
+    *,
+    tier: str | None = None,
+    subsystem: str | None = None,
+) -> dict | tuple[int, str]:
+    """Step 1 of ``adr_add``: forward ``create_adr_row`` to the backend ledger
+    (ADR-0197 — id IS the ADR number). Returns ``(adr_id_int, adr_id)`` on
+    success or an error dict.
+
+    Car H: threads ``tier`` (D27) and ``subsystem`` (D28, §10 Q2-normalized
+    in the caller) onto the row at INSERT time — both columns are inert on
+    rows created before Car H landed, so the seed op (``seed_adr_tier_subsystem``)
+    backfills them in place afterward.
+    """
+    try:
+        result = _forward_admin(
+            "create_adr_row",
+            {
+                "project_id": project_id,
+                "title": title,
+                "status": status,
+                "decided_on": date,
+                "tier": tier,
+                "subsystem": subsystem,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"create_adr_row forward failed: {exc}"}
+    row = result.get("row") if isinstance(result, dict) else None
+    if row is None:
+        err = result.get("error") if isinstance(result, dict) else "unknown"
+        return {"ok": False, "error": f"create_adr_row returned no row: {err}"}
+    adr_id_int = int(row["id"])
+    adr_id = f"ADR-{adr_id_int:04d}"
+    return adr_id_int, adr_id
+
+
+@observe(tier="stage", metric="tools.adr._write_adr_body_page")
+def _write_adr_body_page(
+    *,
+    resolved: str,
+    project_id: str,
+    adr_id: str,
+    adr_id_int: int,
+    fields: dict[str, str],
+) -> dict | str:
+    """Step 2 of ``adr_add``: write the body page (D4 — wiki write stays
+    core-side). Slug uses the D32 ③ scheme: body_slug = {project_id}_adr-NNNN
+    where project_id's `/` becomes `_`. Returns the slug on success or an
+    error dict. Extracted from ``adr_add`` (I13 fn_loc)."""
+    page_slug = f"{project_id.replace('/', '_')}_adr-{adr_id_int:04d}"
+    page_content = _build_adr_body(adr_id=adr_id, **fields)
+    page_payload = _canonical_adr_payload(
+        page_slug, page_content, "decision", _adr_tags(adr_id, fields["status"]), resolved
+    )
+    # C4 (0047 PR#40 §5): stamp the project_id the caller ALREADY resolved for
+    # the ledger row, so the body page and its row agree across the two engines
+    # and ``_wiki_write_canonical`` does not re-derive a value we hold.
+    page_payload["project_id"] = project_id
+    page_result = _wiki_write_canonical(page_payload, wait=True)
+    if not _write_ok(page_result):
+        return {
+            "ok": False,
+            "error": f"per-ADR page write failed: {page_result.get('reason', 'unknown')}",
+            "adr_id": adr_id,
+        }
+    return page_slug
+
+
+@observe(tier="stage", metric="tools.adr._link_adr_body_slug")
+def _link_adr_body_slug(adr_id_int: int, adr_id: str, page_slug: str) -> dict | None:
+    """Step 3 of ``adr_add``: forward ``set_adr_body_slug`` to link the ledger
+    row to the body slug (D4 — only the slug pointer moves). Returns an error
+    dict on failure, None on success. Extracted from ``adr_add`` (I13 fn_loc)."""
+    try:
+        slug_result = _forward_admin(
+            "set_adr_body_slug",
+            {"id": adr_id_int, "body_slug": page_slug},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": f"set_adr_body_slug forward failed: {exc}",
+            "adr_id": adr_id,
             "slug": page_slug,
         }
-        rows = _assemble_index_rows(existing_index, new_row, adr_id, target_ids)
-        index_content = _build_index_content(project_name, rows)
-        index_payload = _canonical_adr_payload(
-            index_slug,
-            index_content,
-            "reference",
-            ["adr", "adr-index"],
-            resolved,
-            replace_slug=index_slug if index_exists else None,
-        )
-        index_result = _wiki_write_canonical(index_payload, wait=True)
-        if not _write_ok(index_result):
-            return {
-                "ok": False,
-                "error": f"index write failed: {index_result.get('reason', 'unknown')}",
-                "adr_id": adr_id,
-                "slug": page_slug,
-            }
-
-        # ── Flip superseded targets' page status tag (best-effort) ─────────────
-        for tid in target_ids:
-            _flip_superseded_target(resolved, tid, adr_id)
-
-        return {"adr_id": adr_id, "slug": page_slug}
+    if isinstance(slug_result, dict) and slug_result.get("ok") is False:
+        return {
+            "ok": False,
+            "error": f"set_adr_body_slug failed: {slug_result.get('error', 'unknown')}",
+            "adr_id": adr_id,
+            "slug": page_slug,
+        }
+    return None
 
 
+@observe(tier="stage", metric="tools.adr._link_adr_supersede_targets")
+def _link_adr_supersede_targets(adr_id_int: int, supersedes: str) -> None:
+    """Step 4 of ``adr_add``: forward ``add_adr_supersedes`` for each target.
+    Best-effort — failure logs and continues so the row + body link survive.
+    Extracted from ``adr_add`` (I13 fn_loc)."""
+    import logging  # noqa: PLC0415
+
+    target_ids = _parse_supersedes(supersedes)
+    for tid in target_ids:
+        target_int = int(tid.split("-")[1])
+        try:
+            _forward_admin(
+                "add_adr_supersedes",
+                {"adr_id": adr_id_int, "supersedes_id": target_int},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "adr_add supersede link failed: adr_id=%s target=%s err=%s",
+                f"ADR-{adr_id_int:04d}",
+                tid,
+                exc,
+            )
+
+
+@observe(tier="hot", metric="tools.adr.adr_get")
 @_tool(power=True)
-def adr_get(directory: str, adr_id: str) -> dict:
-    """Read a single ADR's canonical page directly.
+def adr_get(directory: str, adr_id: str, *, project: str | None = None) -> dict:
+    """Read a single ADR's body page + ledger row (merged per D5).
+
+    Car F: the body page fetch is UNCHANGED (D4 — wiki body stays in SurrealDB).
+    The ledger row's metadata is MERGED into the response (D5: row owns ALL
+    metadata; page owns ONLY prose). The merge is ADDITIVE-ONLY — pre-migration
+    keys (`content`, `slug`, `directory_context`, tags, …) remain a SUBSET of
+    post-migration keys (§4 step 3 acceptance gate).
+
+    Car F adds ``baseline_hash`` / ``content_hash`` per ADR-0209 §14.3
+    (row-side — changes only on seed/adopt; row+page content_hash is the
+    desync signal).
+
+    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override lets a caller
+    read another project's ADR. Precedence: ``project`` (override) >
+    ``session_project`` > ``directory``-derived (Car A0) > ``"global"``.
+    When supplied, the validated project_id is forwarded to the backend
+    ledger read (``get_adr_row(project_id=...)``) so the row lookup is
+    namespaced to the override. When BOTH ``project`` and ``directory`` are
+    supplied, ``project`` wins and ``directory`` is logged-and-ignored
+    (§9 [VERIFY]).
 
     Args:
         directory: Absolute path to the project root.
         adr_id: "ADR-NNNN" (case-insensitive; "adr-1" / "1" also accepted).
 
     Returns:
-        The wiki page dict for `<project>-adr-NNNN`, or {"error": "..."} if absent.
+        The merged body+row dict, or {"error": "..."} if absent.
     """
     try:
         resolved = _resolve_project_root(directory)
@@ -311,87 +549,270 @@ def adr_get(directory: str, adr_id: str) -> dict:
     if not m:
         return {"error": f"invalid adr_id {adr_id!r}; expected 'ADR-NNNN'"}
     normalized = f"ADR-{int(m.group(1)):04d}"
-    slug = adr_page_slug(resolved, normalized)
-    return wiki_read(slug, directory=resolved)
+    adr_id_int = int(m.group(1))
+
+    # C5 (0047 PR#40 §5): ``derive_project_id(cwd=resolved)`` deleted. The
+    # namespace stamp on the ledger row comes from ``project=`` and nothing
+    # else. The deep registry check is backend-side
+    # (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
+    # type-level guard.
+    try:
+        project_id = resolve_effective_project(
+            project=project,
+            directory=resolved,
+            session_project=None,
+            tool="adr_get",
+        )
+    except UnresolvedProjectError as exc:
+        return dict(exc.payload)
+    except InvalidProjectOverrideError as exc:
+        return {"error": f"adr_get: {exc}"}
+
+    body = _fetch_adr_body_page(resolved, project_id, normalized, adr_id_int)
+    row_result = _fetch_adr_ledger_row(adr_id, adr_id_int, project_id=project_id)
+    return _build_adr_get_response(body, row_result)
 
 
+@observe(tier="stage", metric="tools.adr._fetch_adr_body_page")
+def _fetch_adr_body_page(
+    resolved: str,
+    project_id: str,
+    normalized: str,
+    adr_id_int: int,
+) -> dict[str, Any]:
+    """D4 body fetch (Car F: unchanged). Try the new D32 ③ slug first, then
+    fall back to the legacy `<project>-adr-NNNN` for the 194 pages Car L
+    has not yet re-slugged. Extracted from ``adr_get`` for I13 cyclomatic.
+
+    C5 (0047 PR#40 §5): both ``wiki_read`` calls now thread ``project=``. They
+    passed ``directory=`` alone, which worked only because ``wiki_read``'s
+    resolver would derive an identity from that directory — a tool-to-tool call
+    dropping a value the CALLER already holds. With the derivation tier deleted
+    the omission is a raise, which is exactly the class of forgotten caller §2's
+    ordering was designed to surface."""
+    new_slug = f"{project_id.replace('/', '_')}_adr-{adr_id_int:04d}"
+    legacy_slug = adr_page_slug(resolved, normalized)
+    body: dict[str, Any] = wiki_read(new_slug, directory=resolved, project=project_id)
+    if "error" in body:
+        body = wiki_read(legacy_slug, directory=resolved, project=project_id)
+    return body
+
+
+@observe(tier="stage", metric="tools.adr._fetch_adr_ledger_row")
+def _fetch_adr_ledger_row(
+    adr_id: str,
+    adr_id_int: int,
+    *,
+    project_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Ledger row fetch — returns the row envelope dict (or None on forward
+    failure). Extracted from ``adr_get`` for I13 cyclomatic.
+
+    Car M (0047 §7, §16.6): when ``project_id`` is supplied (the caller
+    provided ``project=`` and the override won), it is forwarded to the
+    backend ``get_adr_row`` op so the row lookup is namespaced to that
+    project_id. The deep registry check is backend-side
+    (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
+    type-level guard.
+    """
+    payload: dict[str, Any] = {"id": adr_id_int}
+    if project_id is not None:
+        payload["project_id"] = project_id
+    try:
+        return _forward_admin("get_adr_row", payload)
+    except Exception as exc:  # noqa: BLE001 — merge is best-effort
+        import logging  # noqa: PLC0415
+
+        logging.getLogger(__name__).warning(
+            "adr_get get_adr_row forward failed: adr_id=%s err=%s", adr_id, exc
+        )
+        return None
+
+
+@observe(tier="stage", metric="tools.adr._build_adr_get_response")
+def _build_adr_get_response(
+    body: dict[str, Any],
+    row_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge body + row metadata per D5 (additive-only). Reflects row-side
+    status in merged tags. Extracted from ``adr_get`` for I13 cyclomatic."""
+    row_metadata: dict[str, Any] = {}
+    if isinstance(row_result, dict):
+        row = row_result.get("row")
+        if isinstance(row, dict):
+            row_metadata = _row_to_response_metadata(row)
+    merged: dict[str, Any] = dict(body)
+    merged.update(row_metadata)
+    if isinstance(merged.get("tags"), list) and isinstance(row_result, dict):
+        merged = _reflect_row_status_in_tags(merged, row_result.get("row") or {})
+    return merged
+
+
+@observe(tier="stage", metric="tools.adr._row_to_response_metadata")
+def _row_to_response_metadata(row: dict) -> dict[str, Any]:
+    """Map ledger row fields onto the D5 additive metadata keys. ADR-0209
+    §14.3: baseline_hash + content_hash keys. Extracted for I13."""
+    return {
+        "date": row.get("decided_on") or "",
+        "rationale": "",  # prose lives on the body page (D4)
+        "alternatives": "",  # ditto
+        "revisit_trigger": "",  # ditto
+        "supersedes": row.get("supersedes") or "none",
+        "subsystem": row.get("subsystem") or "",
+        "tier": row.get("tier") or "",
+        "baseline_hash": row.get("baseline_hash") or "",
+        # Car F: content_hash mirrors row+page (regenerated on every write);
+        # Car G seeds the initial value from the existing page hash.
+        # ADR-0209 §14.3.
+        "content_hash": row.get("content_hash") or "",
+    }
+
+
+@observe(tier="stage", metric="tools.adr._reflect_row_status_in_tags")
+def _reflect_row_status_in_tags(merged: dict[str, Any], row: dict) -> dict[str, Any]:
+    """Replace any ``adr-status:*`` tag in ``merged['tags']`` with the
+    row-side status (D5: row owns ALL metadata). Extracted from ``adr_get``
+    for I13 cyclomatic."""
+    row_status = row.get("status")
+    if not row_status:
+        return merged
+    status_tag = f"adr-status:{row_status}"
+    tags: list[str] = []
+    seen = False
+    for t in merged.get("tags", []):
+        if isinstance(t, str) and t.startswith("adr-status:"):
+            tags.append(status_tag)
+            seen = True
+        else:
+            tags.append(t)
+    if not seen:
+        tags.append(status_tag)
+    merged["tags"] = tags
+    return merged
+
+
+@observe(tier="hot", metric="tools.adr.adr_list")
 @_tool(power=True)
-def adr_list(directory: str, status: str | None = None, limit: int = 50, offset: int = 0) -> dict:
-    """List ADRs from the canonical index; optional status filter.
+def adr_list(
+    directory: str,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    *,
+    project: str | None = None,
+    tier: str | None = "binding",
+    subsystem: str | None = None,
+) -> dict:
+    """List ADRs from the ledger; optional status/tier filter + pagination.
+
+    Car F: re-pointed from ``wiki_read(index_slug)`` + ``parse_index_rows`` to
+    ``list_adr_rows`` over the core PTC → backend HTTP path. Return shape is
+    UNCHANGED: ``{"adrs": [7-key rows], "count": N}`` plus optional
+    ``total`` / ``truncated: True`` / ``next_offset`` when the page is
+    truncated.
+
+    Car M (0047 §7, §16.6): the ``project=`` override lets a caller list
+    another project's ADRs. Precedence, as C5 left it: ``project`` (override) >
+    ``session_project`` > a raise. The ``directory``-derived and ``"global"``
+    tiers this docstring used to name are DELETED (ADR-0227). When
+    supplied, the validated project_id is forwarded to the backend
+    ``list_adr_rows`` op so the list is namespaced to the override. When
+    BOTH ``project`` and ``directory`` are supplied, ``project`` wins and
+    ``directory`` is logged-and-ignored (§9 [VERIFY]).
+
+    Car H: defaults ``tier`` to ``"binding"`` (D27 — superseded/rejected/deprecated
+    ADRs are tagged ``historical`` and excluded by default). Pass ``tier=None``
+    to receive rows of any tier.
 
     Args:
         directory: Absolute path to the project root.
         status: Optional filter (open/accepted/superseded/rejected/deprecated).
+        tier: Optional filter — ``"binding"`` (default, D27) or ``"historical"``.
+            ``None`` returns rows of any tier.
         limit: Max ADRs returned per page (default 50). <= 0 means no limit.
         offset: 0-based index of the first ADR returned (default 0). Page forward
             with the `next_offset` value the response carries when truncated.
 
     Returns:
-        {"adrs": [{adr_id, status, date, title, supersedes, superseded_by, slug}, ...],
-         "count": N} where `count` is the number of rows in `adrs`.
-        Empty list when the index is absent.
-
-        When the page does not cover the whole filtered set, three extra keys
-        appear: `total` (rows after the status filter), `truncated: True`, and
-        `next_offset` (omitted on the last page). They are ABSENT when nothing
-        was sliced, so existing callers see an unchanged shape.
-
-    Note (task:0085): this tool had no `limit` at all and a full listing measured
-    57 KB, large enough that the harness spilled it to a file. Unlike `recall`,
-    the rows here are already narrow (7 scalar fields) — the size is row COUNT,
-    so pagination is the fix rather than projection or content truncation.
+        ``{"adrs": [...7-key rows...], "count": N}`` (untruncated) or
+        ``{"adrs": [...], "count": N, "total": M, "truncated": True,
+        "next_offset": K}`` (truncated). Empty list when the ledger has no
+        rows for the project.
     """
     try:
         resolved = _resolve_project_root(directory)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"cannot resolve project root: {exc}"}
 
-    index_slug = adr_index_slug(resolved)
-    page = wiki_read(index_slug, directory=resolved)
-    if "error" in page or not page.get("content"):
+    # C5 (0047 PR#40 §5): ``derive_project_id(cwd=resolved)`` deleted. The
+    # namespace stamp on the ledger list comes from ``project=`` and nothing
+    # else.
+    try:
+        project_id = resolve_effective_project(
+            project=project,
+            directory=resolved,
+            session_project=None,
+            tool="adr_list",
+        )
+    except UnresolvedProjectError as exc:
+        return dict(exc.payload)
+    except InvalidProjectOverrideError as exc:
+        return {"error": f"adr_list: {exc}"}
+
+    try:
+        result = _forward_admin(
+            "list_adr_rows",
+            {
+                "project_id": project_id,
+                "status": status,
+                "tier": tier,
+                "subsystem": subsystem,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        import logging  # noqa: PLC0415
+
+        logging.getLogger(__name__).warning(
+            "adr_list forward failed: project_id=%s err=%s", project_id, exc
+        )
         return {"adrs": [], "count": 0}
-    rows = parse_index_rows(page["content"])
-    if status is not None:
-        rows = [r for r in rows if r["status"] == status]
 
-    total = len(rows)
+    rows = result.get("rows", []) if isinstance(result, dict) else []
+    if not isinstance(rows, list):
+        rows = []
+
+    # Map ledger rows onto the 7-key consumer shape (the load-bearing contract).
+    entries = [_row_to_adr_list_entry(r) for r in rows if isinstance(r, dict)]
+
+    total = len(entries)
     start = max(0, offset)
-    window = rows[start:] if limit <= 0 else rows[start : start + limit]
+    if limit <= 0:
+        window = entries[start:]
+    else:
+        window = entries[start : start + limit]
 
-    result: dict = {"adrs": window, "count": len(window)}
+    out: dict[str, Any] = {"adrs": window, "count": len(window)}
     if len(window) != total:
-        result["total"] = total
-        result["truncated"] = True
+        out["total"] = total
+        out["truncated"] = True
         if start + len(window) < total:
-            result["next_offset"] = start + len(window)
-    return result
+            out["next_offset"] = start + len(window)
+    return out
 
 
-# ── Backward-compatible re-exports ────────────────────────────────────────────
-# All names that external callers / tests import from this module path remain
-# importable here. The split is an internal detail.
+# ── Public re-exports ───────────────────────────────────────────────────────
+# Car G (0047 §7): the parser/serializer/index-render machinery is DELETED
+# from ``adr_index.py``; the per-project lock + its globals are DELETED
+# here. Only the slug-helper re-export survives (legacy body-fetch fallback
+# in ``_fetch_adr_body_page`` — see ``adr_index.py`` module docstring).
 __all__ = [
     # MCP tools
     "adr_add",
     "adr_get",
     "adr_list",
-    # adr_index public surface
-    "_ADR_HEADER_RE",
-    "_ADR_PAGE_SLUG_RE",
-    "_INDEX_HEADER",
-    "_INDEX_ROW_RE",
-    "_build_index_content",
-    "_committed_page_max_id",
-    "_index_max_id",
-    "_next_adr_id",
-    "_next_adr_id_from_index",
-    "_render_index_row",
-    "adr_index_slug",
-    "adr_log_slug",
+    # adr_index public surface — Car G keeps ONLY the slug helper
     "adr_page_slug",
-    "parse_adr_ids",
-    "parse_index_rows",
-    # adr_render public surface
+    # adr_render public surface (helpers used by ``adr_add``)
     "_REQUIRED_FIELDS",
     "_VALID_STATUSES",
     "_adr_tags",
@@ -401,9 +822,9 @@ __all__ = [
     "_flip_superseded_target",
     "_parse_supersedes",
     # adr.py-local
-    "_ADR_LOG_LOCKS",
-    "_ADR_LOG_LOCKS_GUARD",
     "_FATAL_WRITE_REASONS",
-    "_adr_log_lock",
+    "_normalize_subsystem",
+    "_row_to_adr_list_entry",
+    "_trigger_subsystem_rollup_regen",
     "_write_ok",
 ]

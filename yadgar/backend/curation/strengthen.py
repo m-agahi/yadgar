@@ -5,6 +5,10 @@ import logging
 from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage import StorageEngine
+from yadgar._shared.storage._project_id_writer import (
+    observe_project_id_skip,
+    resolve_project_id_from_rows,
+)
 from yadgar._shared.storage.directory import dominant_directory
 
 logger = logging.getLogger(__name__)
@@ -96,6 +100,16 @@ def _memify_reweight(
 _DERIVED_TAGS = frozenset({"derived", "auto-generated"})
 
 
+@observe(tier="hot", span=False)
+def _pair_source_mems(src_name: str, tgt_name: str, source_mems: list[dict]) -> list[dict]:
+    """Source memories whose content mentions either entity name."""
+    return [
+        m
+        for m in source_mems
+        if src_name in (m.get("content") or "") or tgt_name in (m.get("content") or "")
+    ]
+
+
 @observe(tier="stage")
 def _derive_pair_directory(src_name: str, tgt_name: str, source_mems: list[dict]) -> str:
     """Originating directory for a co-occurrence pair.
@@ -103,13 +117,30 @@ def _derive_pair_directory(src_name: str, tgt_name: str, source_mems: list[dict]
     Vote with the directory_context of every source memory whose content mentions
     either entity name. dominant_directory() returns the single real dir when
     unambiguous, else "global" (cross-project / unknown).
+
+    C4 note: ``directory_context`` keeps this resolution because it is the
+    legacy read key until C7 re-keys the readers. The ``project_id`` half is
+    ``_derive_pair_project`` below, and it does NOT collapse to a sentinel.
     """
     dir_votes = [
-        m.get("directory_context")
-        for m in source_mems
-        if src_name in (m.get("content") or "") or tgt_name in (m.get("content") or "")
+        m.get("directory_context") for m in _pair_source_mems(src_name, tgt_name, source_mems)
     ]
     return dominant_directory(dir_votes)
+
+
+@observe(tier="stage")
+def _derive_pair_project(src_name: str, tgt_name: str, source_mems: list[dict]) -> str | None:
+    """``project_id`` for a co-occurrence pair, or ``None`` when unnameable.
+
+    C4 (0047 PR#40 §5). This writer is the **highest-volume sentinel producer
+    in the corpus** — D4 measured 238 live ``"global"`` rows carrying its
+    signature — which is why C6 has a deletion step at all. The vote is now
+    over the source rows' own ``project_id`` values: exactly one distinct
+    identifying value wins; zero or two or more means the pair spans no single
+    project and the derived fact is skipped and counted rather than being
+    attributed to a namespace nobody chose.
+    """
+    return resolve_project_id_from_rows(_pair_source_mems(src_name, tgt_name, source_mems))
 
 
 @observe(tier="stage")
@@ -150,6 +181,14 @@ def _collect_derive_inserts(
         if derived_content in existing_contents:
             continue
 
+        # C4: a pair whose sources name no single project is skipped and
+        # counted — and must NOT count as derived, or the stat reports work
+        # that produced no row.
+        pair_project = _derive_pair_project(src_name, tgt_name, source_mems)
+        if pair_project is None:
+            observe_project_id_skip("memify_derive")
+            continue
+
         to_insert.append(
             {
                 "memory_id": storage._next_id("memory"),
@@ -158,6 +197,7 @@ def _collect_derive_inserts(
                 "src_name": src_name,
                 "tgt_name": tgt_name,
                 "directory_context": _derive_pair_directory(src_name, tgt_name, source_mems),
+                "project_id": pair_project,
             }
         )
         existing_contents.add(derived_content)
@@ -202,6 +242,7 @@ def _memify_derive(
                 "content = $content, embedding = $embedding, tags = $tags, "
                 "source_episode_id = $source_episode_id, "
                 "directory_context = $directory_context, "
+                "project_id = $project_id, "
                 "created_at = $created_at, last_accessed = $last_accessed, "
                 "heat = $heat, is_stale = $is_stale, file_hash = $file_hash, "
                 "embedding_model = $embedding_model, "
@@ -218,6 +259,7 @@ def _memify_derive(
                     "tags": ["derived", "auto-generated"],
                     "source_episode_id": None,
                     "directory_context": item["directory_context"],
+                    "project_id": item["project_id"],
                     "created_at": now,
                     "last_accessed": now,
                     "heat": 0.5,

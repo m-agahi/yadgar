@@ -20,6 +20,7 @@ from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 from yadgar.core.server._helpers import _q_with_timeout
+from yadgar.core.server.tools._project_param import accept_project_param
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,8 @@ def recent_memories(
     limit: int = 10,
     since: str = "24h",
     directory: str = "",
+    *,
+    project: str | None = None,
 ) -> dict:
     """Return recently stored memories, newest first, without classifier dependency.
 
@@ -205,6 +208,9 @@ def recent_memories(
             "directory": <str>,
         }
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     storage = _get_storage()
     effective_limit = min(max(1, limit), 100)
     effective_dir = directory.strip() if directory else ""
@@ -423,11 +429,17 @@ def add_rule(
     """Add a neuro-symbolic rule for filtering/re-ranking memories.
 
     rule_type: "hard" (must satisfy) or "soft" (preference).
-    scope: "global", "directory", or "file".
+    scope: "global", "project", or "path".
     condition: e.g. "importance > 0.7", "tag contains architecture".
     action: "filter" for hard rules, "boost:0.3" or "penalty:0.2" for soft rules.
     priority: Higher = applied first (default 0).
-    scope_value: Directory path or file pattern for scoped rules.
+    scope_value: project_id for scope="project" (matched by EXACT equality); a
+        glob over a real filesystem path for scope="path"; unused for "global".
+
+    C10 (0047 §5(a)): the retired kinds "directory" and "file" are REJECTED
+    backend-side with a message naming their replacement. A "directory" rule
+    carried a filesystem path in scope_value and could never match a project_id,
+    so accepting it would mint a rule that is dead on arrival.
     """
     # R3 Car 3b: the rules-engine DB write (insert_rule) forwards to backend /admin.
     # rule_type/scope/action/condition validation runs backend-side inside
@@ -448,12 +460,22 @@ def add_rule(
 
 
 @_tool(power=True)
-def get_rules(directory: str = "") -> list[dict]:
-    """Get active rules. If directory is provided, returns only applicable rules."""
+def get_rules(directory: str = "", *, project: str | None = None) -> list[dict]:
+    """Get active rules. If a project is named, returns only applicable rules.
+
+    C10 (0047 §5(a)): ``get_applicable_rules`` is now keyed on the **project_id**
+    (exact equality), not a directory prefix. The resolved ``project`` override
+    is preferred when supplied; ``directory`` remains accepted as the legacy
+    positional so existing callers keep working until C11 re-keys this tool's
+    signature along with the rest of the scoped tool surface.
+    """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary.
+    resolved = accept_project_param(project, directory)
     if _st._rules_engine is None:
         return []
-    if directory:
-        return _st._rules_engine.get_applicable_rules(directory)
+    scope_key = resolved or directory
+    if scope_key:
+        return _st._rules_engine.get_applicable_rules(scope_key)
     return _st._rules_engine.get_all_rules()
 
 

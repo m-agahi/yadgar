@@ -143,9 +143,12 @@ def _canonical_adr_payload(
     """Build a canonical wiki_add payload for the ADR write path.
 
     ``title`` == ``slug`` so ``_slugify(title)`` yields the deterministic slug.
-    ``force=True`` bypasses the drainer sim gate (canonical ADR/index pages are
-    legitimately near-duplicate). ``page_type="adr"`` satisfies the
-    ``_wiki_write_canonical`` CANONICAL_PAGE_TYPES allowlist assertion.
+    ``page_type="adr"`` satisfies the ``_wiki_write_canonical``
+    CANONICAL_PAGE_TYPES allowlist assertion. No ``force=True`` flag is set:
+    Car C3 (0047 §7 D21) flipped the ``adr`` page_type to
+    ``gate_mode="identity"`` so the drainer sim gate is a pass-through for
+    canonical ADR pages (the slug IS the identity — a re-write of the same
+    slug is an update, not a duplicate).
     """
     return {
         "wiki_schema_version": 2,
@@ -157,7 +160,6 @@ def _canonical_adr_payload(
         "source_memory_ids": None,
         "confidence": "high",
         "append": False,
-        "force": True,
         "replace_slug": replace_slug,
         "directory_context": directory,
         "page_type": "adr",
@@ -170,15 +172,61 @@ def _assemble_index_rows(
     new_row: dict,
     new_adr_id: str,
     target_ids: list[str],
+    project_id: str | None = None,
 ) -> list[dict]:
     """Return the full ADR index row-set after adding ``new_row`` + supersede back-links.
 
-    Two-pass: append the new row, then flip each supersede target's status to
-    'superseded' and record the new ADR's NNNN in its ``superseded_by`` column.
-    """
-    from yadgar.core.server.tools.adr_index import parse_index_rows  # noqa: PLC0415
+    Car G (0047 §7): re-pointed off ``parse_index_rows`` (which read the
+    legacy ``<project>-adr-index`` wiki page) onto the SQL ledger. The
+    ledger is the authoritative index source post-seed (D35a); the legacy
+    page is now ``superseded-by-ledger``-tagged (D35d). The function shape
+    is preserved so callers (tests, Car F's re-point tests) that pin the
+    return value keep working unchanged.
 
-    rows = parse_index_rows(existing_index)
+    Args:
+        existing_index: legacy index-page content (unused post-G; kept for
+            signature stability with the pre-G callers).
+        new_row: the new row dict being inserted.
+        new_adr_id: the new ADR id (e.g. ``"ADR-0042"``).
+        target_ids: list of superseded ADR ids (``["ADR-0007"]``); their
+            row-side status was flipped to ``superseded`` in Car F, so the
+            back-link is computed in-memory from the ledger fetch.
+        project_id: when supplied, the ledger fetch is scoped to this
+            project; when ``None``, the function degrades to the new_row
+            + target back-links only (test seam).
+
+    Returns:
+        The projected row dicts in the 7-key consumer shape (matches the
+        pre-G ``parse_index_rows`` contract — see ``_row_to_adr_list_entry``
+        for the mapping).
+    """
+    rows: list[dict] = []
+    try:
+        if project_id is not None:
+            from yadgar.core.forward import _forward_admin  # noqa: PLC0415
+
+            result = _forward_admin("list_adr_rows", {"project_id": project_id})
+            ledger_rows = result.get("rows") if isinstance(result, dict) else []
+            for r in ledger_rows or []:
+                if not isinstance(r, dict):
+                    continue
+                rows.append(
+                    {
+                        "adr_id": f"ADR-{int(r['id']):04d}",
+                        "status": r.get("status") or "open",
+                        "date": r.get("decided_on") or "",
+                        "title": r.get("title") or "",
+                        "supersedes": r.get("supersedes") or "none",
+                        "superseded_by": r.get("superseded_by") or "-",
+                        "slug": r.get("body_slug") or "",
+                    }
+                )
+    except Exception:  # noqa: BLE001 — degraded: project-scoped ledger not reachable
+        rows = []
+
+    # Append the new row last (Car F's contract — caller expects the new
+    # row to be present in the returned list so a downstream render can
+    # re-emit the index page if it wants to).
     rows.append(new_row)
     if not target_ids:
         return rows

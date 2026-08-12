@@ -28,6 +28,7 @@ from typing import TypeIs
 
 from yadgar._shared.observability.observe import observe
 from yadgar.backend.admin_exec import (
+    adr_seed,
     audit,
     backup_sql,
     blocks,
@@ -35,12 +36,18 @@ from yadgar.backend.admin_exec import (
     drain,
     engine_status,
     invariants,
+    ledger,
     memory,
+    nightly_sweep,
     project,
+    project_backfill,
+    reslug,
     restoration,
     restore_sql,
+    rollup,
     runtime_config,
     seed,
+    seed_adr_tier_subsystem,
     staleness,
     wiki,
 )
@@ -86,6 +93,8 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "staleness_flag_memory": staleness.staleness_flag_memory,
     # seed store phase (T2 Car E1 — census verdict #9)
     "seed_store": seed.seed_store,
+    # 0047 spine train Car E — task-list page seed (plan §3.3, D35a-D35c)
+    "seed_task_from_pages": seed.seed_task_from_pages,
     # wiki-edit + agent_prompt writes (R3 Car 3c / R5 group 3)
     "wiki_delete": wiki.wiki_delete,
     "wiki_autolink": wiki.wiki_autolink,
@@ -102,7 +111,9 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "wiki_insert_at": wiki.wiki_insert_at,
     "wiki_replace_markdown_block": wiki.wiki_replace_markdown_block,
     "agent_prompt_save": wiki.agent_prompt_save,
-    "increment_prompt_usage": wiki.increment_prompt_usage,
+    # Car I: ``increment_prompt_usage`` (memory-row path) is gone — uses is a
+    # SQL integer on ``agent_pattern`` (D40). The new op is registered below
+    # under ``ledger``.
     # anchor-audit + invariants + project writes (R3 Car 3d / R5 final group)
     "audit_apply_mutations": audit.audit_apply_mutations,
     "write_audit_sentinel": audit.write_audit_sentinel,
@@ -131,6 +142,83 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # replay a dump into engine #2, and the enumeration gate runs inside this op
     # before a restore can be called good — see admin_exec/restore_sql.py.
     "mariadb_restore_verify": restore_sql.mariadb_restore_verify,
+    # Car B: ledger READ ops (task / adr / agent_prompt) over MariaStorageEngine
+    # methods. Async because asyncmy is async-only. Closes the in-process
+    # _get_storage() read path core used to take for ledger tables.
+    # C6: the ``project`` registry seed + read. The registry is load-bearing
+    # (ADR-0202/0223) and ships with zero rows, so seeding it is the FIRST
+    # operator step on a new deployment — every task/adr row FKs to it. These
+    # two ops are deliberately NOT registry-guarded: they are the bootstrap.
+    "create_project_row": ledger.create_project_row,
+    "list_project_rows": ledger.list_project_rows,
+    # C6: the operator-invoked project_id backfill (T2). Dry-run by default —
+    # it returns a manifest and writes nothing until the operator re-runs with
+    # dry_run=False AND acknowledges the unmapped bucket and the deletes.
+    "project_id_backfill": project_backfill.project_id_backfill,
+    "list_task_rows": ledger.list_task_rows,
+    "get_task_row": ledger.get_task_row,
+    "list_task_rows_all_projects": ledger.list_task_rows_all_projects,
+    # Car D: ledger WRITE ops (task) — create / update + task_blocked_by join-edge
+    # reconcile (D39). Mirror the READ ops' async shape; the core ``task_write``
+    # tool shells forward here over HTTP per §15 / ADR-0078.
+    "create_task_row": ledger.create_task_row,
+    "update_task_row": ledger.update_task_row,
+    "list_adr_rows": ledger.list_adr_rows,
+    "get_adr_row": ledger.get_adr_row,
+    "list_agent_prompt_rows": ledger.list_agent_prompt_rows,
+    # Car I additions: uses-DESC list, single-row lookup, composes reads,
+    # ledger-row upserts for ``agent_prompt_save`` / ``discipline_save``,
+    # and ``uses`` increment over the table (D40).
+    "list_agent_pattern_rows_uses_desc": ledger.list_agent_pattern_rows_uses_desc,
+    "get_agent_pattern_row": ledger.get_agent_pattern_row,
+    "list_pattern_composes": ledger.list_pattern_composes,
+    "save_agent_pattern_row": ledger.save_agent_pattern_row,
+    "save_agent_discipline_row": ledger.save_agent_discipline_row,
+    "increment_agent_pattern_uses": ledger.increment_agent_pattern_uses,
+    "get_agent_prompt_toc_updated_at": ledger.get_agent_prompt_toc_updated_at,
+    # Car F: ADR WRITE ops over MariaStorageEngine — create_adr_row is the new
+    # ID source of truth (ADR-0197: AUTO_INCREMENT id IS the ADR number),
+    # set_adr_body_slug links the row to the wiki body page (D4 — body stays
+    # in SurrealDB, only the slug pointer moves to MariaDB), and
+    # add_adr_supersedes is the D23 supersede link + status flip. Async for
+    # the same reason as the read ops above.
+    "create_adr_row": ledger.create_adr_row,
+    "set_adr_body_slug": ledger.set_adr_body_slug,
+    "add_adr_supersedes": ledger.add_adr_supersedes,
+    # Car G (0047 §7): the ``_get_adr_log_updated_at`` signal re-points off
+    # the deleted ``<project>-adr-index`` wiki page onto the SQL ledger.
+    "max_adr_updated_at": ledger.max_adr_updated_at,
+    # Car B: runtime_config READ ops (SurrealDB sync path). Closes the in-process
+    # _get_storage() read violation in core/server/tools/_runtime_config.py.
+    "get_config_row": runtime_config.get_config_row,
+    "list_config_rows": runtime_config.list_config_rows,
+    # Car L (0047 §7 D32 ③): ADR wiki page re-slug — moves pages from
+    # ``yadgar-adr-NNNN`` to ``{project_id}_adr-NNNN`` + updates crossrefs
+    # + inline body links + adr.body_slug. Idempotent; dry-run by default.
+    "reslug": reslug.reslug_adr_pages,
+    # Car G (0047 §7 D23/D35a): ADR seed (pages→ledger) + retype mutator.
+    # ``seed_adr_rows`` lifts the ~223 existing ADRs from per-ADR wiki PAGES
+    # into the ``adr`` ledger table (D35a — one-shot, idempotent on
+    # body_slug). ``retype_page_type`` flips ``wiki_page.page_type``
+    # ``adr`` → ``adr_superseded`` atomic with the row-side status flip
+    # (D23 — the sole sanctioned writer for the lifecycle transition).
+    "seed_adr_rows": adr_seed.seed_adr_rows,
+    "retype_page_type": adr_seed.retype_page_type,
+    # Car K (0047 §7 row K): nightly archive sweep — cross-engine write that
+    # flips MariaDB ledger rows to status='archived' and retypes SurrealDB
+    # body pages to per-type archived variants. Per-page mutability_override
+    # in ('locked','derived') is the operator opt-out. Idempotent;
+    # circuit-breaker caps the candidate count.
+    "run_nightly_archive_sweep": nightly_sweep.run_nightly_archive_sweep,
+    # Car H (0047 §7 D29): per-subsystem ADR rollup pages (D29). The
+    # ``_regenerate_subsystem_rollup`` is the internal write helper invoked
+    # from core ``adr_add``'s post-commit step (§10 Q1 on-write trigger);
+    # ``run_rollup_regen`` is the admin-op catch-up entry point that
+    # iterates a project's distinct subsystems and regenerates each. The
+    # one-shot ``seed_adr_tier_subsystem`` (D35a) backfills ``tier`` +
+    # ``subsystem`` columns on existing rows.
+    "run_rollup_regen": rollup.run_rollup_regen,
+    "seed_adr_tier_subsystem": seed_adr_tier_subsystem.seed_adr_tier_subsystem,
 }
 
 
@@ -157,6 +245,119 @@ def _ensure_engines() -> None:
     from yadgar.backend.restoration import ensure_restoration_engines  # noqa: PLC0415
 
     ensure_restoration_engines()
+
+
+def _resolve_storage():
+    """Return the runtime storage engine for ops that take it as a parameter."""
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+
+    return _get_storage()
+
+
+@observe(tier="hot", span=False)
+def _kwargs_op(fn):
+    """Adapt a KEYWORD-ONLY op body to the dispatch's ``impl(payload)`` contract.
+
+    C10 (0047 §5(d)). Both dispatchers call ``impl(payload)`` — one positional
+    dict. Four registered bodies are declared keyword-only (``def f(*, a, b)``),
+    so that call raised ``TypeError: takes 0 positional arguments but 1 was
+    given`` **every time**. They could never have executed through ``/admin``:
+
+        reslug, retype_page_type, seed_adr_rows, seed_task_from_pages
+
+    (measured by binding every entry in ``_ADMIN_OPS`` against ``impl({})``).
+    ``retype_page_type`` is D23's "sole sanctioned writer" for the ADR supersede
+    lifecycle transition, so that transition has never run through this route.
+
+    The async branch is not cosmetic: ``_is_async_op`` uses
+    ``inspect.iscoroutinefunction``, which inspects the wrapper's own code flags.
+    A sync wrapper around a coroutine body would report False, and the sync
+    dispatcher would return an un-awaited coroutine object as if it were the
+    result dict. ``functools.wraps`` is deliberately NOT used — it would copy
+    ``__wrapped__`` and make ``inspect.signature`` report the wrapped
+    keyword-only signature, hiding the very mismatch this adapter exists to fix.
+    """
+    if inspect.iscoroutinefunction(fn):
+
+        @observe(
+            exempt=(
+                "the WRAPPED op body already carries its own @observe boundary "
+                "sample, and run_admin_op/run_admin_op_async instrument the "
+                "dispatch around it. Instrumenting this adapter would add a "
+                "THIRD sample per call for exactly four ops — observe's "
+                "double-instrumentation guard suppresses a duplicate span, not "
+                "a duplicate metric."
+            )
+        )
+        async def _acall(payload: dict):
+            return await fn(**payload)
+
+        _acall.__name__ = f"{getattr(fn, '__name__', 'op')}__kwargs_adapter"
+        return _acall
+
+    def _call(payload: dict):
+        return fn(**payload)
+
+    _call.__name__ = f"{getattr(fn, '__name__', 'op')}__kwargs_adapter"
+    return _call
+
+
+@observe(tier="hot", span=False)
+def _payload_storage_op(fn):
+    """Adapt ``fn(payload, *, storage)`` to ``impl(payload)``, injecting storage.
+
+    C10: ``reslug_adr_pages`` takes the payload positionally but declares
+    ``storage`` keyword-only with **no default**, so ``impl(payload)`` raised
+    ``TypeError: missing a required keyword-only argument: 'storage'``. The
+    dispatchers call ``_ensure_engines()`` first, so the runtime storage is
+    composed by the time this runs.
+    """
+    if inspect.iscoroutinefunction(fn):
+
+        @observe(
+            exempt=(
+                "the WRAPPED op body already carries its own @observe boundary "
+                "sample, and run_admin_op/run_admin_op_async instrument the "
+                "dispatch around it. Instrumenting this adapter would add a "
+                "THIRD sample per call for exactly four ops — observe's "
+                "double-instrumentation guard suppresses a duplicate span, not "
+                "a duplicate metric."
+            )
+        )
+        async def _acall(payload: dict):
+            return await fn(payload, storage=_resolve_storage())
+
+        _acall.__name__ = f"{getattr(fn, '__name__', 'op')}__storage_adapter"
+        return _acall
+
+    def _call(payload: dict):
+        return fn(payload, storage=_resolve_storage())
+
+    _call.__name__ = f"{getattr(fn, '__name__', 'op')}__storage_adapter"
+    return _call
+
+
+# ── C10: re-register the four bodies whose signatures the dispatch cannot call ──
+#
+# Applied here rather than inline in ``_ADMIN_OPS`` because the adapters are
+# defined below the table. Keeping the table a flat name → body map also keeps
+# it readable as the registry it is; the adaptation is a dispatch concern.
+#
+# ``_ADMIN_OPS_KWARG_SHAPED`` is the closed list — ``test_admin_op_dispatch_shapes``
+# re-derives it empirically from the live table, so a new keyword-only op added
+# later fails that test instead of silently becoming unreachable.
+_ADMIN_OPS_KWARG_SHAPED: tuple[str, ...] = (
+    "retype_page_type",
+    "seed_adr_rows",
+    "seed_task_from_pages",
+)
+_ADMIN_OPS_PAYLOAD_STORAGE_SHAPED: tuple[str, ...] = ("reslug",)
+
+for _op_name in _ADMIN_OPS_KWARG_SHAPED:
+    _ADMIN_OPS[_op_name] = _kwargs_op(_ADMIN_OPS[_op_name])
+for _op_name in _ADMIN_OPS_PAYLOAD_STORAGE_SHAPED:
+    _ADMIN_OPS[_op_name] = _payload_storage_op(_ADMIN_OPS[_op_name])
+del _op_name
 
 
 def _is_async_op(impl: AdminOp) -> TypeIs[Callable[[dict], Awaitable[dict]]]:

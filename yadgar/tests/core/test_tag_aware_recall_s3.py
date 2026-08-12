@@ -18,7 +18,9 @@ import sys
 
 import pytest
 
+from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server  # noqa: E402
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("recall_backend_bypass", "admin_backend_bypass")
 
@@ -55,7 +57,7 @@ def _save_agent_prompt(pattern: str, content: str, directory: str = "global") ->
     """Save an agent-prompt page via agent_prompt_save and assert success."""
     from yadgar.core.server.tools.agent_prompts import agent_prompt_save
 
-    res = agent_prompt_save(pattern, content, directory=directory)
+    res = agent_prompt_save(pattern, content, directory=directory, project=TEST_PROJECT_ID)
     assert res.get("saved") is True, f"agent_prompt_save failed: {res}"
 
 
@@ -71,6 +73,7 @@ def _add_unrelated_pages(count: int = 40) -> None:
                 "covers indexing, partitioning, and query planning details."
             ),
             category="reference",
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
         )
 
 
@@ -96,6 +99,7 @@ class TestBC_S3_Exclude:
             query="audit this pull request for vulnerabilities",
             type="all",
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         for r in results:
             tags = r.get("tags", [])
@@ -116,6 +120,7 @@ class TestBC_S3_Exclude:
             query="audit this pull request for vulnerabilities",
             type="wiki",
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         for r in results:
             tags = r.get("tags", [])
@@ -148,6 +153,7 @@ class TestBC_S3_Include:
             type="wiki",
             tags=["agent-prompt"],
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         assert results, "expected at least one agent-prompt result"
         for r in results:
@@ -178,6 +184,7 @@ class TestBC_S3_Precedence:
             query="audit this pull request for vulnerabilities",
             type="wiki",
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         assert not any("agent-prompt" in r.get("tags", []) for r in results), (
             f"Agent-prompt appeared without tags param. Slugs: {[r.get('slug', '') for r in results]}"
@@ -197,6 +204,7 @@ class TestBC_S3_Precedence:
             type="wiki",
             tags=["agent-prompt"],
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         assert any("agent-prompt" in r.get("tags", []) for r in results), (
             "Agent-prompt page not returned when tags=['agent-prompt'] — exclude not suppressed."
@@ -227,6 +235,7 @@ class TestBC_S3_Dilution:
             type="wiki",
             tags=["agent-prompt"],
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         assert results, "agent-prompt page must survive corpus dilution (SQL pre-filter required)"
         # Every result must be an agent-prompt page — pre-filter works.
@@ -266,6 +275,7 @@ class TestBC_S3_Ranking:
             type="wiki",
             tags=["agent-prompt"],
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         assert results, "expected at least one agent-prompt result"
         top_slug = results[0].get("slug", "")
@@ -293,12 +303,14 @@ class TestBC_S3_Noops:
             title="Normal reference page",
             content="This page documents the project architecture and module layout.",
             category="reference",
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
         )
 
         results = _recall_fn()(
             query="project architecture",
             type="wiki",
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         # Should return normal wiki results without crashing.
         assert isinstance(results, list)
@@ -316,6 +328,7 @@ class TestBC_S3_Noops:
             title="Normal reference page",
             content="This page documents the project architecture and module layout.",
             category="reference",
+            opts=WikiAddOptions(project_id=TEST_PROJECT_ID),
         )
 
         results = _recall_fn()(
@@ -323,5 +336,6 @@ class TestBC_S3_Noops:
             type="wiki",
             tags=None,
             directory="global",
+            project=TEST_PROJECT_ID,
         )
         assert isinstance(results, list)

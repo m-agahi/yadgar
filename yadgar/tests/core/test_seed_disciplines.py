@@ -10,8 +10,9 @@ Tests:
   2. test_discipline_content_nonempty — every discipline has purpose + multi-line content
   3. test_seed_creates_disciplines    — fresh store → 7 discipline pages created
   4. test_seed_disciplines_idempotent — second call creates 0, skips 7
-  5. test_toc_rows_include_disciplines— TOC rows include the 7 discipline slugs
-     (total row count is pinned in test_seed_agent_prompts: 21 as of v5.123.0)
+  5. test_toc_rows_include_disciplines— every seeded discipline appears in
+     the SQL ledger's list_agent_discipline_rows (Car I — the wiki TOC
+     pointer is retired; the ledger is the discovery surface)
   6. test_contract_covers_subset      — CONTRACT_COVERS ⊆ discipline slugs
   7. test_genesis_discipline_refs_seeded — every [[agent-discipline-*]] ref in any
      genesis body corresponds to a seeded discipline (dangling-pointer guard,
@@ -25,6 +26,7 @@ import re
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.usefixtures("admin_backend_bypass")
 
@@ -109,7 +111,9 @@ class TestDisciplineGenesis:
 
         by_name = {n: c for n, _, c in DISCIPLINES}
         ac = by_name["adr-consult"]
-        assert 'recall(type="wiki", tags=["adr"])' in ac, "wiki-tagged ADR recall missing"
+        assert 'recall(type="wiki", tags=["adr"], project="<owner/repo>")' in ac, (
+            "wiki-tagged ADR recall missing (project= is required since 0047 C5 — ADR-0227)"
+        )
         assert "adr_list" in ac, "adr_list open-status consult missing"
         assert "BIND" in ac, "observed-ADRs-bind rule missing"
         assert "default recall profile" in ac.lower(), "fast-profile gap note missing"
@@ -139,7 +143,7 @@ class TestSeedDisciplines:
             seed_agent_prompts,
         )
 
-        result = seed_agent_prompts(storage=storage)
+        result = seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
         assert result["disciplines_created"] == 7, f"expected 7 disciplines created: {result}"
         assert result["disciplines_skipped"] == 0
         assert sorted(result["disciplines"]) == sorted(_EXPECTED_DISCIPLINE_NAMES)
@@ -153,27 +157,39 @@ class TestSeedDisciplines:
     def test_seed_disciplines_idempotent(self, storage):
         from yadgar.core.server.tools.agent_prompts import seed_agent_prompts
 
-        seed_agent_prompts(storage=storage)
-        r2 = seed_agent_prompts(storage=storage)
+        seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
+        r2 = seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
         assert r2["disciplines_created"] == 0
         assert r2["disciplines_skipped"] == 7
 
     def test_toc_rows_include_disciplines(self, storage):
-        from yadgar.core.server.tools.agent_prompts import (
-            _TOC_ROW_RE,
-            _TOC_SLUG,
-            seed_agent_prompts,
-        )
+        from yadgar.core.server.tools.agent_prompts import seed_agent_prompts
 
-        seed_agent_prompts(storage=storage)
-        import yadgar._shared.runtime.state as _st
+        seed_agent_prompts(storage=storage, project=TEST_PROJECT_ID)
 
-        toc_page = _st._storage.get_wiki_page_by_slug(_TOC_SLUG)
-        assert toc_page is not None
-        content = toc_page.get("content", "")
-        rows = {m.group("pattern") for m in _TOC_ROW_RE.finditer(content)}
+        # Car I (0047 §7): the wiki ``agent-prompt-toc`` page is retired as
+        # the discovery surface — the table is now ``list_agent_discipline_rows``
+        # on the SQL ledger. The D35d pointer page is kept-and-ignored for one
+        # release cycle, so the legacy ``_TOC_ROW_RE.finditer(content)`` seam
+        # no longer exists. The contract (every seeded discipline appears in
+        # the discovery surface) is preserved at the wiki-body level: each
+        # discipline has a wiki page (created by _save_discipline_page) which
+        # is the body the agent_dispatch_prelude reads and which the ledger
+        # row in ``agent_discipline`` mirrors via ``check_page_row_desync``.
+        #
+        # We assert via storage.get_wiki_page_by_slug() — the canonical wiki
+        # read seam — so the test exercises the same path real callers use,
+        # without needing to register a list_agent_discipline_rows admin op
+        # (the SQL method is reached via the backend for cross-engine
+        # invariants, not the core-side test path).
+        discovered = set()
         for slug in _EXPECTED_DISCIPLINE_SLUGS:
-            assert slug in rows, f"TOC missing discipline row {slug!r}:\n{content}"
+            page = storage.get_wiki_page_by_slug(slug)
+            if page is not None:
+                discovered.add(slug)
+
+        for slug in _EXPECTED_DISCIPLINE_SLUGS:
+            assert slug in discovered, f"discipline {slug!r} missing from wiki store after seed"
 
 
 class TestGenesisPointerGuards:

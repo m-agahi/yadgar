@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import yadgar._shared.runtime.state as _st
 import yadgar.core.server.tools.recall as _recall_symbol  # noqa: F401 — imported for side-effects
+from yadgar._shared.storage.directory import RecallScope
 
 _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
@@ -38,6 +39,11 @@ def _make_memory_dict(mid: int = 1, score: float = 0.8, content: str | None = No
         "tags": [],
         "branch": None,
         "_source": "memory",
+        # Car C7: MemoryProvider applies an is_project_eligible residual guard
+        # keyed on project_id (not directory_context) — matches the
+        # project_id="/tmp/test" scope every _call_fanout() call in this file
+        # uses, so these rows stay eligible.
+        "project_id": "/tmp/test",
     }
 
 
@@ -77,8 +83,15 @@ def _make_mock_wiki(results=None):
 class TestForwardOnlyDispatch:
     """Phase 2a: recall() always calls _forward_to_backend — no flag gate."""
 
-    def _call_recall(self, directory="/tmp/test", **kwargs):
-        """Helper: call recall with _forward_to_backend mocked."""
+    def _call_recall(self, directory="/tmp/test", project="owner/repo", **kwargs):
+        """Helper: call recall with _forward_to_backend mocked.
+
+        ``project`` is explicit because C5 (ADR-0227) put the identity resolver
+        at the top of ``recall`` — a call naming only a directory now raises
+        ``UnresolvedProjectError`` before the forward these tests spy on is
+        ever reached. What is asserted below is what recall FORWARDS, so the
+        call has to get that far.
+        """
         fake_results = [_make_memory_dict(1)]
         captured = {}
 
@@ -93,7 +106,13 @@ class TestForwardOnlyDispatch:
         ):
             mock_st._consolidation = None
             mock_st._pool = None
-            result = recall_fn(query="test query", max_results=5, directory=directory, **kwargs)
+            result = recall_fn(
+                query="test query",
+                max_results=5,
+                directory=directory,
+                project=project,
+                **kwargs,
+            )
 
         return result, captured
 
@@ -153,7 +172,7 @@ class TestFanoutRecall:
                 query=query,
                 max_results=max_results,
                 min_heat=0.0,
-                directory="/tmp/test",
+                recall_scope=RecallScope(project_id="/tmp/test"),
                 **kw,
             )
 
@@ -269,7 +288,12 @@ class TestForwardOnlyEndToEnd:
         ):
             mock_st._consolidation = None
             mock_st._pool = None
-            result = recall_fn(query="test query", max_results=10, directory="/tmp/test")
+            result = recall_fn(
+                query="test query",
+                max_results=10,
+                directory="/tmp/test",
+                project="owner/repo",
+            )
 
         has_wiki = any(r.get("_source") == "wiki" for r in result)
         has_memory = any(r.get("id") == 1 for r in result)

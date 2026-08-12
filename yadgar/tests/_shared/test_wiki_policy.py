@@ -97,10 +97,18 @@ class TestPolicyByType:
 class TestGetPolicy:
     """get_policy routes to the correct WikiPolicy instance."""
 
-    def test_adr_returns_default(self):
-        """'adr' has no override entry → DEFAULT_POLICY."""
+    def test_adr_returns_c3_policy(self):
+        """Car C3 (0047 §7 D21): 'adr' resolves to _ADR_POLICY (identity gate).
+
+        Pre-C3 'adr' fell through to DEFAULT_POLICY. C3 introduces _ADR_POLICY
+        with gate_mode='identity' so canonical ADR pages bypass the similarity
+        gate without needing the ``force=True`` payload flag.
+        """
+        from yadgar._shared.wiki.policy import _ADR_POLICY
+
         p = get_policy("adr")
-        assert p == DEFAULT_POLICY
+        assert p == _ADR_POLICY
+        assert p.gate_mode == "identity"
 
     def test_none_returns_default(self):
         """None page_type → DEFAULT_POLICY."""
@@ -120,13 +128,17 @@ class TestGetPolicy:
     def test_agent_prompt_non_storage_axes(self):
         """'agent_prompt' policy: write-behaviour axes match expected values.
 
-        gate_mode, dir_scope, merge match the default (similarity/strict/allow).
-        recall_disposition is "exclude" (Car C policy-driven recall exclusion —
-        agent-prompt pages must not pollute everyday recall fanout).
-        storage_scope is "global" (the C2 new axis — see test_agent_prompt_storage_scope_global).
+        Car C3 (0047 §7 D21): gate_mode flipped from "similarity" to
+        "identity" — agent-prompt pages share structural prose (all
+        dispatch scaffolding of the same shape), so the content-similarity
+        gate false-positives on every write. dir_scope and merge match
+        the default (strict/allow). recall_disposition is "exclude" (Car C
+        policy-driven recall exclusion — agent-prompt pages must not pollute
+        everyday recall fanout). storage_scope is "global" (the C2 new axis
+        — see test_agent_prompt_storage_scope_global).
         """
         p = get_policy("agent_prompt")
-        assert p.gate_mode == "similarity"
+        assert p.gate_mode == "identity"  # Car C3: identity gate (was "similarity")
         assert p.recall_disposition == "exclude"  # Car C: excluded from fanout recall
         assert p.dir_scope == "strict"
         assert p.merge == "allow"
@@ -210,3 +222,111 @@ class TestAgentPageTypeSplit:
         from yadgar._shared.wiki.wiki_meta import PAGE_TYPES
 
         assert PAGE_TYPES[page_type] == ["Purpose", "Prompt"]
+
+
+# ── F. Car C7 — "downweight" disposition RETIRED; task_list is now "exclude" ──
+
+
+class TestDownweightDisposition:
+    """Car C7 (0047 §5 C7) retired the "downweight" recall_disposition (D22/C2).
+
+    C2's ``task_list`` policy stayed recall-visible but scored its ranking
+    down via a multiply on ``placement_score``. That multiply was a VERIFIED
+    SIGN BUG: ``placement_score = ce + wiki_prior_weight * native_score`` is
+    commonly negative (``ce`` is a raw cross-encoder logit), and multiplying a
+    negative value by a sub-1.0 factor moves it TOWARD ZERO — an INCREASE
+    under "higher ranks first", i.e. the penalty promoted exactly the pages it
+    was meant to sink. See ``yadgar/backend/retrieval/providers/fusion.py``
+    and the ``PAGE_TYPE_TASK_LIST`` entry in ``POLICY_BY_TYPE`` for the full
+    account.
+
+    C7's fix: ``task_list`` is now ``recall_disposition="exclude"`` (dropped
+    from search entirely, in the stage-1 SQL WHERE, before it can consume a
+    pool slot) and the disposition set is CLOSED at ``{"include", "exclude"}``
+    — ``downweight_multiplier`` is deleted, not just unused. These tests pin
+    that closure and the concrete task_list flip; renamed from
+    ``TestDownweightDisposition``'s original "penalty survives" assertions
+    (all of which are now the OPPOSITE of the current contract).
+    """
+
+    def test_task_list_resolves_to_exclude_not_downweight(self):
+        """``task_list`` now resolves to ``recall_disposition="exclude"``.
+
+        Was: asserted ``"downweight"``. C7 retired that value outright — the
+        page is now dropped from search, not ranked-down within it.
+        """
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
+
+        assert get_policy(PAGE_TYPE_TASK_LIST).recall_disposition == "exclude"
+
+    def test_task_list_differs_from_default(self):
+        """``task_list`` policy must differ from DEFAULT (single source assertion).
+
+        Unchanged invariant — only the REASON it differs moved (gate_mode +
+        recall_disposition both diverge from DEFAULT_POLICY now, previously
+        recall_disposition alone did under the retired "downweight" value).
+        """
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
+
+        assert get_policy(PAGE_TYPE_TASK_LIST) != DEFAULT_POLICY
+
+    def test_downweight_multiplier_helper_is_deleted(self):
+        """``downweight_multiplier`` no longer exists on the policy module.
+
+        Was: ``downweight_multiplier({"page_type": PAGE_TYPE_TASK_LIST}, 0.5)
+        == 0.5``. The helper — and every call site in fusion.py and
+        wiki_query — is deleted along with the disposition value it served.
+        This pins the deletion so a future "quick fix" cannot silently
+        reintroduce a multiply-based penalty (the sign-bug-prone shape).
+        """
+        import yadgar._shared.wiki.policy as policy_mod
+
+        assert not hasattr(policy_mod, "downweight_multiplier")
+
+    def test_recall_disposition_set_is_closed_at_include_exclude(self):
+        """Every registered policy's ``recall_disposition`` is include or exclude.
+
+        Was: ``downweight_multiplier({"page_type": None}, 0.5) == 1.0`` (an
+        include-disposition page is unaffected by the penalty helper). That
+        helper is gone; the more valuable invariant it protected — the
+        disposition set never grows a third silent value — is asserted
+        directly across the whole registry plus DEFAULT_POLICY.
+        """
+        from yadgar._shared.wiki.policy import DEFAULT_POLICY, POLICY_BY_TYPE
+
+        all_dispositions = {p.recall_disposition for p in POLICY_BY_TYPE.values()} | {
+            DEFAULT_POLICY.recall_disposition
+        }
+        assert all_dispositions <= {"include", "exclude"}, (
+            f"recall_disposition set must stay closed at "
+            f"{{'include', 'exclude'}}; found {all_dispositions}"
+        )
+
+    def test_task_list_gate_mode_is_identity(self):
+        """``task_list``'s gate_mode is "identity" (Car C3, unrelated to C2/C7).
+
+        Was: ``downweight_multiplier({"page_type": PAGE_TYPE_AGENT_PATTERN},
+        0.5) == 1.0`` — an exclude-disposition page (agent_pattern) is
+        unaffected by the deleted helper. Re-pointed to a still-live axis of
+        the SAME policy object under test (task_list): the slug-is-identity
+        gate that lets canonical task-list writers upsert without tripping
+        the content-similarity gate.
+        """
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
+
+        assert get_policy(PAGE_TYPE_TASK_LIST).gate_mode == "identity"
+
+    def test_is_recall_visible_now_drops_task_list(self):
+        """A task_list page is DROPPED by the visibility filter — the opposite of before.
+
+        Was: ``is_recall_visible({"page_type": PAGE_TYPE_TASK_LIST}) is True``
+        ("downweight is a ranking penalty, not an exclusion — must remain
+        visible"). Under ``recall_disposition="exclude"`` with
+        ``opt_in_tag=None`` (unconditional), the SAME call must now return
+        False: the page is excluded outright, not ranked down within a
+        visible result set.
+        """
+        from yadgar._shared.wiki.policy import is_recall_visible
+        from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_TASK_LIST
+
+        assert is_recall_visible({"page_type": PAGE_TYPE_TASK_LIST}) is False

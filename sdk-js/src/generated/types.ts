@@ -29,6 +29,10 @@ export interface MemorizeArgs {
   ttl_days?: number | null;
   /** Human-readable reason (required for semantic_immortal when server flag set). */
   reason?: string;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 export interface MemorizeResult {
@@ -56,6 +60,10 @@ export interface RecallArgs {
   profile?: string | null;
   /** Per-stage override map (used with profile). */
   stage_overrides?: Record<string, Record<string, unknown>> | null;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 export interface ForgetArgs {
@@ -93,6 +101,10 @@ export interface AnchorArgs {
   valid_until?: string | null;
   /** Days until expiry. */
   ttl_days?: number | null;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 export interface CheckpointArgs {
@@ -105,11 +117,18 @@ export interface CheckpointArgs {
   next_steps?: string[];
   active_errors?: string[];
   custom_context?: string;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 export interface RestoreArgs {
   /** Absolute working directory path. */
   directory?: string;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +145,9 @@ export interface AddRuleArgs {
 export interface GetRulesArgs {
   /** If provided, returns only applicable rules for this directory. */
   directory?: string;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +184,10 @@ export interface WikiAddArgs {
   source_memory_ids?: number[] | null;
   confidence?: string;
   append?: boolean;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 export interface WikiQueryArgs {
@@ -169,16 +195,23 @@ export interface WikiQueryArgs {
   tags?: string[] | null;
   category?: string | null;
   max_results?: number;
+  /** Project id (`owner/repo`), forwarded to the server. */
+  project?: string;
 }
 
 export interface WikiReadArgs {
   slug: string;
+  /** Project id (`owner/repo`), forwarded to the server. */
+  project?: string;
 }
 
 export interface WikiListArgs {
   category?: string | null;
   limit?: number;
   slug_prefix?: string | null;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 export interface WikiGetArgs {
@@ -222,12 +255,18 @@ export interface BlockCreateArgs {
   scope?: string;
   char_limit?: number;
   directory?: string | null;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 export interface BlockGetArgs {
   name: string;
   scope?: string;
   directory?: string | null;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 export interface BlockUpdateArgs {
@@ -235,17 +274,26 @@ export interface BlockUpdateArgs {
   content: string;
   scope?: string;
   directory?: string | null;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 export interface BlockDeleteArgs {
   name: string;
   scope?: string;
   directory?: string | null;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 export interface BlockListArgs {
   scope?: string | null;
   directory?: string | null;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,16 +321,27 @@ export interface BookmarkReorderArgs {
 export interface ProjectBriefArgs {
   directory: string;
   mode?: string;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 export interface BootstrapProjectArgs {
   directory: string;
   content: string;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 export interface UpdateActiveWorkArgs {
   directory: string;
   content: string;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 export interface InstallHooksArgs {
@@ -297,6 +356,10 @@ export interface SyncInstructionsArgs {
 export interface SeedProjectArgs {
   directory: string;
   dry_run?: boolean;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +371,9 @@ export interface AuditAnchorsArgs {
   dry_run?: boolean;
   cosine_threshold?: number | null;
   include_global?: boolean;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,15 +383,25 @@ export interface AuditAnchorsArgs {
 export interface AgentDispatchPreludeArgs {
   pattern: string;
   task_topic: string;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 export interface AgentPromptSaveArgs {
   pattern: string;
   content: string;
+  /** Project id (`owner/repo`) — the scope key. REQUIRED: since 0047 C5 an identity is
+   * never derived, so omitting it fails with `unresolved_project` rather than
+   * falling back to a guess (ADR-0227). `directory` alone does NOT resolve one. */
+  project?: string;
 }
 
 export interface AgentPromptGetArgs {
   pattern: string;
+  /** Project id (`owner/repo`). Validated at the MCP boundary; this tool's scope
+   * key is still `directory` until the read path is re-keyed. */
+  project?: string;
 }
 
 // ---------------------------------------------------------------------------

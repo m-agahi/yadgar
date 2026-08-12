@@ -34,6 +34,12 @@ from yadgar.backend.retrieval import (
 )
 from yadgar.backend.retrieval.stages.base import RetrievalStage
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 # ---------------------------------------------------------------------------
 # Deterministic stub embeddings (copied from characterization test)
 # ---------------------------------------------------------------------------
@@ -152,6 +158,7 @@ def _insert_memory(storage, embeddings, content):
             "embedding": emb,
             "tags": [],
             "directory_context": "/pipeline-test",
+            "project_id": _PROJECT,
             "heat": 1.0,
             "is_stale": False,
             "file_hash": None,
@@ -550,6 +557,7 @@ def regression_env(tmp_path_factory):
                 "embedding": emb,
                 "tags": [],
                 "directory_context": "/regression",
+                "project_id": _PROJECT,
                 "heat": 1.0,
                 "is_stale": False,
                 "file_hash": None,

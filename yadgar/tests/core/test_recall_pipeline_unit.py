@@ -17,6 +17,8 @@ import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 def test_backend_tracing_provider_not_clobbered():
     """Backend TracerProvider must not be clobbered by yadgar.server import chain."""
@@ -307,7 +309,18 @@ def test_recall_forward_only_calls_session_side_effects():
         mock_st._consolidation = None
         mock_st._pool = None
 
-        result = _recall_fn(query="forward test", directory="/tmp", max_results=5)
+        # ADR-0227: recall() resolves its project or raises — there is no
+        # derivation tier left for `directory` to feed. The identity is
+        # incidental to what this test asserts (that the session half runs on
+        # the forwarded list), but it must be NAMED or the call never gets far
+        # enough to forward. The "absent identity raises" contract itself is
+        # pinned by test_v5_65_directory_required.py.
+        result = _recall_fn(
+            query="forward test",
+            directory="/tmp",
+            max_results=5,
+            project=TEST_PROJECT_ID,
+        )
 
         # Deferred session half — drain so the assertion is deterministic.
         drain_session_side_effects(timeout=10.0)
@@ -342,7 +355,16 @@ def test_recall_forward_only_loud_failure():
         mock_st._pool = None
 
         try:
-            _recall_fn(query="loud fail test", directory="/tmp", max_results=5)
+            # project= NAMED (ADR-0227): without it recall raises
+            # UnresolvedProjectError — which is NOT a RuntimeError, so it would
+            # escape the except below and the test would red on the wrong error
+            # while asserting nothing about the backend-down path.
+            _recall_fn(
+                query="loud fail test",
+                directory="/tmp",
+                max_results=5,
+                project=TEST_PROJECT_ID,
+            )
             raise AssertionError("Expected recall() to raise on backend error")
         except RuntimeError as exc:
             assert "backend down" in str(exc), f"Wrong error: {exc}"

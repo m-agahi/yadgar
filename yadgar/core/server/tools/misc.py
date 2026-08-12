@@ -19,6 +19,7 @@ from pathlib import Path
 import yadgar._shared.runtime.state as _st
 from yadgar import __version__
 from yadgar._shared.config import get_settings
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import (
     _get_consolidation,
@@ -31,6 +32,11 @@ from yadgar.core.forward import _forward_restore
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
 from yadgar.core.lifecycle import _get_file_queue
 from yadgar.core.server._app import _tool, mcp_server
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    accept_project_param,
+    resolve_effective_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +107,8 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     next_steps: list[str] = None,
     active_errors: list[str] = None,
     custom_context: str = "",
+    *,
+    project: str | None = None,
 ) -> dict:
     """Snapshot your current working state for post-compaction recovery.
 
@@ -109,6 +117,24 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     Checkpoints auto-supersede — only the latest one matters.
 
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    #
+    # C13: the validated value is KEPT and stamped on the enqueue payload
+    # below. C4b gave memorize / anchor / agent_prompt_save their enqueue-time
+    # stamp and did not reach checkpoint; C5 then widened the drainer's
+    # ``_validate_project_id`` gate from wiki_add to EVERY op type. Together
+    # those meant checkpoint validated an identity it had been handed and then
+    # threw it away, so every checkpoint job was permanently DLQ'd as
+    # ``missing_project_id`` -- including the ones from the stop-hook protocol,
+    # which C5 had just taught to pass ``project="{project}"``. The highest-
+    # volume recovery path in the system, discarding the one value that would
+    # have let it through.
+    #
+    # The checkpoint TABLE still has no project_id column -- that is C11's
+    # work. The PAYLOAD carrying one is what the drainer's gate requires.
+    # (Found independently by two C13 sweeps, tests/core and tests/scripts.)
+    _project_id = accept_project_param(project, directory)
     # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
     _surrogate_err = _validate_checkpoint_surrogates(
         current_task,
@@ -151,13 +177,20 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
             "next_steps": next_steps,
             "active_errors": active_errors,
             "custom_context": custom_context,
+            # C13: the enqueue-time stamp the drainer's gate requires. Set from
+            # the value the caller named, never derived — the drainer runs in a
+            # container that cannot mint one (ADR-0227). A caller that named
+            # none still lands in the DLQ, which is the DECLARED failure path
+            # for a queued write (recoverable, requeueable once the caller
+            # passes project=), not a silent drop.
+            "project_id": _project_id,
         },
     )
     return {"queued": True, "directory": directory}
 
 
 @_tool(always_load=True)
-def restore(directory: str = "") -> dict:
+def restore(directory: str = "", *, project: str | None = None) -> dict:
     """Restore context after compaction using Hippocampal Replay.
 
     Reconstructs your working context from:
@@ -172,8 +205,38 @@ def restore(directory: str = "") -> dict:
 
     T2 Car B: thin forwarder — the restore compute (CheckpointRestore +
     CognitiveMap SR navigation) runs backend-side behind POST /restore.
+
+    project: C10g (0047 PR#40 §5) — REQUIRED in effect. The anchor bucket, the
+      hot-memories bucket and gap detection are all keyed on the resolved
+      project_id now, so a call that names no project gets the checkpoint and
+      memory blocks (both still path-keyed) and empty memory buckets. When
+      neither ``project=`` nor a session identity names one, this returns the
+      structured unresolved-project envelope rather than guessing (ADR-0227).
     """
-    return _forward_restore(directory)
+    # C10g (0047 PR#40 §5): PROMOTED from ``accept_project_param`` to a real
+    # resolution, the same promotion C5b made for ``bootstrap_project``. That
+    # helper only validates the override; restore's memory-backed sinks are now
+    # keyed on the resolved project_id, so boundary-validation-only would leave
+    # the anchor and hot buckets permanently empty.
+    #
+    # Both values go down the wire: restore fans out to five sinks and they key
+    # on different columns (see ``CheckpointRestore.restore``). ``directory``
+    # still keys the checkpoint and memory-block sinks.
+    #
+    # Failure returns the tool's error envelope rather than raising — the MCP
+    # boundary never raises, matching ``anchor`` above.
+    try:
+        _effective_project_id = resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,
+            tool="restore",
+        )
+    except UnresolvedProjectError as exc:
+        return {"ok": False, **exc.payload}
+    except InvalidProjectOverrideError as exc:
+        return {"ok": False, "reason": f"restore: {exc}"}
+    return _forward_restore(directory, project_id=_effective_project_id)
 
 
 _VALID_ANCHOR_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
@@ -252,13 +315,15 @@ def _validate_anchor_inputs(
 
 
 @_tool(always_load=True)
-def anchor(
+def anchor(  # noqa: PLR0913 — MCP tool signature; ``project`` is keyword-only
     content: str,
     context: str,
     reason: str = "",
     tier: str | None = None,
     valid_until: str | None = None,
     ttl_days: int | None = None,
+    *,
+    project: str | None = None,
 ) -> dict:
     """Mark critical context as compaction-resistant.
 
@@ -275,6 +340,14 @@ def anchor(
     valid_until: ISO-8601 UTC explicit expiry. Mutually exclusive with ttl_days.
     ttl_days: shorthand valid_until = now() + ttl_days. Mutually exclusive with valid_until.
 
+    project: C4b (0047 PR#40 §5) — the OPTIONAL cross-project override, same
+      contract as ``memorize``/``wiki_add``. ``anchor`` had no such parameter
+      before this car: C3 measured its 42-tool surface over the ``@_tool``
+      functions taking ``directory``, and ``anchor`` names that argument
+      ``context``. The RESOLVED project_id is stamped on the enqueued payload
+      on EVERY call; ``project=`` changes which project is named, never
+      whether one is.
+
     """
     # secret-gate: skip — gate_or_reject() is called inside _validate_anchor_inputs()
     _tier, _computed_valid_until, _err = _validate_anchor_inputs(
@@ -288,12 +361,30 @@ def anchor(
     # ADR-0215: the branch half of the pair is discarded — nothing reads it now.
     context = normalize_write_context(context)
 
+    # C4b (0047 PR#40 §5): resolve the effective project_id BEFORE the enqueue
+    # so the wire payload carries it. This tool call is the only participant
+    # that can see the session; the drainer runs in a container with no git
+    # binary and no host project mounts (ADR-0227 §1.1). A malformed override
+    # surfaces as the tool's error envelope so the MCP boundary never raises.
+    try:
+        _effective_project_id = resolve_effective_project(
+            project=project,
+            directory=context,
+            session_project=None,
+            tool="anchor",
+        )
+    except UnresolvedProjectError as exc:
+        return {"queued": False, "stored": False, "ok": False, **exc.payload}
+    except InvalidProjectOverrideError as exc:
+        return {"queued": False, "stored": False, "ok": False, "reason": f"anchor: {exc}"}
+
     # Enqueue-only: the sync write runs in the backend drainer (R3 Car 1).
     _enqueue_payload: dict = {
         "content": content,
         "context": context,
         "reason": reason,
         "tier": _tier,
+        "project_id": _effective_project_id,
     }
     if _computed_valid_until is not None:
         _enqueue_payload["valid_until"] = _computed_valid_until
@@ -529,7 +620,7 @@ def resource_processes() -> str:
 
 
 @_tool(power=True)
-def seed_project(directory: str, dry_run: bool = False) -> dict:
+def seed_project(directory: str, dry_run: bool = False, *, project: str | None = None) -> dict:
     """Bootstrap Yadgar memory for an existing project in one call.
 
     Scans the project directory and creates foundational memories from:
@@ -546,12 +637,24 @@ def seed_project(directory: str, dry_run: bool = False) -> dict:
     directory: Project root directory to scan (absolute path).
     dry_run: If True, scan and show what would be stored without actually storing.
     """
+    # C4 (0047 PR#40 §5): seed_project WRITES rows, so its ``project`` is
+    # threaded for real rather than merely validated — the backend's
+    # ``seed_store`` op stamps the value instead of deriving one it cannot
+    # derive (ADR-0227). ``accept_project_param`` still runs first so a
+    # malformed override raises at the MCP boundary.
+    accept_project_param(project, directory)
     from yadgar.core.seed import seed_project as _seed
 
     resolved = str(Path(directory).resolve())
+    _effective_project_id = resolve_effective_project(
+        project=project,
+        directory=resolved,
+        session_project=None,
+        tool="seed_project",
+    )
     # T2 Car E1: the store phase forwards to the backend seed_store /admin op —
     # no core engine handles needed (scan + generate run host-side inside _seed).
-    result = _seed(directory=resolved, dry_run=dry_run)
+    result = _seed(directory=resolved, dry_run=dry_run, project_id=_effective_project_id)
     # §4: Register this directory as a known project root for file-hash whitelist.
     if not dry_run:
         _st._project_roots.add(resolved)

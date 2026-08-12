@@ -23,15 +23,36 @@ Usage:
         subagent_type="general-purpose",
         include_context=True,
     )
+
+An unknown ``pattern`` RAISES (C5, 0047 PR#40 §5)
+-------------------------------------------------
+Before C5 an unknown pattern flowed through ``_cached_agent_prompt`` and was
+dropped by a truthiness guard, so the prelude came back as contract + recall
+hint and **no prompt** — which the caller reads as *"no pattern exists for this
+task-shape"* and which therefore **licenses a bespoke dispatch**. That is the
+same defect class as the ``_local_fallback`` ADR-0227 deletes: a fallback
+manufacturing a plausible-looking wrong answer. The TOC carries **exact slugs**
+and the agent reads **by slug**, so an unavailable slug must fail loud rather
+than let the agent invent one. (Pruning dead TOC entries is cleanup that
+FOLLOWS; it is not the fix.) ``pattern=""`` remains the documented skip, and
+``_build_context_block`` is deliberately untouched — its empty return is
+best-effort enrichment whose caller already drops it.
 """
 
 from __future__ import annotations
 
 import logging
 
+from yadgar._shared.errors import UnresolvedPatternError, UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import observe_project_id_skip
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    accept_project_param,
+    resolve_effective_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,14 +151,55 @@ def _cached_agent_prompt(pattern: str, storage) -> dict | None:
 # deduped (CONTRACT_COVERS + repeated slugs), within the budget. Overflow drops
 # disciplines last-listed-first with a warning. Seed-on-miss applies to
 # referenced disciplines (genesis text is the last-resort fallback).
+#
+# 0047 Car I: the composed-order read (which discipline slugs an agent_pattern
+# pulls in, in what order) is now the ``agent_pattern_composes`` ledger table,
+# not the ## Composes regex over the wiki body. The wiki body still CARRY the
+# section as human-readable doc, but the source-of-truth for composition is the
+# ledger row (see ``_ledger_composes_for``). The regex + parsers below stay as
+# a fallback when the ledger is unavailable (engine #2 down, test seam, etc.).
 
-import re as _re  # noqa: E402
 
-_COMPOSES_SECTION_RE = _re.compile(
-    r"^##+\s+Composes\s*$(?P<body>.*?)(?=^##+\s|\Z)",
-    _re.MULTILINE | _re.DOTALL | _re.IGNORECASE,
-)
-_WIKI_LINK_RE = _re.compile(r"\[\[([a-zA-Z0-9_-]+)\]\]")
+@observe(tier="hot", metric="tools.dispatch_helper._ledger_composes_for")
+def _ledger_composes_for(pattern: str) -> list[str] | None:
+    """Read composed discipline slugs from ``agent_pattern_composes`` (table-backed).
+
+    Returns an ordered list of discipline slugs (per ``position`` ASC), or
+    ``None`` when the ledger is unavailable — the caller falls back to the
+    wiki-body regex in that case. An empty list is a real answer
+    (pattern exists with no composes) and is returned as ``[]`` (NOT None).
+
+    The ledger is the source-of-truth (D40, schema §3.3): the wiki body may
+    carry a free-form ``## Composes`` section as documentation, but the order
+    the prelude actually composes them in comes from this table.
+    """
+    try:
+        result = _forward_admin("list_pattern_composes", {"pattern_name": pattern})
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("agent_dispatch_prelude: list_pattern_composes forward failed: %s", _e)
+        return None
+    if not isinstance(result, dict):
+        return None
+    if result.get("ok") is False:
+        return None
+    rows = result.get("rows") or []
+    return [str(r.get("discipline_name", "")) for r in rows if r.get("discipline_name")]
+
+
+@observe(tier="hot", metric="tools.dispatch_helper._composes_for")
+def _composes_for(pattern: str, content: str | None) -> list[str]:
+    """Resolve the composed-discipline slug list for *pattern*.
+
+    0047 Car I: ledger first (table-backed source-of-truth), wiki-body regex
+    as fallback. Returns [] when neither yields an answer.
+    """
+    if pattern:
+        ledger = _ledger_composes_for(pattern)
+        if ledger is not None:
+            return ledger
+    if isinstance(content, str):
+        return _parse_composes(content)
+    return []
 
 
 @observe(tier="hot", metric="tools.dispatch_helper._parse_composes")
@@ -149,11 +211,17 @@ def _parse_composes(content: str) -> list[str]:
     """
     if not isinstance(content, str):
         return []
-    m = _COMPOSES_SECTION_RE.search(content)
+    import re as _re  # noqa: PLC0415
+
+    m = _re.search(
+        r"^##+\s+Composes\s*$(?P<body>.*?)(?=^##+\s|\Z)",
+        content,
+        _re.MULTILINE | _re.DOTALL | _re.IGNORECASE,
+    )
     if m is None:
         return []
     slugs: list[str] = []
-    for slug in _WIKI_LINK_RE.findall(m.group("body")):
+    for slug in _re.findall(r"\[\[([a-zA-Z0-9_-]+)\]\]", m.group("body")):
         if slug not in slugs:
             slugs.append(slug)
     return slugs
@@ -165,17 +233,31 @@ def _strip_composes_section(content: str) -> str:
     discipline sections replace it in the assembled prelude)."""
     if not isinstance(content, str):
         return content
-    return _COMPOSES_SECTION_RE.sub("", content).rstrip()
+    import re as _re  # noqa: PLC0415
+
+    return _re.sub(
+        r"^##+\s+Composes\s*$(?P<body>.*?)(?=^##+\s|\Z)",
+        "",
+        content,
+        flags=_re.MULTILINE | _re.DOTALL | _re.IGNORECASE,
+    ).rstrip()
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._resolve_discipline_text")
-def _resolve_discipline_text(slug: str, storage) -> str | None:
+def _resolve_discipline_text(slug: str, storage, project: str | None = None) -> str | None:
     """Resolve a composed discipline slug to its prompt body.
 
     Resolution: epoch-cached slug read → seed-on-miss from the disciplines
     genesis (create-if-absent, mirrors the contract path) → genesis text as
     in-memory fallback. Unknown slugs (no page, no genesis) return None and
     are skipped. Never raises — composition must not crash the prelude.
+
+    C13 (0047 PR#40 §5): ``project`` is threaded from ``agent_dispatch_prelude``,
+    which already has it. Without it the seed-on-miss WRITE below raised
+    ``UnresolvedProjectError`` straight into the ``except Exception`` here and
+    the page was silently never reseeded — the prelude still rendered from
+    genesis, so the degradation was invisible and permanent. A write inside a
+    never-raises helper is exactly where a dropped identity hides.
     """
     from yadgar.core.server.tools.agent_prompts import (  # noqa: PLC0415
         DISCIPLINE_SLUG_PREFIX,
@@ -190,7 +272,11 @@ def _resolve_discipline_text(slug: str, storage) -> str | None:
         result = _cached_slug_read(slug, storage)
         if result is None and slug in genesis:
             # Seed-on-miss: re-create the discipline page from packaged genesis.
-            _seed_discipline_pages(storage=storage, only=slug[len(DISCIPLINE_SLUG_PREFIX) :])
+            _seed_discipline_pages(
+                storage=storage,
+                only=slug[len(DISCIPLINE_SLUG_PREFIX) :],
+                project=project,
+            )
             logger.info("prelude_discipline_reseeded slug=%s", slug)
             result = _read_agent_prompt(slug, storage=storage)
         if result is None:
@@ -203,7 +289,9 @@ def _resolve_discipline_text(slug: str, storage) -> str | None:
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._build_discipline_sections")
-def _build_discipline_sections(composes: list[str], storage) -> list[str]:
+def _build_discipline_sections(
+    composes: list[str], storage, project: str | None = None
+) -> list[str]:
     """Render composed discipline slugs into prelude sections.
 
     Dedup rule: slugs in CONTRACT_COVERS are never re-included (the contract —
@@ -215,7 +303,7 @@ def _build_discipline_sections(composes: list[str], storage) -> list[str]:
     for slug in composes:
         if slug in CONTRACT_COVERS:
             continue
-        body = _resolve_discipline_text(slug, storage)
+        body = _resolve_discipline_text(slug, storage, project)
         if body:
             sections.append(f"## Discipline [{slug}]\n\n{body}")
     return sections
@@ -309,17 +397,19 @@ def _record_pattern_usage(pattern: str) -> None:
 
     Fires once per prelude assembly that RESOLVED a pattern page (unresolved
     patterns are not counted). The DB write forwards to the backend
-    increment_prompt_usage admin op (ADR-0078); transport errors are swallowed
-    — the counter is telemetry, never load-bearing.
+    increment_agent_pattern_uses admin op (D40, schema §3.3): the memory-row
+    read-modify-write path is gone; ``uses`` is a SQL integer bumped via
+    ``UPDATE agent_pattern SET uses = uses + 1 WHERE name = :name``. Transport
+    errors are swallowed — the counter is telemetry, never load-bearing.
     """
     try:
-        _forward_admin("increment_prompt_usage", {"pattern": pattern})
+        _forward_admin("increment_agent_pattern_uses", {"pattern": pattern})
     except Exception as _e:  # noqa: BLE001
-        logger.debug("agent_dispatch_prelude: increment_prompt_usage forward failed: %s", _e)
+        logger.debug("agent_dispatch_prelude: increment_agent_pattern_uses forward failed: %s", _e)
 
 
 @observe(tier="stage", metric="tools.dispatch_helper._record_prelude_marker")
-def _record_prelude_marker(storage, directory: str | None) -> None:
+def _record_prelude_marker(storage, directory: str | None, project: str | None = None) -> None:
     """Best-effort record of agent_dispatch_prelude call (read-side nudge, #69).
 
     Writes a _dispatch_prelude marker so _apply_dispatch_prelude_signal can
@@ -330,11 +420,31 @@ def _record_prelude_marker(storage, directory: str | None) -> None:
     to the backend /admin op. ``storage`` is kept for signature stability but the
     write no longer touches it directly. Transport errors are swallowed — the
     marker is a nudge, never load-bearing.
+
+    C5b (0047 PR#40 §2 amendment 2): the marker row used to reach the raw
+    ``CREATE`` unattributed. It is a per-directory row, so its owner is the
+    caller's project — but ``agent_dispatch_prelude`` is a READ tool, and
+    raising there would break prompt assembly over telemetry. So the write
+    takes C4's declared skip-and-count path instead: no identity, no row, one
+    counted skip. **Stated consequence:** a caller that passes no ``project=``
+    records no marker at all, so ``_apply_dispatch_prelude_signal`` reads
+    "never called" for it — a real behaviour change, made observable by the
+    metric rather than hidden.
     """
     if not directory:
         return
     try:
-        _forward_admin("record_prelude_marker", {"directory": directory})
+        project_id = resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,
+            tool="agent_dispatch_prelude",
+        )
+    except (UnresolvedProjectError, InvalidProjectOverrideError):  # fmt: skip
+        observe_project_id_skip("dispatch_prelude_marker")
+        return
+    try:
+        _forward_admin("record_prelude_marker", {"directory": directory, "project_id": project_id})
     except Exception as _e:  # noqa: BLE001
         logger.debug("agent_dispatch_prelude: record_prelude_marker forward failed: %s", _e)
 
@@ -348,6 +458,8 @@ def agent_dispatch_prelude(
     directory: str | None = None,
     subagent_type: str | None = None,
     include_context: bool = False,
+    *,
+    project: str | None = None,
 ) -> str:
     """Return a markdown prelude to prepend to a subagent prompt.
 
@@ -380,14 +492,25 @@ def agent_dispatch_prelude(
 
     Returns:
         Markdown string. Base cap: 3 500 chars. With context: up to 6 000 chars.
+
+    Raises:
+        UnresolvedPatternError: ``pattern`` is non-empty, the library is
+            enabled, and no page exists at ``agent-prompt-<pattern>``. C5
+            (0047 PR#40 §5): this used to return a prelude with the contract and
+            no prompt, which the caller reads as "no pattern exists" — and that
+            reading is what licenses a bespoke dispatch. ``pattern=""`` remains
+            the documented skip.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
+    # this tool's scope from ``directory`` onto the resolved project_id.
+    accept_project_param(project, directory)
     if storage is None:
         from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
 
         storage = _get_storage()
 
     # Record that agent_dispatch_prelude was called (read-side nudge, #69).
-    _record_prelude_marker(storage, directory)
+    _record_prelude_marker(storage, directory, project)
 
     # v5.122.0: contract sourced from wiki page (agent-prompt-contract) via cache,
     # with seed-on-miss + genesis fallback. Fetched BEFORE the kill-gate so the
@@ -406,27 +529,37 @@ def agent_dispatch_prelude(
     from yadgar._shared.config import get_settings  # noqa: PLC0415
 
     if pattern and get_settings().AGENT_PROMPT_LIBRARY_ENABLED:
+        # C5 (0047 PR#40 §5) — see the module docstring's "unknown pattern"
+        # note. Read hoisted OUT of the try below (a raise inside it would be
+        # swallowed by the handler this car exists to defeat); empty result
+        # raises; storage errors are no longer reported as absence.
+        prompt_result = _cached_agent_prompt(pattern, storage)
+        if not (prompt_result and prompt_result.get("content")):
+            raise UnresolvedPatternError(f"agent-prompt-{pattern}")
+
+        raw_content = prompt_result["content"]
+        version = prompt_result.get("version", "?")
+        # Stage 3 + 0047 Car I: ledger-first composed-order read
+        # (agent_pattern_composes is the source-of-truth); wiki-body
+        # regex is the fallback when the ledger is unavailable.
+        # Assembly stays best-effort: a discipline-composition or usage-counter
+        # failure is genuinely non-fatal enrichment, and the RESOLUTION above is
+        # what had to stop being best-effort.
         try:
-            prompt_result = _cached_agent_prompt(pattern, storage)
-            if prompt_result and prompt_result.get("content"):
-                raw_content = prompt_result["content"]
-                version = prompt_result.get("version", "?")
-                # Stage 3: resolve ## Composes refs (seed-on-miss + dedup inside),
-                # then strip the section from the injected pattern snippet.
-                discipline_sections = _build_discipline_sections(
-                    _parse_composes(raw_content), storage
-                )
-                body = _strip_composes_section(raw_content)
-                # Truncate if needed to respect the pattern-snippet budget
-                used = len(contract_text) + 100  # 100 for separators
-                available = _AGENT_PROMPT_BUDGET - used
-                if available > 80:
-                    snippet = body[:available]
-                    tail.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
-                # Stage 3.4: count the assembly (pattern resolved → real usage).
-                _record_pattern_usage(pattern)
+            discipline_sections = _build_discipline_sections(
+                _composes_for(pattern, raw_content), storage, project
+            )
+            body = _strip_composes_section(raw_content)
+            # Truncate if needed to respect the pattern-snippet budget
+            used = len(contract_text) + 100  # 100 for separators
+            available = _AGENT_PROMPT_BUDGET - used
+            if available > 80:
+                snippet = body[:available]
+                tail.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
+            # Stage 3.4: count the assembly (pattern resolved → real usage).
+            _record_pattern_usage(pattern)
         except Exception as _e:
-            logger.debug("agent_dispatch_prelude: _read_agent_prompt failed: %s", _e)
+            logger.debug("agent_dispatch_prelude: prompt assembly failed: %s", _e)
 
     # Recall hint
     if task_topic:

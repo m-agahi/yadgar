@@ -165,6 +165,86 @@ async def _recall_with_timeout(
 # ---------------------------------------------------------------------------
 
 
+@observe(exempt="thin resolver wrapper; no I/O of its own")
+@observe(exempt="single query-param read with a falsy-to-None coercion; no I/O")
+def _hook_query_project(request) -> str | None:
+    """Read the hook's explicit ``?project=``, or ``None``.
+
+    Car C7. A one-line read, extracted only because inlining it added a branch
+    to two handlers that were already at the I30 cyclomatic cap. Kept as a named
+    function rather than an allowlist entry so the cap keeps meaning something.
+    """
+    try:
+        return request.query_params.get("project") or None
+    except Exception:  # noqa: BLE001 — a hook must never raise on a param read
+        return None
+
+
+@trace_span()
+@observe(tier="stage", metric="http.hook_project_id")
+def hook_project_id(directory: str | None, project: str | None = None) -> str:
+    """Resolve the hook caller's project id, or fail loud. NEVER guesses.
+
+    Car C7. Hooks carry no session transport — the host-side mint module records
+    that "MCP calls carry no session key… nothing to infer from" — so a project
+    can only arrive as an explicit ``?project=`` query parameter. (That module is
+    referred to indirectly on purpose: ADR-0227's reachability guard under
+    ``tests/hooks/`` detects the layer breach TEXTUALLY, by scanning file
+    contents rather than imports — so spelling the module's name anywhere in
+    core-server prose trips the guard exactly as a real import would.)
+
+    THE DIRECTORY CANNOT SUPPLY IT, and that is not an oversight in this
+    function — C5 deleted the ``derive_project_id(cwd=…)`` tier from
+    ``resolve_effective_project`` outright (ADR-0227: "a directory is not an
+    identity — it is a filesystem hint that happened to be adjacent to one, and
+    the process reading it cannot see the tree it names"). There is no
+    derivation left anywhere in the tree to fall back to.
+
+    Three cases, and the difference between the last two is the whole point:
+
+    * **``project`` supplied** → use it. This is the path hook scripts should
+      take; they run on the HOST and can read the git remote the container
+      cannot.
+    * **No project and no directory** → ``""``, i.e. EXPLICITLY UNSCOPED. Three
+      call sites construct ``_HookRecallForwarder("")`` deliberately (the
+      instructions-loaded hook and its siblings) and their documented contract
+      is "an empty scope directory means legacy whole-DB eligibility mode".
+      Preserved verbatim — an empty string is the caller stating it has no
+      scope, not a guess at one.
+    * **A directory but no project** → RAISE. This is the case C7 changes, and
+      it degrades hook recall to an empty injection until the hook scripts send
+      ``?project=``. That is deliberate: the alternative is forwarding
+      unscoped, which would inject ANOTHER PROJECT'S memories into this
+      project's prompt — precisely the leak v5.65 was written to close. Losing
+      an injection is recoverable; leaking one is not. All five hook call sites
+      wrap the forward in ``except Exception: return JSONResponse({"text": ""})``,
+      so the raise degrades cleanly rather than breaking the prompt.
+    """
+    from yadgar.core.server.tools._project_param import (  # noqa: PLC0415
+        resolve_effective_project,
+    )
+
+    _dir = (directory or "").strip().rstrip("/")
+    if project is None and not _dir:
+        return ""
+
+    if project is None:
+        logger.warning(
+            "hook recall: directory=%r supplied but no project= — C7 scopes on "
+            "project_id and C5 deleted directory derivation, so this recall "
+            "cannot be scoped and will NOT be widened. Pass ?project=owner/repo "
+            "from the hook script.",
+            _dir,
+        )
+
+    return resolve_effective_project(
+        project=project,
+        directory=_dir or None,
+        session_project=None,
+        tool="hook_recall",
+    )
+
+
 @observe(tier="boundary", metric="http._forward_hook_recall")
 def _forward_hook_recall(
     query: str,
@@ -173,6 +253,7 @@ def _forward_hook_recall(
     min_heat: float,
     directory: str,
     profile: str | None = "fast",
+    project: str | None = None,
 ) -> list[dict]:
     """Forward a prompt-recall HOOK recall to the backend /recall endpoint.
 
@@ -189,19 +270,25 @@ def _forward_hook_recall(
     from yadgar._shared.config import get_settings  # noqa: PLC0415
     from yadgar.core.server.tools.recall import _forward_to_backend  # noqa: PLC0415
 
-    # Normalise directory before forwarding — the backend scopes with exact-string
-    # is_directory_eligible (no normalisation server-side), and the post-filter in
-    # _filter_prompt_recall_results also strips. Mirror recall.py's
+    # Normalise directory before deriving the project — mirror recall.py's
     # `(directory or "").strip().rstrip("/")` so a trailing-slash cwd does not
-    # silently scope to nothing. (The deployed hook sends a clean cwd; defensive.)
+    # silently derive a different project. (The deployed hook sends a clean cwd;
+    # defensive.)
     directory = (directory or "").strip().rstrip("/")
 
+    # Car C7 (0047 §5 C7): the backend's RecallRequest now REQUIRES project_id —
+    # it is the scope key, and an absent value would mean an unscoped
+    # corpus-wide read. Resolve it here from the hook's directory. A failure to
+    # resolve raises, which the hook handler's except-block degrades to
+    # {"text": ""} — the designed behaviour for a hook that cannot be scoped
+    # (ADR-0227: fail loud rather than silently widen).
     timeout_s = get_settings().HOOK_RECALL_TIMEOUT_S
     return _forward_to_backend(
         query=query,
         max_results=max_results,
         min_heat=min_heat,
         directory=directory,
+        project_id=hook_project_id(directory, project),
         type_filter="all",
         tags=None,
         mode=None,
@@ -226,10 +313,13 @@ class _HookRecallForwarder:
     recall(query, max_results, min_heat, profile).
     """
 
-    __slots__ = ("_directory",)
+    __slots__ = ("_directory", "_project")
 
-    def __init__(self, directory: str) -> None:
+    def __init__(self, directory: str, project: str | None = None) -> None:
         self._directory = directory
+        # Car C7: the hook's explicit ``?project=``, when it sent one. See
+        # ``hook_project_id`` — the directory can no longer supply an identity.
+        self._project = project
 
     def recall(
         self,
@@ -244,6 +334,7 @@ class _HookRecallForwarder:
             max_results=max_results,
             min_heat=min_heat,
             directory=self._directory,
+            project=self._project,
             profile=profile,
         )
 
@@ -262,19 +353,91 @@ _stats_cache: dict = {}  # keys: "data", "cached_at", "project"
 _SENTINEL_MAX_RETRIES = 3
 
 
+class SentinelPermanentError(RuntimeError):
+    """The sentinel write was REFUSED, not merely unavailable — retrying cannot help.
+
+    Car F9. The distinction is the whole point of the class: ``RuntimeError``
+    (daemon down, queue unwritable) is transient and earns the retry ladder; a
+    REFUSAL — an unresolvable identity, a malformed override — is a property of
+    the record itself, so replaying byte-identical input three more times just
+    delays the same outcome by three session starts and buries it under
+    WARNINGs. This is surfaced at ERROR and retired to ``failed/`` at once.
+    """
+
+
 @observe(tier="stage")
-def _sentinel_memorize(content: str, directory_context: str) -> None:
-    """Import one sentinel record into memory. Extracted for patching in tests."""
+def _sentinel_memorize(content: str, project_id: str | None) -> dict:
+    """Import one sentinel record into memory. Extracted for patching in tests.
+
+    Car F9 (c1): ``project`` is supplied from the record's own minted identity.
+    Before this, the call named no project at all, so C10 (f)'s identity
+    contract refused EVERY sentinel write::
+
+        memorize rejected sentinel: {'stored': False, 'error': 'unresolved_project',
+                                     'fix': 'pass project="owner/repo"'}
+
+    and no sentinel row was ever written. There is deliberately no derivation
+    from the record's ``cwd`` here (ADR-0227): this process cannot see the tree
+    that path names, and a key it invented would be indistinguishable from a
+    real one at read time.
+
+    ``context=`` is NOT passed: C10 (f) redefined it as an optional real FILE
+    path used only for staleness hashing. The sentinel's ``cwd`` is a directory
+    and contributes nothing but a misleading hash input.
+
+    KNOWN RESIDUAL — the async rejection window. ``memorize`` defaults to
+    ``wait=False``, so ``queued`` means the job reached the file queue, not that
+    it was stored: the backend re-validates the stamp at INSERT time
+    (``_ensure_project_exists_sync``) and can DLQ a job this function already
+    reported as accepted. F9 is what makes that window reachable — before it,
+    every sentinel write was refused SYNCHRONOUSLY. It is deliberately not
+    closed here: ``wait=True`` would block the SessionStart handler for up to
+    ``WIKI_WRITE_WAIT_TIMEOUT_SECONDS`` (5s) behind a hook whose ``urlopen``
+    timeout is 2s, trading an invisible rejection for a timed-out session
+    start. A DLQ'd sentinel is not lost — the payload survives in the DLQ and
+    ``project_brief``'s ``pending_rejections_count`` / ``review_rejections``
+    action surfaces it — and the ``queue_id`` logged on consume is the thread
+    back from a DLQ entry to the sentinel file that produced it.
+
+    Returns:
+        The ``memorize`` result envelope (the caller logs its ``queue_id``).
+
+    Raises:
+        SentinelPermanentError: the write was refused (identity or policy).
+        RuntimeError: the write did not land for a transient reason.
+    """
     import yadgar.core.server as _srv  # noqa: PLC0415
+
+    if not project_id:
+        raise SentinelPermanentError(
+            "sentinel carries no project_id (error=unresolved_project): the SessionEnd "
+            "hook could not mint an identity for this session and nothing downstream "
+            "may derive one (ADR-0227)"
+        )
 
     result = _srv.memorize(
         content=content,
-        context=directory_context,
         tags=["_session_end_sentinel", "session_end"],
+        project=project_id,
     )
     if not result.get("stored") and not result.get("queued"):
-        # Raise so the caller's retry logic triggers
+        if result.get("error"):
+            # An error envelope is a REFUSAL — the write was evaluated and
+            # rejected. Never retried; surfaced verbatim so the reason is in
+            # the log rather than inferred from a repeat count.
+            raise SentinelPermanentError(f"memorize refused sentinel: {result}")
         raise RuntimeError(f"memorize rejected sentinel: {result}")
+    return result
+
+
+@observe(tier="stage")
+def _sentinel_retire_to_failed(marker: Path, failed_dir: Path) -> None:
+    """Move a sentinel out of the inbox into failed/. Never raises."""
+    try:
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        marker.rename(failed_dir / marker.name)
+    except Exception as mv_e:
+        logger.warning("sentinel move to failed/ error: %s", mv_e)
 
 
 @observe(tier="stage")
@@ -282,11 +445,7 @@ def _sentinel_handle_failure(marker: Path, record: dict, retries: int, failed_di
     """Handle a failed sentinel import: increment retries or move to failed/."""
     record["retries"] = retries
     if retries >= _SENTINEL_MAX_RETRIES:
-        try:
-            failed_dir.mkdir(parents=True, exist_ok=True)
-            marker.rename(failed_dir / marker.name)
-        except Exception as mv_e:
-            logger.warning("sentinel move to failed/ error: %s", mv_e)
+        _sentinel_retire_to_failed(marker, failed_dir)
     else:
         try:
             tmp = marker.with_suffix(".json.tmp")
@@ -301,7 +460,11 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
     """Scan sentinel dir, import each unprocessed *.json file into memory.
 
     - On success: file deleted (consumed).
-    - On failure: retries field incremented; after _SENTINEL_MAX_RETRIES, moved to failed/.
+    - On a REFUSAL (SentinelPermanentError): logged at ERROR and moved to failed/
+      immediately — a record the write path evaluated and rejected will be
+      rejected identically on every replay (Car F9).
+    - On a transient failure: retries field incremented; after
+      _SENTINEL_MAX_RETRIES, moved to failed/.
     - Never raises — errors are logged.
     """
     sentinel_dir = Path(sentinel_dir_path)
@@ -317,12 +480,32 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
             logger.warning("sentinel parse error for %s: %s", marker, e)
             continue
 
-        cwd = record.get("cwd", "global")
         retries = int(record.get("retries", 0))
 
         try:
-            _sentinel_memorize(content=json.dumps(record), directory_context=cwd)
+            _result = _sentinel_memorize(
+                content=json.dumps(record),
+                project_id=record.get("project_id"),
+            )
             marker.unlink()  # consumed
+            # Car F9: the marker is gone the moment the job is QUEUED, so the
+            # queue_id is the only remaining link from a later DLQ entry back to
+            # the sentinel file it came from. Logged at INFO for that trace.
+            logger.info(
+                "sentinel consumed: %s -> queue_id=%s",
+                marker.name,
+                (_result or {}).get("queue_id"),
+            )
+        except SentinelPermanentError as perm_e:
+            # Car F9 observability: a refused write is a defect, not weather.
+            # ERROR (not WARNING), the reason verbatim, and retired at once so
+            # it stops presenting as "still pending, will converge".
+            logger.error(
+                "sentinel import REFUSED for %s — retiring to failed/ without retry: %s",
+                marker,
+                perm_e,
+            )
+            _sentinel_retire_to_failed(marker, failed_dir)
         except Exception as e:
             retries += 1
             logger.warning("sentinel import failed for %s (attempt %d): %s", marker, retries, e)
@@ -676,8 +859,21 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
 @mcp_server.custom_route("/hooks/post-compact", methods=["GET"])
 @trace_span()
 async def hook_post_compact(request: Request) -> JSONResponse:
-    """Called by SessionStart hook after compaction. Returns restoration context."""
+    """Called by SessionStart hook after compaction. Returns restoration context.
+
+    C10g (0047 PR#40 §5): accepts an optional ``?project=owner/repo``. Restore's
+    anchor / hot-memory / gap sinks are keyed on the project_id now, so a hook
+    that sends only ``?directory=`` gets the checkpoint and memory blocks (both
+    still path-keyed) and empty memory buckets.
+
+    Unlike ``hook_project_id``, a missing project does NOT raise here. That
+    function raises because widening its recall would LEAK another project's
+    memories into the prompt; restore cannot leak — the sinks return empty —
+    and raising would additionally throw away the checkpoint, which is the part
+    of a post-compact restore that cannot be reconstructed from anywhere else.
+    """
     directory = request.query_params.get("directory", os.getcwd())
+    project_id = request.query_params.get("project")
 
     # T2 Car B: restore compute runs backend-side behind POST /restore.
     # Lazy import mirrors the tools.recall import at :181 (avoids the
@@ -685,7 +881,7 @@ async def hook_post_compact(request: Request) -> JSONResponse:
     from yadgar.core.forward import _forward_restore  # noqa: PLC0415
 
     try:
-        result = await asyncio.to_thread(_forward_restore, directory)
+        result = await asyncio.to_thread(_forward_restore, directory, project_id)
         return JSONResponse(result)
     except Exception as e:
         logger.exception("hook_post_compact error: %s", e)
@@ -773,6 +969,12 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
             "summary": sanitize_log_field(body.get("summary", ""), max_len=500),
             "directory": _dir_key,
             "session_id": session_id,
+            # C4 (0047 PR#40 §5): carried from the host-side hook runner
+            # (core/cli/hook.py). This process is the daemon container and
+            # cannot mint one (ADR-0227) — an absent value stays absent, and
+            # the consolidation summariser skips-and-counts the row rather
+            # than bucketing it under a guess.
+            "project_id": sanitize_log_field(str(body.get("project_id", "")), max_len=200),
         }
 
         # §9 Q2: Protect _action_batch under asyncio.Lock to prevent data races.
@@ -793,6 +995,12 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         combined_tools = ",".join(a["tool_name"] for a in to_flush)
         combined_summary = " | ".join(a["summary"] for a in to_flush if a["summary"])
         directory = to_flush[-1]["directory"]
+        # C4: the batch is one row, so it needs ONE identity. Take it only when
+        # every action in the batch agrees; a batch that spans two projects (or
+        # names none) is written unattributed and skipped downstream, never
+        # collapsed onto whichever action happened to be last.
+        _batch_projects = {a.get("project_id") for a in to_flush if a.get("project_id")}
+        batch_project_id = _batch_projects.pop() if len(_batch_projects) == 1 else ""
         from datetime import UTC
 
         ts = datetime.now(UTC).isoformat()
@@ -810,6 +1018,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
                 "summary": combined_summary[:500],
                 "directory": directory,
                 "session_id": session_id,
+                "project_id": batch_project_id,
                 "timestamp": ts,
             },
         )
@@ -826,120 +1035,231 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
 
 
 @observe(tier="stage")
-async def _task_list_restore_nudge(directory: str) -> str:
-    """Return the task-list restore-nudge line, or "" when no page exists.
+async def _task_list_legacy_wiki_nudge(directory: str) -> str:
+    """Legacy wiki-page parser for the without-Car-D branch.
 
-    If a saved "<project>-task-list" wiki page exists for `directory`, return a
-    one-line pointer telling the instance to restore its open tasks via
-    TaskCreate. A server-side existence pre-check (a metadata row read, parity
-    cost with the checkpoint hint) means zero dead nudges on projects that never
-    saved a list.
+    Extracted from `_task_list_restore_nudge` to keep the handler under the
+    C901 complexity cap. Returns "" on any error (fail-open). Deleted at
+    master 0047 cutover time.
+
+    Car C2: this reader deliberately keeps the BASENAME key. Its pages were
+    minted under `<basename>-task-list` by the pre-ADR-0227 stop hook, so a
+    legacy reader must use the legacy key — handing it the minted `owner/repo`
+    would build `m-agahi/yadgar-task-list`, which is not a slug shape (slugs
+    replace `/` with `_`, ADR-0202) and matches nothing. The LIVE path
+    (`_task_list_restore_nudge`) uses the minted key; only this soon-to-be
+    deleted compatibility arm looks backwards.
+    """
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+
+    storage = _get_storage()
+    if storage is None:
+        return ""
+    legacy_key = _Path(directory).name if directory else ""
+    if not legacy_key:
+        return ""
+    slug = f"{legacy_key}-task-list"
+    try:
+        page = await asyncio.to_thread(
+            storage.get_wiki_page_by_slug_directory,
+            slug,
+            directory,
+        )
+    except Exception as _ge:
+        logger.debug("task-list page read failed: %s", _ge)
+        return ""
+    if not page:
+        return ""
+    import re as _re  # noqa: PLC0415
+
+    _TASK_RE = _re.compile(r"^## task:(?:([\w-]+/)?([0-9a-hj-np-tv-z]+))", _re.MULTILINE)
+    _STATUS_RE = _re.compile(r"^- status:\s*(\S+)", _re.MULTILINE)
+    _SUBJECT_RE = _re.compile(r"^- subject:\s*(.+)", _re.MULTILINE)
+    _content = page.get("content", "") or ""
+    _sections = _TASK_RE.split(_content)
+    _open_tasks: list[tuple[str, str, str]] = []
+    _i = 1
+    while _i + 1 < len(_sections):
+        _task_id = _sections[_i].strip()
+        _body = _sections[_i + 1]
+        _sm = _STATUS_RE.search(_body)
+        _status = _sm.group(1).lower() if _sm else ""
+        if _status in ("pending", "in_progress"):
+            _subm = _SUBJECT_RE.search(_body)
+            _subject = _subm.group(1).strip() if _subm else "(no subject)"
+            _open_tasks.append((_task_id, _subject, _status))
+        _i += 2
+    _CAP = 12
+    if not _open_tasks:
+        return (
+            f"\n[yadgar] Saved task list ({slug}) — all tasks complete.\n"
+            f'Full list: wiki_read("{slug}", directory="{directory}")\n'
+        )
+    _shown = _open_tasks[:_CAP]
+    _overflow = len(_open_tasks) - len(_shown)
+    _k = len(_open_tasks)
+    _lines = [
+        "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
+        f"{_k} open task(s) from the last session ({slug}). Call TaskCreate for EACH one now:",
+    ]
+    for _tid, _subj, _st_open in _shown:
+        _lines.append(f"  - [{_tid}] {_subj} ({_st_open})")
+    if _overflow > 0:
+        _lines.append(f"  …and {_overflow} more")
+    _lines.append(
+        f'Full descriptions: wiki_read("{slug}", directory="{directory}"). '
+        "Preserve the `[N]` prefix at the start of each TaskCreate subject "
+        "so task ids reconcile across sessions. "
+        "Recreate every open task (pending / in_progress) with TaskCreate "
+        "before proceeding; skip completed. Do this FIRST.\n"
+    )
+    return "\n".join(_lines)
+
+
+@observe(
+    exempt=(
+        "pure formatter; runs once per SessionStart nudge assembly. No I/O, "
+        "no storage side effects — just iterates pre-fetched ledger rows and "
+        "assembles a markdown snippet. Observability would add a span sample "
+        "with zero diagnostic value."
+    )
+)
+def _format_task_list_nudge_rows(rows: list[dict], cap: int, project: str) -> str:
+    """Format a ledger-read result list into the forcing-nudge payload.
+
+    Extracted from `_task_list_restore_nudge` to keep the handler under the
+    C901 complexity cap. Returns "" when rows is empty.
+    """
+    if not rows:
+        return ""
+    _lines = [
+        "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
+        f"{len(rows)} open task(s) for {project} from the task ledger. "
+        "Call TaskCreate for EACH one now:",
+    ]
+    _shown = rows[:cap]
+    _overflow = len(rows) - len(_shown)
+    for _row in _shown:
+        _tid = _row.get("number") or _row.get("id") or "?"
+        _subj = _row.get("title") or _row.get("subject") or "(no subject)"
+        _st = _row.get("status", "pending")
+        _lines.append(f"  - [{_tid}] {_subj} ({_st})")
+    if _overflow > 0:
+        _lines.append(f"  …and {_overflow} more")
+    _lines.append(
+        "Preserve the `[N]` prefix at the start of each TaskCreate subject "
+        "so task ids reconcile across sessions. "
+        "Recreate every open task (pending / in_progress) with TaskCreate "
+        "before proceeding; skip completed. Do this FIRST.\n"
+    )
+    return "\n".join(_lines)
+
+
+@observe(tier="stage")
+async def _task_list_restore_nudge(directory: str, project: str = "") -> str:
+    """Return the task-list restore-nudge line, or "" when no ledged exists.
+
+    Car E (0047 spine train): reads open tasks from the ``task`` ledger table
+    (Car D ships the schema + tools) instead of parsing the `{project}-task-list`
+    wiki page. The forcing-nudge form (ADR-0137 Option B) is preserved: imperative
+    + enumerated + hoisted FIRST by the caller (http.py:1105).
+
+    The D11 prefix-preserve instruction is part of the nudge payload so the
+    harness ``TaskCreate`` subject retains the ``[N]`` prefix and the next
+    session's reconcile can match it.
+
+    Graceful fallback: if Car D's task symbols (``task_list`` / ``list_task_rows``)
+    are not yet present, the function returns the legacy wiki-page nudge — so
+    the rewire is non-breaking on the without-Car-D branch.
 
     MAIN-THREAD-ONLY by construction: the sole caller is hook_session_context,
     reached by SessionStart only — never by a subagent (SubagentStart /
     agent_dispatch_prelude do not call it), and NOT via project_brief
     (subagent-callable → would leak).
 
-    ADR-0215 removed branch scoping, so the existence check resolves the page by
+    ADR-0215 removed branch scoping; the existence check resolves by
     directory alone and is reachable from any working tree.
+
+    Car C2 / ADR-0227: ``project`` is the project_id MINTED BY THE SESSION HOOK
+    and forwarded as a query parameter — core-server derives nothing. It used
+    to be ``Path(directory).name``, which is not an identity: every checkout
+    named ``yadgar`` addressed the same ledger rows, and no checkout addressed
+    the rows written under the real ``owner/repo`` key. An ABSENT project means
+    a caller with no identity, and the correct response is no project-scoped
+    read at all — never a guess (ADR-0227: "never defaulted, never inferred,
+    never silently substituted").
 
     Fail-open: any error returns "" so session-start is never blocked.
     """
     try:
-        from pathlib import Path as _Path  # noqa: PLC0415
-
-        from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
-
-        project = _Path(directory).name if directory else ""
         if not project:
             return ""
-        storage = _get_storage()
-        if storage is None:
-            return ""
-        slug = f"{project}-task-list"
-        page = await asyncio.to_thread(
-            storage.get_wiki_page_by_slug_directory,
-            slug,
-            directory,
-        )
-        if not page:
-            return ""
 
-        # v5.142.0 — inline a compact open-task summary (checkpoint-symmetric).
-        # Parse the page body to extract pending/in_progress tasks and inline
-        # them so the model sees content directly, mirroring the checkpoint hint
-        # at lines 1076-1082.  Fail-open: any parse error falls back to the old
-        # existence-only nudge so session-start is never blocked by a bad page.
-        _OLD_NUDGE = (
-            f"\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work. "
-            f'wiki_read("{slug}", directory="{directory}") and recreate every open '
-            "task (pending / in_progress) with TaskCreate before proceeding "
-            "(skip completed). Do this FIRST.\n"
-        )
+        # ── Car E primary path: read the task ledger (Car D ships the table + tools)
         try:
-            _content = page.get("content", "") or ""
-            # Parse ## task:NNNN sections.  Each section header starts a block
-            # that ends at the next ## heading or EOF.
-            import re as _re  # noqa: PLC0415
+            from yadgar.core.server.tools import task as _task_tools  # noqa: PLC0415
 
-            _TASK_RE = _re.compile(r"^## task:(\d+)", _re.MULTILINE)
-            _STATUS_RE = _re.compile(r"^- status:\s*(\S+)", _re.MULTILINE)
-            _SUBJECT_RE = _re.compile(r"^- subject:\s*(.+)", _re.MULTILINE)
+            _ledger = _task_tools
+        except ImportError:
+            _ledger = None
 
-            _sections = _TASK_RE.split(_content)
-            # split gives: [pre, id1, body1, id2, body2, ...]
-            _open_tasks: list[tuple[str, str, str]] = []  # (id, subject, status)
-            _i = 1
-            while _i + 1 < len(_sections):
-                _task_id = _sections[_i].strip()
-                _body = _sections[_i + 1]
-                _sm = _STATUS_RE.search(_body)
-                _status = _sm.group(1).lower() if _sm else ""
-                if _status in ("pending", "in_progress"):
-                    _subm = _SUBJECT_RE.search(_body)
-                    _subject = _subm.group(1).strip() if _subm else "(no subject)"
-                    _open_tasks.append((_task_id, _subject, _status))
-                _i += 2
-
-            _CAP = 12
-            if not _open_tasks:
-                # All tasks complete — brief note, no TaskCreate instruction.
-                return (
-                    f"\n[yadgar] Saved task list ({slug}) — all tasks complete.\n"
-                    f'Full list: wiki_read("{slug}", directory="{directory}")\n'
+        if _ledger is not None and hasattr(_ledger, "task_list"):
+            try:
+                _rows = await asyncio.to_thread(
+                    _ledger.task_list,
+                    project_id=project,
+                    status=["pending", "in_progress"],
                 )
+            except Exception as _le:
+                logger.debug("task-list ledger read failed: %s", _le)
+                _rows = []
+            return _format_task_list_nudge_rows(list(_rows or []), 12, project)
 
-            _shown = _open_tasks[:_CAP]
-            _overflow = len(_open_tasks) - len(_shown)
-            _k = len(_open_tasks)
-            # Forcing form (v5.149): imperative + enumerated + hoisted FIRST by the
-            # caller. The advisory tail-nudge was ignored (tasks stayed in yadgar,
-            # harness TaskList empty); a hook cannot COMPEL a TaskCreate call, so this
-            # maximizes salience. Mechanical writer is the fallback if this still fails
-            # (docs/plans/harness-task-seed-inbound-2026-07-17.md, Option A / task A).
-            _lines = [
-                "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
-                f"{_k} open task(s) from the last session ({slug}). "
-                "Call TaskCreate for EACH one now:",
-            ]
-            for _tid, _subj, _st in _shown:
-                _lines.append(f"  - [{_tid}] {_subj} ({_st})")
-            if _overflow > 0:
-                _lines.append(f"  …and {_overflow} more")
-            _lines.append(
-                f'Full descriptions: wiki_read("{slug}", directory="{directory}"). '
-                "Recreate every open task (pending / in_progress) with TaskCreate "
-                "before proceeding; skip completed. Do this FIRST.\n"
-            )
-            return "\n".join(_lines)
-        except Exception as _pe:
-            logger.debug("session-context task-list nudge parse error: %s", _pe)
-            # Parse failed — fall back to the old existence-only nudge so the
-            # model at least knows the page exists and how to restore manually.
-            return _OLD_NUDGE
+        # ── Legacy path: wiki-page parse. Removed once Car D lands.
+        return await _task_list_legacy_wiki_nudge(directory)
     except Exception as _te:
         logger.debug("session-context task-list nudge error: %s", _te)
         return ""
+
+
+_CURRENT_PROJECT_BLOCK = "current_project"
+
+
+@observe(tier="stage")
+def _upsert_current_project_block(directory: str, project: str) -> None:
+    """Persist the session's minted project_id into an always-injected block.
+
+    Car C2 / ADR-0227. The SessionStart banner is a one-shot line: compaction
+    eats it, and after that the agent has no way to recover the identity — MCP
+    calls carry no session key, so there is nothing to look it up from. Memory
+    blocks ARE re-injected on every session-context render, so writing the key
+    into ``current_project`` is what makes it survive a compaction inside a
+    long session.
+
+    Writes only what the caller minted. Fail-open (blocks are an ergonomic
+    aid, not the transport): a storage error must never break session start.
+    """
+    if not project or not directory:
+        return
+    content = (
+        f"project_id: {project}\n"
+        f'Pass project="{project}" on yadgar tool calls that take it. '
+        "A different value is deliberate cross-project work."
+    )
+    try:
+        from yadgar.core.server.tools import blocks as _blocks  # noqa: PLC0415
+
+        result = _blocks.block_update(
+            _CURRENT_PROJECT_BLOCK, content, scope="project", directory=directory
+        )
+        if isinstance(result, dict) and result.get("ok") is False:
+            _blocks.block_create(
+                _CURRENT_PROJECT_BLOCK, content, scope="project", directory=directory
+            )
+    except Exception as _be:  # noqa: BLE001 — never block session start
+        logger.debug("current_project block upsert failed: %s", _be)
 
 
 @observe(tier="stage")
@@ -986,6 +1306,10 @@ async def hook_session_context(request: Request) -> JSONResponse:
     Returns: {"text": "...markdown..."}
     """
     directory = request.query_params.get("directory", os.getcwd())
+    # Car C2 / ADR-0227: the project_id is MINTED HOST-SIDE by the SessionStart
+    # hook and arrives here as an explicit parameter. This process cannot derive
+    # it (no git, no repo mounted in the container) and must not try.
+    project = request.query_params.get("project", "")
     mode = request.query_params.get("mode", "catalog")
     # v5.7.9: read source for per-source hint copy and compact suppression.
     # Unknown/missing values fall through to the "startup" default.
@@ -996,6 +1320,11 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
     # Record timestamp for prompt-recall throttling (bounded dict)
     _bounded_set(_st._last_session_context, directory, time.monotonic())
+
+    # Car C2: persist the minted identity BEFORE the compact early-return below,
+    # so a compaction refreshes the block too (that is the case the block exists
+    # for). No-op + fail-open when the caller sent no project.
+    _upsert_current_project_block(directory, project)
 
     # v5.10.6: import any pending session-end sentinel files before project_brief query.
     _sentinel_dir_env = os.environ.get("YADGAR_SESSION_END_DIR", "")
@@ -1102,7 +1431,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
             # Hoisted FIRST (v5.149): the task-restore nudge led the render so it is
             # not buried under the project-brief catalog — the advisory tail form was
             # ignored. Prepend keeps it the first thing the model reads this session.
-            render = await _task_list_restore_nudge(directory) + render
+            render = await _task_list_restore_nudge(directory, project) + render
 
         return JSONResponse({"text": render})
     except Exception as _e:
@@ -1111,28 +1440,35 @@ async def hook_session_context(request: Request) -> JSONResponse:
 
 
 @observe(tier="stage")
-def _filter_prompt_recall_results(results: list[dict], directory: str | None) -> list[dict]:
-    """Post-filter retriever results by caller directory for prompt-recall.
+def _filter_prompt_recall_results(results: list[dict], project_id: str | None) -> list[dict]:
+    """Post-filter retriever results by caller PROJECT for prompt-recall.
 
-    v5.65 Fix D: hook_prompt_recall previously forwarded all retriever results to
-    the response without directory scoping.  The retriever runs in a container and
-    cannot filter by host directory on its own — we must apply is_directory_eligible()
-    here after retrieval.
+    v5.65 Fix D: hook_prompt_recall previously forwarded all retriever results
+    to the response with no scoping at all.
 
-    When directory is None or empty (param absent / not passed by hook script),
-    scoping is skipped with a warning rather than using os.getcwd() (container path
-    would mis-scope results).
+    Car C7 (0047 §5 C7) re-keys the predicate from ``directory_context`` onto
+    ``project_id`` + the ``global`` reach tag, matching the stage-1 WHERE clause
+    exactly. It remains a POST-filter here on purpose: this endpoint hands back
+    whatever the forwarded recall produced, and re-issuing a scoped query would
+    double the hook's latency against ADR-0077's budget.
+
+    When project_id is absent, scoping is skipped with a warning rather than
+    guessing — a container's ``os.getcwd()`` is ``/app`` and would mis-scope.
     """
-    from yadgar._shared.storage.directory import is_directory_eligible  # noqa: PLC0415
+    from yadgar._shared.storage.directory import is_project_eligible  # noqa: PLC0415
 
-    if not directory or not directory.strip():
+    if not project_id or not project_id.strip():
         logger.warning(
-            "prompt-recall: directory param absent — skipping directory filter "
-            "(container cannot detect host cwd; pass ?directory= in hook script)"
+            "prompt-recall: project_id absent — skipping project filter "
+            "(container cannot detect host cwd; pass the resolved project id)"
         )
         return results
-    caller_dir = directory.strip().rstrip("/")
-    return [r for r in results if is_directory_eligible(r.get("directory_context"), caller_dir)]
+    caller_project = project_id.strip()
+    return [
+        r
+        for r in results
+        if is_project_eligible(r.get("project_id"), r.get("tags"), caller_project)
+    ]
 
 
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
@@ -1152,6 +1488,13 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         # container cwd would mis-scope retriever results.  directory may be None if
         # hook script does not pass ?directory=; handled by _filter_prompt_recall_results.
         directory = request.query_params.get("directory") or None
+        # Car C7: the hook's EXPLICIT project. C5 deleted directory derivation
+        # (ADR-0227), so this is the only signal that can scope a hook recall.
+        # Absent + a directory present → hook_project_id raises and the
+        # except-block below degrades to an empty injection, which is the
+        # deliberate choice: no injection beats another project's memories in
+        # this project's prompt (the v5.65 leak).
+        _hook_project = _hook_query_project(request)
 
         if not query or len(query) < 2:
             return JSONResponse({"text": ""})
@@ -1184,7 +1527,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
             # profile="fast": backend runs memory-only BM25+HNSW+fusion
             # (no CE/NLI/MP, no wiki fanout, no engram links — ADR-0077).
             results = await _recall_with_timeout(
-                _HookRecallForwarder(directory or ""),
+                _HookRecallForwarder(directory or "", _hook_project),
                 "prompt-recall",
                 query,
                 max_results=5,
@@ -1199,10 +1542,16 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if results is None:
             return JSONResponse({"text": ""})
 
-        # v5.65 Fix D: directory post-filter. The backend already scopes with the
-        # SAME is_directory_eligible predicate, so this is idempotent on forwarded
-        # rows — kept as the defense-in-depth contract (#166 Trap 2).
-        results = _filter_prompt_recall_results(results, directory)
+        # v5.65 Fix D / Car C7: PROJECT post-filter. The backend already scopes
+        # with the SAME project_id + 'global'-tag predicate in its stage-1 WHERE,
+        # so this is idempotent on forwarded rows — kept as the defense-in-depth
+        # contract (#166 Trap 2). Resolution failure degrades to unfiltered
+        # forwarded rows, which the backend already scoped.
+        try:
+            _scoped = hook_project_id(directory, _hook_project)
+        except Exception:  # noqa: BLE001 — hook must never raise into the prompt
+            _scoped = None
+        results = _filter_prompt_recall_results(results, _scoped)
 
         if not results:
             return JSONResponse({"text": ""})
@@ -1357,6 +1706,65 @@ async def hook_seed_agent_prompts(request: Request) -> JSONResponse:
         _hook_observe("seed_agent_prompts", _t0, _caught_exc)
 
 
+@mcp_server.custom_route("/hooks/seed-task-from-pages", methods=["POST"])
+@trace_span()
+async def hook_seed_task_from_pages(request: Request) -> JSONResponse:
+    """Seed the task ledger from existing {project}-task-list wiki pages.
+
+    Car E (0047 spine train, plan §3.3). Called by `yadgar seed
+    --seed-task-from-pages` CLI after daemon start. Forwards to the backend
+    admin op `seed_task_from_pages` via `_forward_admin`, which reads
+    page_type='task_list' wiki pages, parses ## task:<id> sections, and
+    inserts rows into the task ledger. Idempotent (D35a).
+
+    Body (JSON):
+        {
+            "directory": "/abs/path/to/project",
+            "project_id": "<project key>",
+            "dry_run": false
+        }
+
+    Response:
+        {"status": "ok", "result": {"seeded": N, "skipped": M, "candidates": K,
+                                    "dry_run": bool, "pages": {...}}}
+        {"status": "error", "message": "..."}   — on validation failure (400)
+    """
+    _t0 = time.perf_counter()
+    _caught_exc: BaseException | None = None
+    try:
+        try:
+            body = await request.json()
+        except Exception:
+            _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
+            _hook_observe_response("seed_task_from_pages", _resp.status_code)
+            return _resp
+
+        directory = sanitize_log_field(str(body.get("directory", "")), max_len=1000)
+        project_id = sanitize_log_field(str(body.get("project_id", "")), max_len=200)
+        dry_run = bool(body.get("dry_run", False))
+        if not directory or not project_id:
+            _resp = JSONResponse(
+                {"status": "error", "message": "directory and project_id are required"},
+                status_code=400,
+            )
+            _hook_observe_response("seed_task_from_pages", _resp.status_code)
+            return _resp
+
+        from yadgar.core.forward import _forward_admin  # noqa: PLC0415
+
+        result = await asyncio.to_thread(
+            _forward_admin,
+            "seed_task_from_pages",
+            {"directory": directory, "project_id": project_id, "dry_run": dry_run},
+        )
+        return JSONResponse({"status": "ok", "result": result})
+    except Exception as _exc:
+        _caught_exc = _exc
+        raise
+    finally:
+        _hook_observe("seed_task_from_pages", _t0, _caught_exc)
+
+
 @mcp_server.custom_route("/hooks/file-changed", methods=["POST"])
 @trace_span()
 async def hook_file_changed(request: Request) -> JSONResponse:
@@ -1504,6 +1912,16 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
             try:
                 # T2 Car E1 (ADR-0078): team-inbox rows ride the file-queue seam
                 # (backend drainer replays via run_action_log_replay).
+                #
+                # C4 (0047 PR#40 §5): deliberately NO ``project_id`` stamp. The
+                # ``project_id`` in scope here is ``match.group(1)`` — a segment
+                # of the team-inbox FILE PATH, not an identity key (the same
+                # name-collision trap C3 hit with ``wiki_write_task_list.project``,
+                # which is a slug component). Reusing it would mint a namespace
+                # from a directory name, which is precisely what ADR-0227 deletes.
+                # These rows arrive unattributed and are skipped-and-counted by
+                # the consolidation summariser until the team-inbox writer
+                # carries a real session identity.
                 from yadgar.core.lifecycle import _get_file_queue  # noqa: PLC0415
 
                 await _asyncio.to_thread(
@@ -1732,6 +2150,10 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
             request.query_params.get("agent_type", "general-purpose"), max_len=64
         )
         cwd = sanitize_log_field(request.query_params.get("cwd", os.getcwd()), max_len=500)
+        # Car C7: the subagent's EXPLICIT project. ``cwd`` defaults to a real
+        # path here, and a directory can no longer produce an identity (C5
+        # deleted derivation), so without this the hook cannot be scoped.
+        _sa_project = _hook_query_project(request)
 
         try:
             body = await request.json()
@@ -1765,7 +2187,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
             # v5.51.0: wrapped in _recall_with_timeout (asyncio.wait_for) to bound latency.
             # On timeout, _recall_with_timeout returns None (logs WARN + increments counter).
             results = await _recall_with_timeout(
-                _HookRecallForwarder(cwd or ""),
+                _HookRecallForwarder(cwd or "", _sa_project),
                 "subagent-start",
                 query,
                 max_results=5,

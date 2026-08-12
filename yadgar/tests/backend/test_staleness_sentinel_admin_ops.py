@@ -123,9 +123,14 @@ class TestBootstrapProjectStoreOp:
         storage.get_block.return_value = None
         monkeypatch.setattr(_st, "_storage", storage)
 
-        result = bootstrap_project_store({"resolved": "/proj/root", "content": "# init"})
+        result = bootstrap_project_store(
+            {"resolved": "/proj/root", "content": "# init", "project_id": "test-owner/test-repo"}
+        )
 
-        storage.upsert_project_init.assert_called_once_with("/proj/root", "# init")
+        # C5b: the op threads the wire ``project_id`` into the upsert verbatim.
+        storage.upsert_project_init.assert_called_once_with(
+            "/proj/root", "# init", project_id="test-owner/test-repo"
+        )
         # Default blocks seeded (current_task + gotchas)
         assert storage.create_block.call_count == 2
         assert result == {"id": 1, "content": "x"}

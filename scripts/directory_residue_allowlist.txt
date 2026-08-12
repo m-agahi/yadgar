@@ -1,0 +1,201 @@
+# ADR-0225 `directory` residue-sweep allowlist.
+# Started by C10 (0047 §5) as a classification; promoted by C15 into the
+# allowlist of `scripts/check_directory_residue.py`, the lint C10 wrote it for.
+#
+# WHAT THIS IS
+# ------------
+# ADR-0225 retires `directory` as a scoping/identity concept and says the
+# retirement is "enforced by a residue sweep rather than by review".
+# `scripts/check_directory_residue.py` is that sweep and this file is its
+# allowlist: every scanned `*.py` that still carries a residue token in a
+# SCOPING POSITION (parameter name / call-site keyword / string-literal dict
+# key or subscript / class-body field), on purpose, with the reason recorded.
+#
+# Read the lint's module docstring first. In particular: `directory` was NOT
+# removed. C5 removed its ability to RESOLVE; C14 measured that it survives as
+# a parameter on 46 MCP tools in two classes, one of which is STILL
+# directory-keyed. Deleting entries tagged `tool-surface` on the assumption the
+# sweep is unfinished will break live scoping.
+#
+# FORMAT
+# ------
+#   <tag>  <path-or-glob>  # reason (>= 40 chars, required)
+#
+# A glob ends in `/**` and matches every scanned `*.py` beneath it. Paths are
+# repo-relative. Malformed rows, unknown tags, duplicate paths, and reasons
+# shorter than 40 chars are HARD FAILURES — an unparsed row silently grants
+# nothing and hides a residue site. 40 matches the repo's governed-allowlist
+# family (.test-weakening-, .health-endpoint-, .urllib-httperror-close-) and
+# C9a's own reason floor; the lint promoting three siblings must not be the
+# weakest of the four on the one field a reviewer actually reads.
+#
+# TAGS — the class of reason. The trailing comment gives the specific one.
+# -----------------------------------------------------------------------
+#   carve-out-1   Host-side identity MINTING, and only there: the hook entry
+#                 points and the CLI/installer surface that hands a real path
+#                 in so a `project_id` can be derived from it. Permanent.
+#   carve-out-2   A SIGNATURE named after the stored legacy column
+#                 (`directory_context`). The column itself is stripped as a
+#                 CLASS and never appears here (see below). Dies with the
+#                 column, in the NEXT PR's drop migration.
+#   carve-out-3   A genuine filesystem path: opened, globbed, walked, watched,
+#                 hashed, or turned into display text. Never compared against a
+#                 project identity. Permanent.
+#   tool-surface  The `directory` parameter C14 measured as SURVIVING on the 46
+#                 MCP tools. Two sub-classes, named per entry:
+#                   * resolve_effective_project — RAISES without `project=`;
+#                     `directory` is accepted-but-inert.
+#                   * accept_project_param      — STILL directory-keyed;
+#                     `project=` is validated only. Removing `directory` here
+#                     breaks scoping today.
+#   wire-contract A key crossing a process boundary — queue payload, viz node,
+#                 admin payload, `RecallRequest`. Renamed with the far side or
+#                 not at all (`extra="forbid"`; images deploy together).
+#   legacy-key    A REAL scope key that plan 0047 §2 Amendment 3 blocks: a
+#                 rename is safe only when the backing table already carries
+#                 `project_id` AND every caller actually holds an identity.
+#                 C11 shipped the columns; these are the transitional second
+#                 arm that keeps the un-backfilled historical corpus reachable,
+#                 plus the sites whose callers still cannot produce an identity.
+#
+# CARVE-OUT 2 IS A CLASS STRIP, NOT ENTRIES
+# -----------------------------------------
+# `directory_context` in a STRING-LITERAL position (`row["directory_context"]`,
+# `{"directory_context": ...}`) is the stored column, alive until the next PR's
+# drop migration because the C6 backfill derives from it. The lint strips it
+# before matching, so it never needs an entry — enumerating ~100 column reads
+# would produce an allowlist that asserts nothing. A PARAMETER or KEYWORD of
+# that name is a signature, not a column, and does get an entry.
+#
+# CARVE-OUT 4 IS MOOT HERE, BY CONSTRUCTION
+# -----------------------------------------
+# `docs/**/adr-*`, `docs/plans/archive/**` and `docs/CHANGELOG.md` are historical
+# and correct as written. An AST lint over `*.py` never reaches markdown, so
+# there is nothing to exempt. Recorded rather than omitted, because carve-out 4
+# is on the reviewer's list. C14 owns the docs surface.
+#
+# DIRECTION 2 IS A HARD FAIL, NOT A WARNING
+# -----------------------------------------
+# An entry whose path matches no scanned file, or whose files no longer carry
+# any residue, FAILS the lint. Deliberately unlike
+# `.test-weakening-allowlist.json`'s `_stale_policy`: that guard's input is a
+# merge-base that MOVES, so its entries go stale through nobody's fault. This
+# lint's input is the filesystem — a stale entry is always somebody's edit and
+# always has an owner. C15a also demonstrated the alternative: two warn-only
+# entries sat stale from the ADR-0215 train's merge until a car finally deleted
+# them, which is warn-only teaching the next reader to skim the warnings.
+#
+# KNOWN GAP — THE GLOBS (ADR-0080: state what the gate cannot see)
+# ----------------------------------------------------------------
+# The three `/**` entries below cover 37 `.py` files as a block. A NEW scoping
+# `directory` inside e.g. `yadgar/core/install/` therefore passes silently.
+# They are kept because they are genuine carve-out-3 subtrees and enumerating
+# them file-by-file risks red-on-arrival churn — but this is a gap, not
+# coverage. Narrow a glob to exact paths when a subtree stops being uniformly
+# carve-out-3.
+#
+# C10 CLASSIFIED 25 FILES THAT NEED NO ENTRY HERE
+# -----------------------------------------------
+# C10's original list came from a word-boundary TEXT scan and included files
+# whose only `directory` is a positional argument, a local variable, an
+# attribute read (`args.directory`), or prose. The AST matcher excludes every
+# one of those positions by construction, so those entries would be stale on
+# arrival and were dropped rather than carried. Their C11/C9c worklist role is
+# recorded in `docs/CHANGELOG.md` and plan 0047, which is where planning state
+# belongs — not in a lint allowlist that Direction 2 must keep honest.
+
+# ── carve-out 1: host-side identity minting ─────────────────────────────────
+carve-out-1  yadgar/core/hooks/session-start-context.py    # the minting hook: turns the session's real cwd into a project_id
+carve-out-1  yadgar/core/hooks/post-tool-capture.py        # hook entry point; stamps the host path onto the action_log payload
+carve-out-1  yadgar/core/hooks/prompt-recall.py            # hook entry point; local FTS fallback over the host path
+
+# ── carve-out 3: genuine filesystem paths, permanent ────────────────────────
+carve-out-3  yadgar/core/install/**                        # install targets, config + interpreter paths (glob; see KNOWN GAP)
+carve-out-3  yadgar/core/daemon/**                         # unit files and data dirs; watch_directory is a path to watch
+carve-out-3  yadgar/core/staleness/**                      # file-hash staleness inputs — real files on disk
+carve-out-3  yadgar/core/bootstrap/bootstrap.py            # watch_directory forwarded to the daemon watcher; a path, not a scope
+carve-out-3  yadgar/core/server/_startup.py                # watch_directory forwarded into core_init_engines
+carve-out-3  yadgar/core/seed/_scan.py                     # Path(directory).resolve() — a genuine filesystem walk
+carve-out-3  yadgar/core/code_graph/config.py              # the repo path code_graph indexes; resolver keys the knob off it
+carve-out-3  yadgar/_shared/runtime/lifecycle.py           # init_engines(watch_directory) — the directory the watcher watches
+carve-out-3  yadgar/_shared/runtime/cache_epoch.py         # hashes its argument into a counter FILE NAME; producer is _resolve_project_root
+carve-out-3  yadgar/_shared/server_helpers/server_helpers.py  # _resolve_project_root and the two worktree-root heuristics: paths on disk
+carve-out-3  yadgar/_shared/file_queue/queue.py            # _find_terminal walks the queue directory looking for a terminal file
+carve-out-3  yadgar/backend/retrieval/core.py              # basename(directory) is EMBEDDING INPUT TEXT, not a scope key; changing it
+                                                           # silently shifts new rows out of the existing corpus's cosine space.
+carve-out-3  yadgar/backend/admin_exec/adr_seed.py         # basename() project-NAME surrogate for display; never compared to an identity
+
+# ── carve-out 2: a signature named after the stored directory_context column ─
+carve-out-2  yadgar/_shared/storage/_project_id_writer.py  # _resolve_project_id_for_write(directory_context) — the column's own writer
+carve-out-2  yadgar/_shared/storage/user.py                # insert_profile / get_profiles_for_entity take the column value
+carve-out-2  yadgar/_shared/storage/narrative.py           # get_beliefs_for_subject(directory_context) + the NarrativeEntry field
+carve-out-2  yadgar/_shared/wiki/store.py                  # the §25 read ladder: _gate_dir_eligible, find_similar_wiki_pages, read_by_directory
+carve-out-2  yadgar/_shared/contracts/models.py            # pydantic mirrors of stored rows (Episode, Checkpoint, NarrativeEntry, prospective)
+carve-out-2  yadgar/backend/write_exec/wiki_add_impl.py    # forwards directory_context= into the wiki write path
+carve-out-2  yadgar/backend/queue_drainer/dlq.py           # forwards directory_context= when re-applying a drained payload
+
+# ── wire contracts: keys crossing a process boundary ────────────────────────
+wire-contract  yadgar/backend/embed_service/embed_service_models.py  # RecallRequest.directory retained OPTIONAL and deliberately not deleted;
+                                                                     # extra="forbid", so core and backend images must move together.
+wire-contract  yadgar/_shared/wiki/contract.py             # WikiAddOptions.directory_context — the enqueue-time payload field
+wire-contract  yadgar/backend/graph/graph_nodes.py         # viz node payload key consumed by the graph UI
+wire-contract  yadgar/backend/write_exec/_memorize_phases/_phase_post_write.py  # the same viz node payload key, written here
+wire-contract  yadgar/backend/queue_drainer/__init__.py    # queue payload key — caller_context, read back by the drainer
+wire-contract  yadgar/backend/admin_exec/wiki.py           # core-owned admin payload key over the HTTP admin boundary
+wire-contract  yadgar/backend/admin_exec/seed.py           # core-owned admin payload key; directory and project_id coexist by design
+
+# ── legacy-key: a real scope key, blocked by Amendment 3's two conditions ────
+legacy-key  yadgar/_shared/storage/blocks.py               # memory_block: C11 declared project_id, the directory arm keeps pre-C11 rows reachable
+legacy-key  yadgar/_shared/storage/runtime_config.py       # runtime_config: C11 shipped the COLUMN only; no caller holds an identity (plan §6 knob train)
+legacy-key  yadgar/_shared/storage/queue.py                # action_log: dual-write; three live consumers still read the legacy column
+legacy-key  yadgar/_shared/storage/episode.py              # episode: dual-write; causal_discovery/pc.py filters on e['directory']
+legacy-key  yadgar/_shared/storage/ops.py                  # get_active_checkpoint — the checkpoint table's transitional dual key
+legacy-key  yadgar/_shared/storage/memory.py               # get_recent_memories_since: both callers would have to resolve, and resolve raises;
+                                                           # project_brief has no error envelope and runs on the session-start hook path.
+legacy-key  yadgar/_shared/storage/wiki.py                 # list_wiki_pages / list_wiki_catalog + the three upserts that ALREADY have project_id
+                                                           # (a two-parameter merge is a redesign, not a rename).
+legacy-key  yadgar/_shared/sensory_buffer/sensory_buffer.py  # episode capture dual-writes the legacy column
+legacy-key  yadgar/_shared/rules_engine/rules_engine.py    # _LEGACY_SCOPE_KINDS maps the RETIRED kind "directory" onto "project" so writes reject it
+legacy-key  yadgar/backend/restoration/checkpoint_restore.py  # five sinks; checkpoint and memory_block have no project_id, so restore must pass both
+legacy-key  yadgar/backend/restoration/__init__.py         # run_restore forwards into checkpoint_restore.restore
+legacy-key  yadgar/backend/write_exec/checkpoint_impl.py   # forwards into replay.create_checkpoint — the checkpoint table again
+legacy-key  yadgar/backend/write_exec/action_log_impl.py   # storage.insert_action_log(directory=) — the action_log dual-write, same block as _shared/storage/queue.py
+legacy-key  yadgar/backend/consolidation/cleanup.py        # reads the action_log row's directory as the summary memory's scope
+legacy-key  yadgar/backend/prospective/prospective.py      # prospective_memory.target_directory — a stored column with no project_id
+legacy-key  yadgar/backend/admin_exec/blocks.py            # storage block API (directory=) — memory_block, same block as _shared/storage/blocks.py
+legacy-key  yadgar/backend/admin_exec/project.py           # storage.get_block / create_block(directory=)
+legacy-key  yadgar/backend/admin_exec/audit.py             # storage.insert_action_log(directory=) plus the payload key it reads back
+legacy-key  yadgar/backend/admin_exec/runtime_config.py    # plan §6 — runtime_config scoping belongs to the knob train, not a mechanical rename
+legacy-key  yadgar/core/server/http.py                     # MIXED Starlette hook routes: checkpoint, memory_block, runtime_config, action_log
+legacy-key  yadgar/core/forward.py                         # _forward_restore — the checkpoint table, which has no project_id column yet
+legacy-key  yadgar/core/runtime_config_client.py           # the host-side runtime_config client; blocked with its storage layer
+legacy-key  yadgar/core/code_graph/digest.py               # memory_block injection scope is an exact directory match (the block NAME carries the discriminator)
+legacy-key  yadgar/core/cli/_shared.py                     # forward_restore / forward_pre_compact_drain — checkpoint
+legacy-key  yadgar/core/cli/capture.py                     # action_log: the CLI capture path stamps the legacy column
+legacy-key  yadgar/core/cli/hook.py                        # memory_block plus the mixed hook routes; blocked with core/server/http.py
+legacy-key  yadgar/core/cli/seed.py                        # memory + wiki_page writes still keyed on the legacy column
+legacy-key  yadgar/core/cli/stats.py                       # memory rows are still counted by the legacy directory column
+legacy-key  yadgar/core/seed/_generate.py                  # stamps the legacy column onto every seeded memory payload
+legacy-key  yadgar/core/server/tools/_runtime_config.py    # the core-side runtime_config resolver; blocked with its storage layer
+
+# ── tool-surface: the `directory` parameter C14 measured as SURVIVING ───────
+# resolve_effective_project sub-class — RAISES without `project=`; `directory`
+# is accepted-but-inert. accept_project_param sub-class — STILL directory-keyed.
+tool-surface  yadgar/core/server/tools/_project_param.py   # THE two-class site itself: resolve_effective_project and accept_project_param
+tool-surface  yadgar/core/server/tools/recall.py           # resolve_effective_project class; also _resolve_shape_limit's runtime_config read
+tool-surface  yadgar/core/server/tools/memorize.py         # resolve_effective_project class — raises without project=; directory is accepted-but-inert
+tool-surface  yadgar/core/server/tools/wiki.py             # resolve_effective_project class (wiki_add/adr) + wiki_list, which is still keyed
+tool-surface  yadgar/core/server/tools/adr.py              # resolve_effective_project class over wiki_page
+tool-surface  yadgar/core/server/tools/adr_render.py       # resolve_effective_project class over wiki_page
+tool-surface  yadgar/core/server/tools/agent_prompts.py    # resolve_effective_project class over wiki_page
+tool-surface  yadgar/core/server/tools/dispatch_helper.py  # resolve_effective_project class over memory + wiki_page
+tool-surface  yadgar/core/server/tools/misc.py             # checkpoint/restore are accept_project_param and STILL directory-keyed
+tool-surface  yadgar/core/server/tools/project.py          # project_brief is accept_project_param and STILL directory-keyed
+tool-surface  yadgar/core/server/tools/blocks.py           # block_* are accept_project_param and STILL directory-keyed (memory_block)
+tool-surface  yadgar/core/server/tools/audit.py            # audit_anchors is accept_project_param and STILL directory-keyed
+tool-surface  yadgar/core/server/tools/admin_other.py      # get_rules and recent_memories are accept_project_param and STILL directory-keyed
+tool-surface  yadgar/core/server/tools/runtime_config.py   # config_* are accept_project_param; runtime_config is plan §6's knob train
+tool-surface  yadgar/core/server/tools/task.py             # forwards directory= into the still-keyed admin payloads
+tool-surface  benchmarks/run_eval.py                       # drives recall() over the tool surface that still accepts directory
+tool-surface  benchmarks/run_longmemeval.py                # drives recall() over the tool surface that still accepts directory
+tool-surface  benchmarks/run_perf_loadtest.py              # recall load test driving the same still-accepting tool surface as the two eval harnesses

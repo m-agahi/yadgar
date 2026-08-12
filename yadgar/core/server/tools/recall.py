@@ -24,6 +24,15 @@ from yadgar._shared.runtime.recall_side_effects_fork import (
 )
 from yadgar.core.server._app import _tool
 
+# Car M (0047 §7, §16.6): cross-project ``project=`` override. Resolves the
+# effective project_id (override → session → directory → "global") so the
+# recall scope can be addressed by project_id even when working in another
+# project's tree.
+from yadgar.core.server.tools._project_param import (
+    InvalidProjectOverrideError,
+    resolve_effective_project,
+)
+
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
@@ -99,6 +108,54 @@ _RECALL_PROJECTION_DENYLIST: frozenset[str] = frozenset(
         "wiki_schema_version",
     }
 )
+
+
+@observe(exempt="single resolve + 2 string operations; no I/O — called once at the recall boundary")
+def _resolve_project_for_recall(
+    *,
+    project: str | None,
+    directory: str | None,
+) -> tuple[str, str]:
+    """Car M: resolve the effective project_id and the wire-directory sentinel.
+
+    Returns ``(effective_project_id, directory_sentinel)``:
+      * ``effective_project_id`` — the resolved project namespace (override >
+        session > directory > ``"global"``).
+      * ``directory_sentinel`` — never empty. If the caller did not supply a
+        usable directory, falls back to ``effective_project_id`` so the
+        backend's RecallRequest contract (``directory: str`` non-empty) holds.
+
+    Raises ``ValueError`` on a malformed ``project=`` — the type-level guard
+    fires here so the MCP boundary surfaces a clean error envelope.
+    """
+    try:
+        effective_project_id = resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,
+            tool="recall",
+        )
+    except InvalidProjectOverrideError as exc:
+        raise ValueError(f"recall: {exc}") from exc
+
+    _dir_stripped = (directory or "").strip().rstrip("/") if directory else ""
+    # Car C7 — THE GUARD IS DELETED, and this is the re-key C13d flagged.
+    #
+    # C13d measured the old ``if not _dir_stripped and not project`` branch as
+    # DEAD both ways round: with ``project`` absent the resolver above raises
+    # ``UnresolvedProjectError`` first (C5), and with ``project`` present the
+    # second condition is false. It was retained pending C7's decision on this
+    # tool's scope. That decision is made: the scope key is ``project_id``, the
+    # resolver is its single chokepoint, and it already fails loud. A second
+    # guard restating a weaker version of the same rule — in terms of the
+    # DIRECTORY, which no longer scopes anything — could only ever be dead code
+    # or a contradiction, so it goes.
+    #
+    # The directory sentinel below stays: the backend still carries ``directory``
+    # as the caller's physical path (non-scoping), and it must be non-empty.
+    if not _dir_stripped:
+        _dir_stripped = effective_project_id
+    return effective_project_id, _dir_stripped
 
 
 @observe(exempt="trivial dict-lookup string builder; no I/O — and called per-row inside a loop")
@@ -239,7 +296,7 @@ def _resolve_shape_limit(config_key: str, settings_field: str, directory: str) -
 
 
 @observe(tier="boundary", metric="tools.recall._forward_to_backend")
-def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signature
+def _forward_to_backend(  # noqa: PLR0913 — 11 args match full recall signature
     query: str,
     max_results: int,
     min_heat: float,
@@ -250,11 +307,20 @@ def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signatur
     profile: str | None = None,
     timeout_s: float = 120.0,
     deadline_ms: int | None = None,
+    project_id: str | None = None,
 ) -> list[dict]:
     """Forward recall to the backend /recall endpoint.
 
     Phase 2a: now forwards ALL params including mode (landscape dispatch) and
     profile (rerank_level — gated CE/NLI/MP and fusion-CE on the backend).
+
+    Car M (0047 §7, §16.6): the ``project_id`` parameter is the cross-project
+    override (resolve_effective_project → override → session → directory →
+    "global"). When supplied, the backend scopes memories by ``project_id``
+    and keeps the global wiki blend global (post-L semantics — pre-L only
+    memories written AFTER Car M carry ``project_id``). When ``None`` the
+    payload omits the key (wire-compatible with older backends; RecallRequest
+    is extra="forbid" so the field is conditional).
 
     Backend URL: derived from YADGAR_EMBED_URL (the same base URL used by
     RemoteMLClient for /rerank).  If YADGAR_EMBED_URL is not configured,
@@ -303,6 +369,8 @@ def _forward_to_backend(  # noqa: PLR0913 — 10 args match full recall signatur
     }
     if deadline_ms is not None:
         payload["deadline_ms"] = deadline_ms
+    if project_id is not None:
+        payload["project_id"] = project_id
 
     resp = httpx.post(
         f"{backend_base}/recall",
@@ -326,6 +394,8 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
     mode: str | None = None,
     tags: list[str] | None = None,
     max_chars: int | None = None,
+    *,
+    project: str | None = None,
 ) -> list[dict]:
     """Primary semantic + keyword retrieval tool. Use for discovery and context loading.
 
@@ -333,12 +403,33 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
     numeric ID — those tools are for direct ID lookups, not search. Prefer
     recall(type="wiki") over wiki_query() for wiki-only searches.
 
+    Car M (0047 §7, §16.6): the ``project=`` override lets a caller address
+    another project's memory namespace without leaving the current working
+    tree. Precedence: ``project`` (override) > ``session_project`` (Car E
+    SessionStart context) > ``directory``-derived (Car A0
+    ``derive_project_id``) > ``"global"`` fallback. When BOTH ``project`` and
+    ``directory`` are supplied, ``project`` wins and ``directory`` is logged-
+    and-ignored. The resolved project_id is forwarded to the backend
+    (``payload["project_id"]``) so post-Car-L scoping lands cleanly; pre-L
+    the parameter is just carried through. The non-string / empty guards are
+    enforced at the type level (raise ``InvalidProjectOverrideError``); the
+    deep "is this project_id in the registry?" check lives at the backend
+    write path (Car A0 `_ensure_project_exists_sync`, §15 / ADR-0078).
+
     Args:
         query: Search text. Combined semantic (embedding) + keyword scoring.
-        directory: REQUIRED. Host-side project directory (e.g. "/home/user/myapp").
-            Results are scoped to this directory plus global wiki pages. Do NOT omit
-            or pass empty — daemon runs in a container and cannot detect the real path
-            via os.getcwd(). Raises ValueError if absent/empty.
+        directory: REQUIRED when ``project`` is None. Host-side project
+            directory (e.g. "/home/user/myapp"). Results are scoped to this
+            directory plus global wiki pages. Do NOT omit AND pass empty —
+            daemon runs in a container and cannot detect the real path via
+            os.getcwd(). Raises ValueError if absent/empty.
+            Ignored with a logged INFO when ``project`` is supplied
+            (project wins — §9 [VERIFY]).
+        project: OPTIONAL cross-project override (Car M). When supplied,
+            validation runs through ``resolve_effective_project``: must be a
+            non-empty string. The backend uses this to scope memories
+            (post-Car-L); wiki results stay global regardless (wiki pages
+            are not project-stamped in the current model).
         max_results: Max results to return (default 5). Higher = slower + more tokens;
             keep <=10 for targeted lookups, <=20 for broad exploration.
         min_heat: Heat floor (default 0.0 = no filter). Pass >0.5 to restrict to
@@ -384,13 +475,16 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
     """
     import time as _time  # noqa: PLC0415
 
-    # v5.65 Fix D: hard-require directory — MUST be first check in body.
-    _dir_stripped = (directory or "").strip().rstrip("/")
-    if not _dir_stripped:
-        raise ValueError(
-            "recall: directory is required (caller must supply project dir; "
-            "container cannot detect it via os.getcwd())"
-        )
+    # Car M: resolve the effective project_id (override → session → directory)
+    # AND the wire-directory sentinel in one helper. Type-level guard fires
+    # here so a malformed ``project=`` surfaces as ValueError (the tool
+    # boundary never raises InvalidProjectOverrideError). When ``project`` was
+    # supplied, the resolve helper also logs-and-ignores ``directory`` per §9
+    # [VERIFY] (project wins).
+    effective_project_id, _dir_stripped = _resolve_project_for_recall(
+        project=project,
+        directory=directory,
+    )
 
     # Validate type param early — before any expensive setup.
     if type not in _VALID_RECALL_TYPES:
@@ -426,6 +520,19 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
             _st._consolidation.record_activity()
 
         # Phase 2a: forward-only — raise loud on backend error (no in-core fallback).
+        #
+        # Car C7 (0047 §5 C7) — THE RESOLVED PROJECT IS ALWAYS SENT NOW.
+        # Car M shipped it only when the caller passed an explicit ``project=``
+        # override (``... if effective_project_id and project is not None else
+        # None``). That was survivable while the backend still scoped on
+        # ``directory``; it is not survivable now that ``project_id`` IS the
+        # scope key and ``RecallRequest`` requires it. Under the old condition
+        # every ordinary ``recall(directory=…)`` — which is nearly all of them,
+        # since only a cross-project lookup passes ``project=`` — would omit the
+        # field and come back HTTP 422 against an ``extra="forbid"`` model.
+        # The resolver above already raises ``UnresolvedProjectError`` when it
+        # cannot produce a value (C5), so there is nothing left to guard.
+        _project_payload = effective_project_id
         merged = _forward_to_backend(
             query=query,
             max_results=max_results,
@@ -435,6 +542,7 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
             tags=tags,
             mode=mode,
             profile=profile,
+            project_id=_project_payload,
         )
         # task:0085 — bound the RETURNED payload. Shaping is presentation-only:
         # it runs after retrieval/rerank/fusion, so ranking is untouched.

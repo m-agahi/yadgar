@@ -10,6 +10,12 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.storage import StorageEngine
 from yadgar._shared.thermodynamics import MemoryThermodynamics
 
+# C13 (0047 PR#40 §5): seeds must NAME the project they write into —
+# C5 deleted every fallback that used to answer an unnamed write (ADR-0227).
+# A per-file constant, deliberately NOT a shared fixture default: a new test
+# that builds its own write payload still reds — the signal of the flip.
+_PROJECT = "m-agahi/yadgar"
+
 # Detect whether the embedding model can be loaded
 _engine = EmbeddingEngine()
 try:
@@ -82,6 +88,7 @@ class TestSurpriseScoring:
                 "content": "Python web framework using Flask for REST APIs",
                 "embedding": emb,
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
             }
         )
 
@@ -103,6 +110,7 @@ class TestSurpriseScoring:
                 "content": content,
                 "embedding": emb,
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
             }
         )
 
@@ -278,6 +286,7 @@ class TestSynapticBoost:
             {
                 "content": "nearby context memory",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.5,
                 "created_at": five_min_ago,
             }
@@ -288,6 +297,7 @@ class TestSynapticBoost:
             {
                 "content": "critical decision memory",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 1.0,
                 "created_at": now,
             }
@@ -307,6 +317,7 @@ class TestSynapticBoost:
             {
                 "content": "self memory",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.5,
                 "created_at": now,
             }
@@ -326,6 +337,7 @@ class TestSynapticBoost:
             {
                 "content": "old context memory",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 0.5,
                 "created_at": long_ago,
             }
@@ -336,6 +348,7 @@ class TestSynapticBoost:
             {
                 "content": "recent event",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
                 "heat": 1.0,
                 "created_at": now,
             }
@@ -357,6 +370,7 @@ class TestMetamemory:
             {
                 "content": "trackable memory",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
             }
         )
 
@@ -376,6 +390,7 @@ class TestMetamemory:
             {
                 "content": "confidence test memory",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
             }
         )
 
@@ -397,6 +412,7 @@ class TestMetamemory:
             {
                 "content": "new memory",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
             }
         )
         assert thermo.get_reliability(mid) == 1.0
@@ -407,6 +423,7 @@ class TestMetamemory:
             {
                 "content": "tested memory",
                 "directory_context": "/proj",
+                "project_id": _PROJECT,
             }
         )
 

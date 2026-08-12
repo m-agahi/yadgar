@@ -20,8 +20,13 @@ import numpy as np
 import pytest
 
 from yadgar._shared.config import Settings
-from yadgar.backend.curation import MemoryCurator
+from yadgar.backend.curation import CurateParams, MemoryCurator
 from yadgar.backend.curation.ingestion import NewMemorySpec, insert_new_memory
+
+#: C13 — every write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation that used to answer for it, so a
+#: write without it is a hard UnresolvedProjectError at insert.
+_TEST_PROJECT = "m-agahi/yadgar"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -151,6 +156,7 @@ class TestCuratorEnrichmentWiring:
             "/home/user/project",
             ["outdoor"],
             _dummy_embedding_bytes(),
+            params=CurateParams(project_id=_TEST_PROJECT),
         )
 
         # Must have called insert_memory exactly once (create path, no similar hits)
@@ -195,6 +201,7 @@ class TestCuratorEnrichmentWiring:
             "/projects/notes",
             ["travel"],
             _dummy_embedding_bytes(),
+            params=CurateParams(project_id=_TEST_PROJECT),
         )
 
         assert received.get("embeddings_engine") is embeddings, (

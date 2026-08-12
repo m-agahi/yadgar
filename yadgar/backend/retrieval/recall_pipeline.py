@@ -72,6 +72,7 @@ from yadgar._shared.runtime.recall_session import (  # noqa: F401 (combiner + re
     _record_recall_sr_transition,
 )
 from yadgar._shared.runtime.recall_utils import _is_episodic_query
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.backend.retrieval.providers.base import Scope
 from yadgar.backend.retrieval.providers.fusion import fuse_candidates
 from yadgar.backend.retrieval.providers.memory import MemoryProvider
@@ -411,11 +412,12 @@ def _build_provider_tasks(  # noqa: PLR0913 — mirrors _fanout_recall's threade
         tags = [t for t in tags if t != "agent-prompt"] or None
 
     # S3 precedence: tags=["agent-prompt"] suppresses the default exclude. Without
-    # tags, general recall excludes agent-prompt pages + the global toc page so
-    # tool-prompt fragments don't pollute general wiki results (the every-project
-    # leak S3 exists to kill). Targeted recall(tags=["agent-prompt"]) still won't
-    # pull the TOC (SQL pre-filter), so excluding it here is safe both ways.
-    wiki_exclude = None if tags else ["agent-prompt", "agent-prompt-toc"]
+    # tags, general recall excludes agent-prompt pages so tool-prompt fragments
+    # don't pollute general wiki results (the every-project leak S3 exists to
+    # kill). Targeted recall(tags=["agent-prompt"]) pulls the actual prompt
+    # bodies; the old wiki-TOC page is gone (0047 Car I, D35a: retired,
+    # kept-ignored pointer slug). The exclude stays "agent-prompt" only.
+    wiki_exclude = None if tags else ["agent-prompt"]
 
     # Memory provider — active when type_filter is "all" or "memory".
     if type_filter in ("all", "memory") and _st._retriever is not None:
@@ -446,7 +448,7 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
     query: str,
     max_results: int,
     min_heat: float,
-    directory: str,
+    recall_scope: RecallScope,
     type_filter: str = "all",
     tags: list[str] | None = None,
     profile: str | None = None,
@@ -459,9 +461,13 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
     ``UNIFIED_RECALL_ENABLED``-gated entry with a "legacy body below"; the flag
     has been default-on since v5.80 and no legacy body exists.)
 
-    Step 3 additions (directory scoping):
-      - MemoryProvider applies Python-side is_directory_eligible filter.
-      - WikiProvider applies Python-side is_directory_eligible filter.
+    Car C7 (0047 §5 C7) — SCOPING MOVED INTO THE QUERY:
+      - The scope is the caller's ``project_id``, not their directory.
+      - Both providers push ``project_id = $p OR 'global' IN tags`` (plus, for
+        wiki, the ``POLICY_BY_TYPE``-derived ``page_type`` exclusion) into the
+        stage-1 ``WHERE``. Before C7 both applied a Python post-filter AFTER the
+        query had already spent its LIMIT, so a scoped recall over a
+        minority-share project could return zero rows while the DB held plenty.
 
     Step 4 additions (cross-type fusion):
       - Per-type quotas (RECALL_MEMORY_QUOTA / RECALL_WIKI_QUOTA) applied
@@ -486,7 +492,13 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
         query: Search query.
         max_results: Maximum results to return.
         min_heat: Minimum heat threshold forwarded to MemoryProvider.
-        directory: Caller directory (required, validated upstream).
+        recall_scope: The caller's ``RecallScope`` — resolved project id plus
+            the slugs this read must not surface. Car C7 re-keyed the scope
+            from ``directory`` to ``project_id``; Car C8 replaced the bare
+            ``project_id: str`` with the bundled object rather than adding a
+            ninth parameter (the I30 HARD cap is 8, and a loose parallel
+            parameter is how the exclusion arm gets dropped by a caller that
+            threads the project and forgets the rest).
         type_filter: One of {"all", "memory", "wiki"}. Selects provider subset.
         tags: Tag include filter for wiki retrieval. When set, triggers SQL pre-filter
               (search_wiki_vectors_tagged) and suppresses the default agent-prompt exclude.
@@ -499,9 +511,23 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
         List of raw memory/wiki dicts from providers, fused by CE rerank,
         deduped by content, trimmed to max_results.
     """
+    # Car C7 (0047 §5 C7): the scope is now the PROJECT, not the directory, and
+    # it is pushed into the stage-1 WHERE rather than post-filtered. ``tags``
+    # rides along as ``opt_in_tags`` so the policy-derived ``page_type``
+    # exclusion can be relaxed per request — without that,
+    # ``recall(type="wiki", tags=["agent-prompt"])`` returns nothing.
+    #
+    # Car C8: ``excluded_slugs`` (the superseded-ADR set) is carried through
+    # ALREADY RESOLVED. It is read from the SQL ledger in the async route,
+    # upstream of the ``asyncio.to_thread`` boundary — this function is SYNC
+    # and runs in a worker thread, while ``asyncmy`` is async-only, so a lookup
+    # here would need a private event loop per recall. See
+    # ``backend/retrieval/superseded.py``: the hazard is closed by PLACEMENT.
     scope = Scope(
-        directory=directory,
+        project_id=recall_scope.project_id or "",
         min_heat=min_heat,
+        opt_in_tags=tags,
+        excluded_slugs=recall_scope.excluded_slugs,
     )
 
     # Candidate pool size: ask for more than max_results so fusion + dedup

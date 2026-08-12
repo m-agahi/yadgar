@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from yadgar.core import server
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -60,6 +61,7 @@ def _insert(slug, title="Test", content="content here", tags=None):
             "confidence": "medium",
             "source_memory_ids": [],
             "links": [],
+            "project_id": TEST_PROJECT_ID,
         }
     )
 

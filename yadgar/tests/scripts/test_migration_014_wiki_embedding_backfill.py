@@ -71,6 +71,14 @@ def _storage():
     return _state_mod._storage
 
 
+#: Identity these fixtures write under. Named explicitly because C5 (ADR-0227)
+#: deleted every tier under the caller's value at the storage chokepoint — an
+#: insert with no ``project_id`` now raises ``UnresolvedProjectError`` instead of
+#: being stamped ``"global"``. These rows exist only to be found by the
+#: embedding backfill, so any stable key does; what matters is that one is named.
+_TEST_PROJECT_ID = "owner/repo"
+
+
 def _insert_null_page(title: str, content: str = "placeholder content") -> int:
     """Insert wiki_page row with embedding=None."""
     st = _storage()
@@ -86,8 +94,8 @@ def _insert_null_page(title: str, content: str = "placeholder content") -> int:
             "confidence": 1.0,
             "embedding": None,
             "source_memory_ids": [],
-        },
-        branch=None,
+            "project_id": _TEST_PROJECT_ID,
+        }
     )
 
 

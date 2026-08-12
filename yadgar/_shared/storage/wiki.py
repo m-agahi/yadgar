@@ -8,7 +8,7 @@ _WikiMixin provides:
   - upsert_project_init / upsert_active_work
   - insert_wiki_page_version / get_max_version_for_page
   - list_wiki_page_versions / get_wiki_page_version
-  - _compute_change_summary
+  - compute_change_summary (in wiki_change_summary.py)
 
 v5.41.1 audit: all version-write paths reviewed for try/except masking.
   - insert_wiki_page: compound BEGIN/COMMIT txn (no masking).
@@ -18,82 +18,22 @@ v5.41.1 audit: all version-write paths reviewed for try/except masking.
   - insert_wiki_page_version: kept for migration seeder; not called by write paths.
   - replace_wiki_crossrefs: separate txn scope (crossref consistency, not version).
   No other version-write try/except patterns found.
+
+Car J (0047 §7 D25/D26): insert/update/delete carry ``_sanctioned=False``.
+True bypasses the mutability gate for server-side lifecycle transitions
+(Car G supersede retype, Car K nightly sweep). Default rejects locked/derived
+writes with PermissionError.
 """
 
-import difflib
 import logging
-import re as _re
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
+from yadgar._shared.storage.mutability_gate import enforce_mutability
+from yadgar._shared.storage.wiki_change_summary import compute_change_summary
 
 _log = logging.getLogger(__name__)
-
-
-# ── Change-summary helpers ─────────────────────────────────────────────────────
-
-
-_HEADING_RE = _re.compile(r"^##+ (.+)")
-
-
-@observe(tier="hot")
-def _diff_context_line(diff_line: str) -> str:
-    """Strip unified-diff prefix (+/-/@/ ) to get the raw text for heading detection."""
-    if diff_line.startswith("@"):
-        return diff_line.lstrip("+-@ ")
-    return diff_line[1:] if diff_line else ""
-
-
-@observe(tier="hot")
-def _find_nearby_heading(diff: list[str], i: int, touched: list[str]) -> None:
-    """Look back up to 5 diff lines for a ## heading; append to touched if found."""
-    for j in range(max(0, i - 5), i):
-        m = _HEADING_RE.match(_diff_context_line(diff[j]))
-        if m:
-            heading = m.group(1).strip()
-            if heading not in touched:
-                touched.append(heading)
-            return
-
-
-@observe(tier="hot")
-def _compute_change_summary(old_content: str, new_content: str) -> str:
-    """Generate a concise diff summary for a wiki page version.
-
-    Format: "+N -M lines | sections: 'Foo', 'Bar' | size: X → Y bytes"
-    Capped at 300 chars. No LLM — pure difflib (I9: no LLM on write path).
-
-    Section detection: markdown ## / ### headings at column 0 that appear
-    within 5 lines above changed (added/removed) content.
-    """
-    old_lines = old_content.splitlines(keepends=True)
-    new_lines = new_content.splitlines(keepends=True)
-    diff = list(difflib.unified_diff(old_lines, new_lines, lineterm=""))
-
-    added = 0
-    removed = 0
-    touched_sections: list[str] = []
-
-    for i, line in enumerate(diff):
-        if line.startswith("+") and not line.startswith("+++"):
-            added += 1
-            _find_nearby_heading(diff, i, touched_sections)
-        elif line.startswith("-") and not line.startswith("---"):
-            removed += 1
-
-    size_old = len(old_content.encode())
-    size_new = len(new_content.encode())
-
-    parts = [f"+{added} -{removed} lines"]
-    if touched_sections:
-        section_str = ", ".join(f"'{s}'" for s in touched_sections[:5])
-        parts.append(f"sections: {section_str}")
-    parts.append(f"size: {size_old} → {size_new} bytes")
-
-    summary = " | ".join(parts)
-    if len(summary) > 300:
-        summary = summary[:299] + "…"
-    return summary
 
 
 class _WikiMixin:
@@ -133,65 +73,96 @@ class _WikiMixin:
             pass
 
     @trace_span()
-    def insert_wiki_page(self, page: dict, branch: str | None = None) -> int:
+    def insert_wiki_page(self, page: dict) -> int:
         """Insert a new wiki page, return its integer ID.
 
         v5.41.1: wiki_page CREATE and wiki_page_version CREATE are wrapped in a
         single BEGIN/COMMIT transaction. Either both succeed or both roll back —
         no orphan wiki_page rows without a version, and no orphan version rows.
+
+        C12 (ADR-0226): the ``branch`` kwarg is GONE and was not cosmetic — it
+        appended ``branch = $branch`` here, RE-CREATING untyped the column 029
+        dropped (SCHEMALESS), and seeded ``ver_branch`` into 032's snapshot.
+
+        Car J: gate enforced below. Locked/derived pages reject insert; pass
+        ``_sanctioned=True`` for server-side lifecycle transitions (Car G).
         """
+        # Symmetry with update/delete — `_sanctioned` is opt-in for callers
+        # that seed derived rollups (Car K nightly sweep) or write the
+        # mutability_override back during a sanctioned migration. Read via
+        # get+delete-from-copy so we don't mutate the caller's dict.
+        page_copy = dict(page) if isinstance(page, dict) else page
+        _sanctioned = bool(page_copy.pop("_sanctioned", False))
+        # The mutability gate consults the page_type (no override yet on
+        # first insert — row hasn't been written). We synthesise the page
+        # dict the gate reads.
+        gate_page: dict = {"page_type": page_copy.get("page_type")}
+        enforce_mutability(gate_page, op="insert_wiki_page", sanctioned=_sanctioned)
+
         now = self._now_iso()
         pid = self._next_id("wiki_page")
         # Reserve version row ID outside the txn (counter bump is non-transactional).
         vid = self._next_id("wiki_page_version")
-        embedding = page.get("embedding")
+        embedding = page_copy.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if isinstance(embedding, bytes) else embedding
 
+        # Car F1: no embedding ⇒ store NONE. A bound Python None lands SurrealDB
+        # NULL (see ``get_wiki_pages_without_embedding`` below), which passes
+        # ``IS NOT NONE`` and then crashes ``cosine()``.
+        emb_assign = "embedding = $embedding" if emb_floats is not None else "embedding = NONE"
         page_set = (
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, links = $links, "
-            "confidence = $confidence, embedding = $embedding, "
+            f"confidence = $confidence, {emb_assign}, "
             "source_memory_ids = $source_memory_ids, "
             "created_at = $created_at, updated_at = $updated_at"
         )
         params: dict = {
             "pid": pid,
-            "title": page.get("title", ""),
-            "slug": page["slug"],
-            "content": page.get("content", ""),
-            "category": page.get("category"),
-            "tags": page.get("tags", []),
-            "links": page.get("links", []),
-            "confidence": page.get("confidence", 1.0),
-            "embedding": emb_floats,
-            "source_memory_ids": page.get("source_memory_ids", []),
-            "created_at": page.get("created_at", now),
-            "updated_at": page.get("updated_at", now),
+            "title": page_copy.get("title", ""),
+            "slug": page_copy["slug"],
+            "content": page_copy.get("content", ""),
+            "category": page_copy.get("category"),
+            "tags": page_copy.get("tags", []),
+            "links": page_copy.get("links", []),
+            "confidence": page_copy.get("confidence", 1.0),
+            **({"embedding": emb_floats} if emb_floats is not None else {}),
+            "source_memory_ids": page_copy.get("source_memory_ids", []),
+            "created_at": page_copy.get("created_at", now),
+            "updated_at": page_copy.get("updated_at", now),
             "vid": vid,
-            "ver_title": page.get("title", ""),
-            "ver_content": page.get("content", ""),
-            "ver_category": page.get("category"),
-            "ver_tags": page.get("tags", []),
-            "ver_confidence": page.get("confidence"),
-            "ver_source_memory_ids": page.get("source_memory_ids", []),
-            "ver_branch": branch,
+            "ver_title": page_copy.get("title", ""),
+            "ver_content": page_copy.get("content", ""),
+            "ver_category": page_copy.get("category"),
+            "ver_tags": page_copy.get("tags", []),
+            "ver_confidence": page_copy.get("confidence"),
+            "ver_source_memory_ids": page_copy.get("source_memory_ids", []),
             "ver_now": now,
         }
-        if branch is not None:
-            page_set += ", branch = $branch"
-            params["branch"] = branch
         # v5.42.5: directory_context — NOT NULL per migration 016 schema constraint.
         # Value comes from page dict (preferred) or falls back to "global".
-        directory_context = page.get("directory_context") or "global"
+        directory_context = page_copy.get("directory_context") or "global"
         page_set += ", directory_context = $directory_context"
         params["directory_context"] = directory_context
         # v5.53.2: page_type + wiki_schema_version — optional (option<string> /
         # option<int>). Only included in SET clause when non-None so SurrealDB
         # stores NONE (absent) rather than explicit null for untyped pages.
-        if page.get("page_type") is not None:
+        if page_copy.get("page_type") is not None:
             page_set += ", page_type = $page_type, wiki_schema_version = $wiki_schema_version"
-            params["page_type"] = page["page_type"]
-            params["wiki_schema_version"] = page.get("wiki_schema_version", 1)
+            params["page_type"] = page_copy["page_type"]
+            params["wiki_schema_version"] = page_copy.get("wiki_schema_version", 1)
+        # Car L (0047 §16.9): project_id alongside directory_context, REQUIRED
+        # on page_copy. C13: the "fall back to the lazy classifier … then to
+        # 'unresolved' so the write never blocks" note that stood here described
+        # behaviour C5 DELETED — an unstamped page RAISES, and blocking the write
+        # is the point (ADR-0227). ``directory_context`` above keeps its
+        # ``or "global"`` deliberately: that is REACH, on a column alive until C11.
+        project_id = _resolve_project_id_for_write(
+            caller_value=page_copy.get("project_id"),
+            directory_context=directory_context,
+        )
+        page_set += ", project_id = $project_id"
+        params["project_id"] = project_id
 
         # Single compound transaction: wiki_page + wiki_page_version version=1.
         # I1: no LLM/embed inside txn — pure DB writes only.
@@ -202,7 +173,7 @@ class _WikiMixin:
             "page_id = $pid, version = 1, title = $ver_title, "
             "content = $ver_content, category = $ver_category, tags = $ver_tags, "
             "confidence = $ver_confidence, "
-            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "source_memory_ids = $ver_source_memory_ids, "
             "change_summary = 'initial version', created_at = $ver_now, "
             "provenance_agent = 'default';\n"
             "COMMIT TRANSACTION",
@@ -212,7 +183,12 @@ class _WikiMixin:
         return pid
 
     @trace_span()
-    def update_wiki_page(self, page_id: int, updates: dict) -> bool:
+    def update_wiki_page(
+        self,
+        page_id: int,
+        updates: dict,
+        _sanctioned: bool = False,
+    ) -> bool:
         """Update fields on an existing wiki page. Return True if found.
 
         v5.41.1: wiki_page UPDATE and wiki_page_version INSERT are wrapped in a
@@ -224,6 +200,12 @@ class _WikiMixin:
         outside the transaction. In embedded single-writer mode this is safe.
         In server mode a race window exists between read and txn open, but that
         is a pre-existing constraint scoped out per plan §Non-goals.
+
+        Car J: gate enforced HERE — single chokepoint for all write paths
+        (``WikiStore._apply_text_edit``/``append_section``/``restore_version``,
+        ``WikiStore.add`` upsert, ``admin_exec.wiki_update`` that bypasses
+        ``WikiStore`` entirely). Override wins over per-type default.
+        ``_sanctioned=True`` for Car G supersede retype, Car K sweep.
         """
         if not updates:
             return False
@@ -232,6 +214,11 @@ class _WikiMixin:
         old_page: dict | None = self.get_wiki_page(int(page_id))
         if old_page is None:
             return False
+
+        # Car J: enforce mutability BEFORE the txn — locked/derived pages
+        # reject the write with PermissionError. Sanctioned transitions
+        # (Car G supersede retype, Car K nightly sweep) pass _sanctioned=True.
+        enforce_mutability(old_page, op="update_wiki_page", sanctioned=_sanctioned)
 
         # Handle embedding conversion if present.
         if "embedding" in updates and isinstance(updates["embedding"], bytes):
@@ -246,7 +233,7 @@ class _WikiMixin:
         merged.update(updates)
         old_content = old_page.get("content", "")
         new_content = updates.get("content", old_page.get("content", ""))
-        change_summary = _compute_change_summary(old_content, new_content)
+        change_summary = compute_change_summary(old_content, new_content)
 
         # Reserve version row ID + number outside the txn (counters are non-txn).
         vid = self._next_id("wiki_page_version")
@@ -256,6 +243,11 @@ class _WikiMixin:
         set_parts = []
         params: dict = {"pid": int(page_id)}
         for col, val in updates.items():
+            if col == "embedding" and val is None:
+                # Car F1: a LIVE NULL source — ``_compute_embedding`` returns
+                # None when the embed service is down. Same reason as insert.
+                set_parts.append("embedding = NONE")
+                continue
             set_parts.append(f"{col} = $upd_{col}")
             params[f"upd_{col}"] = val
 
@@ -270,7 +262,6 @@ class _WikiMixin:
                 "ver_tags": merged.get("tags", []),
                 "ver_confidence": merged.get("confidence"),
                 "ver_source_memory_ids": merged.get("source_memory_ids", []),
-                "ver_branch": merged.get("branch"),
                 "ver_change_summary": change_summary,
                 "ver_now": now,
             }
@@ -285,7 +276,7 @@ class _WikiMixin:
             "page_id = $pid, version = $new_ver, title = $ver_title, "
             "content = $ver_content, category = $ver_category, tags = $ver_tags, "
             "confidence = $ver_confidence, "
-            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "source_memory_ids = $ver_source_memory_ids, "
             "change_summary = $ver_change_summary, created_at = $ver_now, "
             "provenance_agent = 'default';\n"
             "COMMIT TRANSACTION",
@@ -312,11 +303,9 @@ class _WikiMixin:
         because a Python ``None`` param stores an explicit null, which ``IS NONE``
         does NOT match) is gone with the field it served.
 
-        The ``wiki_page_version`` snapshot below still carries ``branch``: that
-        column is an audit-trail record of past versions and migration 029
-        deliberately leaves it in place (see
-        ``_migration_029_drop_branch_column``, which drops the field on ``memory``
-        and ``wiki_page`` only).
+        C12 (ADR-0226): the snapshot below no longer carries ``branch`` either —
+        Car 9's audit-trail survivor is revoked, 032 drops it, and this was the
+        third of three snapshot writers that would have put it straight back.
 
         Creates a wiki_page_version row in the same compound transaction.
         """
@@ -331,7 +320,7 @@ class _WikiMixin:
         merged[field] = value
 
         new_content = merged.get("content", "")
-        change_summary = _compute_change_summary(old_page.get("content", ""), new_content)
+        change_summary = compute_change_summary(old_page.get("content", ""), new_content)
 
         params: dict = {
             "pid": int(page_id),
@@ -343,7 +332,6 @@ class _WikiMixin:
             "ver_tags": merged.get("tags", []),
             "ver_confidence": merged.get("confidence"),
             "ver_source_memory_ids": merged.get("source_memory_ids", []),
-            "ver_branch": merged.get("branch"),
             "ver_change_summary": change_summary,
             "ver_now": now,
         }
@@ -351,6 +339,14 @@ class _WikiMixin:
         page_set_clause = f"{field} = $upd_val, updated_at = $upd_now"
         params["upd_val"] = value
         params["upd_now"] = now
+        # ``option<T>`` fields (e.g. ``mutability_override`` added by migration
+        # 030) need ``= NONE`` to clear, not ``= $upd_val`` — a Python ``None``
+        # param serialises to explicit null, which an ``option<T>`` typed
+        # column rejects (schema expects ``none`` for absent). Non-nullable
+        # fields (the historical case) keep the parameterised form.
+        if value is None:
+            page_set_clause = f"{field} = NONE, updated_at = $upd_now"
+            params.pop("upd_val", None)
 
         self._q(
             "BEGIN TRANSACTION;\n"
@@ -359,7 +355,7 @@ class _WikiMixin:
             "page_id = $pid, version = $new_ver, title = $ver_title, "
             "content = $ver_content, category = $ver_category, tags = $ver_tags, "
             "confidence = $ver_confidence, "
-            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "source_memory_ids = $ver_source_memory_ids, "
             "change_summary = $ver_change_summary, created_at = $ver_now, "
             "provenance_agent = 'default';\n"
             "COMMIT TRANSACTION",
@@ -447,14 +443,32 @@ class _WikiMixin:
         return self._row_to_dict(rows[0]) if rows else None
 
     @trace_span()
-    def delete_wiki_page(self, page_id: int) -> bool:
-        """Delete a wiki page by ID. Return True if deleted."""
+    def delete_wiki_page(self, page_id: int, _sanctioned: bool = False) -> bool:
+        """Delete a wiki page by ID. Return True if deleted.
+
+        Car J: symmetric with update_wiki_page — locked/derived reject delete.
+        ``_sanctioned=True`` for Car K sweep on derived rollups.
+        """
         pid = int(page_id)
-        # Fetch slug before deleting so we can clean crossrefs keyed by slug
-        rows = self._q(f"SELECT id, slug FROM wiki_page:{pid}")
+        # Fetch slug + page_type before deleting so we can enforce mutability
+        # AND clean crossrefs keyed by slug in one read.
+        rows = self._q(f"SELECT id, slug, page_type, mutability_override FROM wiki_page:{pid}")
         if not rows:
             return False
-        slug = rows[0].get("slug", "")
+        row = rows[0]
+        slug = row.get("slug", "")
+        # Car J: enforce mutability. Derive the row dict the gate reads from
+        # the SELECT — same shape ``get_wiki_page`` would return.
+        enforce_mutability(
+            {
+                "id": pid,
+                "slug": slug,
+                "page_type": row.get("page_type"),
+                "mutability_override": row.get("mutability_override"),
+            },
+            op="delete_wiki_page",
+            sanctioned=_sanctioned,
+        )
         # Clean ALL crossrefs referencing this page's slug (both outgoing and
         # incoming).  wiki.delete() already calls replace_wiki_crossrefs(slug, [])
         # for outgoing rows, but the INCOMING rows (to_slug = slug) are never
@@ -555,7 +569,12 @@ class _WikiMixin:
         change_summary: str,
         provenance_agent: str = "default",
     ) -> int:
-        """Insert a wiki_page_version row. Returns the version number assigned."""
+        """Insert a wiki_page_version row. Returns the version number assigned.
+
+        C12 (ADR-0226): ``snapshot.get("branch")`` is gone with migration 032's
+        column. A stale caller dict carrying ``branch`` is IGNORED, not written
+        through — SCHEMALESS, so writing it back re-creates what 032 just cleared.
+        """
         max_ver = self.get_max_version_for_page(page_id)
         new_ver = max_ver + 1
         vid = self._next_id("wiki_page_version")
@@ -565,7 +584,7 @@ class _WikiMixin:
             "page_id = $page_id, version = $version, title = $title, "
             "content = $content, category = $category, tags = $tags, "
             "confidence = $confidence, "
-            "source_memory_ids = $source_memory_ids, branch = $branch, "
+            "source_memory_ids = $source_memory_ids, "
             "change_summary = $change_summary, created_at = $created_at, "
             "provenance_agent = $provenance_agent",
             {
@@ -578,7 +597,6 @@ class _WikiMixin:
                 "tags": snapshot.get("tags", []),
                 "confidence": snapshot.get("confidence"),
                 "source_memory_ids": snapshot.get("source_memory_ids", []),
-                "branch": snapshot.get("branch"),
                 "change_summary": change_summary,
                 "created_at": now,
                 "provenance_agent": provenance_agent,
@@ -621,14 +639,25 @@ class _WikiMixin:
     # ------------------------------------------------------------------ Wiki Search
 
     @trace_span()
-    def search_wiki_fts_scored(self, query: str, limit: int = 10) -> list[tuple[int, float]]:
-        """BM25 search returning (page_id, score) tuples."""
-        fts_query = self._preprocess_fts_query(query)
+    def search_wiki_fts_scored(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
+    ) -> list[tuple[int, float]]:
+        """BM25 search returning (page_id, score) tuples.
+
+        Car C7 — the FTS arm is UNAFFECTED by dilution: ``LIMIT`` applies AFTER
+        the ``WHERE``, so an added ``AND`` composes. Unlike the vector arm."""
+        params = {"q": self._preprocess_fts_query(query), "lim": limit}
+        where = "content @1@ $q" + (f" AND ({scope_sql})" if scope_sql else "")
+        params.update(scope_params or {})
         rows = self._q(
-            "SELECT id, search::score(1) AS score FROM wiki_page "
-            "WHERE content @1@ $q "
-            "ORDER BY score DESC LIMIT $lim",
-            {"q": fts_query, "lim": limit},
+            f"SELECT id, search::score(1) AS score FROM wiki_page "
+            f"WHERE {where} ORDER BY score DESC LIMIT $lim",
+            params,
         )
         results = []
         for row in rows:
@@ -639,16 +668,36 @@ class _WikiMixin:
 
     @trace_span()
     def search_wiki_vectors(
-        self, query_embedding: bytes, top_k: int = 5
+        self,
+        query_embedding: bytes,
+        top_k: int = 5,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> list[tuple[int, float]]:
-        """KNN search on wiki page embeddings. Returns (page_id, distance)."""
-        fetch_k = min(top_k * 4, 4096)
+        """Vector search on wiki page embeddings. Returns (page_id, distance).
+
+        Car C7 — TWO SHAPES. Unscoped → HNSW KNN. Scoped → BRUTE-FORCE cosine:
+        ``AND project_id = $p`` on the KNN form is NOT a pre-filter (KNN picks
+        neighbours FIRST) so it under-returns. See ``storage/directory.py``.
+
+        Car F1 — BOTH emptiness guards, for the reason spelled out on the memory
+        arm (``storage/vector.py::search_vectors``). Not belt-and-braces: NONE
+        and NULL are different values and each guard admits the other's.
+        """
         floats = self._bytes_to_floats(query_embedding)
+        params: dict = {"qv": floats}
+        if scope_sql:
+            where = f"embedding IS NOT NONE AND embedding IS NOT NULL AND ({scope_sql})"
+            tail = "ORDER BY sim DESC LIMIT $lim"
+            params.update({"lim": top_k, **(scope_params or {})})
+        else:
+            where = f"embedding <|{min(top_k * 4, 4096)}, 40|> $qv"
+            tail = "ORDER BY sim DESC"
         rows = self._q(
             f"SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
-            f"FROM wiki_page WHERE embedding <|{fetch_k}, 40|> $qv "
-            f"ORDER BY sim DESC",
-            {"qv": floats},
+            f"FROM wiki_page WHERE {where} {tail}",
+            params,
         )
         results = []
         for row in rows:
@@ -661,18 +710,32 @@ class _WikiMixin:
 
     @trace_span()
     def search_wiki_vectors_tagged(
-        self, query_embedding: bytes, include_tag: str, top_k: int = 5
+        self,
+        query_embedding: bytes,
+        include_tag: str,
+        top_k: int = 5,
+        *,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> list[tuple[int, float]]:
-        """Brute-force cosine over ``tags CONTAINS $tag`` rows. Returns (page_id, similarity).
-        Tag-scoped brute-force vector search (any tag). No HNSW — avoids dilution.
-        Returns similarity NOT distance — accumulate directly, skip 1/(1+distance).
+        """Brute-force cosine over ``tags CONTAINS $tag`` rows → (page_id, similarity).
+        No HNSW — avoids dilution. Similarity NOT distance: accumulate directly.
+
+        Car F1 — brute-force UNCONDITIONALLY (no KNN arm to fall back to when
+        ``scope_sql`` is empty), so the NONE/NULL double guard is exposed on
+        EVERY call here. See ``storage/vector.py::search_vectors``.
         """
         floats = self._bytes_to_floats(query_embedding)
+        where = "tags CONTAINS $tag AND embedding IS NOT NONE AND embedding IS NOT NULL"
+        params = {"qv": floats, "tag": include_tag, "lim": top_k}
+        # Car C7: this path already skipped HNSW, so the scope composes for free.
+        where = where + (f" AND ({scope_sql})" if scope_sql else "")
+        params.update(scope_params or {})
         rows = self._q(
-            "SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
-            "FROM wiki_page WHERE tags CONTAINS $tag AND embedding IS NOT NONE "
-            "ORDER BY sim DESC LIMIT $lim",
-            {"qv": floats, "tag": include_tag, "lim": top_k},
+            f"SELECT id, vector::similarity::cosine(embedding, $qv) AS sim "
+            f"FROM wiki_page WHERE {where} "
+            f"ORDER BY sim DESC LIMIT $lim",
+            params,
         )
         results: list[tuple[int, float]] = []
         for row in rows:
@@ -784,12 +847,19 @@ class _WikiMixin:
     # ------------------------------------------------------------------ _project_init / _active_work atomic helpers
 
     @observe(tier="stage")
-    def upsert_project_init(self, directory: str, content: str) -> dict:
+    def upsert_project_init(self, directory: str, content: str, *, project_id: str = "") -> dict:
         """Atomic delete-then-insert for _project_init memory.
 
         Deletes all existing _project_init memories for the directory, then
         inserts a new one tagged [_project_init, _anchor] as semantic+protected.
         Returns the new memory dict (without embedding).
+
+        C5b (0047 PR#40 §2 amendment 2): the raw CREATE below routed around
+        ``_resolve_project_id_for_write`` and wrote an UNATTRIBUTED row — the
+        column is ``option<string>``, so the omission never raised. A
+        ``_project_init`` row is a per-directory singleton describing one
+        project, so its owner is the caller's project; it is threaded, never
+        derived (ADR-0227).
         """
         now = self._now_iso()
         mid = self._next_id("memory")
@@ -802,7 +872,7 @@ class _WikiMixin:
             "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = NONE, tags = $tags, "
             "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
+            "project_id = $project_id, created_at = $now, last_accessed = $now, "
             "heat = $heat, is_stale = false, file_hash = NONE, "
             "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
             "excitability = 1.0, store_type = $store_type, "
@@ -815,6 +885,9 @@ class _WikiMixin:
                 "content": content,
                 "tags": ["_project_init", "_anchor"],
                 "dir": directory,
+                "project_id": _resolve_project_id_for_write(
+                    caller_value=project_id, directory_context=directory
+                ),
                 "now": now,
                 "heat": 1.0,
                 "store_type": "semantic",
@@ -833,10 +906,13 @@ class _WikiMixin:
         }
 
     @observe(tier="stage")
-    def upsert_active_work(self, directory: str, content: str) -> dict:
+    def upsert_active_work(self, directory: str, content: str, *, project_id: str = "") -> dict:
         """Atomic delete-then-insert for _active_work memory.
 
         Returns dict with keys: previous_content (str | None), new_memory (dict).
+
+        C5b: same bypass, same fix as ``upsert_project_init`` — a per-directory
+        singleton is owned by the caller's project.
         """
         now = self._now_iso()
         mid = self._next_id("memory")
@@ -858,7 +934,7 @@ class _WikiMixin:
             "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = NONE, tags = $tags, "
             "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
+            "project_id = $project_id, created_at = $now, last_accessed = $now, "
             "heat = $heat, is_stale = false, file_hash = NONE, "
             "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
             "excitability = 1.0, store_type = $store_type, "
@@ -871,6 +947,9 @@ class _WikiMixin:
                 "content": content,
                 "tags": ["_active_work"],
                 "dir": directory,
+                "project_id": _resolve_project_id_for_write(
+                    caller_value=project_id, directory_context=directory
+                ),
                 "now": now,
                 "heat": 1.0,
                 "store_type": "episodic",
@@ -890,12 +969,19 @@ class _WikiMixin:
         return {"previous_content": previous_content, "new_memory": new_memory}
 
     @observe(tier="stage")
-    def upsert_dispatch_prelude_marker(self, directory: str) -> dict:
+    def upsert_dispatch_prelude_marker(self, directory: str, *, project_id: str = "") -> dict:
         """Atomic delete-then-insert for _dispatch_prelude marker memory.
 
         Mirrors upsert_active_work but uses tag '_dispatch_prelude' and a fixed
         content string.  Only the latest timestamp persists (no memory spam).
         Returns dict with keys: id, created_at.
+
+        C5b: third bypass, same fix. The marker records that a dispatch
+        prelude was assembled FOR this directory, so the owning project is the
+        caller's — the row is per-directory, not cross-project. The caller
+        (``_record_prelude_marker``) skips the write rather than raising when
+        it cannot name one; see that function for why a read tool must not die
+        over telemetry.
         """
         now = self._now_iso()
         mid = self._next_id("memory")
@@ -906,7 +992,7 @@ class _WikiMixin:
             "CREATE type::record('memory', $id) SET "
             "content = $content, embedding = NONE, tags = $tags, "
             "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
+            "project_id = $project_id, created_at = $now, last_accessed = $now, "
             "heat = $heat, is_stale = false, file_hash = NONE, "
             "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
             "excitability = 1.0, store_type = $store_type, "
@@ -919,6 +1005,9 @@ class _WikiMixin:
                 "content": "dispatch_prelude marker",
                 "tags": ["_dispatch_prelude"],
                 "dir": directory,
+                "project_id": _resolve_project_id_for_write(
+                    caller_value=project_id, directory_context=directory
+                ),
                 "now": now,
                 "heat": 1.0,
                 "store_type": "episodic",
@@ -926,63 +1015,3 @@ class _WikiMixin:
             },
         )
         return {"id": mid, "created_at": now}
-
-    @observe(tier="stage")
-    def get_prompt_usage_counts(self) -> dict:
-        """Return the per-pattern prelude-usage counts (Stage 3.4, #33).
-
-        Counts live in a single global memory row tagged '_prompt_usage' whose
-        content is a JSON dict {pattern: count}. Missing row → {}.
-        """
-        import json  # noqa: PLC0415
-
-        rows = self._q("SELECT content FROM memory WHERE '_prompt_usage' INSIDE tags LIMIT 1")
-        if not rows:
-            return {}
-        try:
-            counts = json.loads(rows[0].get("content") or "{}")
-        except (ValueError, TypeError):  # fmt: skip
-            return {}
-        return counts if isinstance(counts, dict) else {}
-
-    @observe(tier="stage")
-    def increment_prompt_usage(self, pattern: str) -> int:
-        """Increment the prelude-usage counter for *pattern*; return the new count.
-
-        Read-modify-write on the single '_prompt_usage' row via the same atomic
-        delete-then-insert as upsert_dispatch_prelude_marker (memory rows are not
-        wiki-versioned — no churn). Best-effort counter: a lost increment under
-        concurrent prelude calls is acceptable.
-        """
-        import json  # noqa: PLC0415
-
-        counts = self.get_prompt_usage_counts()
-        counts[pattern] = int(counts.get(pattern, 0)) + 1
-        now = self._now_iso()
-        mid = self._next_id("memory")
-        self._q(
-            "BEGIN TRANSACTION;\n"
-            "DELETE FROM memory WHERE '_prompt_usage' INSIDE tags;\n"
-            "CREATE type::record('memory', $id) SET "
-            "content = $content, embedding = NONE, tags = $tags, "
-            "source_episode_id = NONE, directory_context = $dir, "
-            "created_at = $now, last_accessed = $now, "
-            "heat = $heat, is_stale = false, file_hash = NONE, "
-            "embedding_model = NONE, plasticity = 1.0, stability = 0.0, "
-            "excitability = 1.0, store_type = $store_type, "
-            "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
-            "reconsolidation_count = 0, provenance_agent = $agent, "
-            "vector_clock = '{}', is_protected = true;\n"
-            "COMMIT TRANSACTION",
-            {
-                "id": mid,
-                "content": json.dumps(counts, sort_keys=True),
-                "tags": ["_prompt_usage"],
-                "dir": "global",
-                "now": now,
-                "heat": 1.0,
-                "store_type": "episodic",
-                "agent": "default",
-            },
-        )
-        return counts[pattern]

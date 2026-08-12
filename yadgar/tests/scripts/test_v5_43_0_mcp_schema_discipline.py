@@ -50,8 +50,20 @@ def _slugify(title: str) -> str:
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 
-def _insert_wiki_page(slug, title, content, directory="global"):
-    """Insert a wiki page directly to storage for test setup."""
+#: C5 (ADR-0227): the storage chokepoint takes the caller's value or raises,
+#: so every direct-insert fixture names one. These tests vary DIRECTORY, so a
+#: single shared identity keeps the directory assertions meaningful.
+_TEST_PROJECT_ID = "owner/repo"
+
+
+def _insert_wiki_page(slug, title, content, directory="global", project_id=None):
+    """Insert a wiki page directly to storage for test setup.
+
+    project_id defaults to the shared _TEST_PROJECT_ID; Q3 below overrides it
+    per page — wiki_query's scope key is project_id (Car C7), so isolating
+    two pages by directory alone while sharing one project_id no longer
+    isolates anything.
+    """
     st = _storage()
     return st.insert_wiki_page(
         {
@@ -64,6 +76,7 @@ def _insert_wiki_page(slug, title, content, directory="global"):
             "source_memory_ids": [],
             "confidence": "high",
             "directory_context": directory,
+            "project_id": project_id if project_id is not None else _TEST_PROJECT_ID,
         },
     )
 
@@ -82,6 +95,7 @@ def _insert_memory(content, directory="/proj/test"):
             "is_stale": False,
             "file_hash": None,
             "embedding_model": "all-MiniLM-L6-v2",
+            "project_id": _TEST_PROJECT_ID,
             "_internal": True,
         },
     )
@@ -93,24 +107,51 @@ def _insert_memory(content, directory="/proj/test"):
 
 
 def test_q3_wiki_query_scopes_to_directory(tmp_path):
-    """wiki_query with directory scopes results to that dir + global (Q3)."""
+    """wiki_query scopes results to the caller's project (Q3).
+
+    RE-KEYED (0047 PR#40 Car C7, commit a33401c0 "one WHERE clause — project +
+    global reach tag..."): wiki_query's RecallScope now filters on project_id,
+    not directory — ``_st._wiki.query(..., scope=RecallScope(project_id=...))``
+    in yadgar/core/server/tools/wiki.py. The original test varied only
+    `directory` while both calls named the SAME `project=` override, which
+    defeated the isolation it meant to prove once project wins over directory
+    (Car M precedence: project > session > directory-derived > raise) — both
+    pages share the caller's project_id, so both surface for both calls.
+    Directory can no longer even be the sole scope key: C5 deleted the
+    directory-derivation tier, so a call naming no `project=` and no session
+    identity raises `UnresolvedProjectError` rather than falling back to
+    directory. This is NOT the same code path as project_brief's
+    directory-keyed `key_wiki_pages`/wiki_list (TestProjectBriefWikiScoping,
+    test_directory_scoping_v562.py) — those deliberately were NOT touched by
+    C7 and stay directory-keyed; wiki_query specifically was.
+
+    The isolation axis this test proves is now project_id, so the two pages
+    are seeded under two DIFFERENT project_ids and queried with matching
+    overrides — `directory` is still supplied (wiki_query hard-requires it)
+    but is logged-and-ignored once `project=` wins.
+    """
     from yadgar.core.server.tools.wiki import wiki_query
+
+    _PROJ_A = "owner/schema-q3-proj-a-repo"
+    _PROJ_B = "owner/schema-q3-proj-b-repo"
 
     _insert_wiki_page(
         "schema-q3-proj-a",
         "Schema Q3 Project A",
         "schema discipline project alpha",
         directory="/proj/alpha",
+        project_id=_PROJ_A,
     )
     _insert_wiki_page(
         "schema-q3-proj-b",
         "Schema Q3 Project B",
         "schema discipline project beta",
         directory="/proj/beta",
+        project_id=_PROJ_B,
     )
 
-    results_a = wiki_query("schema discipline project", directory="/proj/alpha")
-    results_b = wiki_query("schema discipline project", directory="/proj/beta")
+    results_a = wiki_query("schema discipline project", directory="/proj/alpha", project=_PROJ_A)
+    results_b = wiki_query("schema discipline project", directory="/proj/beta", project=_PROJ_B)
 
     slugs_a = [r["slug"] for r in results_a]
     slugs_b = [r["slug"] for r in results_b]

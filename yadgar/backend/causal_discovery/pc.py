@@ -20,14 +20,44 @@ logger = logging.getLogger(__name__)
 def _fetch_filtered_episodes(
     storage: StorageEngine,
     cutoff_iso: str,
-    directory: str | None,
+    project_id: str | None,
 ) -> list[dict]:
-    """Return episodes since cutoff, sorted by timestamp, optionally filtered by directory."""
+    """Return episodes since cutoff, sorted by timestamp, optionally filtered by project_id.
+
+    C12 (0047 PR#40 §5) — **this filter used to match nothing.** It read
+    ``e["directory"] == project_id``: a filesystem PATH column compared against an
+    ``owner/repo`` IDENTITY. Those never compare equal, so a real ``project_id``
+    selected ZERO episodes and ``build_event_matrix`` returned an empty matrix
+    instead of a scoped one. It failed silently — an empty matrix is a legitimate
+    "insufficient data" outcome, so nothing raised. It was latent rather than live:
+    the only production caller (``discover_dag()`` via ``_run_causal_discovery_phase``)
+    passes no ``project_id``, so the branch was skipped; the public facade
+    ``CausalDiscovery.build_event_matrix(project_id=…)`` is where it bit.
+
+    C11's migration 033 gave ``episode`` a ``project_id`` column and ``insert_episode``
+    stamps it, which is what makes the re-key available. ``.get()``, not a subscript:
+    pre-033 rows have no such key at all.
+
+    **KNOWN GAP, stated rather than silent.** ``_shared/runtime/recall_session.py`` is
+    the one ``capture_action`` caller with no project in scope — correctly so, since
+    threading one would change ``_apply_recall_session_side_effects``'s signature up
+    the core recall path. An episode whose only captures came from recall therefore
+    carries ``project_id=None`` and is EXCLUDED here. Pinned by
+    ``tests/backend/test_c12_pc_episode_project_filter.py``.
+
+    A dual-arm ``project_id OR directory`` fallback was considered and rejected as
+    dead code on two measurements: a path never equals ``owner/repo``, so the legacy
+    arm could not match a real ``project_id``; and ``ActionLogger.capture`` assigns
+    ``episode["directory"] = directory`` unconditionally while recall passes ``""``,
+    so any episode a recall touched has had its ``directory`` blanked and the legacy
+    arm could not recover the historical corpus either. Re-introducing it would only
+    re-mix path and identity semantics — the exact confusion ADR-0225 retires.
+    """
     all_episodes = storage.get_episodes_since(0)
     episodes = [e for e in all_episodes if e.get("timestamp", "") >= cutoff_iso]
     episodes.sort(key=lambda e: e.get("timestamp", ""))
-    if directory:
-        episodes = [e for e in episodes if e["directory"] == directory]
+    if project_id:
+        episodes = [e for e in episodes if e.get("project_id") == project_id]
     return episodes
 
 
@@ -104,7 +134,7 @@ def _fill_event_matrix(
 def build_event_matrix(
     storage: StorageEngine,
     settings: Settings,
-    directory: str | None = None,
+    project_id: str | None = None,
     hours: int = 168,
 ) -> tuple[np.ndarray, list[str], list[str]]:
     """Build a time-aligned binary event matrix from recent activity.
@@ -119,7 +149,7 @@ def build_event_matrix(
     cutoff_iso = cutoff.isoformat()
 
     all_entities = storage.get_all_entities(min_heat=0.0, include_archived=True)
-    episodes = _fetch_filtered_episodes(storage, cutoff_iso, directory)
+    episodes = _fetch_filtered_episodes(storage, cutoff_iso, project_id)
 
     if not episodes:
         return np.zeros((0, 0)), [], []

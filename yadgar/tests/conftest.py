@@ -1326,17 +1326,42 @@ def flush_queue():
     return _flush
 
 
-def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
+def _row_in_scope(row: dict, scope: str | None) -> bool:
+    """True when *row* belongs to the project the caller named.
+
+    C10 (f): the scope key on a memory row is ``project_id``. When the caller
+    named no project the row cannot be disambiguated by scope, so content alone
+    decides — the same latitude the old directory match gave a caller that
+    passed the directory it happened to be in.
+    """
+    if not scope:
+        return True
+    return row.get("project_id") == scope
+
+
+def memorize_sync(
+    content: str, context: str | None = None, tags: list | None = None, **kwargs
+) -> dict:
     """Call memorize(), flush the queue, then return the stored memory dict with 'id'.
 
     Drop-in replacement for tests that previously relied on memorize() returning
     the full memory dict synchronously. After v4.4 the fast path returns
     {stored, queued, queue_id}; this helper flushes the drainer and fetches
     the memory so callers get a dict with 'id', 'content', 'heat', etc.
+
+    C10 (f) (0047 PR#40 §5): the read-back used to match
+    ``row["directory_context"] == context``. That is no longer true of any row
+    memorize writes — ``directory_context`` is stamped from the resolved
+    ``project_id`` and ``context`` is an optional staleness path. Left as it
+    was, every scan fell through and the helper returned the queued envelope,
+    surfacing as ``KeyError: 'id'`` in ~20 behavioural tests. The match is now
+    content + the SCOPE key the caller named (``project=``), which is what
+    "the row this call wrote" actually means after the split.
     """
     from yadgar.core import server as _s
 
     result = _s.memorize(content, context, tags, **kwargs)
+    _scope = kwargs.get("project")
     # Early-reject paths return synchronously without queuing
     if not result.get("queued"):
         return result
@@ -1349,7 +1374,7 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
         for row in rows:
-            if row.get("content") == content and row.get("directory_context") == context:
+            if row.get("content") == content and _row_in_scope(row, _scope):
                 row.pop("embedding", None)
                 return row
     except Exception:
@@ -1359,7 +1384,7 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
         for row in recent:
-            if row.get("content") == content and row.get("directory_context") == context:
+            if row.get("content") == content and _row_in_scope(row, _scope):
                 row.pop("embedding", None)
                 return row
     except Exception:
@@ -1372,7 +1397,7 @@ def memorize_sync(content: str, context: str, tags: list, **kwargs) -> dict:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
         for row in recent:
             stored = row.get("content", "")
-            if content in stored and row.get("directory_context") == context:
+            if content in stored and _row_in_scope(row, _scope):
                 row.pop("embedding", None)
                 return row
     except Exception:
@@ -1422,6 +1447,7 @@ def recall_backend_bypass(monkeypatch):
     """
     import sys
 
+    from yadgar._shared.storage.directory import RecallScope
     from yadgar.backend.retrieval.compose import ensure_retrieval_engine
     from yadgar.backend.retrieval.recall_pipeline import _fanout_recall
 
@@ -1436,8 +1462,20 @@ def recall_backend_bypass(monkeypatch):
         tags,
         mode=None,
         profile=None,
+        project_id=None,
+        **kwargs,
     ):
-        """Direct _fanout_recall call — bypasses HTTP, same _st engines."""
+        """Direct _fanout_recall call — bypasses HTTP, same _st engines.
+
+        Car C7 (0047 §5 C7): ``_fanout_recall`` re-keyed its scope parameter
+        from ``directory`` to a REQUIRED ``project_id``. The real
+        ``recall()`` → ``_forward_to_backend`` call site (recall.py) now
+        always sends ``project_id`` alongside ``directory`` — this bypass
+        mirrors that: ``directory`` is still accepted (kept for API parity
+        with ``_forward_to_backend``'s real signature and any caller that
+        inspects it), but the value forwarded into ``_fanout_recall`` is
+        ``project_id``, not ``directory``.
+        """
         if mode is not None and mode != "landscape":
             # Unknown mode — return empty (forward-only would have 400'd)
             return []
@@ -1447,11 +1485,14 @@ def recall_backend_bypass(monkeypatch):
         # T2 Car E2: compose the backend retriever lazily against the test's
         # live engines (idempotent; the shared root no longer builds it).
         ensure_retrieval_engine()
+        # Car C8: the scope param is a RecallScope. ``excluded_slugs`` stays
+        # EMPTY here — the superseded-ADR set is loaded in the async route this
+        # bypass replaces, and the loader is async while this shim is sync.
         return _fanout_recall(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
-            directory=directory,
+            recall_scope=RecallScope(project_id=project_id),
             type_filter=type_filter,
             tags=tags,
             profile=profile,
@@ -1521,6 +1562,8 @@ def admin_backend_bypass(monkeypatch):
         "yadgar.core.server.tools.admin_invariants",
         "yadgar.core.server.tools.project",
         "yadgar.core.server.tools.dispatch_helper",
+        # Car F: ADR tools forward ledger reads/writes via _forward_admin.
+        "yadgar.core.server.tools.adr",
     ):
         _mod = sys.modules.get(_consumer)
         if _mod is not None and hasattr(_mod, "_forward_admin"):

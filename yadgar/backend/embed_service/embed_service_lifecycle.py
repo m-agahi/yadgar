@@ -248,18 +248,25 @@ async def _migrate_engine_two() -> str | None:
     dies with the thread — the exact hazard car C kept construction
     connectionless to avoid. The lifespan is on the real loop.
 
-    NON-FATAL, MATCHING CARS A AND C. mysqld is started outside the container
-    HEALTHCHECK and outside the closing ``wait -n``; ``_init_sql_storage``
-    degrades to None on any failure. Nothing READS engine #2 yet — config reads
-    are core-in-process and repointing them is the knob train's build (ADR-0200)
-    — so a failed migration cannot produce a wrong answer, only an absent table.
-    THE MOMENT THE KNOB TRAIN REPOINTS READS THIS MUST BECOME FATAL, or the
-    daemon serves defaults from a schema-less database. PR #32's review flagged
-    the silent-swallow version of this; the error is logged with its traceback
-    rather than dropped.
+    FATAL — the precondition this docstring used to carry as a warning. It read
+    "THE MOMENT THE KNOB TRAIN REPOINTS READS THIS MUST BECOME FATAL, or the
+    daemon serves defaults from a schema-less database", and cars D/F/G/I/K of
+    PR #40 repointed exactly those reads. So a migration that RAN and failed now
+    propagates: the error is still logged with its traceback first (PR #32's
+    review flagged the silently-swallowed version), and then it is re-raised so
+    boot stops instead of continuing onto a database with no tables. ADR-0222
+    measured what the swallow buys — logged as an error, health check green,
+    systemd active, the daemon running BROKEN.
+
+    ABSENT IS NOT FAILED, and the distinction is deliberate. Every host without
+    MariaDB composes no engine #2 (``_init_sql_storage`` degrades to None), and
+    boot there is correct; only a migration that ran and raised is fatal.
 
     Returns:
-        The head revision id, or None when engine #2 is absent or migration failed.
+        The head revision id, or None when engine #2 is absent.
+
+    Raises:
+        Exception: whatever ``upgrade_to_head`` raised, re-raised unchanged.
     """
     from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
 
@@ -274,7 +281,7 @@ async def _migrate_engine_two() -> str | None:
         head = await upgrade_to_head(sql_storage.engine)
     except Exception:
         logger.exception("engine #2 migration FAILED — the relational schema is not at head")
-        return None
+        raise
 
     logger.info("engine #2 migrated to alembic head %s", head)
     return head

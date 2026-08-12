@@ -25,8 +25,20 @@ from yadgar.core.cli.drain import cmd_drain, register
 # ---------------------------------------------------------------------------
 
 
-def _make_args(directory="/tmp/proj", db_path=None, transcript_path=None):
-    return SimpleNamespace(directory=directory, db_path=db_path, transcript_path=transcript_path)
+def _make_args(directory="/tmp/proj", db_path=None, transcript_path=None, project="owner/repo"):
+    """Build a parsed-args double for ``cmd_drain``.
+
+    ``project`` is explicit because ``/tmp/proj`` is not a git tree: since C5
+    (ADR-0227) nothing derives an identity from a directory. ``cmd_drain``
+    resolves with ``required=False``, so an absent one yields ``None`` rather
+    than exiting — see ``test_forwards_none_project_when_tree_is_unresolvable``.
+    """
+    return SimpleNamespace(
+        directory=directory,
+        db_path=db_path,
+        transcript_path=transcript_path,
+        project=project,
+    )
 
 
 @contextmanager
@@ -98,14 +110,34 @@ class TestCmdDrainForward:
     def test_forwards_directory(self):
         with _patched() as fwd:
             cmd_drain(_make_args(directory="/my/proj"))
-        # HOOKS Car 2: cmd_drain now forwards (directory, transcript_path).
-        fwd.assert_called_once_with("/my/proj", None)
+        # HOOKS Car 2 forwarded (directory, transcript_path); C4 appended the
+        # host-resolved project_id as the third positional.
+        fwd.assert_called_once_with("/my/proj", None, "owner/repo")
 
     def test_forwards_transcript_path(self):
         """HOOKS Car 2: --transcript-path is threaded through to the forwarder."""
         with _patched() as fwd:
             cmd_drain(_make_args(directory="/my/proj", transcript_path="/tmp/s.jsonl"))
-        fwd.assert_called_once_with("/my/proj", "/tmp/s.jsonl")
+        fwd.assert_called_once_with("/my/proj", "/tmp/s.jsonl", "owner/repo")
+
+    def test_forwards_the_resolved_project_id(self):
+        """C4: ``--project`` reaches the backend op rather than being dropped."""
+        with _patched() as fwd:
+            cmd_drain(_make_args(directory="/my/proj", project="acme/widget"))
+        fwd.assert_called_once_with("/my/proj", None, "acme/widget")
+
+    def test_forwards_none_project_when_tree_is_unresolvable(self):
+        """C5/ADR-0227: drain resolves with ``required=False`` — and never invents one.
+
+        ``/tmp/proj`` has no identity, and this command runs from
+        ``pre-compact-drain.sh`` where exiting would silently lose the very
+        checkpoint the drain exists to save. So it degrades to ``None`` — the
+        assertion is that the third positional is ``None``, NOT a substituted
+        key like ``"global"`` or ``local/proj``.
+        """
+        with _patched() as fwd:
+            cmd_drain(_make_args(directory="/tmp/proj", project=None))
+        fwd.assert_called_once_with("/tmp/proj", None, None)
 
     def test_forward_error_propagates(self):
         """Forward-only: backend-unreachable errors surface, no local fallback."""

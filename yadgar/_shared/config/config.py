@@ -372,12 +372,11 @@ class Settings(BaseSettings):
     # Max near-duplicate candidates returned in the (non-blocking) near_duplicates list.
     MEMORIZE_SIM_TOP_K: int = 3
 
-    # v5.42.6: enforcement knob (I25 three-way registered).
-    # Default True: strict enforcement — a missing directory rejects the write.
-    # False: relax enforcement, emit WARN log + metric instead of rejecting.
-    # Set to False as a migration escape hatch if legacy callers lack directory.
-    # ADR-0215 deleted the BRANCH_ENFORCEMENT sibling along with branch scoping.
-    DIRECTORY_ENFORCEMENT: bool = True
+    # C5 (0047 PR#40 §5): ``DIRECTORY_ENFORCEMENT`` is DELETED. ADR-0215 had
+    # already removed its BRANCH_ENFORCEMENT sibling; ADR-0225 set this one's end
+    # condition as "until the registry check is actually wired", and C6 wires it
+    # in this same PR. A knob whose OFF position disables a scoping guarantee
+    # cannot coexist with an identity contract that is fail-loud by construction.
 
     # v5.62.0: Recall quality floor — drop results whose cross-encoder score is
     # below this threshold.  Targets keyword-only co-occurrence noise that survives
@@ -402,6 +401,15 @@ class Settings(BaseSettings):
     # Small (0.1) so CE relevance dominates but native signals tie-break.
     RECALL_MEMORY_PRIOR_WEIGHT: float = 0.1
     RECALL_WIKI_PRIOR_WEIGHT: float = 0.1
+
+    # Car C7 (0047, absorbing C8 item 5) DELETED ``RECALL_DOWNWEIGHT_FACTOR``.
+    # It tuned a penalty that never worked: both call sites MULTIPLIED a score
+    # of the form ``ce + w * native``, and ``ce`` is a raw cross-encoder logit
+    # that is commonly negative — so a factor below 1.0 RAISED the score and
+    # promoted the pages it was meant to sink. Its only user (``task_list``) is
+    # now ``recall_disposition="exclude"`` and no disposition resolves to
+    # ``"downweight"`` any more, so there is nothing left to tune. A future soft
+    # sink must SUBTRACT or CLAMP, never multiply — and must not reuse this name.
 
     # task:0085: recall() output-size bounds (presentation-only, applied in
     # core/server/tools/recall.py AFTER retrieval — ranking is untouched).

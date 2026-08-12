@@ -26,7 +26,12 @@ def phase_store(ctx: MemorizeContext) -> None:
     storage = _lifecycle._get_storage()
     embeddings = _lifecycle._get_embeddings()
     buffer = _lifecycle._get_buffer()
-    fhash = _file_hash(ctx.context)
+    # C10 (f) (0047 PR#40 §5): ``ctx.context`` is now an OPTIONAL REAL PATH and
+    # this is one of its only two surviving consumers (the other is the
+    # ``upsert_file_hash`` registration below) — carve-out 3. Absent path → no
+    # hash attempt, which is the same best-effort outcome ``_file_hash`` already
+    # produced for a directory or a prose string.
+    fhash = _file_hash(ctx.context) if ctx.context else None
 
     curator = _st._curator
     if curator is not None and ctx.embedding is not None:
@@ -47,15 +52,26 @@ def phase_store(ctx: MemorizeContext) -> None:
 
     # CLS dual-store: classify memory as episodic or semantic
     if _st._consolidation is not None and _st._consolidation.cls is not None:
-        store_type = _st._consolidation.cls.classify_memory(ctx.content, ctx.tags, ctx.context)
+        # C10 (f): ``classify_memory``'s third parameter is named ``project_id``
+        # (C9b renamed it); it was still being handed ``ctx.context``. Feeding a
+        # parameter one value while it is named for another is how the two keys
+        # stayed indistinguishable — pass the scope key it asks for.
+        store_type = _st._consolidation.cls.classify_memory(ctx.content, ctx.tags, ctx.project_id)
         storage.update_memory_fields(ctx.memory_id, store_type=store_type)
 
-    # Register file hash so staleness detector can find the filepath later
+    # Register file hash so staleness detector can find the filepath later.
+    # ``fhash`` is non-None only when ``ctx.context`` was a readable file, so
+    # the path handed to the registration is always a real one (carve-out 3).
     if fhash is not None:
         storage.upsert_file_hash(ctx.context, fhash)
 
-    # Capture in sensory buffer
-    buffer.capture(ctx.content, ctx.context)
+    # Capture in sensory buffer. C10 (f) kept passing ONLY the path because the
+    # ``episode`` table had no ``project_id`` column and substituting one would
+    # have minted a row the path-keyed readers cannot find. C11's migration 033
+    # added the column, so BOTH now travel: the path still feeds the readers
+    # that key on it (``causal_discovery/pc.py``, ``consolidation/cls.py``) and
+    # the identity is stamped alongside rather than in place of it.
+    buffer.capture(ctx.content, ctx.context or "", project_id=ctx.project_id)
 
     # Record activity on consolidation engine
     if _st._consolidation is not None:
@@ -74,7 +90,12 @@ def _store_via_curator(ctx: MemorizeContext, storage, embeddings, fhash: str | N
     curator = _st._curator
     result = curator.curate_on_remember(
         ctx.content,
-        ctx.context,
+        # C10 (f): still forwarded as the path hint, but it is NO LONGER what
+        # the row is stamped with — ``insert_new_memory`` now takes the
+        # ``directory_context`` from ``spec.project_id``. This arm is the
+        # PRODUCTION arm, so a stamp fix that reached only ``_direct_insert``
+        # would go green in a curator-less harness and stay broken live.
+        ctx.context or "",
         ctx.tags,
         ctx.embedding,
         params=CurateParams(
@@ -85,6 +106,13 @@ def _store_via_curator(ctx: MemorizeContext, storage, embeddings, fhash: str | N
             file_hash=fhash,
             embedding_model=embeddings.get_model_name(),
             contextual_prefix=ctx.contextual_prefix,
+            # C4b (0047 PR#40 §5): the curator branch is the PRODUCTION branch
+            # — ``phase_store`` prefers it whenever a curator and an embedding
+            # are both present. Stamping only ``_direct_insert`` below would
+            # leave the live path re-deriving inside a container that cannot
+            # (ADR-0227 §1.1). The merge arm needs nothing: it UPDATEs a row
+            # whose project_id was stamped by whoever inserted it.
+            project_id=ctx.project_id,
         ),
     )
     memory_id = result["memory_id"]
@@ -132,7 +160,12 @@ def _direct_insert(ctx: MemorizeContext, storage, embeddings, fhash: str | None)
             "content": ctx.content,
             "embedding": ctx.embedding,
             "tags": ctx.tags,
-            "directory_context": ctx.context,
+            # C10 (f) (0047 PR#40 §5): THE STAMP. It comes from the resolved
+            # ``project_id``, never from ``context``. ``context`` named a
+            # directory that no ``directory`` grep in the survey could reach,
+            # and the corpus shows callers filling it with prose (18 distinct
+            # non-path values live). Scope is now carried by exactly one key.
+            "directory_context": ctx.project_id,
             "heat": ctx.initial_heat,
             "is_stale": False,
             "file_hash": fhash,
@@ -140,6 +173,10 @@ def _direct_insert(ctx: MemorizeContext, storage, embeddings, fhash: str | None)
             "provenance_agent": ctx.provenance_agent_resolved,
             "tier": ctx.tier,
             "valid_until": ctx.computed_valid_until,
+            # C4b (0047 PR#40 §5): the enqueue-time stamp reaches
+            # ``insert_memory`` as ``_resolve_project_id_for_write``'s
+            # ``caller_value``, so a stamped write never touches the classifier.
+            "project_id": ctx.project_id,
         },
         embeddings_engine=embeddings,
         settings=get_settings(),

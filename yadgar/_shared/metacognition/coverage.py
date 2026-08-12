@@ -126,11 +126,17 @@ class _CoverageMixin:
         return known / total, unknown
 
     @observe(tier="boundary")
-    def assess_coverage(self, query: str, directory: str = "") -> dict:
+    def assess_coverage(self, query: str, project_id: str = "") -> dict:
         """Assess how well Yadgar can answer a query.
 
         Returns a dict with coverage score, confidence, suggestion,
         identified gaps, and detailed signal breakdowns.
+
+        C9a (0047 §5): ``directory`` renamed to ``project_id`` per ADR-0225.
+        The parameter is **not read** — ``_gather_memories`` and
+        ``_entity_coverage`` are both corpus-wide. Kept rather than deleted
+        because callers pass it positionally from trees C9a does not own;
+        C14 drops it.
         """
         matching_memories = self._gather_memories(query)
         memory_count = len(matching_memories)

@@ -231,8 +231,13 @@ class AstrocytePool:
             if mem is None:
                 continue
             content = mem.get("content", "")
+            # C9a (0047 §5): reads ``project_id`` instead of the legacy
+            # ``directory_context`` column per ADR-0225. ``extract_entities_typed``
+            # does not read the argument at all (pure regex over ``content``),
+            # so a row written before C6's backfill — carrying no project_id —
+            # changes nothing observable here.
             typed_entities = self._graph.extract_entities_typed(
-                content, mem.get("directory_context", "")
+                content, mem.get("project_id", "") or ""
             )
             for name, etype, _ctx in typed_entities:
                 if etype in entity_types:

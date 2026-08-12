@@ -55,13 +55,13 @@ class _SignalsMixin:
     # ── Signal 2: Entity novelty ─────────────────────────────────────────
 
     @observe(tier="stage", metric="write.compute_entity_novelty")
-    def _compute_entity_novelty(self, content: str, directory: str) -> float:
+    def _compute_entity_novelty(self, content: str, project_id: str) -> float:
         """Signal 2: How many entities in this content are new to the graph?
 
         entity_novelty = new_entities / total_entities (or 0.5 if no entities)
         """
         kg = self._retriever._graph
-        extracted = kg.extract_entities_typed(content, directory)
+        extracted = kg.extract_entities_typed(content, project_id)
 
         if not extracted:
             return 0.5  # No entities = moderate novelty
@@ -78,7 +78,7 @@ class _SignalsMixin:
     # ── Signal 3 helpers ─────────────────────────────────────────────────
 
     @observe(tier="hot", metric="write.collect_temporal_entities")
-    def _collect_temporal_entities(self, content: str, directory: str) -> set[str]:
+    def _collect_temporal_entities(self, content: str, project_id: str) -> set[str]:
         """Collect entity names to check for temporal novelty.
 
         Method 1: Extract entities from content using code patterns.
@@ -86,7 +86,7 @@ class _SignalsMixin:
         """
         entity_names: set[str] = set()
         kg = self._retriever._graph
-        extracted = kg.extract_entities_typed(content, directory)
+        extracted = kg.extract_entities_typed(content, project_id)
         for name, _type, _rel_ctx in extracted:
             entity_names.add(name)
         for entity in self._get_cached_entities():
@@ -130,18 +130,18 @@ class _SignalsMixin:
     # ── Signal 3: Temporal novelty ───────────────────────────────────────
 
     @observe(tier="stage", metric="write.compute_temporal_novelty")
-    def _compute_temporal_novelty(self, content: str, directory: str) -> float:
+    def _compute_temporal_novelty(self, content: str, project_id: str) -> float:
         """Signal 3: How recently was a related topic discussed?
 
         Within last hour: 0.1 (recent = expected follow-up)
         1-24h ago: 0.3 (moderate gap)
         >24h or none found: 0.7 (old topic resurfacing = surprising)
         """
-        entity_names_to_check = self._collect_temporal_entities(content, directory)
+        entity_names_to_check = self._collect_temporal_entities(content, project_id)
         if not entity_names_to_check:
             return 0.7  # No entities to check = surprising
 
-        dir_memories = self._storage.get_memories_for_directory(directory, min_heat=0.0)
+        dir_memories = self._storage.get_memories_for_directory(project_id, min_heat=0.0)
         most_recent_dt = self._most_recent_mention_dt(entity_names_to_check, dir_memories)
 
         if most_recent_dt is None:
@@ -159,14 +159,14 @@ class _SignalsMixin:
     # ── Signal 4: Structural novelty ─────────────────────────────────────
 
     @observe(tier="stage", metric="write.compute_structural_novelty")
-    def _compute_structural_novelty(self, content: str, directory: str) -> float:
+    def _compute_structural_novelty(self, content: str, project_id: str) -> float:
         """Signal 4: Does this content introduce new relationship types or causal patterns?
 
         New relationship type in graph: 0.8
         All relationship types already exist: 0.2
         """
         kg = self._retriever._graph
-        extracted = kg.extract_entities_typed(content, directory)
+        extracted = kg.extract_entities_typed(content, project_id)
 
         if not extracted:
             return 0.2  # No structure to analyze

@@ -13,6 +13,11 @@ from yadgar.backend.queue_drainer import (
     _classify_error,
 )
 
+#: C13 — every queued write in this file names a project explicitly.
+#: ADR-0227 deleted the derivation, so the drainer's _validate_project_id
+#: DLQs an unstamped payload before the behaviour under test can run.
+_TEST_PROJECT = "m-agahi/yadgar"
+
 # ── _classify_error ───────────────────────────────────────────────────────────
 
 
@@ -121,7 +126,10 @@ def _advance_all_backoffs(drainer: QueueDrainer) -> None:
 class TestPermanentFailureDLQ:
     def test_moves_to_dlq_after_max_permanent_attempts(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path, max_permanent_attempts=3, backoff_base_s=0.0)
-        fq.enqueue("memorize", {"content": "test", "context": "/tmp", "branch": "master"})
+        fq.enqueue(
+            "memorize",
+            {"project_id": _TEST_PROJECT, "content": "test", "context": "/tmp", "branch": "master"},
+        )
 
         err = Exception("Client error '400 Bad Request'")
         with patch.object(drainer, "_apply", side_effect=err):
@@ -140,6 +148,7 @@ class TestPermanentFailureDLQ:
         fq.enqueue(
             "wiki_add",
             {
+                "project_id": _TEST_PROJECT,
                 "wiki_schema_version": 2,
                 "slug": "t",
                 "title": "T",
@@ -167,7 +176,10 @@ class TestPermanentFailureDLQ:
 
     def test_events_log_appended(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path, max_permanent_attempts=1, backoff_base_s=0.0)
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
+        fq.enqueue(
+            "memorize",
+            {"project_id": _TEST_PROJECT, "content": "t", "context": "/tmp", "branch": "master"},
+        )
 
         with patch.object(
             drainer, "_apply", side_effect=Exception("Client error '400 Bad Request'")
@@ -189,7 +201,10 @@ class TestTransientFailureSurvives:
             max_transient_attempts=10,
             backoff_base_s=0.0,
         )
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
+        fq.enqueue(
+            "memorize",
+            {"project_id": _TEST_PROJECT, "content": "t", "context": "/tmp", "branch": "master"},
+        )
 
         err = Exception("Server error '503 Service Unavailable'")
         for _ in range(4):
@@ -205,7 +220,10 @@ class TestTransientFailureSurvives:
 class TestBackoffBehavior:
     def test_file_skipped_within_backoff_window(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path, backoff_base_s=3600.0)
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
+        fq.enqueue(
+            "memorize",
+            {"project_id": _TEST_PROJECT, "content": "t", "context": "/tmp", "branch": "master"},
+        )
 
         err = Exception("Client error '400 Bad Request'")
         with patch.object(drainer, "_apply", side_effect=err):
@@ -220,7 +238,10 @@ class TestBackoffBehavior:
         fq, drainer = _make_drainer(
             tmp_path, max_permanent_attempts=10, backoff_base_s=30.0, backoff_max_s=3600.0
         )
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
+        fq.enqueue(
+            "memorize",
+            {"project_id": _TEST_PROJECT, "content": "t", "context": "/tmp", "branch": "master"},
+        )
 
         err = Exception("Client error '400 Bad Request'")
         now = time.time()
@@ -241,7 +262,10 @@ class TestBackoffBehavior:
         fq, drainer = _make_drainer(
             tmp_path, max_permanent_attempts=20, backoff_base_s=30.0, backoff_max_s=100.0
         )
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
+        fq.enqueue(
+            "memorize",
+            {"project_id": _TEST_PROJECT, "content": "t", "context": "/tmp", "branch": "master"},
+        )
 
         fname = list(fq.pending())[0].name
         # Simulate 10 previous failures
@@ -261,7 +285,10 @@ class TestBackoffBehavior:
 class TestSuccessAndReset:
     def test_success_clears_tracker(self, tmp_path):
         fq, drainer = _make_drainer(tmp_path)
-        fq.enqueue("memorize", {"content": "t", "context": "/tmp", "branch": "master"})
+        fq.enqueue(
+            "memorize",
+            {"project_id": _TEST_PROJECT, "content": "t", "context": "/tmp", "branch": "master"},
+        )
         fname = list(fq.pending())[0].name
         drainer._attempts[fname] = _Attempt(count=2, last_error="old error")
 

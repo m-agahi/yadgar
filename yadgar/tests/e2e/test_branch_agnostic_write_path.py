@@ -61,6 +61,12 @@ pytestmark = pytest.mark.e2e
 
 PROJECT_DIR = "/home/test/yadgar-project"
 
+#: Identity every write in this file names. ADR-0215 (the subject here) removed
+#: the BRANCH dimension; C5/ADR-0227 then made the PROJECT dimension mandatory
+#: at the same boundaries. Naming it keeps each test on its own subject: a
+#: writer that refuses for want of an identity is not evidence about branch.
+PROJECT_ID = "owner/repo"
+
 
 def _no_branch_context_anywhere(monkeypatch) -> None:
     """Construct the exact environment the v5.42.3 hard-reject fired on.
@@ -103,6 +109,7 @@ class TestWritesSucceedWithoutBranchContext:
             content=f"memorize note {token}",
             context=PROJECT_DIR,
             tags=["adr-0215"],
+            project=PROJECT_ID,
         )
         assert result.get("stored") is True, (
             f"memorize must accept a write with no branch context (ADR-0215); got {result}"
@@ -115,7 +122,15 @@ class TestWritesSucceedWithoutBranchContext:
             f"memorize must have stored exactly one row for token {token!r}; got {rows}"
         )
         assert rows[0]["id"] is not None
-        assert rows[0]["directory_context"] == PROJECT_DIR
+        # C10 (f) (0047 PR#40 §5): the stamp is the PROJECT, not the path.
+        # ``context`` lost its scoping role — it is now an optional real path
+        # used only for staleness hashing — so ``directory_context`` is written
+        # from the resolved ``project_id``. Asserted as an equality against
+        # PROJECT_ID (not relaxed away) so this still fails if the stamp is
+        # dropped, and so a regression back to the path is caught here too.
+        # ``anchor`` below deliberately still stamps the path: its reader
+        # (``get_anchored_memories_scoped``) has not been re-keyed yet.
+        assert rows[0]["directory_context"] == PROJECT_ID
 
     def test_anchor_stores_a_row(self, e2e_engines, monkeypatch, _e2e_backend_drainer):
         """anchor() previously returned {"error": "missing_branch"} here."""
@@ -129,6 +144,7 @@ class TestWritesSucceedWithoutBranchContext:
             content=f"anchor note {token}",
             context=PROJECT_DIR,
             reason="adr-0215 write path",
+            project=PROJECT_ID,
         )
         assert result.get("queued") is True, (
             f"anchor must accept a write with no branch context (ADR-0215); got {result}"
@@ -150,7 +166,7 @@ class TestWritesSucceedWithoutBranchContext:
         storage = e2e_engines["storage"]
         token = "adr0215writepathcheckpoint"
 
-        result = checkpoint(directory=PROJECT_DIR, current_task=f"task {token}")
+        result = checkpoint(directory=PROJECT_DIR, current_task=f"task {token}", project=PROJECT_ID)
         assert result.get("queued") is True, (
             f"checkpoint must accept a write with no branch context (ADR-0215); got {result}"
         )
@@ -177,7 +193,9 @@ class TestWritesSucceedWithoutBranchContext:
         storage = e2e_engines["storage"]
         token = "adr0215writepathactivework"
 
-        result = update_active_work(directory=PROJECT_DIR, content=f"active work {token}")
+        result = update_active_work(
+            directory=PROJECT_DIR, content=f"active work {token}", project=PROJECT_ID
+        )
         new_memory = result.get("new_memory")
         assert isinstance(new_memory, dict), (
             f"update_active_work must store a row with no branch context (ADR-0215); got {result}"

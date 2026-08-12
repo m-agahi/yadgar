@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar.backend.graph.graph_layout import attach_cached_positions, graph_signature
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
 def _payload(ids):
@@ -123,6 +124,7 @@ def _seed(n=4):
                 "directory_context": "/test",
                 "tags": ["t"],
                 "heat": float(i + 1) / n,
+                "project_id": TEST_PROJECT_ID,
             }
         )
 

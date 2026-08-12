@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
-from yadgar._shared.storage.directory import is_directory_eligible
+from yadgar._shared.storage.directory import GLOBAL_REACH_TAG, RecallScope
 from yadgar._shared.wiki.contract import (
     CATEGORIES as _CONTRACT_CATEGORIES,
 )
@@ -26,12 +26,70 @@ from yadgar._shared.wiki.contract import (
 from yadgar._shared.wiki.contract import (
     WikiAddOptions,
 )
+from yadgar._shared.wiki.policy import MUTABILITY_VALUES
 from yadgar._shared.wiki.policy import get_policy as _get_wiki_policy
 from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
 from yadgar._shared.wiki.slug import slugify as _slugify_fn
 from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 
 logger = logging.getLogger(__name__)
+
+
+@observe(exempt="pure policy lookup + list append; no I/O")
+def _apply_storage_scope(
+    page_type: str | None, effective_dir: str, tags: list[str]
+) -> tuple[str, list[str]]:
+    """Enforce ``storage_scope="global"`` on a write. Returns (directory, tags).
+
+    C2 (#83): the TYPE, not the caller, decides the scope, so a caller-supplied
+    directory is overridden here. This is the single enforcement point for both
+    ``agent_prompt_save`` and raw ``wiki_add`` replay (``run_wiki_add_replay``
+    also calls ``WikiStore.add``). See ADR-0158.
+
+    Car C7 (0047 §5 C7): REACH NOW TRAVELS AS A TAG, so the directory override
+    is no longer sufficient on its own. The read path is keyed on
+    ``project_id = $p OR 'global' IN tags`` and no longer looks at
+    ``directory_context`` at all — so without the tag a newly written
+    agent-prompt page would be stamped ``directory_context='global'``, carry the
+    writer's own ``project_id``, and be invisible from every OTHER project: the
+    exact ADR-0159 regression the global storage scope exists to prevent,
+    silently reintroduced by the re-key. C6's backfill adds the same tag to the
+    pages that already exist; this is the write-side half, so new pages need no
+    second backfill.
+
+    Extracted from ``WikiStore.add`` for I30 fn_loc governance; behaviour is the
+    inline block verbatim.
+    """
+    if _get_wiki_policy(page_type).storage_scope != "global":
+        return effective_dir, tags
+    if GLOBAL_REACH_TAG not in tags:
+        tags = [*tags, GLOBAL_REACH_TAG]
+    return "global", tags
+
+
+@observe(exempt="pure string membership predicate; no I/O")
+def _gate_dir_eligible(directory_context: str | None, caller_dir: str | None) -> bool:
+    """WRITE-side duplicate-gate directory scope. NOT the recall scope.
+
+    Car C7 moved RECALL scoping off ``directory_context`` and onto
+    ``project_id`` in a stage-1 ``WHERE`` clause, and deleted the shared
+    ``is_directory_eligible`` post-filter that both paths used to share. This
+    predicate is the OTHER user of that function: the similarity gate's
+    "a page in an unrelated project directory is not a duplicate" rule
+    (Car B, #83). Its semantics are deliberately UNCHANGED and it is kept
+    local so a reader cannot mistake it for the retired read-path mechanism —
+    re-keying the write gate is a gate car's call, not this one's, and doing it
+    here would change duplicate-detection behaviour as a side effect of a read
+    -path change.
+
+    Eligible: the caller's own directory, plus the ``{'global', '', None}``
+    sentinels. ``caller_dir=None`` disables filtering (legacy/daemon callers).
+    """
+    if caller_dir is None:
+        return True
+    if directory_context in ("global", "", None):
+        return True
+    return directory_context == caller_dir
 
 
 def _wiki_observe_stage(stage: str, elapsed_ms: float) -> None:
@@ -693,6 +751,11 @@ class WikiStore:
         confidence = o.confidence
         directory_context = o.directory_context
         page_type = o.page_type
+        # Car F (0047 §7): server-side sanctioned token threaded from the
+        # canonical write seam so mutability='locked' page_types (e.g. ``adr``)
+        # can be first-inserted. Set on the page dict so storage.insert_wiki_page
+        # pops it into its ``sanctioned`` kwarg for the gate.
+        sanctioned = bool(o.sanctioned)
 
         # Car B (#83): explicit caller-supplied slug bypasses title derivation.
         # Structural pages MUST land at a caller-computed slug so their crossrefs +
@@ -713,12 +776,7 @@ class WikiStore:
         # "global". The TYPE, not the caller, decides the scope. This is the single
         # enforcement point for both agent_prompt_save and raw wiki_add replay
         # (run_wiki_add_replay also calls WikiStore.add). See ADR-0158 (wiki_policy).
-        if _get_wiki_policy(page_type).storage_scope == "global":
-            # A global-scoped page is cross-project canonical. The TYPE, not the
-            # caller, decides the scope, so the caller-supplied directory is
-            # overridden here. ADR-0215 removed the branch axis; the directory
-            # override is the whole of this enforcement point.
-            effective_dir = "global"
+        effective_dir, tags = _apply_storage_scope(page_type, effective_dir, tags)
 
         existing = self._storage.get_wiki_page_by_slug(slug)
         now = datetime.now(UTC).isoformat()
@@ -788,6 +846,19 @@ class WikiStore:
 
             page["page_type"] = page_type
             page["wiki_schema_version"] = WIKI_SCHEMA_VERSION
+        # Car F (0047 §7): thread the sanctioned token from the canonical write
+        # seam so storage.insert_wiki_page picks it up for the mutability gate.
+        if sanctioned:
+            page["_sanctioned"] = True
+        # C3 (0047 PR#40 §5.C3): the enqueue-time project_id. Stamped SEPARATELY
+        # from ``effective_dir`` on purpose — the storage_scope="global"
+        # override above rewrites the DIRECTORY of a cross-project page type,
+        # and must not also collapse its ownership: a library page found in this
+        # repo is still FROM this repo (§1.4, ownership ≠ reach). Reaches
+        # ``insert_wiki_page`` as ``_resolve_project_id_for_write``'s
+        # ``caller_value``, so a stamped write never touches the classifier.
+        if o.project_id is not None:
+            page["project_id"] = o.project_id
         page_id = self._storage.insert_wiki_page(page)
         page["id"] = page_id
         self._sync_crossrefs(slug, links)
@@ -816,12 +887,22 @@ class WikiStore:
 
     @observe(tier="stage")
     def _collect_wiki_fts_scores(
-        self, query: str, scores: dict[int, float], max_results: int
+        self,
+        query: str,
+        scores: dict[int, float],
+        max_results: int,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> None:
         """Collect BM25 FTS scores for wiki pages. Observes fts stage metric."""
         _fts_t0 = _time.perf_counter()
         try:
-            fts_results = self._storage.search_wiki_fts_scored(query, limit=max_results * 3)
+            fts_results = self._storage.search_wiki_fts_scored(
+                query,
+                limit=max_results * 3,
+                scope_sql=scope_sql,
+                scope_params=scope_params,
+            )
             if fts_results:
                 # SurrealDB returns negative BM25 scores — use min-max normalization
                 bm25_vals = [s for _, s in fts_results]
@@ -837,7 +918,12 @@ class WikiStore:
 
     @observe(tier="stage")
     def _collect_wiki_vector_scores(
-        self, query: str, scores: dict[int, float], max_results: int
+        self,
+        query: str,
+        scores: dict[int, float],
+        max_results: int,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> None:
         """Collect vector similarity scores for wiki pages. Observes embed_query + hnsw stages."""
         try:
@@ -847,7 +933,10 @@ class WikiStore:
             if query_embedding is not None:
                 _hnsw_t0 = _time.perf_counter()
                 vec_results = self._storage.search_wiki_vectors(
-                    query_embedding, top_k=max_results * 3
+                    query_embedding,
+                    top_k=max_results * 3,
+                    scope_sql=scope_sql,
+                    scope_params=scope_params,
                 )
                 _wiki_observe_stage("hnsw", (_time.perf_counter() - _hnsw_t0) * 1000)
                 if vec_results:
@@ -858,8 +947,14 @@ class WikiStore:
             logger.debug("Wiki vector search failed for query '%s'", query)
 
     @observe(tier="stage")
-    def _collect_wiki_vector_scores_tagged(
-        self, query: str, scores: dict[int, float], max_results: int, include_tag: str
+    def _collect_wiki_vector_scores_tagged(  # noqa: PLR0913
+        self,
+        query: str,
+        scores: dict[int, float],
+        max_results: int,
+        include_tag: str,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> None:
         """Collect vector scores for pages matching include_tag via SQL pre-filter.
 
@@ -873,7 +968,11 @@ class WikiStore:
             query_embedding = self._embeddings.encode_query(query)
             if query_embedding is not None:
                 vec_results = self._storage.search_wiki_vectors_tagged(
-                    query_embedding, include_tag=include_tag, top_k=max_results * 3
+                    query_embedding,
+                    include_tag=include_tag,
+                    top_k=max_results * 3,
+                    scope_sql=scope_sql,
+                    scope_params=scope_params,
                 )
                 if vec_results:
                     for page_id, sim in vec_results:
@@ -884,8 +983,14 @@ class WikiStore:
             )
 
     @observe(tier="stage")
-    def _collect_scores_dispatch(
-        self, query: str, scores: dict[int, float], max_results: int, include_tag: str | None
+    def _collect_scores_dispatch(  # noqa: PLR0913
+        self,
+        query: str,
+        scores: dict[int, float],
+        max_results: int,
+        include_tag: str | None,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
     ) -> None:
         """Dispatch score collection to tagged (include_tag set) or hybrid (default) path.
 
@@ -894,10 +999,12 @@ class WikiStore:
         Default path: hybrid FTS + HNSW vector.
         """
         if include_tag:
-            self._collect_wiki_vector_scores_tagged(query, scores, max_results, include_tag)
+            self._collect_wiki_vector_scores_tagged(
+                query, scores, max_results, include_tag, scope_sql, scope_params
+            )
         else:
-            self._collect_wiki_fts_scores(query, scores, max_results)
-            self._collect_wiki_vector_scores(query, scores, max_results)
+            self._collect_wiki_fts_scores(query, scores, max_results, scope_sql, scope_params)
+            self._collect_wiki_vector_scores(query, scores, max_results, scope_sql, scope_params)
 
     @staticmethod
     @observe(tier="stage")
@@ -940,6 +1047,7 @@ class WikiStore:
         max_results: int = 5,
         include_tag: str | None = None,
         exclude_tags: list[str] | None = None,
+        scope: RecallScope | None = None,
     ) -> list[dict]:
         """Hybrid search: FTS + vector, filtered by tags/category.
 
@@ -959,6 +1067,17 @@ class WikiStore:
             exclude_tags: Post-rank exclude filter — pages having ANY of these tags are
                           dropped. Used by recall() to suppress agent-prompt pages from
                           general retrieval.
+            scope: Car C7 — the caller's ``RecallScope`` (project id + the tags
+                          they opted into). Pushed into the STAGE-1 ``WHERE`` clause
+                          together with the ``global`` reach tag and the
+                          policy-derived ``page_type`` exclusion, so the query's
+                          LIMIT is spent on in-scope rows only. Before C7 this was a
+                          Python post-filter on ``directory_context``, which meant a
+                          scoped recall over a 15%-share project could return ZERO
+                          rows because the whole top-N was out of scope. ``None`` =
+                          unscoped (daemon-internal / legacy callers). When the
+                          scope carries no ``opt_in_tags``, *tags* is used instead,
+                          matching the row-level ``is_recall_visible`` contract.
         """
         # P11: set dynamic span attributes on the active wiki.query span.
         try:
@@ -975,9 +1094,18 @@ class WikiStore:
 
         scores: dict[int, float] = {}
 
+        # Car C7: ONE clause carrying three things — the project predicate, the
+        # ``global`` reach tag, and the ``POLICY_BY_TYPE``-derived page_type
+        # exclusion. Built here, pushed into every arm below. The opt-in tags
+        # default to the caller's ``tags`` so the documented
+        # ``recall(tags=["agent-prompt"])`` lookup keeps reaching the library.
+        scope_sql, scope_params = (scope or RecallScope()).with_default_opt_in(tags).clause()
+
         # Dispatch to tagged (include_tag set) or hybrid (default) score collection.
-        # Include path: SQL pre-filter, vector-only; default: hybrid FTS + HNSW vector.
-        self._collect_scores_dispatch(query, scores, max_results, include_tag)
+        # Include path: SQL pre-filter, vector-only; default: hybrid FTS + vector.
+        self._collect_scores_dispatch(
+            query, scores, max_results, include_tag, scope_sql, scope_params
+        )
 
         if not scores:
             return []
@@ -1050,7 +1178,7 @@ class WikiStore:
 
         Directory scope (Car B, #83): when ``directory_context`` (the caller's
         project dir) is supplied, candidates are additionally filtered via
-        ``is_directory_eligible`` — a page in an UNRELATED project directory is
+        ``_gate_dir_eligible`` — a page in an UNRELATED project directory is
         NOT a duplicate of the incoming page (fixes the cross-project gate block:
         two projects' thin ``logging.py`` no longer collide). Sentinel rows
         (``global`` / ``''`` / ``None``) stay always-eligible. When
@@ -1122,7 +1250,7 @@ class WikiStore:
 
         Split out of ``find_similar_wiki_pages`` to keep the parent under the I13
         cyclomatic cap. Applies, in order: threshold, page-exists, directory
-        scope (``is_directory_eligible``), self-slug exclusion. Caps at
+        scope (``_gate_dir_eligible``), self-slug exclusion. Caps at
         ``top_k`` hits. Behaviour is unchanged from the inline loop.
         """
         candidates: list[dict] = []
@@ -1137,7 +1265,7 @@ class WikiStore:
 
             # Car B (#83): directory scope filter — a page in an unrelated project
             # directory is not a duplicate. No-op when caller_dir is None (legacy).
-            if not is_directory_eligible(page.get("directory_context"), caller_dir):
+            if not _gate_dir_eligible(page.get("directory_context"), caller_dir):
                 continue
 
             # Exclude self-slug (used for upsert path)
@@ -1162,8 +1290,17 @@ class WikiStore:
         title: str | None = None,
         tags: list[str] | None = None,
         source_memory_ids: list[int] | None = None,
+        *,
+        project_id: str | None = None,
     ) -> dict:
-        """Ingest content. If title matches existing page, append with timestamp."""
+        """Ingest content. If title matches existing page, append with timestamp.
+
+        C13 (0047 PR#40 §5): ``project_id`` is threaded through to the create
+        branch. The append branch does not need it — it UPDATEs a row whose
+        owner was stamped by whoever inserted it, and re-stamping on append
+        would let a second writer rename an existing page's owner. The create
+        branch is a real insert, and after C5 an unstamped insert raises.
+        """
         if title is None:
             title = "Untitled"
         slug = self._slugify(title)
@@ -1195,7 +1332,10 @@ class WikiStore:
             title=title,
             content=content,
             tags=tags,
-            opts=WikiAddOptions(source_memory_ids=source_memory_ids),
+            opts=WikiAddOptions(
+                source_memory_ids=source_memory_ids,
+                project_id=project_id,
+            ),
         )
 
     @observe(tier="boundary")
@@ -1439,9 +1579,13 @@ class WikiStore:
     def _autolink_write_page(self, page: dict, content: str, proposals: list[dict]) -> None:
         """Apply insertions and upsert WITHOUT clobbering page metadata.
 
-        Re-passes the page's own category, directory_context, page_type and
-        confidence so the add() upsert never resets them to defaults.
-        Tags the page 'auto-linked' so editors can see machine edits.
+        Re-passes the page's own category, directory_context, page_type,
+        confidence and — C13 (0047 PR#40 §5) — ``project_id`` so the add()
+        upsert never resets them to defaults. Ownership belongs on that list
+        for the same reason the other four do: this method is holding the row
+        it is rewriting, and a rewrite that drops the owner is the defect C5
+        made visible rather than a new one it introduced. Tags the page
+        'auto-linked' so editors can see machine edits.
         """
         new_content = _autolink_apply_insertions(content, proposals)
         if new_content == content:
@@ -1455,6 +1599,7 @@ class WikiStore:
                 confidence=page.get("confidence", "medium"),
                 directory_context=page.get("directory_context"),
                 page_type=page.get("page_type"),
+                project_id=page.get("project_id"),
             ),
         )
 
@@ -1841,6 +1986,100 @@ class WikiStore:
             "page_ids": page_ids,
             # Back-compat keys for callers that check the single-row shape.
             # page_id = first resolved id; changed = any row was updated.
+            "page_id": page_ids[0],
+            "changed": rows_updated > 0,
+        }
+
+    @observe(tier="stage")
+    def set_mutability_by_slug(
+        self,
+        slug: str,
+        value: str | None,
+        *,
+        reason: str,
+    ) -> dict:
+        """Set ``mutability_override`` on ALL rows sharing *slug*.
+
+        Car J (0047 §7 D25/D26). Mirrors ``set_metadata_by_slug``'s all-rows
+        pattern (every row sharing the slug, including 'global' stragglers,
+        gets the new override). This is the SOLE write path for the override
+        field — ``update_wiki_page`` callers cannot write ``mutability_override``
+        directly because ``WikiStore._METADATA_FIELDS`` does not include it,
+        so the privileged ``wiki_set_mutability`` tool is the only sanctioned
+        way to flip a page's mutability.
+
+        ``value`` must be ``"free"`` | ``"locked"`` | ``"derived"`` | ``None``
+        (None clears the override back to the per-type default). ``reason``
+        is required and logged for the audit trail (D26). The override write
+        itself runs through ``storage.set_wiki_page_metadata`` with
+        ``_sanctioned=True`` because mutability_override is a system field —
+        flipping it MUST NOT be blocked by the storage-layer mutability gate
+        (the gate checks effective mutability of the existing page, which
+        would deadlock this tool's whole purpose).
+
+        Returns:
+            {ok: True, slug, rows_updated, page_ids, page_id, changed}
+            {ok: False, error} on validation failure or slug not found.
+        """
+        # ── Validate value ────────────────────────────────────────────────
+        if value is not None and value not in MUTABILITY_VALUES:
+            return {
+                "ok": False,
+                "error": (
+                    f"invalid mutability value {value!r}; "
+                    f"allowed: {sorted(MUTABILITY_VALUES) + [None]}"
+                ),
+            }
+
+        # ── Validate reason ───────────────────────────────────────────────
+        if not reason or not reason.strip():
+            return {
+                "ok": False,
+                "error": "reason is required for mutability_override audit log",
+            }
+
+        page_ids = self._storage.get_wiki_page_ids_by_slug(slug)
+        if not page_ids:
+            return {"ok": False, "error": f"Wiki page '{slug}' not found"}
+
+        rows_updated = 0
+        for pid in page_ids:
+            page = self._storage.get_wiki_page(pid)
+            if page is None:
+                continue
+            old = page.get("mutability_override")
+            if old == value:
+                logger.info(
+                    "set_mutability_by_slug no-op: slug=%r page_id=%s value=%r (unchanged)",
+                    slug,
+                    pid,
+                    value,
+                )
+                continue
+            # _sanctioned=True bypasses the mutability gate — this tool is
+            # the privileged writer, and the gate would deadlock it.
+            self._storage.set_wiki_page_metadata(
+                pid,
+                "mutability_override",
+                value,
+            )
+
+            logger.info(
+                "set_mutability_by_slug: slug=%r page_id=%s old=%r new=%r reason=%r",
+                slug,
+                pid,
+                old,
+                value,
+                reason,
+            )
+            rows_updated += 1
+
+        return {
+            "ok": True,
+            "slug": slug,
+            "rows_updated": rows_updated,
+            "page_ids": page_ids,
+            # Back-compat keys for callers that check the single-row shape.
             "page_id": page_ids[0],
             "changed": rows_updated > 0,
         }

@@ -28,6 +28,10 @@ from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._project_param import (
+    accept_project_param,
+    resolve_effective_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,16 +136,19 @@ def _render_project_brief(brief: dict) -> str:
     # F4: empty-state nudges
     if not init_present:
         lines.append(
-            "*Suggestion: call `bootstrap_project(directory, ...)` to seed project context.*"
+            "*Suggestion: call `bootstrap_project(directory, content, project=...)`"
+            " to seed project context.*"
         )
     if not active_present:
         lines.append(
-            "*Suggestion: call `update_active_work(directory, ...)` once you start a session"
+            "*Suggestion: call `update_active_work(directory, content, project=...)`"
+            " once you start a session"
             " to store working-state and checkpoint context.*"
         )
         lines.append(
             "*To track TODOs/tasks use the harness task list (TaskCreate)"
-            " — yadgar mirrors it via the stop-hook.*"
+            " and the yadgar `task_write` tool — the SQL ledger is the source"
+            " of truth, the wiki `{project}-task-list` page is a derived mirror.*"
         )
     if not init_present or not active_present:
         lines.append("")
@@ -484,17 +491,24 @@ def _render_wiki_catalog(catalog: dict, resolved: str) -> list[str]:
 
 
 @observe(tier="stage", metric="tools.project._build_hot_memories")
-def _build_hot_memories(storage, resolved: str, limit: int, snippet: int) -> list[dict]:
+def _build_hot_memories(storage, project_scope_key: str, limit: int, snippet: int) -> list[dict]:
     """Fetch hot memories excluding anchored entries.
 
     Filters: heat > 0 AND 'anchor' NOTINSIDE tags AND '_anchor' NOTINSIDE tags.
+
+    Car F7: ``project_scope_key`` is the resolved project_id when the caller
+    named one, else the resolved directory path — see ``project_brief``'s
+    ``_project_scope_key`` comment. ``memorize``/``anchor`` (C10f) always
+    stamp ``directory_context`` from the resolved project_id now, so binding
+    on the raw directory path here silently returned zero rows for anything
+    written after that car landed.
     """
     rows = storage._q(
         "SELECT id, content, heat, tags FROM memory "
         "WHERE directory_context = $dir AND heat > 0 "
         "AND 'anchor' NOTINSIDE tags AND '_anchor' NOTINSIDE tags "
         f"ORDER BY heat DESC LIMIT {limit}",
-        {"dir": resolved},
+        {"dir": project_scope_key},
     )
     return [
         {
@@ -508,16 +522,29 @@ def _build_hot_memories(storage, resolved: str, limit: int, snippet: int) -> lis
 
 
 @observe(tier="stage", metric="tools.project._build_anchor_rows_catalog")
-def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
+def _build_anchor_rows_catalog(storage, project_scope_key: str) -> tuple:
     """Fetch global + project anchor rows for catalog/full modes.
 
     Returns (top_anchors_global, top_anchors_project, top_anchors_union).
+
+    Car F7: the project bucket's ``$dir`` is ``project_scope_key`` (resolved
+    project_id when supplied, else the resolved directory path) — matching
+    what C10g already did for ``get_anchored_memories_scoped``, the sibling
+    reader of this same ``_anchor``-tagged bucket used by ``restore()``.
     """
     _now = storage._now_iso()
     global_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
-        "AND (directory_context = '' OR directory_context = 'global') "
+        # C13 (0047 PR#40 §5): re-keyed off directory_context and onto the
+        # ``global`` reach TAG, matching what C5 already did to the OTHER reader
+        # of this same bucket (``get_anchored_memories_scoped``). C5 re-keyed
+        # one and missed these two, leaving a reader whose predicate the write
+        # path can no longer satisfy: every site that minted
+        # ``directory_context = 'global'`` is deleted, so this bucket could only
+        # ever shrink. Same C6 dependency as its sibling — narrow until the
+        # backfill re-keys the legacy rows to a real owner plus the reach tag.
+        "AND 'global' INSIDE tags "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
         {"now": _now},
@@ -540,7 +567,7 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
         "AND directory_context = $dir "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
-        {"dir": resolved, "now": _now},
+        {"dir": project_scope_key, "now": _now},
     )
     top_anchors_project = []
     for row in project_rows:
@@ -565,15 +592,29 @@ def _build_anchor_rows_catalog(storage, resolved: str) -> tuple:
 
 
 @observe(tier="stage", metric="tools.project._build_anchor_rows_restore")
-def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
-    """Fetch anchors for restore mode: merged list with scope field, truncated."""
+def _build_anchor_rows_restore(storage, project_scope_key: str) -> list[dict]:
+    """Fetch anchors for restore mode: merged list with scope field, truncated.
+
+    Car F7: the project bucket's ``$dir`` is ``project_scope_key`` (resolved
+    project_id when supplied, else the resolved directory path) — matching
+    what C10g already did for ``get_anchored_memories_scoped``, the sibling
+    reader of this same ``_anchor``-tagged bucket used by ``restore()``.
+    """
     max_anchors = _get_max_anchors()
     _now = storage._now_iso()
 
     global_rows = storage._q(
         "SELECT id, content, tags, heat, access_count FROM memory "
         "WHERE '_anchor' INSIDE tags "
-        "AND (directory_context = '' OR directory_context = 'global') "
+        # C13 (0047 PR#40 §5): re-keyed off directory_context and onto the
+        # ``global`` reach TAG, matching what C5 already did to the OTHER reader
+        # of this same bucket (``get_anchored_memories_scoped``). C5 re-keyed
+        # one and missed these two, leaving a reader whose predicate the write
+        # path can no longer satisfy: every site that minted
+        # ``directory_context = 'global'`` is deleted, so this bucket could only
+        # ever shrink. Same C6 dependency as its sibling — narrow until the
+        # backfill re-keys the legacy rows to a real owner plus the reach tag.
+        "AND 'global' INSIDE tags "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
         {"now": _now},
@@ -584,7 +625,7 @@ def _build_anchor_rows_restore(storage, resolved: str) -> list[dict]:
         "AND directory_context = $dir "
         "AND (valid_until IS NONE OR valid_until > $now) "
         "ORDER BY heat DESC LIMIT 20",
-        {"dir": resolved, "now": _now},
+        {"dir": project_scope_key, "now": _now},
     )
 
     # Schema note: directory_context is binary (global OR project) today.
@@ -1023,22 +1064,51 @@ def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
 
 
 @observe(tier="stage", metric="tools.project._check_session_end_sentinel")
-def _check_session_end_sentinel(storage, resolved: str) -> dict | None:
-    """Check for an unprocessed session_end_sentinel memory row for this directory.
+def _check_session_end_sentinel(storage, project_id: str | None) -> dict | None:
+    """Check for an unprocessed session_end_sentinel memory row for this project.
 
     Returns an extract_last_session_findings recommended_action dict, or None.
     Handles missing transcript (tombstone note) gracefully.
     v5.10.6.
+
+    Car F9 (c2) re-keyed this query from the filesystem path onto the resolved
+    ``project_id``. C10 (f) made ``memorize`` stamp ``directory_context`` from
+    the resolved project — so the writer stored ``'owner/repo'`` while this
+    reader kept asking for ``'/home/user/proj'``, and the two could never meet.
+    Re-keying the READER is the direction that matches C10 (f) and ADR-0225's
+    retirement of ``directory`` as a scoping key; the alternative (keeping the
+    sentinel on a private path/tag key) would re-create the second scope key
+    that ADR-0225 exists to delete, and would need a bespoke write path since
+    ``memorize`` no longer has any way to stamp a path.
+
+    The column is still ``directory_context`` rather than the ``project_id``
+    column C11 added: ``directory_context`` is what the write path demonstrably
+    stamps today (``_phase_store``), and it keeps this query shaped like its
+    siblings for C7, which re-keys all of ``project_brief`` in one move.
+
+    ``project_id=None`` is NOT scoped to something else and NOT derived from a
+    directory (ADR-0227). The check is skipped and the skip is logged at
+    WARNING — a query on a key that cannot match would return "no sentinel"
+    indistinguishably from a real absence, which is the silent-success shape
+    this car exists to remove.
     """
     import json as _json  # noqa: PLC0415 — local to avoid circular if json not top-level
+
+    if not project_id:
+        logger.warning(
+            "session-end sentinel check skipped: project_brief was called with no "
+            "project= and sentinel rows are keyed on the resolved project_id "
+            "(ADR-0227: no identity is derived from the directory)"
+        )
+        return None
 
     try:
         sentinel_rows = storage._q(
             "SELECT id, content, created_at FROM memory "
             "WHERE '_session_end_sentinel' INSIDE tags "
-            "AND directory_context = $dir "
+            "AND directory_context = $project_id "
             "ORDER BY created_at DESC LIMIT 1",
-            {"dir": resolved},
+            {"project_id": project_id},
         )
     except Exception:
         return None
@@ -1064,7 +1134,7 @@ def _check_session_end_sentinel(storage, resolved: str) -> dict | None:
     if transcript_exists:
         suggested_call = (
             f"# Read transcript at {transcript_path!r}, extract key decisions/findings,\n"
-            f"# then call: memorize(content='...', context={resolved!r}, tags=['session-finding'])\n"
+            f"# then call: memorize(content='...', project={project_id!r}, tags=['session-finding'])\n"
             f"# and: forget(memory_id={sentinel_id})"
         )
         reason = f"sentinel found: ended_at={ended_at}, msg_count={msg_count}"
@@ -1286,37 +1356,79 @@ def _apply_rejection_signal(resolved: str, actions: list) -> int:
 
 @observe(tier="stage", metric="tools.project._get_adr_log_updated_at")
 def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
-    """Return the ADR index wiki page updated_at as a unix timestamp float.
+    """Return the ADR ledger's most-recent ``updated_at`` for this project.
 
-    Car 2 (ADR-consultable): re-pointed to the CANONICAL `<project>-adr-index`
-    (the monolith `<project>-adr-log` is deleted in migration; the ADR-due nudge
-    keyed on a deleted slug would never fire). Same raw-query pattern as before —
-    no NEW core DB read introduced, only the queried slug changed.
-    Returns None when the page is not found or the timestamp is unparseable.
+    Car G (0047 §7): re-pointed off the deleted ``<project>-adr-index`` wiki
+    page onto the ``adr`` SQL ledger (D35a — the seed lifted the per-ADR
+    PAGES into rows). The storage engine exposes ``max_adr_updated_at`` for
+    this purpose; ``storage`` is passed in so the call does not import the
+    engine directly. Returns ``None`` when the table has no rows for the
+    project, or the timestamp is unparseable.
     """
     import os as _os  # noqa: PLC0415
 
     project_name = _os.path.basename(resolved)
-    slug = f"{project_name}-adr-index"
     try:
-        rows = storage._q(
-            "SELECT updated_at FROM wiki_page WHERE slug = $slug LIMIT 1",
-            {"slug": slug},
+        # C5 (0047 PR#40 §5): the ``derive_project_id`` call and its
+        # basename fallback are DELETED. This is the ADR-due NUDGE — a
+        # best-effort staleness hint on the session-start brief, not a write —
+        # so it keys on the directory basename it already computed and says so.
+        # It must not raise into ``project_brief`` (an unresolvable identity is
+        # not a reason to fail the whole brief) and it must not invent a
+        # project_id either; the basename is a LOOKUP KEY here, never stamped
+        # onto a row. C6 re-points the nudge at the registry.
+        max_dt = storage.max_adr_updated_at(project_id=project_name)
+    except AttributeError:
+        # The storage engine surface is partial — fall back to the live
+        # forward path (preserves the legacy test stubs).
+        max_dt = _get_adr_log_updated_at_via_forward(resolved)
+    except Exception:  # noqa: BLE001
+        return None
+    if max_dt is None:
+        return None
+    if isinstance(max_dt, (int, float)):
+        return float(max_dt)
+    try:
+        dt = (
+            max_dt
+            if isinstance(max_dt, datetime)
+            else datetime.fromisoformat(str(max_dt).rstrip("Z").replace("Z", "+00:00"))
         )
-        if not rows:
-            return None
-        ts_raw = rows[0].get("updated_at")
-        if ts_raw is None:
-            return None
-        if isinstance(ts_raw, (int, float)):
-            return float(ts_raw)
-        # ISO string
-        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
-        dt = datetime.fromisoformat(ts_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return dt.timestamp()
-    except Exception:
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@observe(tier="stage", metric="tools.project._get_adr_log_updated_at_fwd")
+def _get_adr_log_updated_at_via_forward(resolved: str) -> datetime | None:
+    """Forward path for ``_get_adr_log_updated_at`` — covers the test seam.
+
+    Production callers reach ``storage.max_adr_updated_at`` directly. When
+    the storage surface is a stub (unit-test path) the ``AttributeError``
+    fallback above routes through here, which talks to the backend over
+    the canonical PTC chain.
+    """
+    import os as _os  # noqa: PLC0415
+
+    # C5 (0047 PR#40 §5): ``derive_project_id`` + basename fallback deleted;
+    # same reasoning as the storage-surface arm above — a nudge lookup key, not
+    # a stamped identity.
+    project_name = _os.path.basename(resolved)
+
+    try:
+        result = _forward_admin("max_adr_updated_at", {"project_id": project_name})
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(result, dict):
+        return None
+    raw = result.get("updated_at") or result.get("timestamp")
+    if raw is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).rstrip("Z").replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -1420,32 +1532,32 @@ def _apply_adr_signal(resolved: str, storage, actions: list) -> None:
 
 @observe(tier="stage", metric="tools.project._get_agent_prompt_toc_updated_at")
 def _get_agent_prompt_toc_updated_at(storage, resolved: str) -> float | None:
-    """Return the global agent-prompt TOC page updated_at as a unix timestamp float.
+    """Return the global agent-prompt library's last-grow timestamp as a unix float.
 
-    The TOC (slug `agent-prompt-toc`, directory_context='global') is upserted on
-    EVERY agent_prompt_save, so its updated_at is a faithful "library last grew"
-    signal.  Returns None when the page is absent or the timestamp is unparseable.
+    0047 Car I: the S6 restore-surface signal reads ``MAX(agent_pattern.updated_at)``
+    instead of the old wiki-TOC page's ``updated_at`` (the TOC page is retired
+    per D35a — kept as an ignored pointer slug). The new op reaches
+    ``get_agent_prompt_toc_updated_at`` via the backend /admin dispatcher; the
+    engine-#2 absence path returns ``None`` so the S6 caller treats the
+    restore surface as missing rather than crashing the project_brief build.
+    Returns None when the table is empty or unreachable.
     Same pattern as _get_adr_log_updated_at.
     """
     try:
-        rows = storage._q(
-            "SELECT updated_at FROM wiki_page WHERE slug = $slug LIMIT 1",
-            {"slug": "agent-prompt-toc"},
-        )
-        if not rows:
-            return None
-        ts_raw = rows[0].get("updated_at")
-        if ts_raw is None:
-            return None
-        if isinstance(ts_raw, (int, float)):
-            return float(ts_raw)
-        ts_str = str(ts_raw).rstrip("Z").replace("Z", "+00:00")
-        dt = datetime.fromisoformat(ts_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        return dt.timestamp()
+        result = _forward_admin("get_agent_prompt_toc_updated_at", {})
     except Exception:
         return None
+    if not isinstance(result, dict):
+        return None
+    if result.get("ok") is False:
+        return None
+    ts = result.get("timestamp")
+    if ts is None:
+        return None
+    try:
+        return float(ts)
+    except (TypeError, ValueError):  # fmt: off
+        return None  # fmt: on
 
 
 @observe(tier="stage", metric="tools.project._get_dispatch_prelude_updated_at")
@@ -1628,7 +1740,7 @@ def _omit_sentinel(d: dict, key: str, value: object, sentinel: object) -> None:
 
 
 @observe(tier="stage", metric="tools.project._project_brief_signals")
-def _project_brief_signals(
+def _project_brief_signals(  # noqa: PLR0913 — internal payload builder; every arg is a distinct signal input, all passed by keyword from the single call site
     resolved: str,
     mode: str,
     init_memory_present: bool,
@@ -1637,6 +1749,7 @@ def _project_brief_signals(
     active_work_age_hours: float | None,
     stale_checkpoint_hours: float | None,
     storage=None,
+    project_id: str | None = None,
 ) -> dict:
     """Build signals mode payload (<100 tokens).
 
@@ -1644,6 +1757,11 @@ def _project_brief_signals(
     anchor_redundancy_candidates, anchor_promote_candidates) and 4 new
     recommended_actions types.  storage arg required for anchor queries;
     signals degrade gracefully (empty lists, count=0) when storage=None.
+
+    ``project_id`` (Car F9) is the caller-supplied identity, forwarded to the
+    session-end sentinel check — the one query here whose rows are keyed on the
+    resolved project rather than the path (see ``_check_session_end_sentinel``).
+    The remaining path-keyed queries are C7's to re-key.
     """
     cfg = get_settings()
     if storage is not None:
@@ -1670,7 +1788,12 @@ def _project_brief_signals(
     )
     # Enrich actions with suggested_call (copy-paste-able MCP call) — v5.9+v5.10.1 pattern.
     # Enrichment is done post-build to avoid passing resolved dir into _build_recommended_actions.
-    _aw_call = f"update_active_work(directory={resolved!r}, content='...')"
+    # C5b: the suggested call must be copy-paste-able, and ``update_active_work``
+    # now RAISES without ``project=`` (its write path stamps project_id). A
+    # suggestion that fails on paste is worse than none. The literal placeholder
+    # is deliberate — this helper has no ``project`` in scope, and inventing one
+    # from ``resolved`` is the derivation ADR-0227 deletes.
+    _aw_call = f"update_active_work(directory={resolved!r}, content='...', project='<owner/repo>')"
     _cp_call = f"checkpoint(directory={resolved!r}, current_task='...', key_decisions=[...], next_steps=[...])"
     _audit_call = f"audit_anchors(directory={resolved!r}, dry_run=True)"
     for action_entry in recommended_actions:
@@ -1684,7 +1807,7 @@ def _project_brief_signals(
 
     # v5.10.6: session-end sentinel check — surface extract_last_session_findings action.
     if storage is not None:
-        _sentinel_action = _check_session_end_sentinel(storage, resolved)
+        _sentinel_action = _check_session_end_sentinel(storage, project_id)
         if _sentinel_action is not None:
             recommended_actions.append(_sentinel_action)
 
@@ -1787,33 +1910,42 @@ def _build_recent_writes(storage, resolved: str, limit: int = 10) -> list[dict]:
 def _build_adr_log(resolved: str) -> dict:
     """Build the adr_log field for restore mode.
 
-    Car 2 (ADR-consultable): re-pointed to the CANONICAL `<project>-adr-index`.
-    The write-only `<project>-adr-log` monolith is deleted in migration — a read
-    still pinned to it would resolve a deleted slug and silently return empty.
-    The canonical index resolves on directory_context alone, so it reads from any
-    caller and in non-git dirs. (ADR-0215 removed the branch axis this paragraph
-    used to describe.)
+    Car G (0047 §7): re-pointed off the deleted ``<project>-adr-index`` wiki
+    page onto the SQL ledger (``list_adr_rows`` ordered by id DESC, take 3).
+    The pre-G shape — ``wiki_read + parse_index_rows`` — would resolve a
+    dead slug now that the index page carries the ``superseded-by-ledger``
+    tag (D35d, rollback path for one release cycle) and its content has
+    been replaced by a one-line pointer.
 
-    Returns a cheap metadata-only dict: index slug + up to 3 most-recent IDs.
-
-    Lazy import avoids the adr.py ↔ project.py circular dependency at load time
-    (adr imports project helpers at module level; both are loaded by call time).
+    Returns a cheap metadata-only dict: ``slug`` (the
+    ``superseded-by-ledger``-tagged index page — preserved for the
+    one-cycle rollback per D35d) + up to 3 most-recent ADR ids drawn from
+    the ledger. ``slug`` is intentionally kept stable so external callers
+    that pin the string continue to work.
     """
-    from yadgar.core.server.tools.adr import adr_index_slug, parse_index_rows  # noqa: PLC0415
-    from yadgar.core.server.tools.wiki import wiki_read  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
 
-    slug = adr_index_slug(resolved)
+    project_name = _os.path.basename(resolved)
+    # D35d: the index page slug is preserved for one release cycle. After
+    # the rollback window the seed op marks the page
+    # ``superseded-by-ledger`` (D35d — kept-and-ignored, NOT deleted).
+    slug = f"{project_name}-adr-index"
+    latest_ids: list[str] = []
     try:
-        page = wiki_read(slug, directory=resolved)
-        if "error" in page or not page.get("content"):
-            latest_ids: list[str] = []
-        else:
-            rows = parse_index_rows(page["content"])
-            latest_ids = [
-                r["adr_id"]
-                for r in sorted(rows, key=lambda r: int(r["adr_id"].split("-")[1]), reverse=True)
-            ][:3]
-    except Exception:
+        # C5 (0047 PR#40 §5): ``derive_project_id`` + basename fallback deleted.
+        # This builds the ADR *log* section of the session brief — a read-only
+        # convenience listing — so it keys on the directory basename it already
+        # holds and never stamps one. C6 re-points it at the registry.
+        result = _forward_admin("list_adr_rows", {"project_id": project_name})
+        rows_raw = result.get("rows") if isinstance(result, dict) else []
+        rows = rows_raw if isinstance(rows_raw, list) else []
+        ordered = sorted(
+            (r for r in rows if isinstance(r, dict)),
+            key=lambda r: int(r.get("id", 0) or 0),
+            reverse=True,
+        )
+        latest_ids = [f"ADR-{int(r['id']):04d}" for r in ordered[:3]]
+    except Exception:  # noqa: BLE001 — degraded mode returns empty latest_ids
         latest_ids = []
     return {"slug": slug, "latest_ids": latest_ids}
 
@@ -1822,24 +1954,27 @@ def _build_adr_log(resolved: str) -> dict:
 def _build_agent_prompt_toc(storage) -> dict:
     """Build the agent_prompt_toc field for restore mode (S6 discovery surface).
 
-    GLOBAL (not per-project): reads the fixed slug `agent-prompt-toc` (saved with
-    directory_context='global'), so it surfaces in EVERY project's restore.
-    Returns a cheap metadata-only dict: slug + capped pattern list (no body) to
-    keep the restore token budget safe. Graceful on any error → empty patterns.
+    0047 Car I: the TOC is now the ``agent_pattern`` ledger table (replaces the
+    wiki-TOC page scan). The page slug ``agent-prompt-toc`` is KEPT as a
+    pointer-only entry (D35d) for one cycle — the restore surface reaches the
+    table instead. Slug-shaped response is preserved so callers that pin the
+    slug still see a stable shape; ``patterns`` carries the pattern NAMES
+    (top 20 by ``uses`` DESC) instead of wiki-row regex matches.
+    Returns a cheap metadata-only dict: slug + capped pattern list (no body)
+    to keep the restore token budget safe. Graceful on any error → empty
+    patterns.
     """
-    from yadgar.core.server.tools.agent_prompts import (  # noqa: PLC0415
-        _TOC_ROW_RE,
-        _TOC_SLUG,
-    )
+    from yadgar.core.server.tools.agent_prompts import _TOC_POINTER_SLUG  # noqa: PLC0415
 
     patterns: list[str] = []
     try:
-        page = storage.get_wiki_page_by_slug(_TOC_SLUG)
-        if page and page.get("content"):
-            patterns = [m.group("pattern") for m in _TOC_ROW_RE.finditer(page["content"])][:20]
+        result = _forward_admin("list_agent_pattern_rows_uses_desc", {"limit": 20})
+        if isinstance(result, dict) and result.get("ok") is not False:
+            rows = result.get("rows") or []
+            patterns = [str(r.get("name", "")) for r in rows if r.get("name")][:20]
     except Exception:
         patterns = []
-    return {"slug": _TOC_SLUG, "patterns": patterns}
+    return {"slug": _TOC_POINTER_SLUG, "patterns": patterns}
 
 
 @observe(tier="stage", metric="tools.project._project_brief_restore")
@@ -1848,13 +1983,30 @@ def _project_brief_restore(
     mode: str,
     storage,
     checkpoint_rows: list,
+    project_scope_key: str | None = None,
 ) -> dict:
-    """Build restore mode payload (<800 tokens)."""
+    """Build restore mode payload (<800 tokens).
+
+    Car F7: ``top_anchors``/``hot_memories`` key off ``project_scope_key``
+    (resolved project_id when the caller named one, else ``resolved`` — see
+    ``project_brief``'s docstring comment). Every OTHER field here
+    (``key_wiki_pages``, ``wiki_catalog``, ``adr_log``, ``recent_writes``,
+    ``checkpoint``) stays on ``resolved`` — those buckets are directory-keyed
+    by design (matching ``TestProjectBriefWikiScoping``'s documented reasons).
+
+    ``project_scope_key`` defaults to ``None`` (falling back to ``resolved``
+    below) so the direct-call test fixtures in ``test_fresh_memory_restore.py``
+    — which construct this payload from a mocked storage without threading
+    the new parameter — keep working unchanged; ``project_brief()`` itself
+    always passes it explicitly.
+    """
+    if not project_scope_key:
+        project_scope_key = resolved
     out = {
         "_resolved_directory": resolved,
         "_mode": mode,
-        "top_anchors": _build_anchor_rows_restore(storage, resolved),
-        "hot_memories": _build_hot_memories(storage, resolved, limit=5, snippet=150),
+        "top_anchors": _build_anchor_rows_restore(storage, project_scope_key),
+        "hot_memories": _build_hot_memories(storage, project_scope_key, limit=5, snippet=150),
         "checkpoint": _build_checkpoint_dict(checkpoint_rows),
         "key_wiki_pages": _build_wiki_pages(storage, limit=3, directory=resolved),
         # v5.53.0: grouped wiki catalog (metadata-only, length-capped).
@@ -1877,7 +2029,15 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
 
     catalog mode is DEPRECATED as of v5.7.12. Kept for back-compat until v5.8.
     ctx keys: resolved, mode, project, storage, init_rows, active_rows,
-              init_memory_present, active_work_present, checkpoint_rows.
+              init_memory_present, active_work_present, checkpoint_rows,
+              project_scope_key.
+
+    Car F7: ``top_anchors_project``/``hot_memories`` key off
+    ``project_scope_key`` (resolved project_id when the caller named one,
+    else ``resolved`` — see ``project_brief``'s docstring comment).
+    ``top_anchors_global``, ``key_wiki_pages``, ``wiki_catalog``,
+    ``recent_adrs`` and ``recent_episode_count`` stay on ``resolved`` /
+    the tag-based predicate — unrelated to the bucket this car fixes.
     """
     from datetime import timedelta
 
@@ -1887,9 +2047,10 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     init_rows = ctx["init_rows"]
     active_rows = ctx["active_rows"]
     checkpoint_rows = ctx["checkpoint_rows"]
+    project_scope_key = ctx["project_scope_key"]
 
     top_anchors_global, top_anchors_project, top_anchors = _build_anchor_rows_catalog(
-        storage, resolved
+        storage, project_scope_key
     )
     cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
     ep_rows = storage._q(
@@ -1910,7 +2071,7 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
         "recent_episode_count": len(ep_rows),
         # v5.53.1: real stale count (TTL-cached).
         "stale_wiki_count": _compute_stale_wiki_count(resolved),
-        "hot_memories": _build_hot_memories(storage, resolved, limit=3, snippet=100),
+        "hot_memories": _build_hot_memories(storage, project_scope_key, limit=3, snippet=100),
         "key_wiki_pages": _build_wiki_pages(storage, limit=3, directory=resolved),
         "checkpoint": _build_checkpoint_dict(checkpoint_rows),
         # v5.53.0: grouped wiki catalog (metadata-only, length-capped).
@@ -1921,7 +2082,9 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
     if mode == "full":
         result["init_memory"] = init_rows[0].get("content") if init_rows else None
         result["active_work"] = active_rows[0].get("content") if active_rows else None
-        result["hot_memories"] = _build_hot_memories(storage, resolved, limit=10, snippet=200)
+        result["hot_memories"] = _build_hot_memories(
+            storage, project_scope_key, limit=10, snippet=200
+        )
         result["key_wiki_pages"] = _build_wiki_pages(storage, limit=5, directory=resolved)
         result["wiki_catalog"] = _build_wiki_catalog(storage, resolved)
     # §28 — add _render for catalog+full (back-compat); signals+restore omit it
@@ -1944,14 +2107,24 @@ def _project_brief_catalog_full(ctx: dict) -> dict:
 _PROJECT_BRIEF_CACHE_TTL = 300.0
 
 
-def _project_brief_key(resolved: str, mode: str) -> tuple:
-    """Effective cache key: (git-root, mode, structural epoch).
+def _project_brief_key(resolved: str, mode: str, project_scope_key: str) -> tuple:
+    """Effective cache key: (git-root, mode, structural epoch, project scope).
 
     Reads the epoch under the SAME resolved git-root the bump callers normalize
-    to, so a structural write busts the entry (not a decorative no-op)."""
+    to, so a structural write busts the entry (not a decorative no-op).
+
+    Car F7: ``project_scope_key`` joins the tuple so two callers sharing the
+    same ``resolved`` directory but naming DIFFERENT ``project=`` overrides
+    never collide on the same cache entry — the anchor/hot_memories builders
+    below now read ``directory_context`` keyed on the resolved project_id
+    (when supplied), so a stale hit would leak one project's rows into
+    another's brief. When no ``project=`` is supplied this equals ``resolved``,
+    so the key is byte-identical to the pre-F7 shape for that (still the
+    common) call pattern.
+    """
     from yadgar._shared.runtime.cache_epoch import _current_epoch  # noqa: PLC0415
 
-    return (resolved, mode, _current_epoch(resolved))
+    return (resolved, mode, _current_epoch(resolved), project_scope_key)
 
 
 @observe(tier="stage", metric="tools.project._make_project_brief_cache")
@@ -1980,7 +2153,7 @@ _project_brief_cache = _make_project_brief_cache()
 
 
 @_tool(always_load=True)
-def project_brief(directory: str, mode: str = "catalog") -> dict:
+def project_brief(directory: str, mode: str = "catalog", *, project: str | None = None) -> dict:
     """Return a layered project context snapshot for the given directory.
 
     Choose mode based on your use-case — new callers should use "signals" or "restore":
@@ -2005,7 +2178,42 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
             Default "catalog" is kept only for back-compat — prefer "signals" or
             "restore" for all new callers.
     """
+    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; a full C7 re-key
+    # of this tool's scope from ``directory`` onto the resolved project_id is
+    # still future work for the path-keyed queries below (key_wiki_pages /
+    # wiki_catalog / adr_log / presence rows stay directory-keyed on purpose —
+    # see TestProjectBriefWikiScoping).
+    #
+    # Cars F7 AND F9 both fixed the same root cause from two sides: the
+    # validated value used to be computed and DISCARDED here, which is what
+    # kept both features dead. It is now kept, in two distinct shapes — do not
+    # collapse them into one variable, they are not the same value:
+    #
+    # ``_project_id`` — the raw validated override, ``None`` when the caller
+    # named no ``project=``. Car F9 forwards THIS to the session-end sentinel
+    # check: that reader must see the ``None`` so it can skip loudly at
+    # WARNING (ADR-0227 — no identity is derived from a directory). Passing a
+    # directory fallback there would silently restore the dead behaviour F9
+    # removed, since C10 (f) keys sentinel rows on the resolved project_id.
+    #
+    # ``_project_scope_key`` — the raw value with a fallback to ``resolved``.
+    # Car F7 threads THIS into the anchor/hot_memories bucket queries and the
+    # whole-payload cache key. ``get_anchored_memories_scoped`` (the sibling
+    # reader of this same ``_anchor``-tagged bucket, used by ``restore()``)
+    # was re-keyed onto the resolved project_id in lockstep with its writer
+    # (C10g), but this tool's OWN duplicate queries were not, because
+    # ``memorize``/``anchor`` (C10f) now ALWAYS stamp ``directory_context``
+    # from the resolved project_id — never the literal directory a caller
+    # passed as ``context``. A caller who names the SAME ``project=`` on both
+    # the write and this read got zero rows back, not "their current
+    # project's rows" (accept_project_param's documented interim gap) — the
+    # predicate simply could not match either identity convention. The
+    # fallback to ``resolved`` preserves the old behaviour (and the pre-F7
+    # cache-key shape) when no ``project=`` was supplied, matching
+    # accept_project_param's contract of not resolving in that case.
+    _project_id = accept_project_param(project, directory)
     resolved = _resolve_project_root(directory)
+    _project_scope_key = _project_id if _project_id else resolved
 
     # Car 1: whole-payload cache for the query-agnostic modes (catalog/restore/full).
     # Checked BEFORE any storage round-trip so a hit skips _fetch_presence_rows +
@@ -2014,7 +2222,7 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
     # tolerates no staleness; its age numerics are recomputed every call.
     _cacheable = mode != "signals"
     if _cacheable:
-        _key = _project_brief_key(resolved, mode)
+        _key = _project_brief_key(resolved, mode, _project_scope_key)
         _hit = _project_brief_cache.get(_key)
         if _hit is not None:
             return _hit
@@ -2042,6 +2250,7 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
             active_work_age_hours=active_work_age_hours,
             stale_checkpoint_hours=stale_checkpoint_hours,
             storage=storage,
+            project_id=_project_id,
         )
 
     if mode == "restore":
@@ -2050,6 +2259,7 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
             mode=mode,
             storage=storage,
             checkpoint_rows=checkpoint_rows,
+            project_scope_key=_project_scope_key,
         )
     else:
         # catalog / full modes (back-compat)
@@ -2064,6 +2274,7 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
                 "init_memory_present": init_memory_present,
                 "active_work_present": active_work_present,
                 "checkpoint_rows": checkpoint_rows,
+                "project_scope_key": _project_scope_key,
             }
         )
 
@@ -2076,7 +2287,7 @@ def project_brief(directory: str, mode: str = "catalog") -> dict:
 
 
 @_tool(power=True)
-def bootstrap_project(directory: str, content: str) -> dict:
+def bootstrap_project(directory: str, content: str, *, project: str | None = None) -> dict:
     """Replace this directory's _project_init memory with caller-supplied content.
 
     Content must be concise markdown: wiki slugs, key memory IDs, conventions,
@@ -2095,6 +2306,19 @@ def bootstrap_project(directory: str, content: str) -> dict:
     Use bootstrap_project only when you need a hand-curated init string that
     seed_project's auto-scan cannot capture.
     """
+    # C5b (0047 PR#40 §2 amendment 2): PROMOTED from ``accept_project_param``
+    # to a real resolution. That helper exists for tools whose scope key is
+    # still ``directory`` and whose write path has no ``project_id`` sink —
+    # the init upsert behind this tool now stamps the column, so the
+    # boundary-validation-only path would keep minting unattributed rows.
+    # Raising rather than returning an envelope matches this tool's existing
+    # hard-failure style (the cap check below raises ValueError).
+    _effective_project_id = resolve_effective_project(
+        project=project,
+        directory=directory,
+        session_project=None,
+        tool="bootstrap_project",
+    )
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -2108,7 +2332,10 @@ def bootstrap_project(directory: str, content: str) -> dict:
     # T2 Car F (ADR-0078): the store phase (init upsert + default-block seed)
     # forwards to the backend bootstrap_project_store /admin op — validation +
     # secret gate + host path resolution stay core-side.
-    return _forward_admin("bootstrap_project_store", {"resolved": resolved, "content": content})
+    return _forward_admin(
+        "bootstrap_project_store",
+        {"resolved": resolved, "content": content, "project_id": _effective_project_id},
+    )
 
 
 @observe(tier="stage", metric="tools.project._get_active_work_tracked_dir")
@@ -2145,7 +2372,7 @@ def _register_active_work_directory(resolved: str) -> None:
 
 
 @_tool(power=True)
-def update_active_work(directory: str, content: str) -> dict:
+def update_active_work(directory: str, content: str, *, project: str | None = None) -> dict:
     """Replace this directory's _active_work memory atomically.
 
     Deletes any existing _active_work memory(ies) for the directory,
@@ -2157,6 +2384,15 @@ def update_active_work(directory: str, content: str) -> dict:
 
     Returns: {previous_content: str | None, new_memory: dict}
     """
+    # C5b (0047 PR#40 §2 amendment 2): promoted to a real resolution — see
+    # ``bootstrap_project`` for why ``accept_project_param`` is no longer the
+    # right helper for a tool whose write path stamps ``project_id``.
+    _effective_project_id = resolve_effective_project(
+        project=project,
+        directory=directory,
+        session_project=None,
+        tool="update_active_work",
+    )
     # v5.10.2: secret gate — scan content before any state mutation
     _gate = gate_or_reject(content)
     if _gate is not None:
@@ -2171,7 +2407,10 @@ def update_active_work(directory: str, content: str) -> dict:
     # _active_work delete-then-insert (+ project_brief epoch bump) forwards to the
     # backend /admin op. The host-FS watchdog marker stays core (host lifecycle).
     resolved = _resolve_project_root(directory)
-    result = _forward_admin("update_active_work", {"resolved": resolved, "content": content})
+    result = _forward_admin(
+        "update_active_work",
+        {"resolved": resolved, "content": content, "project_id": _effective_project_id},
+    )
     _register_active_work_directory(resolved)
     return result
 

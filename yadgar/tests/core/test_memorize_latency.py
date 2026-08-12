@@ -15,6 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar.tests.core.conftest import TEST_PROJECT_ID
+
 
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
@@ -38,6 +40,7 @@ def test_memorize_takes_async_path():
         "latency budget test unique payload alpha bravo charlie delta epsilon",
         "/latency/project",
         ["perf"],
+        project=TEST_PROJECT_ID,
     )
     assert result.get("queued") is True, (
         f"Expected queued=True (async path), got {result!r}. "
@@ -61,7 +64,9 @@ def test_memorize_enqueue_under_5ms():
     from yadgar.core import server
 
     # Ensure file queue is initialized (warm up)
-    server.memorize("warmup for latency test setup", "/latency/project", ["warmup"])
+    server.memorize(
+        "warmup for latency test setup", "/latency/project", ["warmup"], project=TEST_PROJECT_ID
+    )
 
     mock_enqueue = MagicMock(return_value="00000000-0000-0000-0000-000000000001")
     # Return (blocked=False, reason="", modified=None) so the write path proceeds
@@ -85,6 +90,7 @@ def test_memorize_enqueue_under_5ms():
                 f"latency budget sample {i} unique phi psi omega kappa tau rho",
                 "/latency/project",
                 ["perf"],
+                project=TEST_PROJECT_ID,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             samples.append(elapsed_ms)

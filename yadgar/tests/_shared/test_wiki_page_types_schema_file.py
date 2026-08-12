@@ -46,6 +46,13 @@ class TestSchemaFileLoads:
             "agent_pattern",
             "agent_discipline",
             "task_list",
+            # Car G (0047 §7 D23): adr page is RETYPED to adr_superseded when
+            # a successor ADR supersedes it. Lint shape mirrors adr.
+            "adr_superseded",
+            # Car H (0047 §7 D29): per-subsystem ADR rollup pages — DERIVED,
+            # regenerated on every adr_add post-commit. Lint shape is
+            # "Overview, Decisions"; mutability is "derived" by POLICY.
+            "wiki_rollup",
         }
 
 

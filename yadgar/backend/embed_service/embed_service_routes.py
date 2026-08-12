@@ -82,7 +82,7 @@ _require_admin_token = _es._require_admin_token
 
 
 @observe(tier="stage", metric="backend.recall.landscape")
-def _run_landscape_backend(query: str, max_results: int, directory: str, storage) -> list[dict]:
+def _run_landscape_backend(query: str, max_results: int, project_id: str, storage) -> list[dict]:
     """Backend-side landscape recall via AstrocytePool.consensus_retrieve.
 
     Phase 1 §5.1/§3.2: mirrors core _landscape_recall (recall.py:45-91) but runs
@@ -91,17 +91,22 @@ def _run_landscape_backend(query: str, max_results: int, directory: str, storage
     this function is called when req.mode=="landscape".
 
     Returns [] gracefully when _pool is None (pool unavailable / disabled).
-    Directory post-filter via is_directory_eligible (same predicate as fanout path).
+
+    Car C7 (0047 §5 C7): the post-filter is re-keyed onto ``project_id`` + the
+    ``global`` reach tag. It stays a POST-filter here — and that is correct, not
+    an oversight: ``consensus_retrieve`` is an astrocyte-domain consensus walk,
+    not a single SQL query, so there is no one ``WHERE`` to push a predicate
+    into. The guard is the same predicate the SQL arms use, so the two agree.
     """
     import yadgar._shared.runtime.state as _st  # noqa: PLC0415
-    from yadgar._shared.storage.directory import is_directory_eligible  # noqa: PLC0415
+    from yadgar._shared.storage.directory import is_project_eligible  # noqa: PLC0415
 
     if _st._pool is None:
         logger.debug("landscape_backend: pool unavailable — returning []")
         return []
 
     raw = _st._pool.consensus_retrieve(query, top_k=max_results)
-    scoped = [r for r in raw if is_directory_eligible(r.get("directory_context"), directory)]
+    scoped = [r for r in raw if is_project_eligible(r.get("project_id"), r.get("tags"), project_id)]
     return scoped[:max_results]
 
 
@@ -152,15 +157,23 @@ async def recall_route(
     # rebind on the canonical submodule is honoured.
     await asyncio.to_thread(_es._ensure_recall_engines)
 
+    from yadgar._shared.runtime.lifecycle import (  # noqa: PLC0415
+        _get_sql_storage,
+    )
     from yadgar._shared.runtime.lifecycle import (
         _get_storage as _backend_get_storage,  # noqa: PLC0415
     )
     from yadgar._shared.runtime.recall_side_effects_fork import (  # noqa: PLC0415
         schedule_db_write,
     )
+    from yadgar._shared.storage.directory import RecallScope  # noqa: PLC0415
     from yadgar.backend.retrieval.recall_pipeline import (  # noqa: PLC0415
         _compute_db_boost,
         _fanout_recall,
+    )
+    from yadgar.backend.retrieval.superseded import (  # noqa: PLC0415
+        SUPERSEDED_OPT_IN_TAG,
+        load_superseded_slugs,
     )
 
     # ADR-0077: convert the client's compute budget to a monotonic deadline ONCE,
@@ -169,6 +182,35 @@ async def recall_route(
     deadline: float | None = (
         time.monotonic() + req.deadline_ms / 1000.0 if req.deadline_ms else None
     )
+
+    # ── Car C8 (0047 §5 C8): the superseded-ADR exclusion set ────────────────
+    #
+    # LOADED HERE, IN THE ASYNC ROUTE, BEFORE the ``asyncio.to_thread`` below —
+    # and the placement is the design, not a convenience. ``_run_pipeline`` is
+    # SYNC and runs in a worker thread; ``asyncmy`` is async-only; a status
+    # lookup on the far side of that boundary would need a private event loop
+    # per recall, binding an AsyncAdaptedQueuePool to a loop that dies with the
+    # thread (the pool-churn trap this repo has already written down twice).
+    # DO NOT MOVE THIS DOWNSTREAM.
+    #
+    # Status comes SOLELY from the SQL ledger (``adr.status``, ADR-0206 — one
+    # writer). SurrealDB carries nothing about it.
+    #
+    # The free rider: an explicit ``superseded`` opt-in tag returns them. That
+    # is ADR-0206's own sanctioned exclusion-with-opt-in escape hatch, riding
+    # the arm C7 already built. The token is STRIPPED from the tags handed to
+    # the pipeline — a bare ``tags=["superseded"]`` would otherwise become the
+    # wiki provider's ``include_tag`` and pre-filter the corpus down to pages
+    # carrying a tag no ADR page has, i.e. an opt-in that returns nothing.
+    _requested_tags = list(req.tags or ())
+    _opted_into_superseded = SUPERSEDED_OPT_IN_TAG in _requested_tags
+    pipeline_tags = [t for t in _requested_tags if t != SUPERSEDED_OPT_IN_TAG] or None
+    excluded_slugs: tuple[str, ...] = (
+        ()
+        if _opted_into_superseded
+        else await load_superseded_slugs(_get_sql_storage(), project_id=req.project_id)
+    )
+    recall_scope = RecallScope(project_id=req.project_id, excluded_slugs=excluded_slugs)
 
     # Run the RETRIEVAL + the response-feeding heat mutations in a thread
     # (CPU-bound + IO-bound mix; don't block the event loop). T3 Car 2: the
@@ -185,7 +227,7 @@ async def recall_route(
             merged = _run_landscape_backend(
                 query=req.query,
                 max_results=req.max_results,
-                directory=req.directory,
+                project_id=req.project_id,
                 storage=storage,
             )
         else:
@@ -194,9 +236,9 @@ async def recall_route(
                 query=req.query,
                 max_results=req.max_results,
                 min_heat=req.min_heat,
-                directory=req.directory,
+                recall_scope=recall_scope,
                 type_filter=req.type,
-                tags=req.tags,
+                tags=pipeline_tags,
                 profile=req.profile,
                 deadline=deadline,
             )
@@ -248,7 +290,7 @@ async def restore_route(
     # Bootstrap engines (idempotent, guarded by lock).
     await asyncio.to_thread(_es._ensure_recall_engines)
 
-    result = await asyncio.to_thread(run_restore, req.directory)
+    result = await asyncio.to_thread(run_restore, req.directory, req.project_id)
     return RestoreResponse(result=result)
 
 
@@ -302,10 +344,19 @@ async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)
     still not blocked by storage IO) and awaits an ASYNC op body directly on the
     loop. No existing op changed shape.
 
+    Car B (ADR-0053, §15.2): every response carries a ``scope_versions`` envelope
+    field — ``{kind: per_kind_epoch, ...}`` for the kinds Cars D/F/I care about
+    (``config``, ``ledger``). Core holds its own snapshot and compares; a
+    bumped epoch means its PTC entries for that kind are unreachable, with
+    zero extra round-trips in steady state. The same epoch survives in the
+    backend ``ScopeVersions`` singleton, so the response is cheap (one lock
+    acquire).
+
     op must be a registered admin op (yadgar.backend.admin_exec.run_admin_op).
     Unknown ops → 400. Called by the core thin forwarders (_forward_admin).
     """
     from yadgar.backend.admin_exec import run_admin_op_async  # noqa: PLC0415
+    from yadgar.backend.cache.scope_versions import get_scope_versions  # noqa: PLC0415
 
     # Bootstrap engines (idempotent, guarded by lock) — the op needs storage.
     await asyncio.to_thread(_es._ensure_recall_engines)
@@ -315,7 +366,11 @@ async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return AdminResponse(result=result)
+    # Car B piggyback: per-kind scope-version epochs the core PTC keys by.
+    # Cheap (single lock acquire on the singleton).
+    scope_versions = get_scope_versions().kind_epochs_snapshot(("config", "ledger"))
+
+    return AdminResponse(result=result, scope_versions=scope_versions)
 
 
 # ---------------------------------------------------------------------------
