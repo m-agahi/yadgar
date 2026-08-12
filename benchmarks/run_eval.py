@@ -245,7 +245,7 @@ def _extract_retrieved_keys(results: list[dict]) -> list[str]:
                 if isinstance(raw, str) and ":" in raw:
                     raw = raw.split(":", 1)[1]
                 keys.append(f"mem:{int(raw)}")
-            except TypeError, ValueError:
+            except (TypeError, ValueError):  # fmt: skip
                 pass
     return keys
 
@@ -279,7 +279,7 @@ def evaluate_pair(
     for mid in pair.get("relevant_memory_ids", []):
         try:
             gold_keys.add(f"mem:{int(mid)}")
-        except TypeError, ValueError:
+        except (TypeError, ValueError):  # fmt: skip
             pass
     for slug in pair.get("relevant_wiki_slugs", []):
         if slug:
@@ -391,7 +391,7 @@ def evaluate_pair_unified(
     for mid in pair.get("relevant_memory_ids", []):
         try:
             gold_keys.add(f"mem:{int(mid)}")
-        except TypeError, ValueError:
+        except (TypeError, ValueError):  # fmt: skip
             pass
     for slug in pair.get("relevant_wiki_slugs", []):
         if slug:

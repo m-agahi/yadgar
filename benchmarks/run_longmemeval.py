@@ -804,7 +804,7 @@ def judge_answer(question: dict, hypothesis: str) -> dict:
             json_str = response[response.index("{") : response.rindex("}") + 1]
             result = json.loads(json_str)
             return {"correct": bool(result.get("correct", False)), "raw": response}
-    except json.JSONDecodeError, ValueError:
+    except (json.JSONDecodeError, ValueError):  # fmt: skip
         pass
 
     # Fallback: look for yes/true/correct in response

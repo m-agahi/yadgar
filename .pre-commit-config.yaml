@@ -208,6 +208,23 @@ repos:
         # filter is narrower than the read set.
         always_run: true
 
+      - id: check-directory-residue
+        name: Check ADR-0225 `directory` residue sweep (both directions + sibling allowlists)
+        language: system
+        entry: python scripts/check_directory_residue.py
+        pass_filenames: false
+        # always_run, and this one is the POINT of the hook rather than a nit.
+        # Three tree-scoped predecessors exist as PYTEST modules (C9a/_shared,
+        # C9b/backend), so `pre-commit run --all-files` — the standing per-car
+        # requirement — never ran them, and ADR-0218 forbids the full unit suite.
+        # A car sweeping `backend` was therefore structurally unable to see
+        # `_shared`'s module go red, which is how a sweep stranded a sibling's
+        # allowlist entry twice on this train. One whole-repo run against one
+        # allowlist, at every car boundary, is what closes that class; this
+        # script also parses the two sibling dicts so their entries cannot be
+        # stranded unseen either.
+        always_run: true
+
       - id: check-registry-prose-liveness
         name: Check I32 prose-token liveness (registry cites no dead identifiers)
         language: system
