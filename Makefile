@@ -368,10 +368,22 @@ test-ci:
 CI_LOCAL_DIRS := yadgar/tests/scripts/ yadgar/tests/server/ yadgar/tests/hooks/ yadgar/tests/_meta/ \
                  yadgar/tests/clients/ yadgar/tests/_shared/ yadgar/tests/backend/ yadgar/tests/core/
 CI_LOCAL_MARKER := not integration and not e2e and not perf
-DIRS ?= $(CI_LOCAL_DIRS)
+# NOT `DIRS ?= $(CI_LOCAL_DIRS)`: `?=` only fills an UNSET variable, and a
+# generic name like DIRS can already be set from the calling shell's
+# environment — `?=` would then silently keep that inherited value (possibly
+# empty, which pytest treats as "run testpaths", NOT the CI set) instead of
+# CI_LOCAL_DIRS, exactly the silent-narrowing this target exists to prevent.
+# $(origin DIRS) restricts the override to an explicit `make ci-local
+# DIRS=...` command-line invocation and ignores an inherited env var.
+ifeq ($(origin DIRS),command line)
+CI_LOCAL_TEST_DIRS := $(DIRS)
+else
+CI_LOCAL_TEST_DIRS := $(CI_LOCAL_DIRS)
+endif
 ci-local:
+	@test -n "$(strip $(CI_LOCAL_TEST_DIRS))" || { echo "ci-local: DIRS resolved empty — pass a real path, e.g. DIRS=yadgar/tests/_shared" >&2; exit 1; }
 	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
-	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest $(DIRS) \
+	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest $(CI_LOCAL_TEST_DIRS) \
 	    -q -rs --tb=short -n 4 --dist loadgroup --reruns 2 --reruns-delay 2 \
 	    -m "$(CI_LOCAL_MARKER)" $(PYTEST_ARGS)'
 

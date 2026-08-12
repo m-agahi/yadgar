@@ -26,6 +26,12 @@ WHAT IT COMPARES
     to pytest (asserted identical across all 4 first; if that assumption
     ever breaks this fails loudly rather than silently picking one), vs. the
     ``CI_LOCAL_MARKER`` make variable.
+  * recipe consumption — that the ``ci-local:`` recipe body actually
+    references ``CI_LOCAL_TEST_DIRS``/``CI_LOCAL_DIRS`` and
+    ``CI_LOCAL_MARKER`` rather than a hardcoded path list or marker string.
+    The two checks above only validate the variable DECLARATIONS; without
+    this one, a correct declaration could sit next to a recipe that quietly
+    ignores it.
 
 NOT compared (out of scope, on purpose — see the Makefile's `ci-local`
 comment): ``-n``/``--dist``/``--reruns`` flags (parallelism, not selection);
@@ -133,6 +139,54 @@ def makefile_selection(makefile_path: Path) -> tuple[set[str], str]:
     return dirs, marker
 
 
+# Names the `ci-local:` recipe body may reference for the directory list. Two
+# names because the recipe reads the origin-guarded CI_LOCAL_TEST_DIRS (see
+# the Makefile's DIRS-collision comment), not CI_LOCAL_DIRS directly — but
+# either counts as "consumes the declared selection" for this check.
+_DIRS_VAR_REFS = ("$(CI_LOCAL_TEST_DIRS)", "$(CI_LOCAL_DIRS)")
+_MARKER_VAR_REF = "$(CI_LOCAL_MARKER)"
+
+
+def makefile_recipe_consumes_vars(makefile_path: Path) -> tuple[bool, bool]:
+    """Return (invocation_uses_a_dirs_var, invocation_uses_marker_var) for `ci-local:`.
+
+    Guards against the declared CI_LOCAL_DIRS/CI_LOCAL_MARKER staying correct
+    while the recipe itself is edited to hardcode something else (e.g. `pytest
+    yadgar/tests/_shared/`) — the parity check above only validates the
+    variable DECLARATIONS, not that the recipe actually consumes them.
+
+    Scoped to the substring starting at the first ``pytest`` in the recipe,
+    NOT the whole recipe body: the empty-DIRS guard line (``test -n
+    "$(strip $(CI_LOCAL_TEST_DIRS))" || ...``) always references
+    CI_LOCAL_TEST_DIRS regardless of what the actual pytest invocation does,
+    so scanning the whole recipe would report "consumed" even when the pytest
+    command line itself was edited to hardcode a path — the exact hole this
+    function exists to close, caught only by narrowing to the invocation.
+    """
+    text = makefile_path.read_text(encoding="utf-8")
+    m = re.search(r"^ci-local:[ \t]*$", text, re.MULTILINE)
+    if not m:
+        raise ValueError("no `ci-local:` target found")
+    recipe_lines: list[str] = []
+    for line in text[m.end() :].splitlines():
+        if line.startswith("\t"):
+            recipe_lines.append(line)
+        elif line.strip() == "":
+            continue
+        else:
+            break
+    recipe = "\n".join(recipe_lines)
+    if not recipe:
+        raise ValueError("`ci-local:` target has an empty recipe")
+    pytest_idx = recipe.find("pytest")
+    if pytest_idx == -1:
+        raise ValueError("`ci-local:` recipe contains no 'pytest' invocation")
+    invocation = recipe[pytest_idx:]
+    uses_dirs = any(ref in invocation for ref in _DIRS_VAR_REFS)
+    uses_marker = _MARKER_VAR_REF in invocation
+    return uses_dirs, uses_marker
+
+
 def check(workflow_path: Path, makefile_path: Path) -> list[str]:
     """Return a list of violation strings (empty = clean)."""
     try:
@@ -174,6 +228,24 @@ def check(workflow_path: Path, makefile_path: Path) -> list[str]:
         errors.append(
             f"marker mismatch: ci-pr.yml's subsystem jobs use {wf_marker!r}, "
             f"Makefile's CI_LOCAL_MARKER is {mk_marker!r}."
+        )
+
+    try:
+        uses_dirs, uses_marker = makefile_recipe_consumes_vars(makefile_path)
+    except ValueError as exc:
+        return [*errors, f"MAKEFILE PARSE ERROR ({makefile_path}): {exc}"]
+    if not uses_dirs:
+        errors.append(
+            "the `ci-local:` recipe does not reference "
+            f"{' or '.join(_DIRS_VAR_REFS)} — CI_LOCAL_DIRS can be perfectly correct "
+            "while the recipe itself runs something else entirely. Have the recipe "
+            "consume the declared variable instead of a hardcoded path list."
+        )
+    if not uses_marker:
+        errors.append(
+            f"the `ci-local:` recipe does not reference {_MARKER_VAR_REF} — "
+            "CI_LOCAL_MARKER can be perfectly correct while the recipe passes a "
+            "different -m expression. Have the recipe consume the declared variable."
         )
     return errors
 
