@@ -107,7 +107,7 @@ class TestDirectionOnePlantedResidue:
         root, allow = _mini_repo(
             tmp_path,
             _PLANTED_RESIDUE,
-            "legacy-key  yadgar/core/planted.py  # planted for the C15 lint test\n",
+            "legacy-key  yadgar/core/planted.py  # planted residue for the C15 lint's own tests\n",
         )
         assert _check(root, allow) == []
 
@@ -116,7 +116,7 @@ class TestDirectionOnePlantedResidue:
         root, allow = _mini_repo(
             tmp_path,
             _PLANTED_RESIDUE,
-            "legacy-key  yadgar/core/planted.py  # planted for the C15 lint test\n",
+            "legacy-key  yadgar/core/planted.py  # planted residue for the C15 lint's own tests\n",
         )
         assert _check(root, allow) == []
         allow.write_text("# entry deleted by the mutation test\n", encoding="utf-8")
@@ -152,8 +152,8 @@ class TestDirectionTwoStaleAllowlist:
         root, allow = _mini_repo(
             tmp_path,
             _PLANTED_RESIDUE,
-            "legacy-key  yadgar/core/planted.py  # planted for the C15 lint test\n"
-            "carve-out-3  yadgar/core/vanished.py  # names a module that was deleted\n",
+            "legacy-key  yadgar/core/planted.py  # planted residue for the C15 lint's own tests\n"
+            "carve-out-3  yadgar/core/vanished.py  # names a module that was deleted from the tree\n",
         )
         errors = _check(root, allow)
         stale = [e for e in errors if e.startswith("STALE ENTRY (no subject)")]
@@ -165,7 +165,7 @@ class TestDirectionTwoStaleAllowlist:
         root, allow = _mini_repo(
             tmp_path,
             _PLANTED_RESIDUE,
-            "legacy-key  yadgar/core/planted.py  # planted for the C15 lint test\n",
+            "legacy-key  yadgar/core/planted.py  # planted residue for the C15 lint's own tests\n",
         )
         assert _check(root, allow) == []
         # the "sweep": rename the parameter onto project_id
@@ -182,7 +182,7 @@ class TestDirectionTwoStaleAllowlist:
         root, allow = _mini_repo(
             tmp_path,
             "x = 1\n",
-            "carve-out-3  yadgar/core/planted.py  # resolves, but carries no residue\n",
+            "carve-out-3  yadgar/core/planted.py  # resolves to a real file that carries no residue\n",
         )
         assert _check(root, allow), "a stale entry must FAIL, never merely warn"
 
@@ -192,9 +192,10 @@ class TestDirectionTwoStaleAllowlist:
             "carve-out-3\n",  # one field
             "carve-out-3 a.py b.py  # three fields and a reason\n",
             "not-a-tag  yadgar/core/planted.py  # unknown tag must be rejected\n",
-            "carve-out-3  yadgar/core/planted.py  # short\n",  # reason below the floor
-            "carve-out-3  yadgar/core/planted.py  # a perfectly fine first reason\n"
-            "carve-out-3  yadgar/core/planted.py  # duplicate path, second reason\n",
+            # 38 chars — under the 40 floor, so the boundary is pinned
+            "carve-out-3  yadgar/core/planted.py  # one character short of the forty floor\n",
+            "carve-out-3  yadgar/core/planted.py  # a perfectly fine first reason, long enough\n"
+            "carve-out-3  yadgar/core/planted.py  # duplicate path, a second and different reason\n",
         ],
     )
     def test_malformed_rows_hard_fail(self, tmp_path: Path, row: str) -> None:
@@ -227,7 +228,7 @@ class TestUnparseableIsAViolationNotASkip:
         root, allow = _mini_repo(
             tmp_path,
             _PLANTED_RESIDUE,
-            "legacy-key  yadgar/core/planted.py  # planted for the C15 lint test\n",
+            "legacy-key  yadgar/core/planted.py  # planted residue for the C15 lint's own tests\n",
         )
         assert _check(root, allow) == []
         (root / "yadgar" / "core" / "planted.py").write_text("def f(:\n", encoding="utf-8")
@@ -240,6 +241,63 @@ class TestUnparseableIsAViolationNotASkip:
     def test_the_whole_repo_parses_under_this_interpreter(self) -> None:
         """Green on arrival for the third class too, on whichever Python runs."""
         assert C.find_unparseable(REPO_ROOT) == []
+
+    def test_the_except_tuple_arm_is_interpreter_independent(self, tmp_path: Path) -> None:
+        """The `ast.parse` arm alone is blind on 3.14 — this one is not.
+
+        Under Python 3.14, PEP 758 makes `except A, B:` legal, so the parse arm
+        is structurally incapable of seeing a regression that breaks the 3.13
+        interpreter pre-commit's `language: system` hooks actually run. If a
+        ruff-format run strips a `# fmt: skip` paren again, THIS is what fires,
+        on either Python.
+        """
+        root, allow = _mini_repo(
+            tmp_path,
+            "def f():\n    try:\n        g()\n    except TypeError, ValueError:\n        pass\n",
+            "# no entries\n",
+        )
+        errors = _check(root, allow)
+        bad = [e for e in errors if e.startswith("UNPARSEABLE")]
+        assert bad, f"the regex arm did not fire on 3.14: {errors}"
+        assert "yadgar/core/planted.py:4" in bad[0], bad[0]
+
+    def test_the_parenthesised_form_with_fmt_skip_is_accepted(self, tmp_path: Path) -> None:
+        root, allow = _mini_repo(
+            tmp_path,
+            "def f():\n    try:\n        g()\n"
+            "    except (TypeError, ValueError):  # fmt: skip\n        pass\n",
+            "# no entries\n",
+        )
+        assert _check(root, allow) == []
+
+    def test_the_arm_does_not_self_match_on_prose(self) -> None:
+        """The lint's own text names the form repeatedly; it must not trip.
+
+        The repo has been bitten once already by a guard that scanned for its
+        own marker and fired on the commit message describing it.
+        """
+        assert C.find_unparseable(REPO_ROOT, scan_roots=("scripts",)) == []
+        for prose in (
+            '    """...an unparenthesized ``except A, B:`` fails here."""',
+            '        "syntax such as PEP 758\'s `except A, B:` fails "',
+            "    # bare `except X, Y:` form is a SyntaxError",
+        ):
+            assert not C._BARE_EXCEPT_TUPLE.match(prose), prose
+
+    def test_the_five_swept_sites_stay_parenthesised(self) -> None:
+        """Pin the incidental fix so ruff-format cannot silently undo it."""
+        for rel in (
+            "benchmarks/run_eval.py",
+            "benchmarks/run_longmemeval.py",
+            "docs/diagrams/generate.py",
+        ):
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), 1):
+                assert not C._BARE_EXCEPT_TUPLE.match(line), (
+                    f"{rel}:{lineno} lost its parens — re-add "
+                    "`except (A, B):  # fmt: skip`; the comment is what stops "
+                    "ruff-format stripping them again"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +492,11 @@ class TestGreenOnArrival:
         assert len(entries) >= 60, f"only {len(entries)} entries parsed — did the file move?"
         for tag, pattern, reason in entries:
             assert tag in C.VALID_TAGS, (tag, pattern)
-            assert len(reason) >= 20, (pattern, reason)
+            assert len(reason) >= C.MIN_REASON_CHARS, (pattern, reason)
+
+    def test_the_reason_floor_matches_the_repo_allowlist_family(self) -> None:
+        """40, not 20 — the governed-allowlist family's floor, and C9a's."""
+        assert C.MIN_REASON_CHARS == 40
 
     def test_the_lint_does_not_flag_itself(self) -> None:
         """Self-match check — this repo has already been bitten by one.

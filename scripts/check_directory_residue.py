@@ -178,8 +178,18 @@ import argparse
 import ast
 import fnmatch
 import json
+import re
 import sys
 from pathlib import Path
+
+#: A PEP 758 unparenthesized ``except A, B:`` STATEMENT. Anchored at line start
+#: and required to end the line so prose mentioning the form (this file does,
+#: several times) cannot self-match — the repo has already been bitten once by a
+#: guard that scanned for its own marker and tripped on the commit message
+#: describing it.
+_BARE_EXCEPT_TUPLE = re.compile(
+    r"^\s*except\s+[A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)+\s*:\s*(?:#.*)?$"
+)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ALLOWLIST_FILE = _REPO_ROOT / "scripts" / "directory_residue_allowlist.txt"
@@ -267,6 +277,14 @@ _SIBLINGS: tuple[tuple[str, str, str], ...] = (
 #: every assertion here trivially green — the failure mode this train produced
 #: four times. If a later PR genuinely finishes the sweep, LOWER these
 #: deliberately rather than letting the guard rot.
+#: Minimum characters of stated reason per allowlist entry. 40, matching the
+#: repo's governed-allowlist family (``.test-weakening-allowlist.json``,
+#: ``.health-endpoint-allowlist.json``, ``.urllib-httperror-close-allowlist.json``)
+#: and C9a's own ``test_every_entry_states_a_reason``. The lint that supersedes
+#: three siblings must not be the weakest of the four on the one field a
+#: reviewer actually reads.
+MIN_REASON_CHARS = 40
+
 MIN_FILES_SCANNED = 400  # measured 506
 MIN_RESIDUE_HITS = 300  # measured 408 across 80 files
 MIN_SIBLING_ENTRIES = 60  # measured 80 (C9a _ALLOWLIST 48 + C9a _SWEPT 9 + C9b ALLOWLIST 23)
@@ -382,7 +400,28 @@ def find_unparseable(repo_root: Path, scan_roots: tuple[str, ...] = SCAN_ROOTS) 
     bad: list[str] = []
     for path, rel in iter_sources(repo_root, scan_roots):
         try:
-            ast.parse(path.read_text(encoding="utf-8"))
+            source = path.read_text(encoding="utf-8")
+        except OSError:  # pragma: no cover - defensive
+            continue
+        # Interpreter-INDEPENDENT arm, and the reason it exists: the ast.parse
+        # arm below can only fire under a Python that REJECTS PEP 758, so on
+        # 3.14 it is structurally incapable of seeing this regression. If a
+        # ruff-format run strips one of the `# fmt: skip` parens again, 3.13
+        # breaks and every 3.14-side check stays green — the same
+        # "silent under the environment that matters" shape. The repo's
+        # `test_v5_46_16_except_tuple_sweep.py` covers `yadgar/**` only, which
+        # is exactly why `benchmarks/**` and `docs/diagrams/**` rotted.
+        for lineno, line in enumerate(source.splitlines(), 1):
+            if _BARE_EXCEPT_TUPLE.match(line):
+                bad.append(
+                    f"UNPARSEABLE: {rel}:{lineno} uses PEP 758's unparenthesized "
+                    "`except A, B:`, which is a SyntaxError on every Python before "
+                    "3.14 — including the interpreter pre-commit's `language: system` "
+                    "hooks run. Write `except (A, B):  # fmt: skip`; the `# fmt: skip` "
+                    "is what stops ruff-format stripping the parens back off."
+                )
+        try:
+            ast.parse(source)
         except SyntaxError as exc:
             bad.append(
                 f"UNPARSEABLE: {rel}:{exc.lineno} cannot be parsed by this "
@@ -393,8 +432,6 @@ def find_unparseable(repo_root: Path, scan_roots: tuple[str, ...] = SCAN_ROOTS) 
                 "here because pre-commit's `language: system` hooks run a "
                 "different Python from the venv)."
             )
-        except OSError:  # pragma: no cover - defensive
-            continue
     return bad
 
 
@@ -445,10 +482,11 @@ def parse_allowlist(text: str) -> tuple[list[tuple[str, str, str]], list[str]]:
             )
             continue
         reason = comment.strip()
-        if len(reason) < 20:
+        if len(reason) < MIN_REASON_CHARS:
             errors.append(
                 f"MALFORMED allowlist line {lineno}: entry {pattern!r} has no usable "
-                "stated reason (>= 20 chars after '#'). A bare entry is not reviewable."
+                f"stated reason (>= {MIN_REASON_CHARS} chars after '#'). A bare entry "
+                "is not reviewable."
             )
             continue
         if pattern in seen:
@@ -465,9 +503,15 @@ def _matches(pattern: str, rel: str) -> bool:
     return fnmatch.fnmatch(rel, pattern)
 
 
-def _pattern_files(repo_root: Path, pattern: str) -> list[str]:
-    """Every scanned ``*.py`` the pattern resolves to (may be empty)."""
-    return [rel for _, rel in iter_sources(repo_root) if _matches(pattern, rel)]
+def _pattern_files(repo_root: Path, pattern: str, known: list[str] | None = None) -> list[str]:
+    """Every scanned ``*.py`` the pattern resolves to (may be empty).
+
+    ``known`` lets the caller hoist the walk: ``check()`` resolves 78 entries,
+    and re-walking 506 files per entry made the hook ~7x slower than the
+    ~2s neighbours in ``.pre-commit-config.yaml``.
+    """
+    rels = known if known is not None else [rel for _, rel in iter_sources(repo_root)]
+    return [rel for rel in rels if _matches(pattern, rel)]
 
 
 # ---------------------------------------------------------------------------
@@ -612,8 +656,9 @@ def check(
         )
 
     # ── Direction 2 — stale allowlist entries (hard fail; see docstring) ────
+    known = [rel for _, rel in iter_sources(repo_root, scan_roots)]
     for tag, pattern, reason in entries:
-        resolved = _pattern_files(repo_root, pattern)
+        resolved = _pattern_files(repo_root, pattern, known)
         if not resolved:
             errors.append(
                 f"STALE ENTRY (no subject): `{pattern}` [{tag}] matches no scanned file. "

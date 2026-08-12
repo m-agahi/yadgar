@@ -19,12 +19,15 @@
 #
 # FORMAT
 # ------
-#   <tag>  <path-or-glob>  # reason (>= 20 chars, required)
+#   <tag>  <path-or-glob>  # reason (>= 40 chars, required)
 #
 # A glob ends in `/**` and matches every scanned `*.py` beneath it. Paths are
 # repo-relative. Malformed rows, unknown tags, duplicate paths, and reasons
-# shorter than 20 chars are HARD FAILURES — an unparsed row silently grants
-# nothing and hides a residue site.
+# shorter than 40 chars are HARD FAILURES — an unparsed row silently grants
+# nothing and hides a residue site. 40 matches the repo's governed-allowlist
+# family (.test-weakening-, .health-endpoint-, .urllib-httperror-close-) and
+# C9a's own reason floor; the lint promoting three siblings must not be the
+# weakest of the four on the one field a reviewer actually reads.
 #
 # TAGS — the class of reason. The trailing comment gives the specific one.
 # -----------------------------------------------------------------------
@@ -156,7 +159,7 @@ legacy-key  yadgar/_shared/rules_engine/rules_engine.py    # _LEGACY_SCOPE_KINDS
 legacy-key  yadgar/backend/restoration/checkpoint_restore.py  # five sinks; checkpoint and memory_block have no project_id, so restore must pass both
 legacy-key  yadgar/backend/restoration/__init__.py         # run_restore forwards into checkpoint_restore.restore
 legacy-key  yadgar/backend/write_exec/checkpoint_impl.py   # forwards into replay.create_checkpoint — the checkpoint table again
-legacy-key  yadgar/backend/write_exec/action_log_impl.py   # storage.insert_action_log(directory=)
+legacy-key  yadgar/backend/write_exec/action_log_impl.py   # storage.insert_action_log(directory=) — the action_log dual-write, same block as _shared/storage/queue.py
 legacy-key  yadgar/backend/consolidation/cleanup.py        # reads the action_log row's directory as the summary memory's scope
 legacy-key  yadgar/backend/prospective/prospective.py      # prospective_memory.target_directory — a stored column with no project_id
 legacy-key  yadgar/backend/admin_exec/blocks.py            # storage block API (directory=) — memory_block, same block as _shared/storage/blocks.py
@@ -164,12 +167,12 @@ legacy-key  yadgar/backend/admin_exec/project.py           # storage.get_block /
 legacy-key  yadgar/backend/admin_exec/audit.py             # storage.insert_action_log(directory=) plus the payload key it reads back
 legacy-key  yadgar/backend/admin_exec/runtime_config.py    # plan §6 — runtime_config scoping belongs to the knob train, not a mechanical rename
 legacy-key  yadgar/core/server/http.py                     # MIXED Starlette hook routes: checkpoint, memory_block, runtime_config, action_log
-legacy-key  yadgar/core/forward.py                         # _forward_restore — checkpoint
+legacy-key  yadgar/core/forward.py                         # _forward_restore — the checkpoint table, which has no project_id column yet
 legacy-key  yadgar/core/runtime_config_client.py           # the host-side runtime_config client; blocked with its storage layer
 legacy-key  yadgar/core/code_graph/digest.py               # memory_block injection scope is an exact directory match (the block NAME carries the discriminator)
 legacy-key  yadgar/core/cli/_shared.py                     # forward_restore / forward_pre_compact_drain — checkpoint
 legacy-key  yadgar/core/cli/capture.py                     # action_log: the CLI capture path stamps the legacy column
-legacy-key  yadgar/core/cli/hook.py                        # memory_block plus the mixed hook routes
+legacy-key  yadgar/core/cli/hook.py                        # memory_block plus the mixed hook routes; blocked with core/server/http.py
 legacy-key  yadgar/core/cli/seed.py                        # memory + wiki_page writes still keyed on the legacy column
 legacy-key  yadgar/core/cli/stats.py                       # memory rows are still counted by the legacy directory column
 legacy-key  yadgar/core/seed/_generate.py                  # stamps the legacy column onto every seeded memory payload
@@ -180,7 +183,7 @@ legacy-key  yadgar/core/server/tools/_runtime_config.py    # the core-side runti
 # is accepted-but-inert. accept_project_param sub-class — STILL directory-keyed.
 tool-surface  yadgar/core/server/tools/_project_param.py   # THE two-class site itself: resolve_effective_project and accept_project_param
 tool-surface  yadgar/core/server/tools/recall.py           # resolve_effective_project class; also _resolve_shape_limit's runtime_config read
-tool-surface  yadgar/core/server/tools/memorize.py         # resolve_effective_project class
+tool-surface  yadgar/core/server/tools/memorize.py         # resolve_effective_project class — raises without project=; directory is accepted-but-inert
 tool-surface  yadgar/core/server/tools/wiki.py             # resolve_effective_project class (wiki_add/adr) + wiki_list, which is still keyed
 tool-surface  yadgar/core/server/tools/adr.py              # resolve_effective_project class over wiki_page
 tool-surface  yadgar/core/server/tools/adr_render.py       # resolve_effective_project class over wiki_page
@@ -195,4 +198,4 @@ tool-surface  yadgar/core/server/tools/runtime_config.py   # config_* are accept
 tool-surface  yadgar/core/server/tools/task.py             # forwards directory= into the still-keyed admin payloads
 tool-surface  benchmarks/run_eval.py                       # drives recall() over the tool surface that still accepts directory
 tool-surface  benchmarks/run_longmemeval.py                # drives recall() over the tool surface that still accepts directory
-tool-surface  benchmarks/run_perf_loadtest.py              # recall load test over the same surface
+tool-surface  benchmarks/run_perf_loadtest.py              # recall load test driving the same still-accepting tool surface as the two eval harnesses
