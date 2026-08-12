@@ -1064,22 +1064,51 @@ def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
 
 
 @observe(tier="stage", metric="tools.project._check_session_end_sentinel")
-def _check_session_end_sentinel(storage, resolved: str) -> dict | None:
-    """Check for an unprocessed session_end_sentinel memory row for this directory.
+def _check_session_end_sentinel(storage, project_id: str | None) -> dict | None:
+    """Check for an unprocessed session_end_sentinel memory row for this project.
 
     Returns an extract_last_session_findings recommended_action dict, or None.
     Handles missing transcript (tombstone note) gracefully.
     v5.10.6.
+
+    Car F9 (c2) re-keyed this query from the filesystem path onto the resolved
+    ``project_id``. C10 (f) made ``memorize`` stamp ``directory_context`` from
+    the resolved project — so the writer stored ``'owner/repo'`` while this
+    reader kept asking for ``'/home/user/proj'``, and the two could never meet.
+    Re-keying the READER is the direction that matches C10 (f) and ADR-0225's
+    retirement of ``directory`` as a scoping key; the alternative (keeping the
+    sentinel on a private path/tag key) would re-create the second scope key
+    that ADR-0225 exists to delete, and would need a bespoke write path since
+    ``memorize`` no longer has any way to stamp a path.
+
+    The column is still ``directory_context`` rather than the ``project_id``
+    column C11 added: ``directory_context`` is what the write path demonstrably
+    stamps today (``_phase_store``), and it keeps this query shaped like its
+    siblings for C7, which re-keys all of ``project_brief`` in one move.
+
+    ``project_id=None`` is NOT scoped to something else and NOT derived from a
+    directory (ADR-0227). The check is skipped and the skip is logged at
+    WARNING — a query on a key that cannot match would return "no sentinel"
+    indistinguishably from a real absence, which is the silent-success shape
+    this car exists to remove.
     """
     import json as _json  # noqa: PLC0415 — local to avoid circular if json not top-level
+
+    if not project_id:
+        logger.warning(
+            "session-end sentinel check skipped: project_brief was called with no "
+            "project= and sentinel rows are keyed on the resolved project_id "
+            "(ADR-0227: no identity is derived from the directory)"
+        )
+        return None
 
     try:
         sentinel_rows = storage._q(
             "SELECT id, content, created_at FROM memory "
             "WHERE '_session_end_sentinel' INSIDE tags "
-            "AND directory_context = $dir "
+            "AND directory_context = $project_id "
             "ORDER BY created_at DESC LIMIT 1",
-            {"dir": resolved},
+            {"project_id": project_id},
         )
     except Exception:
         return None
@@ -1105,7 +1134,7 @@ def _check_session_end_sentinel(storage, resolved: str) -> dict | None:
     if transcript_exists:
         suggested_call = (
             f"# Read transcript at {transcript_path!r}, extract key decisions/findings,\n"
-            f"# then call: memorize(content='...', context={resolved!r}, tags=['session-finding'])\n"
+            f"# then call: memorize(content='...', project={project_id!r}, tags=['session-finding'])\n"
             f"# and: forget(memory_id={sentinel_id})"
         )
         reason = f"sentinel found: ended_at={ended_at}, msg_count={msg_count}"
@@ -1711,7 +1740,7 @@ def _omit_sentinel(d: dict, key: str, value: object, sentinel: object) -> None:
 
 
 @observe(tier="stage", metric="tools.project._project_brief_signals")
-def _project_brief_signals(
+def _project_brief_signals(  # noqa: PLR0913 — internal payload builder; every arg is a distinct signal input, all passed by keyword from the single call site
     resolved: str,
     mode: str,
     init_memory_present: bool,
@@ -1720,6 +1749,7 @@ def _project_brief_signals(
     active_work_age_hours: float | None,
     stale_checkpoint_hours: float | None,
     storage=None,
+    project_id: str | None = None,
 ) -> dict:
     """Build signals mode payload (<100 tokens).
 
@@ -1727,6 +1757,11 @@ def _project_brief_signals(
     anchor_redundancy_candidates, anchor_promote_candidates) and 4 new
     recommended_actions types.  storage arg required for anchor queries;
     signals degrade gracefully (empty lists, count=0) when storage=None.
+
+    ``project_id`` (Car F9) is the caller-supplied identity, forwarded to the
+    session-end sentinel check — the one query here whose rows are keyed on the
+    resolved project rather than the path (see ``_check_session_end_sentinel``).
+    The remaining path-keyed queries are C7's to re-key.
     """
     cfg = get_settings()
     if storage is not None:
@@ -1772,7 +1807,7 @@ def _project_brief_signals(
 
     # v5.10.6: session-end sentinel check — surface extract_last_session_findings action.
     if storage is not None:
-        _sentinel_action = _check_session_end_sentinel(storage, resolved)
+        _sentinel_action = _check_session_end_sentinel(storage, project_id)
         if _sentinel_action is not None:
             recommended_actions.append(_sentinel_action)
 
@@ -2145,27 +2180,40 @@ def project_brief(directory: str, mode: str = "catalog", *, project: str | None 
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; a full C7 re-key
     # of this tool's scope from ``directory`` onto the resolved project_id is
-    # still future work for the anchor/hot_memories BUCKET-CHOICE queries
-    # below (key_wiki_pages / wiki_catalog / adr_log / presence rows stay
-    # directory-keyed on purpose — see TestProjectBriefWikiScoping).
+    # still future work for the path-keyed queries below (key_wiki_pages /
+    # wiki_catalog / adr_log / presence rows stay directory-keyed on purpose —
+    # see TestProjectBriefWikiScoping).
     #
-    # Car F7: the validated value used to be computed and discarded here —
-    # ``get_anchored_memories_scoped`` (the sibling reader of this same
-    # ``_anchor``-tagged bucket, used by the ``restore()`` tool) was re-keyed
-    # onto the resolved project_id in lockstep with its writer (C10g), but
-    # this tool's OWN duplicate anchor/hot_memories queries were not, because
+    # Cars F7 AND F9 both fixed the same root cause from two sides: the
+    # validated value used to be computed and DISCARDED here, which is what
+    # kept both features dead. It is now kept, in two distinct shapes — do not
+    # collapse them into one variable, they are not the same value:
+    #
+    # ``_project_id`` — the raw validated override, ``None`` when the caller
+    # named no ``project=``. Car F9 forwards THIS to the session-end sentinel
+    # check: that reader must see the ``None`` so it can skip loudly at
+    # WARNING (ADR-0227 — no identity is derived from a directory). Passing a
+    # directory fallback there would silently restore the dead behaviour F9
+    # removed, since C10 (f) keys sentinel rows on the resolved project_id.
+    #
+    # ``_project_scope_key`` — the raw value with a fallback to ``resolved``.
+    # Car F7 threads THIS into the anchor/hot_memories bucket queries and the
+    # whole-payload cache key. ``get_anchored_memories_scoped`` (the sibling
+    # reader of this same ``_anchor``-tagged bucket, used by ``restore()``)
+    # was re-keyed onto the resolved project_id in lockstep with its writer
+    # (C10g), but this tool's OWN duplicate queries were not, because
     # ``memorize``/``anchor`` (C10f) now ALWAYS stamp ``directory_context``
     # from the resolved project_id — never the literal directory a caller
     # passed as ``context``. A caller who names the SAME ``project=`` on both
     # the write and this read got zero rows back, not "their current
     # project's rows" (accept_project_param's documented interim gap) — the
-    # predicate simply could not match either identity convention.
-    # ``_project_scope_key`` prefers the resolved project_id and falls back to
-    # ``resolved`` (old behaviour) when no ``project=`` was supplied, matching
+    # predicate simply could not match either identity convention. The
+    # fallback to ``resolved`` preserves the old behaviour (and the pre-F7
+    # cache-key shape) when no ``project=`` was supplied, matching
     # accept_project_param's contract of not resolving in that case.
-    _scope_project_id = accept_project_param(project, directory)
+    _project_id = accept_project_param(project, directory)
     resolved = _resolve_project_root(directory)
-    _project_scope_key = _scope_project_id if _scope_project_id else resolved
+    _project_scope_key = _project_id if _project_id else resolved
 
     # Car 1: whole-payload cache for the query-agnostic modes (catalog/restore/full).
     # Checked BEFORE any storage round-trip so a hit skips _fetch_presence_rows +
@@ -2202,6 +2250,7 @@ def project_brief(directory: str, mode: str = "catalog", *, project: str | None 
             active_work_age_hours=active_work_age_hours,
             stale_checkpoint_hours=stale_checkpoint_hours,
             storage=storage,
+            project_id=_project_id,
         )
 
     if mode == "restore":

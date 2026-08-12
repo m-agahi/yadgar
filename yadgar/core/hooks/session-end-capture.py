@@ -32,6 +32,11 @@ from pathlib import Path
 import yadgar._shared.paths as _paths
 from yadgar._shared.observability.observe import observe
 
+try:
+    from yadgar.core.hooks._identity_mint import resolve_session_project
+except ImportError:  # yadgar not importable from this interpreter
+    resolve_session_project = None
+
 # ---------------------------------------------------------------------------
 # Kill switch
 # ---------------------------------------------------------------------------
@@ -294,6 +299,42 @@ def _collect_straggler_findings(tp: str, project_cwd: str) -> list[dict]:
 
 pending_findings = _collect_straggler_findings(transcript_path, cwd)
 
+
+# ---------------------------------------------------------------------------
+# Mint the session's project_id (Car F9, ADR-0227)
+#
+# The sentinel is consumed by the daemon at the NEXT SessionStart, inside a
+# container with no git binary and no host project mounts. That process cannot
+# derive an identity and must not try — so the identity has to travel IN the
+# record, minted here, at a host-side hook entry point (the only category
+# ADR-0227 permits to mint).
+#
+# ``cwd`` is NOT a fallback for it. An unmintable tree yields ``None``, the
+# sentinel is still written (losing the session's exit record would be a worse
+# failure than an unstorable one), and the importer rejects it loudly rather
+# than inventing a key that would be indistinguishable from a real one.
+# ---------------------------------------------------------------------------
+
+
+@observe(tier="stage")
+def _mint_project_id(project_cwd: str) -> str | None:
+    """Return the minted project_id for *project_cwd*, or None. Never raises."""
+    if resolve_session_project is None:
+        return None
+    try:
+        project_id, notice = resolve_session_project(project_cwd)
+    except Exception:  # noqa: BLE001 — a mint crash must not lose the sentinel
+        return None
+    if project_id is None and notice:
+        # Loud on stderr: SessionEnd hook stdout is not injected anywhere, and a
+        # silently identity-less sentinel is exactly the failure this car exists
+        # to stop being invisible.
+        print(notice, file=sys.stderr)
+    return project_id
+
+
+project_id = _mint_project_id(cwd)
+
 # ---------------------------------------------------------------------------
 # Write sentinel atomically
 # ---------------------------------------------------------------------------
@@ -307,6 +348,9 @@ record: dict = {
     "type": "session_end_sentinel",
     "version": 1,
     "cwd": cwd,
+    # Car F9: the scope key. Always present so a consumer can tell "no identity
+    # was mintable" from "this record predates the field"; never derived.
+    "project_id": project_id,
     "end_reason": end_reason,
     "ended_at": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
     "transcript_path": transcript_path,

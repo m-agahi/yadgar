@@ -39,7 +39,7 @@
   "yadgar/core/daemon/units.py:453": {
     "rationale": "task:0105's docker readiness gate for the CORE unit, standing in for podman's sd_notify proxy, which docker does not have. It must approximate READY=1 — emitted LAST, after the full engine set (bootstrap.py). /health/live goes green as soon as the HTTP server binds, so gating on liveness would mark the docker unit active EARLIER than the podman arm does, a semantic regression. Readiness is genuinely required."
   },
-  "yadgar/core/server/http.py:513": {
+  "yadgar/core/server/http.py:605": {
     "rationale": "This is core's own /health readiness handler (_probe_dependency) probing a dependency (db or embed) to build the readiness payload. It IS the readiness implementation, not a caller needing liveness."
   }
 }

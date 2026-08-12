@@ -353,19 +353,91 @@ _stats_cache: dict = {}  # keys: "data", "cached_at", "project"
 _SENTINEL_MAX_RETRIES = 3
 
 
+class SentinelPermanentError(RuntimeError):
+    """The sentinel write was REFUSED, not merely unavailable — retrying cannot help.
+
+    Car F9. The distinction is the whole point of the class: ``RuntimeError``
+    (daemon down, queue unwritable) is transient and earns the retry ladder; a
+    REFUSAL — an unresolvable identity, a malformed override — is a property of
+    the record itself, so replaying byte-identical input three more times just
+    delays the same outcome by three session starts and buries it under
+    WARNINGs. This is surfaced at ERROR and retired to ``failed/`` at once.
+    """
+
+
 @observe(tier="stage")
-def _sentinel_memorize(content: str, directory_context: str) -> None:
-    """Import one sentinel record into memory. Extracted for patching in tests."""
+def _sentinel_memorize(content: str, project_id: str | None) -> dict:
+    """Import one sentinel record into memory. Extracted for patching in tests.
+
+    Car F9 (c1): ``project`` is supplied from the record's own minted identity.
+    Before this, the call named no project at all, so C10 (f)'s identity
+    contract refused EVERY sentinel write::
+
+        memorize rejected sentinel: {'stored': False, 'error': 'unresolved_project',
+                                     'fix': 'pass project="owner/repo"'}
+
+    and no sentinel row was ever written. There is deliberately no derivation
+    from the record's ``cwd`` here (ADR-0227): this process cannot see the tree
+    that path names, and a key it invented would be indistinguishable from a
+    real one at read time.
+
+    ``context=`` is NOT passed: C10 (f) redefined it as an optional real FILE
+    path used only for staleness hashing. The sentinel's ``cwd`` is a directory
+    and contributes nothing but a misleading hash input.
+
+    KNOWN RESIDUAL — the async rejection window. ``memorize`` defaults to
+    ``wait=False``, so ``queued`` means the job reached the file queue, not that
+    it was stored: the backend re-validates the stamp at INSERT time
+    (``_ensure_project_exists_sync``) and can DLQ a job this function already
+    reported as accepted. F9 is what makes that window reachable — before it,
+    every sentinel write was refused SYNCHRONOUSLY. It is deliberately not
+    closed here: ``wait=True`` would block the SessionStart handler for up to
+    ``WIKI_WRITE_WAIT_TIMEOUT_SECONDS`` (5s) behind a hook whose ``urlopen``
+    timeout is 2s, trading an invisible rejection for a timed-out session
+    start. A DLQ'd sentinel is not lost — the payload survives in the DLQ and
+    ``project_brief``'s ``pending_rejections_count`` / ``review_rejections``
+    action surfaces it — and the ``queue_id`` logged on consume is the thread
+    back from a DLQ entry to the sentinel file that produced it.
+
+    Returns:
+        The ``memorize`` result envelope (the caller logs its ``queue_id``).
+
+    Raises:
+        SentinelPermanentError: the write was refused (identity or policy).
+        RuntimeError: the write did not land for a transient reason.
+    """
     import yadgar.core.server as _srv  # noqa: PLC0415
+
+    if not project_id:
+        raise SentinelPermanentError(
+            "sentinel carries no project_id (error=unresolved_project): the SessionEnd "
+            "hook could not mint an identity for this session and nothing downstream "
+            "may derive one (ADR-0227)"
+        )
 
     result = _srv.memorize(
         content=content,
-        context=directory_context,
         tags=["_session_end_sentinel", "session_end"],
+        project=project_id,
     )
     if not result.get("stored") and not result.get("queued"):
-        # Raise so the caller's retry logic triggers
+        if result.get("error"):
+            # An error envelope is a REFUSAL — the write was evaluated and
+            # rejected. Never retried; surfaced verbatim so the reason is in
+            # the log rather than inferred from a repeat count.
+            raise SentinelPermanentError(f"memorize refused sentinel: {result}")
         raise RuntimeError(f"memorize rejected sentinel: {result}")
+    return result
+
+
+@observe(tier="stage")
+def _sentinel_retire_to_failed(marker: Path, failed_dir: Path) -> None:
+    """Move a sentinel out of the inbox into failed/. Never raises."""
+    try:
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        marker.rename(failed_dir / marker.name)
+    except Exception as mv_e:
+        logger.warning("sentinel move to failed/ error: %s", mv_e)
 
 
 @observe(tier="stage")
@@ -373,11 +445,7 @@ def _sentinel_handle_failure(marker: Path, record: dict, retries: int, failed_di
     """Handle a failed sentinel import: increment retries or move to failed/."""
     record["retries"] = retries
     if retries >= _SENTINEL_MAX_RETRIES:
-        try:
-            failed_dir.mkdir(parents=True, exist_ok=True)
-            marker.rename(failed_dir / marker.name)
-        except Exception as mv_e:
-            logger.warning("sentinel move to failed/ error: %s", mv_e)
+        _sentinel_retire_to_failed(marker, failed_dir)
     else:
         try:
             tmp = marker.with_suffix(".json.tmp")
@@ -392,7 +460,11 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
     """Scan sentinel dir, import each unprocessed *.json file into memory.
 
     - On success: file deleted (consumed).
-    - On failure: retries field incremented; after _SENTINEL_MAX_RETRIES, moved to failed/.
+    - On a REFUSAL (SentinelPermanentError): logged at ERROR and moved to failed/
+      immediately — a record the write path evaluated and rejected will be
+      rejected identically on every replay (Car F9).
+    - On a transient failure: retries field incremented; after
+      _SENTINEL_MAX_RETRIES, moved to failed/.
     - Never raises — errors are logged.
     """
     sentinel_dir = Path(sentinel_dir_path)
@@ -408,12 +480,32 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
             logger.warning("sentinel parse error for %s: %s", marker, e)
             continue
 
-        cwd = record.get("cwd", "global")
         retries = int(record.get("retries", 0))
 
         try:
-            _sentinel_memorize(content=json.dumps(record), directory_context=cwd)
+            _result = _sentinel_memorize(
+                content=json.dumps(record),
+                project_id=record.get("project_id"),
+            )
             marker.unlink()  # consumed
+            # Car F9: the marker is gone the moment the job is QUEUED, so the
+            # queue_id is the only remaining link from a later DLQ entry back to
+            # the sentinel file it came from. Logged at INFO for that trace.
+            logger.info(
+                "sentinel consumed: %s -> queue_id=%s",
+                marker.name,
+                (_result or {}).get("queue_id"),
+            )
+        except SentinelPermanentError as perm_e:
+            # Car F9 observability: a refused write is a defect, not weather.
+            # ERROR (not WARNING), the reason verbatim, and retired at once so
+            # it stops presenting as "still pending, will converge".
+            logger.error(
+                "sentinel import REFUSED for %s — retiring to failed/ without retry: %s",
+                marker,
+                perm_e,
+            )
+            _sentinel_retire_to_failed(marker, failed_dir)
         except Exception as e:
             retries += 1
             logger.warning("sentinel import failed for %s (attempt %d): %s", marker, retries, e)
