@@ -313,6 +313,13 @@ No admin op ran.**
 Everything below runs against **ephemeral engines** that pytest creates and destroys — never the
 live corpus. This is the coverage tier **below** the rehearsal, not a substitute for it.
 
+**Measured 2026-08-12, both green:**
+
+```
+make e2e                                        182 passed, 4 skipped   exit 0
+the 11 targeted modules named in the table      214 passed              exit 0
+```
+
 | §8 step | ephemeral-tier coverage | what it does NOT cover |
 |---|---|---|
 | 2, 3 (migration state) | `yadgar/tests/scripts/test_migration_031_project_id_backfill.py`, `…_032_drop_wiki_page_version_branch.py`, `…_033_project_id_other_tables.py`; `yadgar/tests/e2e/test_migration_032_wiki_page_version_branch_e2e.py` | a **restored real corpus** — the tests build their own rows, so they cannot catch a value shape only the live data has |
