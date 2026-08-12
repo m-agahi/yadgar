@@ -7,6 +7,14 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+**test(ci): Car F5 — a local target that actually reproduces CI's unit suite (PR #40 remediation).** Core `5.181.33` → `5.181.38`; backend unchanged (no `yadgar/backend/**` edits).
+
+**PR #40 shipped on a green `make e2e` — a target that runs `yadgar/tests/e2e/ -m e2e`, a directory and marker completely disjoint from what CI gates a PR on. CI then found 49 failures `make e2e` never touched.** `make ci-local` is the target that would have caught them: it reproduces the union of `ci-pr.yml`'s four subsystem jobs (test-fast/test-shared/test-backend/test-core) — `yadgar/tests/{scripts,server,hooks,_meta,clients,_shared,backend,core}/` under `-m 'not integration and not e2e and not perf'` — in one local invocation. It is neither `make e2e` (disjoint suite) nor `make test-ci` (broader, unfiltered directories, no `perf` exclusion) — both left unchanged. Subset for mid-work use: `make ci-local DIRS=yadgar/tests/_shared`.
+
+**Anti-drift, not a copied snapshot.** `scripts/check_ci_local_parity.py` (new pre-commit hook `check-ci-local-parity`, `files:` scoped to `Makefile` + `ci-pr.yml`) parses both files independently and fails the commit the moment their test dirs or marker expression disagree — the exact silent-rot class that let `make e2e` and CI diverge unnoticed. Verified to discriminate: a scratch copy of `ci-pr.yml` with an extra test directory, and a separate copy with a diverged marker, both fail loudly; the real files pass clean.
+
+**Per ADR-0218, this is an INTEGRATION-STEP target, not a car target** — a car's testing obligation stays targeted tests over changed symbols; `make ci-local` (like the full suite it approximates) is for the PR/push seam, documented as such in both the Makefile comment and `AGENTS.md`.
+
 **test(scoping): Car F4 — the scoping assertions that outlived their key, and three production defects the sweep surfaced (PR #40 CI remediation).** Core `5.181.33` → `5.181.37`; backend unchanged (no `yadgar/backend/**` edits).
 
 **`test_other_project_excluded` was triaged as "a real cross-project scoping regression". It is not, and the difference decides whether this is a test migration or a production fix.** Measured on this branch against a live embedded engine: a row stamped `project_id='test-owner/test-repo'` at `directory_context='/home/max/aws-work'` **comes back** from `recall(project='test-owner/test-repo')`; the same row stamped `project_id='other-owner/aws-work'` **does not**. The clause is `(project_id = $sc_pid OR $sc_reach IN tags)` and has no directory arm at all. The test's own `_insert_mem` stamped **every** row — the aws ones included — with the caller's `TEST_PROJECT_ID` and varied only `directory_context`, the key ADR-0225 retires. Returning them was correct. Cross-project scoping works.
