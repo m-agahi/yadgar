@@ -435,9 +435,17 @@ def _parse_surprise_scores(rows) -> list[float]:
 
 def _dq_null_embedding(db, sd, total):
     try:
+        # G2 item 2: SurrealDB's NONE (field absent) and NULL (explicit null)
+        # are DISTINCT values — ``IS NONE`` alone is FALSE for a row whose
+        # embedding is an explicit NULL, so this metric under-counted exactly
+        # the rows it exists to find. Mirrors the guard Car F1 established for
+        # the brute-force vector-search arms (``vector.py::search_vectors``:
+        # ``IS NOT NONE AND IS NOT NULL``) — here the positive form, since the
+        # goal is to COUNT the empty rows rather than exclude them.
         null_count = _count(
             db.query(
-                "SELECT count() FROM memory WHERE is_stale = false AND embedding IS NONE GROUP ALL"
+                "SELECT count() FROM memory WHERE is_stale = false "
+                "AND (embedding IS NONE OR embedding IS NULL) GROUP ALL"
             )
         )
         sd.dq_null_embedding_count = null_count

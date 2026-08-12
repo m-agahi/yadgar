@@ -328,6 +328,121 @@ class TestActionLogWriterAlreadyStamped:
         assert params["directory"] == _PATH
 
 
+class TestActionLogWriterUnnamedProject:
+    """G2 item 3 — an unnamed project writes the ``NONE`` literal, not ``""``.
+
+    ``insert_action_log``'s ``project_id`` default was the literal empty
+    string ``""``, bound as a real parameter value — ``project_id = $project_id``
+    with ``params["project_id"] == ""``. That is spec-divergent: every other
+    C11 writer in this file (``create_block``, ``insert_episode``,
+    ``create_checkpoint``) uses ``project_id_set_fragment`` and emits the
+    ``NONE`` literal for an absent identity, matching the ``option<string>``
+    column type migration 033 declares. An empty string satisfies no scope
+    predicate (``project_id = $sc_pid OR $sc_reach IN tags`` never matches
+    ``""``), so the row becomes silently unscoped-forever rather than
+    genuinely reachable as ``NONE`` is designed to be.
+
+    ``insert_action_log`` is a general storage CRUD primitive, not a
+    session-bound hot-path write (``memorize``/``anchor``), so the right tier
+    is ``project_id_set_fragment`` (absence legitimate) — not
+    ``_resolve_project_id_for_write`` (which raises). ``run_action_log_replay``
+    (``yadgar/backend/write_exec/action_log_impl.py``) already documents that a
+    payload without one is expected and must not crash the drainer.
+    """
+
+    def test_no_project_id_writes_the_none_literal(self, storage, recorder):
+        storage.insert_action_log(
+            tool_name="Read",
+            tool_input_summary="x",
+            directory=_PATH,
+            session_id="s1",
+            timestamp="2026-08-12T00:00:00Z",
+        )
+        sql, params = _creates(recorder, "action_log")[-1]
+        assert "project_id = NONE" in sql, (
+            f"expected the NONE literal in the CREATE statement, got: {sql!r}"
+        )
+        assert "project_id" not in params, (
+            "insert_action_log bound project_id as a real parameter value "
+            "instead of emitting the NONE literal — a bound empty string "
+            "satisfies no scope predicate and the row becomes permanently "
+            "unreachable"
+        )
+
+    def test_empty_string_project_id_also_writes_the_none_literal(self, storage, recorder):
+        """Explicit ``project_id=""`` (the old default) must not sneak through."""
+        storage.insert_action_log(
+            tool_name="Read",
+            tool_input_summary="x",
+            directory=_PATH,
+            session_id="s1",
+            timestamp="2026-08-12T00:00:00Z",
+            project_id="",
+        )
+        sql, params = _creates(recorder, "action_log")[-1]
+        assert "project_id = NONE" in sql
+        assert "project_id" not in params
+
+
+class TestUpdateMemoryFieldsProjectIdIsNoneSafe:
+    """G2 item 6 — ``project_id`` in ``_MEMORY_UPDATABLE_FIELDS`` is a landmine.
+
+    ``update_memory_fields`` binds every field generically as a bound ``$vN``
+    parameter — it has no special-casing for ``option<string>`` columns the
+    way ``project_id_set_fragment`` and ``clear_memory_valid_until`` do.
+    ``project_id`` is ``option<string>`` (migration 033): a bound Python
+    ``None`` serialises to SQL ``NULL``, which SurrealDB rejects outright —
+    the same crash class ``clear_memory_valid_until``'s docstring documents
+    for ``valid_until`` ("Couldn't coerce value ... Expected `none | string`
+    but found `NULL`").
+
+    No live caller passes ``project_id=`` today — the MCP-level
+    ``_MEMORY_UPDATE_ALLOWED`` allowlist (``core/server/tools/admin_other.py``)
+    omits it, and every internal caller of ``update_memory_fields`` passes a
+    fixed, disjoint field set (confidence, tags, store_type, etc — none pass
+    ``project_id``). That is exactly what makes this a landmine rather than a
+    live bug: the first caller to add ``project_id=`` (e.g. a future
+    re-classification tool, which is the use Car L's comment on the allowlist
+    entry names) hits the crash in production with no test ever having
+    exercised the path.
+    """
+
+    def _seed_memory(self, storage, mid: int) -> None:
+        storage._q(
+            f"CREATE memory:{mid} SET content = $c, heat = 1.0, is_stale = false, "
+            f"directory_context = $d, tags = []",
+            {"c": "project_id update probe", "d": _PATH},
+        )
+
+    def test_project_id_none_writes_the_none_literal(self, storage, recorder):
+        self._seed_memory(storage, 9001)
+        storage.update_memory_fields(9001, project_id=None)
+        sql, params = recorder[-1]
+        assert "project_id = NONE" in sql, f"expected the NONE literal, got: {sql!r}"
+        assert None not in params.values(), (
+            "update_memory_fields bound a Python None as a real parameter for "
+            "project_id — SurrealDB rejects NULL for the option<string> column; "
+            "NONE must appear as a literal in the statement, never a bound value"
+        )
+
+    def test_project_id_empty_string_also_writes_the_none_literal(self, storage, recorder):
+        self._seed_memory(storage, 9002)
+        storage.update_memory_fields(9002, project_id="")
+        sql, params = recorder[-1]
+        assert "project_id = NONE" in sql, f"expected the NONE literal, got: {sql!r}"
+        assert "" not in params.values()
+
+    def test_project_id_real_value_still_binds_normally(self, storage, recorder):
+        """The NONE-safety must not swallow a genuine identity."""
+        self._seed_memory(storage, 9003)
+        storage.update_memory_fields(9003, project_id=_PROJECT)
+        sql, params = recorder[-1]
+        assert "project_id = NONE" not in sql
+        assert _PROJECT in params.values(), (
+            f"a real project_id value was not bound as a parameter: sql={sql!r} params={params!r}"
+        )
+
+
 class TestTheUniquenessKeyIsAtLeastAsWideAsTheReadKey:
     """C11 — the write's duplicate check must not be narrower than the read.
 

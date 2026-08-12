@@ -9,6 +9,7 @@ _QueueMixin provides:
 import logging
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import project_id_set_fragment
 
 _log = logging.getLogger(__name__)
 
@@ -75,21 +76,32 @@ class _QueueMixin:
         session minted host-side. The consumer is
         ``consolidation.cleanup._group_rows_by_window``, which groups on it —
         so a row that arrives without one is skipped and counted there rather
-        than being bucketed under a guess. Empty string is the honest "the
-        producer did not stamp one" marker; nothing here derives a value.
+        than being bucketed under a guess. An absent identity is the honest
+        "the producer did not stamp one" marker; nothing here derives a value.
 
         C11: ``action_log`` is SCHEMALESS, so this write needs no migration to
         land — but migration 033 must still add
         ``DEFINE FIELD project_id ON TABLE action_log TYPE option<string>``
         plus an index, so the column is declared and queryable rather than
         merely present on rows written after this car.
+
+        G2 item 3: an unnamed project writes the ``NONE`` literal via
+        ``project_id_set_fragment`` — never a bound empty string. ``""``
+        satisfies no scope predicate (``project_id = $sc_pid OR $sc_reach IN
+        tags``), so a row stamped that way was silently unscoped-forever
+        instead of genuinely reachable as ``NONE`` is designed to be. This is
+        a general storage CRUD primitive (not the session-bound hot path
+        ``memorize``/``anchor`` use), so absence is legitimate here —
+        ``run_action_log_replay`` already documents that a payload without an
+        identity is expected and must not crash the drainer.
         """
         aid = self._next_id("action_log")
+        pid_sql, pid_params = project_id_set_fragment(project_id)
         self._q(
             "CREATE type::record('action_log', $id) SET "
             "tool_name = $tool_name, tool_input_summary = $tis, "
             "directory = $directory, session_id = $sid, "
-            "project_id = $project_id, "
+            f"{pid_sql}, "
             "timestamp = $ts, processed = false",
             {
                 "id": aid,
@@ -97,7 +109,7 @@ class _QueueMixin:
                 "tis": tool_input_summary,
                 "directory": directory,
                 "sid": session_id,
-                "project_id": project_id,
+                **pid_params,
                 "ts": timestamp,
             },
         )

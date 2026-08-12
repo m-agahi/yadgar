@@ -215,6 +215,47 @@ class TestQueryDataQuality:
         assert sd.dq_surprise_p50 is not None
         assert sd.dq_surprise_p95 == 1.5  # fallback to max
 
+    def test_null_embedding_count_includes_explicit_null_rows(self):
+        """G2 item 2: ``dq_null_embedding_count`` must count NONE *and* NULL.
+
+        SurrealDB's ``NONE`` (field absent) and ``NULL`` (explicit null) are
+        DISTINCT values — ``IS NONE`` is FALSE for a row whose embedding is an
+        explicit NULL (same trap Car F1 fixed for the brute-force vector-search
+        arms in ``yadgar/_shared/storage/vector.py::search_vectors``, which
+        guards with ``IS NOT NONE AND IS NOT NULL``). A metric whose whole job
+        is finding rows with no usable embedding must use the mirror-image
+        positive form, ``IS NONE OR IS NULL``, or it silently undercounts
+        exactly the NULL-embedding rows it exists to surface.
+
+        This mock simulates that real SurrealDB distinction: a query that only
+        guards ``embedding IS NONE`` sees 2 rows (the NONE ones); a query that
+        ALSO guards ``embedding IS NULL`` sees all 5 (2 NONE + 3 explicit
+        NULL). Asserting the true total (5) fails against the old
+        NONE-only query — it would return 2 — and passes once both arms are
+        present, so this is not a trivially-passing assertion.
+        """
+        from yadgar.core.cli.stats import _query_data_quality
+
+        sd = _make_stats_data(total=100, stale=0)
+
+        def _dispatch(sql, *args, **kwargs):
+            low = sql.lower()
+            if "embedding" in low and "count" in low:
+                if "is null" in low:
+                    return [[{"count": 5}]]  # 2 NONE + 3 explicit NULL
+                return [[{"count": 2}]]  # NONE-only guard misses the 3 NULL rows
+            return [[{"count": 0}]]
+
+        db = MagicMock()
+        db.query.side_effect = _dispatch
+
+        _query_data_quality(db, sd)
+
+        assert sd.dq_null_embedding_count == 5, (
+            "dq_null_embedding_count under-counted — the query is still "
+            "guarding 'embedding IS NONE' alone and missing explicit-NULL rows"
+        )
+
     def test_db_error_silently_swallowed(self):
         """DB errors should not raise — graceful degradation."""
         from yadgar.core.cli.stats import _query_data_quality

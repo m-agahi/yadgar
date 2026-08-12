@@ -1057,6 +1057,15 @@ class _MemoryMixin:
         set_parts = []
         params = {}
         for i, (k, v) in enumerate(converted.items()):
+            # G2 item 6: project_id is `option<string>` (migration 033). A bound
+            # Python None serialises to SQL NULL, which SurrealDB rejects
+            # outright for an option<string> field — the same crash class
+            # clear_memory_valid_until documents for valid_until. NONE must be
+            # a literal here, mirroring project_id_set_fragment's convention;
+            # a falsy value (None or "") never gets bound as a parameter.
+            if k == "project_id" and not v:
+                set_parts.append("project_id = NONE")
+                continue
             pname = f"v{i}"
             set_parts.append(f"{k} = ${pname}")
             params[pname] = v

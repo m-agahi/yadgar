@@ -267,7 +267,14 @@ def _plan_updates(
     unmapped: list[dict] = []
     for (table, dc), row_count in sorted(counts.items()):
         target = mapping.get(dc)
-        if target is None:
+        # G2 item 5: an empty-string target (operator typo, stripped value, a
+        # bad host-side join) is exactly as "no derivable owner" as an absent
+        # mapping key — `if target is None` alone let it through as a real
+        # update carrying `project_id=""`, which satisfies no scope predicate
+        # and is not the NONE-literal convention every other writer in this
+        # train uses. Falsy (None OR "") both route to the reviewed/quarantine
+        # path instead.
+        if not target:
             unmapped.append({"table": table, "directory_context": dc, "rows": row_count})
             continue
         updates.append(
