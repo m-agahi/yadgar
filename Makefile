@@ -88,7 +88,7 @@ YADGAR_BACKEND_VERSION := $(shell grep -m1 '^BACKEND_VERSION' $(REPO_ROOT)yadgar
         install-hooks install-agents config-sync install-rules \
         seed-anchors code-graph-install detect-runtime detect-os install-runtime clean check \
         pull-images bootstrap-secrets enable-units enable-units-linux enable-units-macos \
-        _enable-units-auto restore upgrade-test eval longmemeval perf
+        _enable-units-auto restore upgrade-test eval longmemeval perf ci-local
 
 all: setup
 
@@ -353,6 +353,27 @@ test-ci:
 	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
 	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest yadgar/tests/ \
 	    -m "not integration and not e2e" -p no:randomly -n auto -q $(PYTEST_ARGS)'
+
+## ci-local: Reproduce CI's four subsystem test jobs (test-fast/test-shared/test-backend/test-core in
+## .github/workflows/ci-pr.yml) — same dirs + marker CI actually gates a PR on. PR #40 shipped on a green
+## `make e2e`, a target that runs a DISJOINT directory+marker from CI (yadgar/tests/e2e/ -m e2e) — CI then
+## found 49 failures. This is the target that would have caught them. It is NOT `test-ci` (broader,
+## unfiltered directory set incl. e2e/integration/restoration dirs, no perf exclusion) and NOT `e2e`.
+## INTEGRATION-STEP TARGET, NOT A CAR TARGET: ADR-0218 forbids a car ever running the full unit suite —
+## a car's obligation stays targeted tests over changed symbols; run this at the PR/push seam instead.
+## Subset for mid-work use: `make ci-local DIRS=yadgar/tests/_shared`. Full run covers all 8 CI dirs.
+## Anti-drift: scripts/check_ci_local_parity.py (pre-commit hook check-ci-local-parity) parses BOTH this
+## Makefile and ci-pr.yml independently and fails if their dirs/marker ever disagree — the exact silent
+## drift that produced PR #40's gap, closed by comparing live files instead of trusting a copied snapshot.
+CI_LOCAL_DIRS := yadgar/tests/scripts/ yadgar/tests/server/ yadgar/tests/hooks/ yadgar/tests/_meta/ \
+                 yadgar/tests/clients/ yadgar/tests/_shared/ yadgar/tests/backend/ yadgar/tests/core/
+CI_LOCAL_MARKER := not integration and not e2e and not perf
+DIRS ?= $(CI_LOCAL_DIRS)
+ci-local:
+	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
+	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest $(DIRS) \
+	    -q -rs --tb=short -n 4 --dist loadgroup --reruns 2 --reruns-delay 2 \
+	    -m "$(CI_LOCAL_MARKER)" $(PYTEST_ARGS)'
 
 ## e2e: Run the behavior-contract e2e safety-net suite against the local `surreal` binary.
 ## Requires: ~/.local/bin/surreal (or surreal on PATH). See yadgar/tests/e2e/conftest.py.

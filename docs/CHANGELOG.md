@@ -7,6 +7,14 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+**test(ci): Car F5 — a local target that actually reproduces CI's unit suite (PR #40 remediation).** Core `5.181.33` → `5.181.38`; backend unchanged (no `yadgar/backend/**` edits).
+
+**PR #40 shipped on a green `make e2e` — a target that runs `yadgar/tests/e2e/ -m e2e`, a directory and marker completely disjoint from what CI gates a PR on. CI then found 49 failures `make e2e` never touched.** `make ci-local` is the target that would have caught them: it reproduces the union of `ci-pr.yml`'s four subsystem jobs (test-fast/test-shared/test-backend/test-core) — `yadgar/tests/{scripts,server,hooks,_meta,clients,_shared,backend,core}/` under `-m 'not integration and not e2e and not perf'` — in one local invocation. It is neither `make e2e` (disjoint suite) nor `make test-ci` (broader, unfiltered directories, no `perf` exclusion) — both left unchanged. Subset for mid-work use: `make ci-local DIRS=yadgar/tests/_shared`.
+
+**Anti-drift, not a copied snapshot.** `scripts/check_ci_local_parity.py` (new pre-commit hook `check-ci-local-parity`, `files:` scoped to `Makefile` + `ci-pr.yml`) parses both files independently and fails the commit the moment their test dirs or marker expression disagree — the exact silent-rot class that let `make e2e` and CI diverge unnoticed. Verified to discriminate: a scratch copy of `ci-pr.yml` with an extra test directory, and a separate copy with a diverged marker, both fail loudly; the real files pass clean.
+
+**Per ADR-0218, this is an INTEGRATION-STEP target, not a car target** — a car's testing obligation stays targeted tests over changed symbols; `make ci-local` (like the full suite it approximates) is for the PR/push seam, documented as such in both the Makefile comment and `AGENTS.md`.
+
 **docs(ops): Car C16 — the operator runbook nothing tracked, and the rehearsal that could not run (PR #40 remediation, §5.C16 + §8).** Core `5.181.32` → `5.181.33`; backend unchanged (no `yadgar/backend/**` edits). **The final car of the 0047 spine train.**
 
 **`MIGRATION_NOTES.md` is gitignored (`.gitignore:12`), so "MIGRATION_NOTES.md untouched" was never a fixable-in-place finding — the real gap was that no TRACKED artefact told an operator what to do with a train that re-keys the entire read path.** `docs/plans/archive/0047-spine-train.md` §3 is that artefact — the file the PR body claimed and which did not exist. It carries the deploy-order constraint, the backup requirement, the `dry_run` sequence, a verification query per migration, and the rollback path.
