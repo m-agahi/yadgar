@@ -206,9 +206,12 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      optional origin/ prefix for foreign tasks; the prefix is preserved in
      the subject verbatim.
 
-6. Call project_brief("{directory}", mode="signals"). UNCONDITIONAL — this call
-   is how you LEARN whether maintenance applies; it is cheap and you may never
-   skip it. Its recommended_actions list drives step 7.
+6. Call project_brief("{directory}", mode="signals", project="{project}").
+   UNCONDITIONAL — this call is how you LEARN whether maintenance applies; it is
+   cheap and you may never skip it. Its recommended_actions list drives step 7.
+   `project=` is not optional decoration: the session-end sentinel signal is
+   keyed on the project_id, so a call that omits it silently loses that action
+   (yadgar will not derive one from the directory — ADR-0227).
 
 7. MAINTENANCE — MANDATORY. You MUST work the recommended_actions list from
    step 6 to completion. It is NOT optional and NOT droppable under length, time,

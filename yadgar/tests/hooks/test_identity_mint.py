@@ -225,9 +225,20 @@ def test_resolve_session_project_failure_emits_no_guess(tmp_path):
 # `resolve_cli_project`'s own docstring claims. Anything else — core/server,
 # backend, yadgar/_shared/ — importing this module means a container-side
 # process is deriving identity again, which is exactly what ADR-0227 removed.
+#
+# Car F9 adds a FOURTH: `core/hooks/session-end-capture.py`. It is the same
+# category as the first — a host-side Claude Code hook script, run by the
+# user's own interpreter with git and the working tree in reach. It has to mint
+# because the sentinel it writes is consumed later BY THE DAEMON, inside a
+# container that can see neither; the identity must travel in the record or the
+# write is refused (which is precisely what happened before F9). Its mint is
+# fail-soft in the SESSION sense only — an unmintable tree yields None and the
+# record is written identity-less, to be rejected loudly at import; no key is
+# ever invented.
 _ALLOWED_IMPORTERS = frozenset(
     {
         "yadgar/core/hooks/session-start-context.py",
+        "yadgar/core/hooks/session-end-capture.py",
         "yadgar/core/cli/hook.py",
         "yadgar/core/cli/_shared.py",
     }

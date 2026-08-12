@@ -454,6 +454,64 @@ def test_hook_sentinel_records_pending_findings(tmp_path):
     assert pf[0]["transcript_path"] == str(out)
 
 
+def test_hook_stamps_minted_project_id(tmp_path):
+    """F9 (c1) writer half: the hook mints the identity and puts it IN the record.
+
+    The SessionEnd hook is a host-side entry point — the only category ADR-0227
+    lets mint an identity. ``.yadgar/project-id`` is the documented override the
+    mint reads first, so this exercises the real mint with no git remote needed.
+    """
+    sentinel_dir = tmp_path / "session-ends"
+    (tmp_path / ".yadgar").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".yadgar" / "project-id").write_text("test-owner/test-repo\n", encoding="utf-8")
+    transcript = _minimal_transcript(tmp_path, human_messages=3)
+
+    rc, _out, _err = _run_hook(
+        {
+            "end_reason": "logout",
+            "session_id": "mint-test",
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+        },
+        tmp_path,
+        sentinel_dir=sentinel_dir,
+    )
+    assert rc == 0, _err
+    files = list(sentinel_dir.glob("*.json"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text())
+    assert record.get("project_id") == "test-owner/test-repo", (
+        f"sentinel must carry the minted identity; got {record.get('project_id')!r}"
+    )
+
+
+def test_hook_unmintable_project_still_writes_sentinel(tmp_path):
+    """An unresolvable identity must not silently drop the session's exit record.
+
+    The sentinel is written with ``project_id: None`` so the session data
+    survives; the importer is what fails loud on it (see the failed/ test).
+    """
+    sentinel_dir = tmp_path / "session-ends"
+    transcript = _minimal_transcript(tmp_path, human_messages=3)
+
+    rc, _out, _err = _run_hook(
+        {
+            "end_reason": "logout",
+            "session_id": "nomint-test",
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+        },
+        tmp_path,
+        sentinel_dir=sentinel_dir,
+    )
+    assert rc == 0, _err
+    files = list(sentinel_dir.glob("*.json"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text())
+    assert "project_id" in record, "the field must be present even when unresolvable"
+    assert record["project_id"] is None
+
+
 def test_hook_atomic_write_no_tmp_file_left(tmp_path):
     """After successful write, no .json.tmp files remain (atomic rename)."""
     sentinel_dir = tmp_path / "session-ends"
@@ -581,11 +639,23 @@ def test_signals_no_sentinel_no_extract_action(flush_queue):
     assert "extract_last_session_findings" not in action_types
 
 
-def test_signals_sentinel_different_dir_not_surfaced(flush_queue):
-    """Sentinel from a different directory is NOT surfaced for current dir."""
+def test_signals_sentinel_different_project_not_surfaced(flush_queue):
+    """Sentinel belonging to a different PROJECT is NOT surfaced for ours.
+
+    F9 premise migration (setup only — the assertion is byte-identical). This
+    test used to write the foreign sentinel under a different *directory* and
+    assert directory-level isolation. ADR-0225 retired ``directory`` as a
+    scoping key and C10 (f) made the stored ``directory_context`` come from the
+    resolved ``project_id``, so "a different directory" no longer names a
+    different scope — two worktrees of one repo are deliberately one project
+    (ADR-0093). The isolation that still exists, and the one the sentinel
+    reader must honour, is PROJECT isolation, so the setup names a second
+    project instead of a second path.
+    """
     from yadgar.core import server
     from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
 
+    other_project = "other-owner/other-repo"
     other_dir = "/tmp/sentinel_other_dir"
     our_dir = "/tmp/sentinel_our_dir_xyz"
     sentinel_content = json.dumps(
@@ -606,14 +676,73 @@ def test_signals_sentinel_different_dir_not_surfaced(flush_queue):
         content=sentinel_content,
         context=other_dir,
         tags=["_session_end_sentinel", "session_end"],
+        project=other_project,
     )
     flush_queue()
 
-    # Query for our_dir — should NOT see the other_dir sentinel
+    # Query as OUR project — must NOT see the other project's sentinel.
     result = server.project_brief(our_dir, mode="signals", project=TEST_PROJECT_ID)
     actions = result.get("recommended_actions", [])
     action_types = [a["action"] for a in actions]
     assert "extract_last_session_findings" not in action_types
+
+
+def test_signals_sentinel_skipped_without_project(flush_queue):
+    """project_brief with no ``project=`` cannot scope the sentinel — and says so.
+
+    F9: sentinel rows are keyed on the resolved project_id (C10 (f)). A caller
+    that names no project has not supplied a scope key, and ADR-0227 forbids
+    inventing one from ``directory``. The check is skipped — LOUDLY, at WARNING
+    — rather than silently querying a key that can never match.
+    """
+    import logging
+
+    from yadgar.core import server
+    from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
+
+    directory = "/tmp/sentinel_noproject_test"
+    sentinel_content = json.dumps(
+        {
+            "type": "session_end_sentinel",
+            "version": 1,
+            "cwd": directory,
+            "end_reason": "logout",
+            "ended_at": "2026-05-30T10:00:00Z",
+            "transcript_path": "/tmp/sentinel_noproject_test/t.jsonl",
+            "session_id": "noproject-sess",
+            "message_count": 5,
+            "last_human_turns": [],
+            "last_touched_files": [],
+        }
+    )
+    memorize_scoped(
+        content=sentinel_content,
+        tags=["_session_end_sentinel", "session_end"],
+        project=TEST_PROJECT_ID,
+    )
+    flush_queue()
+
+    logger = logging.getLogger("yadgar.core.server.tools.project")
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        result = server.project_brief(directory, mode="signals")
+    finally:
+        logger.removeHandler(handler)
+
+    actions = [a["action"] for a in result.get("recommended_actions", [])]
+    assert "extract_last_session_findings" not in actions
+    assert any(
+        r.levelno >= logging.WARNING and "sentinel" in r.getMessage().lower() for r in records
+    ), (
+        f"expected a WARNING naming the skipped sentinel check, got: {[r.getMessage() for r in records]}"
+    )
 
 
 # ===========================================================================
@@ -718,6 +847,11 @@ def test_session_context_imports_sentinel_file(tmp_path, monkeypatch, flush_queu
         "type": "session_end_sentinel",
         "version": 1,
         "cwd": directory,
+        # F9 premise migration (setup only): the identity is minted host-side by
+        # the SessionEnd hook and travels IN the record. ADR-0227 forbids the
+        # importer deriving one from ``cwd``, so a record with no project_id can
+        # no longer be stored at all — see the fail-loud test below.
+        "project_id": TEST_PROJECT_ID,
         "end_reason": "logout",
         "ended_at": "2026-05-30T10:00:00Z",
         "transcript_path": transcript_path,
@@ -745,6 +879,90 @@ def test_session_context_imports_sentinel_file(tmp_path, monkeypatch, flush_queu
     actions = result.get("recommended_actions", [])
     action_types = [a["action"] for a in actions]
     assert "extract_last_session_findings" in action_types
+
+
+def test_sentinel_memorize_passes_project_from_record(tmp_path):
+    """F9 (c1): the importer supplies ``project=`` from the record's own identity.
+
+    The production symptom this pins: ``memorize`` returned
+    ``{'stored': False, 'error': 'unresolved_project'}`` on every attempt
+    because the call named no project, so no sentinel row was ever written.
+    """
+    from unittest.mock import MagicMock
+
+    from yadgar.core.server import http as http_mod
+
+    sentinel_dir = tmp_path / "session-ends"
+    sentinel_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "type": "session_end_sentinel",
+        "version": 1,
+        "cwd": "/tmp/proj-from-record",
+        "project_id": TEST_PROJECT_ID,
+        "end_reason": "logout",
+        "ended_at": "2026-05-30T10:00:00Z",
+        "transcript_path": "/tmp/proj-from-record/t.jsonl",
+        "session_id": "project-param-sess",
+        "message_count": 5,
+        "last_human_turns": [],
+        "last_touched_files": [],
+    }
+    marker = sentinel_dir / "project-param-sess.json"
+    marker.write_text(json.dumps(record), encoding="utf-8")
+
+    fake_memorize = MagicMock(return_value={"stored": True, "queued": True})
+    with patch("yadgar.core.server.memorize", fake_memorize):
+        http_mod._import_pending_sentinels(str(sentinel_dir))
+
+    assert fake_memorize.call_count == 1
+    kwargs = fake_memorize.call_args.kwargs
+    assert kwargs.get("project") == TEST_PROJECT_ID, (
+        f"memorize must be given the record's project_id; got kwargs={kwargs}"
+    )
+    assert not marker.exists(), "consumed sentinel should be deleted"
+
+
+def test_sentinel_without_project_id_fails_loud_not_retried(tmp_path, caplog):
+    """F9 observability: a REFUSED sentinel write is surfaced, not retried into oblivion.
+
+    A record carrying no identity cannot ever be stored (ADR-0227 — nothing may
+    derive one), so retrying it 3× and then dropping it into ``failed/`` with a
+    WARNING is the "reports success while doing nothing" shape. It must go to
+    ``failed/`` on the FIRST attempt, at ERROR, naming the rejection.
+    """
+    import logging
+
+    from yadgar.core.server import http as http_mod
+
+    sentinel_dir = tmp_path / "session-ends"
+    sentinel_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "type": "session_end_sentinel",
+        "version": 1,
+        "cwd": "/tmp/no-identity",
+        "end_reason": "logout",
+        "ended_at": "2026-05-30T10:00:00Z",
+        "transcript_path": "/tmp/no-identity/t.jsonl",
+        "session_id": "no-identity-sess",
+        "message_count": 5,
+        "last_human_turns": [],
+        "last_touched_files": [],
+    }
+    marker = sentinel_dir / "no-identity-sess.json"
+    marker.write_text(json.dumps(record), encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR, logger="yadgar.core.server.http"):
+        http_mod._import_pending_sentinels(str(sentinel_dir))
+
+    assert not marker.exists(), "unstorable sentinel must not linger in the inbox"
+    assert (sentinel_dir / "failed" / "no-identity-sess.json").exists(), (
+        "an identity-less sentinel is permanently unstorable — it belongs in failed/ "
+        "on the first attempt, not after 3 pointless retries"
+    )
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("unresolved_project" in m or "project" in m for m in errors), (
+        f"expected an ERROR naming the rejection, got: {errors}"
+    )
 
 
 def test_session_context_import_failure_leaves_file_retries(tmp_path, monkeypatch):
