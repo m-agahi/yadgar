@@ -17,8 +17,13 @@ git and neither mounts a host project directory, so a derivation reachable from
 and its wrongness is invisible because ``local/<basename>`` is a well-formed
 key. Putting the mint under ``core/hooks/`` makes the boundary structural: the
 residue lint is a set-difference over importers rather than a call-graph
-analysis. ``yadgar/tests/hooks/test_identity_mint.py`` asserts that only
-``core/hooks/session-start-context.py`` and ``core/cli/hook.py`` name it.
+analysis. ``yadgar/tests/hooks/test_identity_mint.py`` asserts that only three
+host-side entry points name it: ``core/hooks/session-start-context.py``,
+``core/cli/hook.py``, and ``core/cli/_shared.py`` (the ``yadgar`` console
+script — a host-invoked binary distinct from the container's ``entrypoint.sh``,
+which runs only the MCP server; ``core/cli/_shared.py::resolve_cli_project``
+mints for CLI subcommands, like ``drain``/``restore``, invoked as their own
+host subprocess with no SessionStart-minted value to inherit).
 
 **Why the pure helpers are imported rather than moved.** ``_normalise_remote``,
 ``_parse_insteadof_map``, ``_insteadof_rules``, ``_walk_project_id_file`` and

@@ -16,6 +16,7 @@ Non-e2e (runs under CI `-m 'not e2e'`).
 from __future__ import annotations
 
 import importlib.util
+import json
 import textwrap
 from pathlib import Path
 
@@ -852,13 +853,50 @@ class TestLayer4Allowlist:
         assert "ALLOW_TEST_WEAKEN" not in joined, joined
 
     def test_shipped_allowlist_is_wellformed(self) -> None:
-        """The real file on disk parses and every entry satisfies the schema."""
+        """The real file on disk parses and every present entry satisfies the schema.
+
+        Well-formed, not non-empty: 0047 C15a emptied the shipped allowlist on
+        purpose (its own ``_stale_policy`` — both prior entries' files left the
+        merge-base diff for good once the ADR-0215 train merged, so the entries
+        could never stop warning and were removed). "Empty" is now a legitimate
+        governed state — "no entries currently sanctioned" — not a guard defect,
+        so asserting non-emptiness would make this test fail on correct,
+        intentional cleanup forever. Routed through ``check_diff`` (rather than
+        re-implementing the per-field checks here) so this test exercises the
+        exact validation path production runs, not a parallel copy of it that
+        could drift. ``test_corrupted_allowlist_copy_is_rejected`` below proves
+        this rewrite still rejects a malformed file — the property the test's
+        name promises.
+        """
         allowlist = ctw.load_allowlist(_REPO_ROOT / ctw._ALLOWLIST_NAME)
-        assert allowlist, "the shipped allowlist must not be empty"
-        for path, meta in allowlist.items():
-            assert isinstance(meta.get("allowed_delta"), int), path
-            assert meta["allowed_delta"] < 0, path
-            assert len(meta.get("rationale", "").strip()) >= ctw._MIN_RATIONALE, path
+        errors = ctw.check_diff("", head_green=None, staged_green=None, allowlist=allowlist)
+        assert not errors, errors
+
+    def test_corrupted_allowlist_copy_is_rejected(self, tmp_path: Path) -> None:
+        """Deliberately corrupt a scratch copy and confirm well-formedness still fires.
+
+        Proves the rewrite above didn't quietly stop checking anything: an
+        allowlist entry with a non-negative ``allowed_delta`` *and* a too-short
+        ``rationale`` must still surface MALFORMED, exactly as it did before an
+        empty allowlist was accepted as legitimate.
+        """
+        corrupted = tmp_path / "corrupted-allowlist.json"
+        corrupted.write_text(
+            json.dumps(
+                {
+                    "_comment": "scratch copy, deliberately malformed for this test",
+                    "yadgar/tests/e2e/test_bad.py": {
+                        "allowed_delta": 3,
+                        "rationale": "too short",
+                    },
+                }
+            )
+        )
+        allowlist = ctw.load_allowlist(corrupted)
+        assert allowlist, "fixture guard: the malformed entry must survive the underscore-strip"
+        errors = ctw.check_diff("", head_green=None, staged_green=None, allowlist=allowlist)
+        assert errors, "a malformed entry must still be rejected"
+        assert any("MALFORMED" in e for e in errors), errors
 
 
 class TestLayer4EnvBypassIsGone:

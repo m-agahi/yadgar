@@ -210,16 +210,26 @@ def test_resolve_session_project_failure_emits_no_guess(tmp_path):
 
 # ── 4. The package boundary (C15's residue lint, in embryo) ───────────────
 
-# The mint is reachable ONLY from the two hook entry points. `core/hooks/` is
+# The mint is reachable ONLY from host-side entry points. `core/hooks/` is
 # the Claude Code hook surface; `core/cli/hook.py` is the same handler set for
 # the opencode/CLI transport (the opencode plugin shells out to `yadgar hook`).
-# Anything else — core/server, backend, _shared — importing this module means
-# a container-side process is deriving identity again, which is exactly what
-# ADR-0227 removed.
+# `core/cli/_shared.py::resolve_cli_project` is the third: the `yadgar`
+# console-script (`[project.scripts] yadgar = "yadgar.__main__:cli"`) is a
+# host-invoked binary, never the code path the "core" container runs —
+# entrypoint.sh's container CMD is `yadgar --transport streamable-http` (the
+# MCP server only); `drain`/`restore`/`seed`/`capture`/`context` are invoked
+# as separate host subprocesses by the hook scripts (e.g.
+# pre-compact-drain.sh calling `yadgar drain`), so they cannot inherit a
+# SessionStart-minted value and must resolve their own — the same "this
+# process can see the git worktree, the containers cannot" carve-out
+# `resolve_cli_project`'s own docstring claims. Anything else — core/server,
+# backend, yadgar/_shared/ — importing this module means a container-side
+# process is deriving identity again, which is exactly what ADR-0227 removed.
 _ALLOWED_IMPORTERS = frozenset(
     {
         "yadgar/core/hooks/session-start-context.py",
         "yadgar/core/cli/hook.py",
+        "yadgar/core/cli/_shared.py",
     }
 )
 
