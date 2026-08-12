@@ -355,11 +355,11 @@ test-ci:
 	    -m "not integration and not e2e" -p no:randomly -n auto -q $(PYTEST_ARGS)'
 
 ## ci-local: Reproduce CI's four subsystem test jobs (test-fast/test-shared/test-backend/test-core in
-## .github/workflows/ci-pr.yml) as FOUR SEPARATE SEQUENTIAL pytest processes — mirrors CI's per-job
-## PROCESS boundary (each subsystem job is its own container) so peak per-process memory stays bounded
-## to one job's tests, not the union of all eight dirs. A single lumped invocation over all 8 dirs was
-## measured OOM-killed (MemoryMax=20G) 1h32m in even at TEST_TIMEOUT=18000 — CI itself never accumulates
-## that much in one process, because the four jobs are four processes (Car F10, PR #40 remediation).
+## .github/workflows/ci-pr.yml) as FOUR SEPARATE pytest processes — mirrors CI's per-job PROCESS
+## boundary (each subsystem job is its own container) so peak per-process memory stays bounded to one
+## job's tests, not the union of all eight dirs. A single lumped invocation over all 8 dirs was measured
+## OOM-killed (MemoryMax=20G) 1h32m in even at TEST_TIMEOUT=18000 — CI itself never accumulates that much
+## in one process, because the four jobs are four processes (Car F10, PR #40 remediation).
 ## PR #40 shipped on a green `make e2e`, a target that runs a DISJOINT directory+marker from CI
 ## (yadgar/tests/e2e/ -m e2e) — CI then found 49 failures. This is the target that would have caught
 ## them. It is NOT `test-ci` (broader, unfiltered directory set incl. e2e/integration/restoration
@@ -369,6 +369,15 @@ test-ci:
 ## DIRS= override: `make ci-local DIRS=yadgar/tests/_shared` runs EXACTLY those dirs as ONE leg (the
 ## mid-work subset use case) — bypasses the four-leg split entirely; it is not a way to run a subset of
 ## the four-leg run. Full run (no DIRS) covers all 8 CI dirs across the four legs below.
+## PARALLEL= (Car G3): legs are separate processes with no data dependency between them, so up to
+## CI_LOCAL_PARALLEL of them run CONCURRENTLY (default 2, `PARALLEL=N make ci-local` overrides, clamped
+## to the number of legs actually running). Concurrency bounds WALL TIME (approaches the longest leg
+## instead of the sum of all four); it does NOT reintroduce F10's OOM, because scripts/ci-local-legs.sh
+## divides each leg's systemd MemoryMax by the effective parallelism — the WORST-CASE total ceiling
+## across all concurrently-running legs stays at the same value F10 already bounded a single leg to
+## (ambient TEST_MEM_MAX, default 20G), it is just shared out instead of given wholesale to one leg at a
+## time. `PARALLEL=1` reproduces the exact old sequential behaviour. See scripts/ci-local-legs.sh's own
+## header comment for the arithmetic and per-leg log/attribution details.
 ## TEST_TIMEOUT (scripts/test-capped.sh's own env var) applies PER LEG, not to the whole run: each leg
 ## is its own test-capped.sh invocation, so e.g. `TEST_TIMEOUT=18000 make ci-local` gives EACH of the
 ## four legs an 18000s budget, not the four-leg run as a whole.
@@ -384,12 +393,14 @@ CI_LOCAL_DIRS_shared  := yadgar/tests/_shared/
 CI_LOCAL_DIRS_backend := yadgar/tests/backend/
 CI_LOCAL_DIRS_core    := yadgar/tests/core/
 CI_LOCAL_MARKER := not integration and not e2e and not perf
+CI_LOCAL_PARALLEL := $(if $(filter command line,$(origin PARALLEL)),$(PARALLEL),2)
 ci-local:
 	@if [ "$(origin DIRS)" = "command line" ] && [ -z "$(strip $(DIRS))" ]; then \
 	  echo "ci-local: DIRS resolved empty — pass a real path, e.g. DIRS=yadgar/tests/_shared" >&2; exit 1; \
 	fi
 	@CI_LOCAL_MARKER="$(CI_LOCAL_MARKER)" \
 	  TEST_LOCK="$(TEST_LOCK)" \
+	  CI_LOCAL_PARALLEL="$(CI_LOCAL_PARALLEL)" \
 	  CI_LOCAL_DIRS_override="$(if $(filter command line,$(origin DIRS)),$(DIRS),)" \
 	  CI_LOCAL_DIRS_fast="$(CI_LOCAL_DIRS_fast)" \
 	  CI_LOCAL_DIRS_shared="$(CI_LOCAL_DIRS_shared)" \
