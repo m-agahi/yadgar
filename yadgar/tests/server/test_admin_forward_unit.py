@@ -200,11 +200,19 @@ def test_block_create_forwards_payload_after_guards():
     assert len(calls) == 1
     op, payload = calls[0]
     assert op == "block_create"
+    # C11 (0047 PR#40 §5): block_create now KEEPS accept_project_param's
+    # validated return value and puts it on the payload (migration 033 gave
+    # memory_block a project_id column). No project= was passed here, and
+    # accept_project_param deliberately does not resolve when project is
+    # None (it would raise via resolve_effective_project otherwise) — so
+    # project_id: None is the correct forwarded value for this unnamed call,
+    # not a caller that should have supplied one.
     assert payload == {
         "name": "n",
         "content": "c",
         "scope": "global",
         "directory": None,
+        "project_id": None,
         "char_limit": 1234,
     }
 

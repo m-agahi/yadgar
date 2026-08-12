@@ -349,8 +349,23 @@ def test_anchor_scope_split_project_list(flush_queue):
 
 
 def test_anchor_scope_split_project_not_in_other_project(flush_queue):
-    """F1: project anchor for dirA must NOT appear in top_anchors_project for dirB."""
-    server.anchor("dirA private anchor", "/tmp/proj_dir_a", "key_decision", project=TEST_PROJECT_ID)
+    """F1: an anchor owned by one project must NOT appear in another project's bucket.
+
+    Car F7: the project bucket is now genuinely keyed on the resolved
+    project_id (matching what memorize/anchor stamp — C10f/C10g), not on the
+    literal `directory` argument (that predicate was silently broken before
+    this car — see project_brief's ``_project_scope_key`` comment). The
+    original test varied only `directory` while BOTH the write and the read
+    named the SAME `project=` override — under that setup the anchor IS
+    owned by the querying project (same project_id, merely a different
+    working directory within it), so its surfacing was never a leak; the
+    isolation axis to prove is project_id, not directory. The anchor is now
+    owned by a DIFFERENT project than the one project_brief is asked about.
+    """
+    _other_project_id = "other-owner/other-repo"
+    server.anchor(
+        "dirA private anchor", "/tmp/proj_dir_a", "key_decision", project=_other_project_id
+    )
     flush_queue()
 
     result = server.project_brief("/tmp/proj_dir_b_different", project=TEST_PROJECT_ID)
