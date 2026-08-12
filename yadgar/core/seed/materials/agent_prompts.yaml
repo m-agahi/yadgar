@@ -17,7 +17,9 @@ contract:
   - agent-discipline-recall-first
   content: |-
     Before substantive work:
-    1. `recall("…relevant topic…")` — surface hot memories, anchors, prior findings.
+    1. `recall("…relevant topic…", directory=<abs path>, project="<owner/repo>")` — surface hot
+       memories, anchors, prior findings. project= is REQUIRED: since C5 an identity is never
+       derived, so omitting it is rejected, not guessed (ADR-0227).
     2. Observed state always wins over recalled state (update if contradicted).
     3. For most agents: do NOT call `memorize()` directly — emit findings in report instead.
        Exception: long_running agents may call memorize with provenance_agent set.
@@ -453,7 +455,7 @@ prompts:
     Prepend that pattern's PLAN LIFECYCLE (ADR-0081/0082: first commit = plan archive-move if completing / header-update if partial; move-not-copy, git ls-files verify) and DISCIPLINE block (bracket pytest-wait, 5-site version sync, ADR-0078 DB stop-and-ask, ADR-0080 fetch-first, I13/I33 gates, zombie-monitor cleanup) to every dispatch built from this pattern.
 
     ## Contract (prepend to every dispatch)
-    - Yadgar: `recall(<topic>, directory=<abs path>)` on entry; observed state wins; END with `## Yadgar findings`.
+    - Yadgar: `recall(<topic>, directory=<abs path>, project=<owner/repo>)` on entry; observed state wins; END with `## Yadgar findings`.
     - ⚠️ NO TEST BENDING (machine-enforced #52 guard). FORBIDDEN: delete/weaken assertions, change expected value to buggy output, add skips (skip-inventory gate rejects unsanctioned skips), hollow-pass.
     - Seam-migration is legitimate: when the architecture moved the behavior (e.g. write-phases to the drainer seam, ADR-0069), migrate the ASSERTION SEAM with rigor and cite the ADR — that is not bending.
     - A test that fails when un-skipped/un-gated was hiding a real break: fix properly or STOP-and-flag; never re-skip.
@@ -463,7 +465,7 @@ prompts:
   content: |-
     DISPATCH: model=sonnet — chunked mechanical codemod — canonical: model-tier-dispatch
 
-    Caveman prose; code normal. TIGHT SCOPE — do ONLY <THIS CHUNK> then COMMIT. Do NOT do later chunks (<LIST>). A prior mega-agent doing everything at once timed out at ~75 tool calls with ZERO commits → all work lost + half-broken worktree. You do ONE chunk and COMMIT before returning. Entry per [[agent-discipline-recall-first]]: ONE `recall("<TOPIC>", directory="<REPO>")`.
+    Caveman prose; code normal. TIGHT SCOPE — do ONLY <THIS CHUNK> then COMMIT. Do NOT do later chunks (<LIST>). A prior mega-agent doing everything at once timed out at ~75 tool calls with ZERO commits → all work lost + half-broken worktree. You do ONE chunk and COMMIT before returning. Entry per [[agent-discipline-recall-first]]: ONE `recall("<TOPIC>", directory="<REPO>", project="<owner/repo>")`.
 
     ⚠️ BEHAVIOR-NEUTRAL (git mv + import-path rewrites only). ⚠️ SHIM = sys.modules ALIAS (`sys.modules[__name__]=_m`) for leaf modules (write-through, patch-compatible) — NOT `__getattr__` (read-only, breaks test patch()); PACKAGES = `__init__` getattr shim (preserve `__path__`) + per-submodule `sys.modules` alias (aliasing the pkg object → `__path__` double-load → two instances → desync). ⚠️ REPOINT path-keyed guards proactively (they silently vacuously-pass against shim files: complexity baseline/allowlist, observe-allowlist, ruff per-file-ignores, capability-coverage, metric-writers, three-way-sync globs). ⚠️ import-linter catches FUNCTION-LOCAL imports (AST) — func-local does NOT hide the edge. ⚠️ SAFETY: import-smoke + targeted only (final CI is the gate) — per [[agent-discipline-process-hygiene]]. Commit rules per [[agent-discipline-commit-hygiene]]. WORK IN worktree `<PATH>` — branch `<BRANCH>` @ <SHA>. Confirm branch+HEAD. STACK a commit. Do NOT push. guards WITHOUT cd out of the worktree.
 
@@ -520,7 +522,7 @@ disciplines:
 - name: recall-first
   purpose: 'Recall-first entry, observed-state-wins, findings-footer reporting (contract-covered).'
   content: |-
-    On entry: ONE bounded `recall("<task topic>", directory=<repo>)` — targeted, don't burst MCP.
+    On entry: ONE bounded `recall("<task topic>", directory=<repo>, project=<owner/repo>)` — targeted, don't burst MCP.
     Observed state ALWAYS wins over recalled/assumed state — when code contradicts memory, believe the code.
     Do NOT call memorize() — emit findings in your report instead.
     REQUIRED: final message ends with a `## Yadgar findings` section (facts/insights, or "none").
@@ -575,7 +577,7 @@ disciplines:
   purpose: 'Read-side ADR discipline: consult binding ADR decisions before planning/building/debugging a subsystem.'
   content: |-
     Before planning / building / debugging a subsystem: consult the ADRs for the touched area —
-    `recall(type="wiki", tags=["adr"])` for semantic decisions + `adr_list(status="open")` for open ones.
+    `recall(type="wiki", tags=["adr"], project="<owner/repo>")` for semantic decisions + `adr_list(directory=<abs path>, project="<owner/repo>", status="open")` for open ones.
     Observed ADR decisions BIND: a shipped ADR is a constraint, not a suggestion — do NOT re-litigate or contradict it; if the work requires reversing one, record a SUPERSEDING ADR (adr_add) rather than silently diverging.
     Uses the DEFAULT recall profile — it fans out to the wiki arm, unlike the fast-profile per-turn auto-recall hook (which is memory-only, ADR-0077, so ADR pages do NOT auto-surface each turn). This read is the deliberate counter to that gap.
-    Direct fetch by id: `adr_get(directory, adr_id)`. ADRs are recall-native canonical pages (`<project>-adr-NNNN`) — readable from any branch.
+    Direct fetch by id: `adr_get(directory, adr_id, project=<owner/repo>)`. ADRs are recall-native canonical pages (`<project>-adr-NNNN`) — readable from any working tree.

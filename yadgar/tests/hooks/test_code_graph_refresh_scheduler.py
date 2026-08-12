@@ -286,10 +286,20 @@ class TestCodeGraphRefreshTemplate:
         assert "no-op" in normalized or "nothing" in normalized
 
     def test_template_writes_block_create_or_update(self):
-        """else → block_update(name=code_graph); on not-found → block_create."""
+        """else → block_update(name=<payload.block_name>); on not-found → block_create.
+
+        The name MUST come from the payload, never a hardcoded "code_graph": a
+        monorepo emits one payload per leaf (``code_graph_<subdir>``), so a
+        hardcoded name makes every leaf overwrite the same block. The template
+        was re-pointed onto ``<payload.block_name>`` by 0047 C10 (51f19805) but
+        this assertion still pinned the hardcoded form, so it had been failing
+        against the shipped template ever since — it asserted the exact bug the
+        template tells the agent to avoid.
+        """
         content = _TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "block_update(" in content
         assert "block_create(" in content
-        assert 'name="code_graph"' in content
+        assert "name=<payload.block_name>" in content
+        assert 'never hardcode `"code_graph"`' in content
         assert 'scope="project"' in content
         assert "directory=" in content

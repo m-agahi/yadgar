@@ -33,7 +33,8 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    no file, works for non-git projects too).
    - Read existing ADRs FIRST — actually CALL it now and dedup against the
      RETURNED content, not your memory of it: adr_list(directory="{directory}",
-     status="open"). If the list is empty there are no open ADRs to dedup
+     project="{project}", status="open"). If the list is empty there are no
+     open ADRs to dedup
      against. Do NOT create the log manually; adr_add handles creation
      automatically.
    <!-- Car G (0047 §7): step 1's read-first-dedup now reaches the SQL ADR
@@ -56,6 +57,7 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    - For each new decision call:
        adr_add(
            directory="{directory}",
+           project="{project}",
            title=<short human-readable title>,
            status=<open|accepted|superseded|rejected|deprecated>,
            date=<ISO date>,
@@ -194,4 +196,4 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
 
 [yadgar] Checkpoint cadence reached — capture, then continue. If you were
 mid-thought, repeat your last question so the conversation continues. Resume after
-/clear or session end: restore(directory="{directory}").
+/clear or session end: restore(directory="{directory}", project="{project}").

@@ -34,14 +34,14 @@ Goal: every SHALL → ✅ or ❌.
 ## PHASE 1 — critical paths (v5.68; gates pre-push)
 
 ### A. Write / memorize
-- BC-A1 memorize(content, directory=D) → retrievable, stamped D. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCA1_MemorizeRecallRoundTrip::test_memorize_recall_roundtrip` P1
+- BC-A1 memorize(content, project=P) → retrievable, stamped P. (0047 C10f: `context` lost its scoping role; the `directory_context` stamp is written from the resolved project_id, not the path.) ✅ `tests/e2e/test_phase1_db_layer.py::TestBCA1_MemorizeRecallRoundTrip::test_memorize_recall_roundtrip` P1
 - BC-A2 write-gate stores novel, dedups near-identical. ✅ `tests/e2e/test_phase2_subsystems.py::TestBCA2_WriteGateSurprise::test_gate_stores_novel_rejects_near_dup` P1
 - BC-A3 every write gets an embedding. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCA3_EmbeddingOnWrite::test_memorize_generates_embedding` P1
 
-### B. Recall + directory scoping (v5.62/64/65)
-- BC-B1 recall(directory=A) includes A+global, excludes other dir B (memories). ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB1_DirectoryFilter::test_excludes_other_project` P1
-- BC-B2 same directory filter on wiki results in recall. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB2_WikiDirectoryFilter::test_aws_wiki_excluded_from_yadgar_recall` P1
-- BC-B3 recall/wiki_query raise on absent/empty directory. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB3_DirectoryRequired::test_recall_raises_without_directory` P1
+### B. Recall + project scoping (v5.62/64/65; re-keyed 0047 C7/C10)
+- BC-B1 recall(project=P) includes P + global-reach rows, excludes another project's rows (memories). A row differing only by `directory_context` is no longer excluded by anything. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB1_DirectoryFilter::test_excludes_other_project` P1
+- BC-B2 same project filter on wiki results in recall. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB2_WikiDirectoryFilter::test_aws_wiki_excluded_from_yadgar_recall` P1
+- BC-B3 recall raises `UnresolvedProjectError` when neither `project=` nor the SessionStart identity names one — a `directory=` alone does NOT resolve it (0047 C5 deleted the derivation and the `"global"` fallback; ADR-0227). wiki_query still raises on absent/empty `directory`. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB3_DirectoryRequired::test_recall_raises_without_directory` P1
 - BC-B4 'system' not eligible. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB4_SystemTagExcluded::test_system_memory_not_returned` P1
 - BC-B5 profile-sourced results surface when a profile exists. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB5_ProfileRecallSurfaces::test_profile_appears_in_recall` P1
 - BC-B6 belief-sourced results surface when a belief exists. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB6_BeliefRecallSurfaces::test_belief_appears_in_recall` P1
@@ -93,7 +93,7 @@ Telemetry caveat: `consolidation_log` vacuum rows written before task:0045 carry
 - BC-G7 wiki bookmarks CRUD. ⏳[r] P2
 - BC-G9 wiki edit primitives (set_metadata/anchor-text/positional/structural) mutate as specified, versioned. ⏳[u] P2
 - BC-G10 wiki_set_metadata reaches ALL rows of a slug across directory contexts (the migration found dup-row stragglers it couldn't touch). ✅ `tests/e2e/test_wiki_set_metadata_allrows.py::TestWikiSetMetadataAllRows::test_set_metadata_updates_all_rows_for_slug` P2
-- BC-G11 fan-out recall scopes wiki results to the caller directory. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB2_WikiDirectoryFilter::test_aws_wiki_excluded_from_yadgar_recall` P1
+- BC-G11 fan-out recall scopes wiki results to the caller project. ✅ `tests/e2e/test_phase1_db_layer.py::TestBCB2_WikiDirectoryFilter::test_aws_wiki_excluded_from_yadgar_recall` P1
 
 ### U. Unified recall fan-out (v6 T6 — UNIFIED_RECALL_ENABLED flag-ON only)
 - BC-U1 recall(type="all") returns BOTH mem:<id> and wiki:<slug> when both exist in scope. ✅ `tests/e2e/test_fusion_e2e.py::TestFusionE2E::test_fanout_returns_memory_and_wiki` P1

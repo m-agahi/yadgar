@@ -111,7 +111,9 @@ class TestDisciplineGenesis:
 
         by_name = {n: c for n, _, c in DISCIPLINES}
         ac = by_name["adr-consult"]
-        assert 'recall(type="wiki", tags=["adr"])' in ac, "wiki-tagged ADR recall missing"
+        assert 'recall(type="wiki", tags=["adr"], project="<owner/repo>")' in ac, (
+            "wiki-tagged ADR recall missing (project= is required since 0047 C5 — ADR-0227)"
+        )
         assert "adr_list" in ac, "adr_list open-status consult missing"
         assert "BIND" in ac, "observed-ADRs-bind rule missing"
         assert "default recall profile" in ac.lower(), "fast-profile gap note missing"

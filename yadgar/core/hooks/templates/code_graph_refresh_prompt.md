@@ -1,7 +1,12 @@
 <!-- YADGAR CODE-GRAPH-REFRESH PROTOCOL
      Substitute these placeholders throughout this file before following instructions:
        {directory} = your current working directory (absolute path; the project root)
-       {project}   = basename of {directory}
+       {project}   = the session's minted project_id — the `owner/repo` value emitted
+                     at SessionStart as `yadgar: project_id=<owner/repo>`. It is NOT
+                     the basename of {directory}: a basename is not an identity
+                     (ADR-0227). This protocol does not need it — its only writes are
+                     the block_* calls in step 3, whose scope key is still the
+                     directory — so do NOT add project= to them from a basename.
 -->
 
 Yadgar code-graph-refresh maintenance. This keeps the project's `code_graph`

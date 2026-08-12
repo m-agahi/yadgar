@@ -26,15 +26,18 @@ const c = new YadgarClient({
   token: process.env.YADGAR_TOKEN,
 });
 
-// Store a memory
+// Store a memory. `project` is the scope key and is REQUIRED: since 0047 C5 an
+// identity is never derived, so omitting it fails with `unresolved_project`
+// rather than falling back to a guess (ADR-0227).
 await c.memorize({
   content: "yadgar uses HNSW for its vector index",
   context: "/home/user/projects/myapp",
+  project: "owner/myapp",
   tags: ["yadgar", "storage"],
 });
 
 // Recall memories
-const hits = await c.recall({ query: "what vector index does yadgar use?", max_results: 3 });
+const hits = await c.recall({ query: "what vector index does yadgar use?", project: "owner/myapp", max_results: 3 });
 console.log(hits);
 
 // Wiki operations
@@ -126,10 +129,11 @@ const c = new YadgarClient({ url: "http://127.0.0.1:42069" });
 await c.memorize({
   content: "The database schema uses SurrealKV with HNSW vector index",
   context: "/home/user/projects/myapp",
+  project: "owner/myapp",
   tags: ["architecture", "database"],
 });
 
-const results = await c.recall({ query: "database schema", max_results: 5 });
+const results = await c.recall({ query: "database schema", project: "owner/myapp", max_results: 5 });
 ```
 
 ### Wiki Query
@@ -154,6 +158,7 @@ console.log(brief);
 await c.anchor({
   content: "Never push directly to master",
   context: "/home/user/projects/myapp",
+  project: "owner/myapp",
   reason: "branch-first rule",
   tier: "semantic_immortal",
 });
