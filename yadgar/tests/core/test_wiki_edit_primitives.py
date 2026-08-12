@@ -82,7 +82,6 @@ def _insert_page(
     tags=None,
     confidence="medium",
     directory_context="global",
-    branch=None,
 ):
     """Insert page directly via storage. Returns page_id.
 
@@ -103,8 +102,7 @@ def _insert_page(
             "links": [],
             "project_id": TEST_PROJECT_ID,
             "directory_context": directory_context,
-        },
-        branch=branch,
+        }
     )
 
 

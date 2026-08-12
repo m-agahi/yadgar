@@ -90,13 +90,21 @@ class _MemoryMixin:
 
     @observe(tier="hot")
     def _build_memory_insert_clause(
-        self, memory: dict, mid: int, now: str, branch: str | None, emb_floats
+        self, memory: dict, mid: int, now: str, emb_floats
     ) -> tuple[str, dict]:
         """Build the CREATE SQL and params dict for a new memory row.
 
         Pure computation — no I/O, no side-effects.  Optional fields
-        (branch, tier, valid_until, migration_grace) are appended only
-        when present so SurrealDB does not store explicit NULLs for them.
+        (tier, valid_until, migration_grace) are appended only when present
+        so SurrealDB does not store explicit NULLs for them.
+
+        C12 (ADR-0226): ``branch`` was the fourth such optional field and it is
+        GONE. Migration 029 dropped ``memory.branch``, but ``memory`` is
+        SCHEMALESS — so this append was a live path that RE-CREATED the dropped
+        column untyped on every write that passed the kwarg, with
+        ``INFO FOR TABLE`` still reporting clean. *"The kwargs were kept for test
+        convenience and are in fact the exact mechanism by which the dropped
+        column comes back."*
         """
         sql = (
             "CREATE type::record('memory', $id) SET "
@@ -154,9 +162,6 @@ class _MemoryMixin:
             "vector_clock": memory.get("vector_clock", "{}"),
             "is_protected": bool(memory.get("is_protected", False)),
         }
-        if branch is not None:
-            sql += ", branch = $branch"
-            params["branch"] = branch
         # v5.8.0: tier / valid_until / migration_grace (optional, nullable)
         if memory.get("tier") is not None:
             sql += ", tier = $tier"
@@ -281,16 +286,14 @@ class _MemoryMixin:
             logging.getLogger(__name__).warning("Enrichment failed: %s", e)
 
     @observe(tier="boundary", metric="storage.memory.insert_memory")
-    def insert_memory(
-        self, memory: dict, embeddings_engine=None, settings=None, branch: str | None = None
-    ) -> int:
+    def insert_memory(self, memory: dict, embeddings_engine=None, settings=None) -> int:
         now = self._now_iso()
         mid = self._next_id("memory")
         embedding = memory.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if embedding else None
 
         self._validate_memory_secrets(memory)
-        sql, params = self._build_memory_insert_clause(memory, mid, now, branch, emb_floats)
+        sql, params = self._build_memory_insert_clause(memory, mid, now, emb_floats)
         self._q(sql, params)
         self._enrich_memory_if_enabled(mid, memory, settings, embeddings_engine, embedding)
 

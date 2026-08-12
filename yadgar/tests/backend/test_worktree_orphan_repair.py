@@ -35,21 +35,20 @@ def _engines(tmp_path):
     server.shutdown()
 
 
-def _insert(directory_context: str, branch: str | None) -> int:
+def _insert(directory_context: str) -> int:
     storage = server._get_storage()
     return storage.insert_memory(
         {
             "project_id": _TEST_PROJECT,
             "content": f"orphan test row {directory_context}",
             "directory_context": directory_context,
-        },
-        branch=branch,
+        }
     )
 
 
 def test_worktree_orphan_rows_repointed_to_canonical_root():
     storage = server._get_storage()
-    mid = _insert("/home/u/proj/.claude/worktrees/agent-abc", "feat/dead-branch")
+    mid = _insert("/home/u/proj/.claude/worktrees/agent-abc")
 
     result = _run_check_invariants(storage)
 
@@ -61,7 +60,7 @@ def test_worktree_orphan_rows_repointed_to_canonical_root():
 
 def test_worktree_orphan_repair_is_idempotent():
     storage = server._get_storage()
-    _insert("/home/u/proj/.claude/worktrees/agent-abc", "feat/dead-branch")
+    _insert("/home/u/proj/.claude/worktrees/agent-abc")
 
     _run_check_invariants(storage)
     second = _run_check_invariants(storage)
@@ -71,19 +70,25 @@ def test_worktree_orphan_repair_is_idempotent():
 
 def test_non_worktree_rows_untouched():
     storage = server._get_storage()
-    mid = _insert("/home/u/proj", "master")
+    mid = _insert("/home/u/proj")
 
     _run_check_invariants(storage)
 
     row = storage.get_memory(mid)
     assert row["directory_context"] == "/home/u/proj"
-    assert row.get("branch") == "master"
+    # C12 (ADR-0226): this used to read back the ``branch="master"`` the seeding
+    # kwarg wrote. That kwarg is revoked — it re-created, untyped, the column
+    # migration 029 dropped from the SCHEMALESS ``memory`` table. The test's own
+    # subject (a non-worktree row is left alone by the repair) is unchanged; the
+    # assertion is now the stronger post-C12 invariant, and it is on the stored
+    # ROW because a re-created column has no definition to show in INFO FOR TABLE.
+    assert "branch" not in row, "a writer re-created memory.branch untyped"
 
 
 def test_tmp_orphans_not_repaired():
     """/tmp/* rows: canonical root not derivable from the string — leave verbatim."""
     storage = server._get_storage()
-    mid = _insert("/tmp/some-throwaway-checkout", "feat/dead-branch")
+    mid = _insert("/tmp/some-throwaway-checkout")
 
     _run_check_invariants(storage)
 

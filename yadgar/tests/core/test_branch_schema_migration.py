@@ -3,7 +3,9 @@
 Covers:
 - Migration idempotent: run twice → same row count, no errors
 - Backfill: pre-existing row without branch field → after migration has branch='master'
-- New row with explicit branch='feat/v5.0' → stored verbatim
+- C12 (ADR-0226): the branch SEEDING KWARGS are revoked, so the two tests that used
+  to assert `insert_memory(branch=…)` / `insert_wiki_page(branch=…)` stored a value
+  now assert the inverse — the kwarg is rejected and no writer re-creates the column
 - New row without branch param → branch remains NONE
 
 Migration is tested by calling the migration function directly
@@ -136,19 +138,23 @@ class TestBranchBackfill:
         )
 
     def test_already_master_row_stays_master(self, storage):
-        """Row already tagged master must remain master after re-run."""
+        """Row already tagged master must remain master after re-run.
+
+        C12 (ADR-0226): the SUBJECT is unchanged — 004's backfill must not
+        re-stamp a row that already carries a branch. Only the SEEDING changed:
+        ``insert_memory(branch="master")`` is gone, because that kwarg was the
+        live path by which a write re-created the column 029 dropped on a
+        SCHEMALESS table. The row is now seeded through a direct ``_q``, exactly
+        as ``_insert_bare_memory`` above already does for the pre-v5 shape.
+        """
         from yadgar._shared.storage import _migration_004_branch_field
 
         _migration_004_branch_field(storage)
 
-        mid = storage.insert_memory(
-            {
-                "content": "already-tagged memory",
-                "directory_context": "/tmp",
-                "tags": [],
-                "project_id": TEST_PROJECT_ID,
-            },
-            branch="master",
+        mid = _insert_bare_memory(storage, "already-tagged memory")
+        storage._q("UPDATE type::record('memory', $id) SET branch = 'master'", {"id": mid})
+        assert storage._q(f"SELECT branch FROM memory:{mid}")[0].get("branch") == "master", (
+            "precondition: the seeded row must really carry branch='master'"
         )
 
         _migration_004_branch_field(storage)
@@ -158,21 +164,47 @@ class TestBranchBackfill:
 
 
 class TestBranchStorageHelpers:
-    """insert_memory and insert_wiki_page accept optional branch kwarg."""
+    """C12 (ADR-0226): the branch kwargs are REVOKED — they were the re-creation path.
 
-    def test_insert_memory_with_branch(self, storage):
+    REWRITTEN, not deleted. These two tests used to assert that
+    ``insert_memory(branch=…)`` and ``insert_wiki_page(branch=…)`` stored the value
+    — i.e. they were the coverage that PINNED the surviving kwarg in place. ADR-0226
+    revokes it: *"The kwargs were kept for test convenience and are in fact the exact
+    mechanism by which the dropped column comes back."* ``memory`` and ``wiki_page``
+    are SCHEMALESS, so migration 029's ``REMOVE FIELD`` dropped only the type
+    definition; every write that passed the kwarg re-created the column untyped
+    while ``INFO FOR TABLE`` still reported clean.
+
+    So they now assert the inverse, on the same two writers: the kwarg is rejected,
+    and no write puts the column back. The `no_branch_stays_none` siblings below are
+    untouched — they always described the post-C12 behaviour.
+    """
+
+    def test_insert_memory_rejects_a_branch_kwarg(self, storage):
+        with pytest.raises(TypeError):
+            storage.insert_memory(
+                {
+                    "content": "feature branch memory",
+                    "directory_context": "/tmp",
+                    "tags": [],
+                    "project_id": TEST_PROJECT_ID,
+                },
+                branch="feat/v5.0",
+            )
+
+    def test_insert_memory_never_re_creates_the_column(self, storage):
+        """The SCHEMALESS trap: assert on the stored ROW, not on INFO FOR TABLE."""
         mid = storage.insert_memory(
             {
                 "content": "feature branch memory",
                 "directory_context": "/tmp",
                 "tags": [],
                 "project_id": TEST_PROJECT_ID,
-            },
-            branch="feat/v5.0",
+            }
         )
-        rows = storage._q(f"SELECT branch FROM memory:{mid}")
+        rows = storage._q(f"SELECT * FROM memory:{mid}")
         assert rows, "memory row not found"
-        assert rows[0].get("branch") == "feat/v5.0"
+        assert "branch" not in rows[0], "a writer re-created memory.branch untyped"
 
     def test_insert_memory_no_branch_stays_none(self, storage):
         mid = storage.insert_memory(
@@ -189,7 +221,22 @@ class TestBranchStorageHelpers:
         branch = rows[0].get("branch")
         assert branch is None, f"expected None (NONE), got {branch!r}"
 
-    def test_insert_wiki_page_with_branch(self, storage):
+    def test_insert_wiki_page_rejects_a_branch_kwarg(self, storage):
+        with pytest.raises(TypeError):
+            storage.insert_wiki_page(
+                {
+                    "slug": "test-wiki-with-branch",
+                    "title": "Test Wiki",
+                    "content": "content",
+                    "tags": [],
+                    "links": [],
+                    "project_id": TEST_PROJECT_ID,
+                },
+                branch="feat/v5.0",
+            )
+
+    def test_insert_wiki_page_never_re_creates_the_column(self, storage):
+        """Covers BOTH tables the one kwarg used to write: wiki_page and its version row."""
         pid = storage.insert_wiki_page(
             {
                 "slug": "test-wiki-with-branch",
@@ -198,12 +245,16 @@ class TestBranchStorageHelpers:
                 "tags": [],
                 "links": [],
                 "project_id": TEST_PROJECT_ID,
-            },
-            branch="feat/v5.0",
+            }
         )
-        rows = storage._q(f"SELECT branch FROM wiki_page:{pid}")
+        rows = storage._q(f"SELECT * FROM wiki_page:{pid}")
         assert rows, "wiki_page row not found"
-        assert rows[0].get("branch") == "feat/v5.0"
+        assert "branch" not in rows[0], "a writer re-created wiki_page.branch untyped"
+
+        versions = storage._q(f"SELECT * FROM wiki_page_version WHERE page_id = {int(pid)}")
+        assert versions, "no version row written"
+        for row in versions:
+            assert "branch" not in row, "a writer re-created wiki_page_version.branch untyped"
 
     def test_insert_wiki_page_no_branch_stays_none(self, storage):
         pid = storage.insert_wiki_page(

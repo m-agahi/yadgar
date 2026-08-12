@@ -319,7 +319,6 @@ def _parse_task_sections(content: str) -> list[dict]:
 
 def _seed_task_list_page(
     directory: str,
-    branch: str | None,
     content: str | None = None,
     monkeypatch: pytest.MonkeyPatch | None = None,
 ) -> None:
@@ -363,8 +362,7 @@ def _seed_task_list_page(
             "wiki_schema_version": 1,
             "directory_context": directory,
             "project_id": TEST_PROJECT_ID,
-        },
-        branch=branch,
+        }
     )
 
     # 2. Ledger stub — the PRIMARY path the nudge now reads. We install a
@@ -397,7 +395,7 @@ def test_task_list_nudge_present_when_page_exists(tmp_path, monkeypatch):
 
     # Seed both surfaces so the post-Car-E PRIMARY path (ledger) drives the
     # nudge; the wiki marker is the legacy fallback that should also resolve.
-    _seed_task_list_page(str(tmp_path), branch=None, monkeypatch=monkeypatch)
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -455,7 +453,7 @@ def test_task_list_nudge_absent_on_compact(tmp_path, monkeypatch):
     token = "tl-compact"
     from yadgar.core import server as _server
 
-    _seed_task_list_page(str(tmp_path), branch=None, monkeypatch=monkeypatch)
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -478,7 +476,7 @@ def test_task_list_nudge_absent_from_subagent_start(tmp_path, monkeypatch):
     nudge."""
     token = "tl-subagent"
 
-    _seed_task_list_page(str(tmp_path), branch=None, monkeypatch=monkeypatch)
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
 
     client = _make_client(token, monkeypatch)
     resp = client.post(
@@ -501,7 +499,7 @@ def test_task_list_nudge_absent_from_dispatch_prelude(tmp_path, monkeypatch):
     NOT call hook_session_context / project_brief. Even with seeded ledger rows,
     the prelude must not surface the main-thread nudge string.
     """
-    _seed_task_list_page(str(tmp_path), branch=None, monkeypatch=monkeypatch)
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
 
     from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
 
@@ -625,7 +623,7 @@ def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
 
     project = Path(str(tmp_path)).name
     content = _MIXED_CONTENT.replace("myproj", project)
-    _seed_task_list_page(str(tmp_path), branch=None, content=content, monkeypatch=monkeypatch)
+    _seed_task_list_page(str(tmp_path), content=content, monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -667,7 +665,7 @@ def test_task_list_nudge_excludes_completed_tasks(tmp_path, monkeypatch):
 
     project = Path(str(tmp_path)).name
     content = _MIXED_CONTENT.replace("myproj", project)
-    _seed_task_list_page(str(tmp_path), branch=None, content=content, monkeypatch=monkeypatch)
+    _seed_task_list_page(str(tmp_path), content=content, monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
@@ -690,7 +688,7 @@ def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
 
     n = 15
     content = _seed_many_open_tasks(str(tmp_path), n)
-    _seed_task_list_page(str(tmp_path), branch=None, content=content, monkeypatch=monkeypatch)
+    _seed_task_list_page(str(tmp_path), content=content, monkeypatch=monkeypatch)
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)

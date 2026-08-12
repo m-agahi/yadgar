@@ -135,7 +135,6 @@ class CheckpointRestore:
         context: str,
         tags: list[str],
         reason: str = "",
-        branch: str | None = None,
         tier: str | None = None,
         valid_until: str | None = None,
         project_id: str | None = None,
@@ -147,6 +146,12 @@ class CheckpointRestore:
 
         tier: v5.8.0 — anchor tier string ("semantic_immortal"|"conditional"|"ephemeral").
         valid_until: v5.8.0 — ISO-8601 UTC expiry string; None = no expiry.
+
+        C12 (ADR-0226) — the ``branch`` kwarg is GONE, and this was its ONE live
+        non-test caller. It forwarded to ``insert_memory(branch=)``, which appended
+        ``branch = $branch`` to the ``memory`` CREATE — re-creating, untyped, the
+        column migration 029 dropped, because ``memory`` is SCHEMALESS. Killing the
+        writer is the safety property; the schema statement never was.
         project_id: C4b (0047 PR#40 §5) — the enqueue-time stamp threaded from
             the core ``anchor`` tool via ``run_anchor_replay`` (its only
             non-test caller). Reaches ``insert_memory`` as
@@ -197,7 +202,7 @@ class CheckpointRestore:
             memory_payload["tier"] = tier
         if valid_until is not None:
             memory_payload["valid_until"] = valid_until
-        memory_id = self._storage.insert_memory(memory_payload, branch=branch)
+        memory_id = self._storage.insert_memory(memory_payload)
         # Set protection and importance flags
         self._storage.protect_memory(
             memory_id,

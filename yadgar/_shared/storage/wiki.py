@@ -73,12 +73,16 @@ class _WikiMixin:
             pass
 
     @trace_span()
-    def insert_wiki_page(self, page: dict, branch: str | None = None) -> int:
+    def insert_wiki_page(self, page: dict) -> int:
         """Insert a new wiki page, return its integer ID.
 
         v5.41.1: wiki_page CREATE and wiki_page_version CREATE are wrapped in a
         single BEGIN/COMMIT transaction. Either both succeed or both roll back —
         no orphan wiki_page rows without a version, and no orphan version rows.
+
+        C12 (ADR-0226): the ``branch`` kwarg is GONE and was not cosmetic — it
+        appended ``branch = $branch`` here, RE-CREATING untyped the column 029
+        dropped (SCHEMALESS), and seeded ``ver_branch`` into 032's snapshot.
 
         Car J: gate enforced below. Locked/derived pages reject insert; pass
         ``_sanctioned=True`` for server-side lifecycle transitions (Car G).
@@ -129,12 +133,8 @@ class _WikiMixin:
             "ver_tags": page_copy.get("tags", []),
             "ver_confidence": page_copy.get("confidence"),
             "ver_source_memory_ids": page_copy.get("source_memory_ids", []),
-            "ver_branch": branch,
             "ver_now": now,
         }
-        if branch is not None:
-            page_set += ", branch = $branch"
-            params["branch"] = branch
         # v5.42.5: directory_context — NOT NULL per migration 016 schema constraint.
         # Value comes from page dict (preferred) or falls back to "global".
         directory_context = page_copy.get("directory_context") or "global"
@@ -169,7 +169,7 @@ class _WikiMixin:
             "page_id = $pid, version = 1, title = $ver_title, "
             "content = $ver_content, category = $ver_category, tags = $ver_tags, "
             "confidence = $ver_confidence, "
-            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "source_memory_ids = $ver_source_memory_ids, "
             "change_summary = 'initial version', created_at = $ver_now, "
             "provenance_agent = 'default';\n"
             "COMMIT TRANSACTION",
@@ -253,7 +253,6 @@ class _WikiMixin:
                 "ver_tags": merged.get("tags", []),
                 "ver_confidence": merged.get("confidence"),
                 "ver_source_memory_ids": merged.get("source_memory_ids", []),
-                "ver_branch": merged.get("branch"),
                 "ver_change_summary": change_summary,
                 "ver_now": now,
             }
@@ -268,7 +267,7 @@ class _WikiMixin:
             "page_id = $pid, version = $new_ver, title = $ver_title, "
             "content = $ver_content, category = $ver_category, tags = $ver_tags, "
             "confidence = $ver_confidence, "
-            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "source_memory_ids = $ver_source_memory_ids, "
             "change_summary = $ver_change_summary, created_at = $ver_now, "
             "provenance_agent = 'default';\n"
             "COMMIT TRANSACTION",
@@ -295,11 +294,9 @@ class _WikiMixin:
         because a Python ``None`` param stores an explicit null, which ``IS NONE``
         does NOT match) is gone with the field it served.
 
-        The ``wiki_page_version`` snapshot below still carries ``branch``: that
-        column is an audit-trail record of past versions and migration 029
-        deliberately leaves it in place (see
-        ``_migration_029_drop_branch_column``, which drops the field on ``memory``
-        and ``wiki_page`` only).
+        C12 (ADR-0226): the snapshot below no longer carries ``branch`` either —
+        Car 9's audit-trail survivor is revoked, 032 drops it, and this was the
+        third of three snapshot writers that would have put it straight back.
 
         Creates a wiki_page_version row in the same compound transaction.
         """
@@ -326,7 +323,6 @@ class _WikiMixin:
             "ver_tags": merged.get("tags", []),
             "ver_confidence": merged.get("confidence"),
             "ver_source_memory_ids": merged.get("source_memory_ids", []),
-            "ver_branch": merged.get("branch"),
             "ver_change_summary": change_summary,
             "ver_now": now,
         }
@@ -350,7 +346,7 @@ class _WikiMixin:
             "page_id = $pid, version = $new_ver, title = $ver_title, "
             "content = $ver_content, category = $ver_category, tags = $ver_tags, "
             "confidence = $ver_confidence, "
-            "source_memory_ids = $ver_source_memory_ids, branch = $ver_branch, "
+            "source_memory_ids = $ver_source_memory_ids, "
             "change_summary = $ver_change_summary, created_at = $ver_now, "
             "provenance_agent = 'default';\n"
             "COMMIT TRANSACTION",
@@ -564,7 +560,12 @@ class _WikiMixin:
         change_summary: str,
         provenance_agent: str = "default",
     ) -> int:
-        """Insert a wiki_page_version row. Returns the version number assigned."""
+        """Insert a wiki_page_version row. Returns the version number assigned.
+
+        C12 (ADR-0226): ``snapshot.get("branch")`` is gone with migration 032's
+        column. A stale caller dict carrying ``branch`` is IGNORED, not written
+        through — SCHEMALESS, so writing it back re-creates what 032 just cleared.
+        """
         max_ver = self.get_max_version_for_page(page_id)
         new_ver = max_ver + 1
         vid = self._next_id("wiki_page_version")
@@ -574,7 +575,7 @@ class _WikiMixin:
             "page_id = $page_id, version = $version, title = $title, "
             "content = $content, category = $category, tags = $tags, "
             "confidence = $confidence, "
-            "source_memory_ids = $source_memory_ids, branch = $branch, "
+            "source_memory_ids = $source_memory_ids, "
             "change_summary = $change_summary, created_at = $created_at, "
             "provenance_agent = $provenance_agent",
             {
@@ -587,7 +588,6 @@ class _WikiMixin:
                 "tags": snapshot.get("tags", []),
                 "confidence": snapshot.get("confidence"),
                 "source_memory_ids": snapshot.get("source_memory_ids", []),
-                "branch": snapshot.get("branch"),
                 "change_summary": change_summary,
                 "created_at": now,
                 "provenance_agent": provenance_agent,

@@ -448,17 +448,6 @@
   "added_by": "car-c4b-memorize-stamp"
  },
  {
-  "path": "yadgar/backend/restoration/checkpoint_restore.py",
-  "function": "anchor_memory",
-  "lineno": 123,
-  "metrics": {
-   "params": 9
-  },
-  "rationale": "C4b (0047 PR#40 §5): params 8 -> 9 for the enqueue-time project_id. anchor_memory mirrors the anchor queue payload the same way run_memorize_replay mirrors memorize's, and its ONLY non-test caller is run_anchor_replay, which forwards the payload field-for-field — the count is payload width, not logic (cyclomatic and nesting unchanged). The cheaper-looking reduction, dropping the vestigial `branch` parameter left over from ADR-0215's removal of branch scoping, is deliberately not taken in this car: deleting pre-existing dead surface is out of scope for an additive stamping change, and doing it here would mix a behavioural cleanup into the one commit that must be trivially auditable before C5 makes absence fatal. Revisit with C5 or with the ADR-0215 sweep.",
-  "added": "2026-08-11",
-  "added_by": "car-c4b-memorize-stamp"
- },
- {
   "path": "yadgar/_shared/storage/user.py",
   "function": "insert_profile",
   "lineno": 98,

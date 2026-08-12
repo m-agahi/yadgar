@@ -109,8 +109,7 @@ class TestWritePathStampsSplitTypes:
                 "wiki_schema_version": 1,
                 "directory_context": "global",
                 "project_id": TEST_PROJECT_ID,
-            },
-            branch=None,
+            }
         )
         assert _page_type(storage, _TOC_POINTER_SLUG) == PAGE_TYPE_AGENT_INDEX
 

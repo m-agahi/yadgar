@@ -404,7 +404,7 @@ class TestOmitPortableEmbedded:
             "directory_context": "/tmp",
             "heat": 1.0,
         }
-        mid = s.insert_memory(mem, branch="master")
+        mid = s.insert_memory(mem)
         rows = s._q(f"SELECT * OMIT content, embedding FROM memory WHERE id IN [memory:{mid}]")
         assert rows, "OMIT query returned no rows"
         assert "content" not in rows[0]

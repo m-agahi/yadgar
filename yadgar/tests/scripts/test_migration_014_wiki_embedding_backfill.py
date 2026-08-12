@@ -95,8 +95,7 @@ def _insert_null_page(title: str, content: str = "placeholder content") -> int:
             "embedding": None,
             "source_memory_ids": [],
             "project_id": _TEST_PROJECT_ID,
-        },
-        branch=None,
+        }
     )
 
 

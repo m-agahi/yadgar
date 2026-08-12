@@ -102,7 +102,6 @@ def _insert_wiki_direct(
     title: str,
     content: str,
     directory_context: str,
-    branch: str | None = None,
     project_id: str = _TEST_PROJECT_ID,
 ) -> str:
     slug = _slugify(title)
@@ -116,7 +115,6 @@ def _insert_wiki_direct(
             "links": [],
             "source_memory_ids": [],
             "confidence": "medium",
-            "branch": branch,
             "directory_context": directory_context,
             "project_id": project_id,
         }
@@ -141,7 +139,6 @@ def _insert_memory_direct(storage, content: str, directory_context: str) -> None
             "is_stale": False,
             "file_hash": None,
             "embedding_model": "all-MiniLM-L6-v2",
-            "branch": None,
             "project_id": _TEST_PROJECT_ID,
             "_internal": True,
         }
@@ -351,14 +348,12 @@ class TestResolutionProjectBeatsGlobal:
             "Test Resolution Slug",
             "Project-A content",
             directory_context="/proj/A",
-            branch=None,
         )
         _insert_wiki_direct(
             storage,
             "Test Resolution Slug",
             "Global content",
             directory_context="global",
-            branch=None,
         )
 
         from yadgar.core.server.tools.wiki import wiki_read
@@ -385,7 +380,6 @@ class TestResolutionProjectBeatsGlobal:
             "Test Global Fallback Slug",
             "Global content here",
             directory_context="global",
-            branch=None,
         )
 
         from yadgar.core.server.tools.wiki import wiki_read
@@ -443,7 +437,6 @@ class TestResolveSlugCallerDirectory:
             "Caller Repo Page",
             "Page from caller repo",
             directory_context="/caller/repo",
-            branch=None,
         )
 
         from yadgar.core.server.tools.wiki import wiki_history

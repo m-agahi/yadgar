@@ -80,12 +80,22 @@ class TestMigration033Registration:
             "031_project_id_backfill"
         )
 
-    def test_032_is_not_taken(self) -> None:
-        """C12 owns 032 (drop ``wiki_page_version.branch``). 033 must not claim it."""
+    def test_032_is_owned_by_c12_and_ordered_before_033(self) -> None:
+        """C12 owns 032 (drop ``wiki_page_version.branch``). 033 must not claim it.
+
+        RE-POINTED by C12, exactly as the pre-landing form instructed: this used to
+        assert no ``032*`` was registered, because 033 landed first and deliberately
+        skipped the number. C12 has now landed, so the reservation is FILLED — and
+        the assertion still earns its place by pinning that 033 did not renumber
+        onto 032 and that list order still matches version order.
+        """
         versions = [m["version"] for m in _MIGRATIONS]
-        assert not any(v.startswith("032") for v in versions), (
-            "032 is reserved for C12; if C12 landed first this assertion is the "
-            "signal to re-point the comment in _MIGRATIONS, not to renumber 033"
+        taken = [v for v in versions if v.startswith("032")]
+        assert taken == ["032_drop_wiki_page_version_branch"], (
+            f"032 belongs to C12's wiki_page_version.branch drop; found {taken!r}"
+        )
+        assert versions.index("032_drop_wiki_page_version_branch") < versions.index(
+            "033_project_id_other_tables"
         )
 
 

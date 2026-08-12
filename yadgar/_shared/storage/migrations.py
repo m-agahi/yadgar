@@ -409,7 +409,15 @@ def _migration_013_wiki_page_version(storage) -> None:
             "tags": page.get("tags", []),
             "confidence": page.get("confidence"),
             "source_memory_ids": page.get("source_memory_ids", []),
-            "branch": page.get("branch"),
+            # C12 (ADR-0226): ``"branch": page.get("branch")`` removed. This seeder
+            # is a wiki_page_version WRITER, and migration 032 retires that column;
+            # the table is SCHEMALESS, so leaving the write in place would re-create
+            # it untyped with INFO FOR TABLE still reporting clean. The source read
+            # was already dead besides — 029 dropped ``wiki_page.branch``, so
+            # ``page.get("branch")`` could only ever yield None. The key MUST leave
+            # both SQL strings below at the same time: the server-mode branch
+            # derives its LET preamble from ``row.items()``, so dropping the key
+            # alone would leave ``$branch`` unbound and crash the seeder.
             "change_summary": "initial version",
             "created_at": now,
             "provenance_agent": "migration_seed",
@@ -426,7 +434,7 @@ def _migration_013_wiki_page_version(storage) -> None:
                         "page_id = $page_id, version = $version, title = $title, "
                         "content = $content, category = $category, tags = $tags, "
                         "confidence = $confidence, "
-                        "source_memory_ids = $source_memory_ids, branch = $branch, "
+                        "source_memory_ids = $source_memory_ids, "
                         "change_summary = $change_summary, created_at = $created_at, "
                         "provenance_agent = $provenance_agent"
                     ]
@@ -444,7 +452,7 @@ def _migration_013_wiki_page_version(storage) -> None:
                 "page_id = $page_id, version = $version, title = $title, "
                 "content = $content, category = $category, tags = $tags, "
                 "confidence = $confidence, "
-                "source_memory_ids = $source_memory_ids, branch = $branch, "
+                "source_memory_ids = $source_memory_ids, "
                 "change_summary = $change_summary, created_at = $created_at, "
                 "provenance_agent = $provenance_agent",
                 {k: v for k, v in row.items()},
@@ -1398,8 +1406,17 @@ def _migration_029_drop_branch_column(storage) -> None:
     Migrations 004 (which defined the field) and 015 (which defined it on the
     since-dropped ``wiki_draft`` table) are untouched: migration 026's docstring
     sets the precedent that shipped migrations are immutable and removal is a new
-    forward migration. ``wiki_page_version.branch`` is an audit-trail snapshot and
-    is deliberately out of scope.
+    forward migration.
+
+    ``wiki_page_version.branch`` was left in scope as an audit-trail snapshot when
+    this migration shipped. **That survivor is revoked** — ADR-0226 rules that a
+    history table holding a column the system has otherwise retired is a second
+    source of truth for a concept that no longer exists. It is dropped by
+    ``_migration_032_drop_wiki_page_version_branch``, a NEW forward revision (029
+    never touched that table, so this is not an in-place edit). 029's own blast
+    radius is unchanged and still stops at ``memory`` + ``wiki_page`` — both the
+    unit and e2e boundary tests still assert exactly that, alongside new siblings
+    asserting 032 does the rest.
 
     NOTE — both tables are SCHEMALESS (see ``_init_schema``), so ``REMOVE FIELD``
     removes only the FIELD DEFINITION; it neither deletes stored values (hence the
@@ -1534,6 +1551,77 @@ def _migration_031_project_id_backfill(storage) -> None:
         "(C4: no in-migration backfill — the container cannot derive an identity; "
         "the operator backfill op is C6)"
     )
+
+
+# ── C12 (0047 PR#40 §5) — branch's last survivor (ADR-0226) ────────────────
+
+
+class Migration032Abort(RuntimeError):
+    """Raised when 032 refuses to drop ``branch`` while stored values survive."""
+
+
+def _migration_032_drop_wiki_page_version_branch(storage) -> None:
+    """Retire ``wiki_page_version.branch`` — branch scoping's last survivor (ADR-0226).
+
+    ADR-0215 removed branch scoping and migration 029 dropped the column from
+    ``memory`` and ``wiki_page``. Car 9 deliberately kept ``wiki_page_version.branch``
+    as an "audit-trail snapshot" and shipped a boundary test asserting 029 leaves it
+    alone. ADR-0226 revokes that survivor: *"a history table holding a column the
+    system has otherwise retired is a second source of truth for a concept that no
+    longer exists, and the boundary test asserting 029 leaves it alone actively pins
+    the survivor in place."* 029 did not touch this table, so this is a NEW forward
+    revision, not an in-place edit of an unreleased one (migration 026's precedent).
+
+    **Why this has a DATA step where 033 deliberately had none.** ``wiki_page_version``
+    is SCHEMALESS (``_migration_013_wiki_page_version`` defines the table, never a
+    ``DEFINE FIELD branch``), so on most databases there is NO field definition to
+    remove and a body consisting only of ``REMOVE FIELD IF EXISTS`` would be a **no-op
+    that still satisfies an ``INFO FOR TABLE`` assertion**. That is migration 031's
+    failure shape — a filter on a column it never projected — in different clothing.
+    The substance is the stored VALUES, so this mirrors 029's order:
+
+      1. count the rows still carrying a value
+      2. ``UPDATE … SET branch = NONE`` on exactly those rows
+      -. assert none survive — BEFORE the drop, while the column is still queryable
+      3. ``REMOVE FIELD IF EXISTS`` for symmetry and ``INFO FOR TABLE`` cleanliness
+
+    ``SET branch = NONE`` assigns the literal SurrealDB ``NONE``, which is what
+    ``IS NONE`` / ``!= NONE`` match. Routing a Python ``None`` through a bind
+    parameter would store an explicit null and the sweep would miss it — the trap
+    documented on ``_m029_null_branch`` and ``set_wiki_page_metadata``.
+
+    **The schema statement is NOT the safety property.** Because the table is
+    SCHEMALESS, any surviving writer re-creates the column untyped and
+    ``INFO FOR TABLE`` still looks clean (ADR-0225/0226). Killing the writers is the
+    guarantee, and it is done in code in this same car: the ``ver_branch`` binding is
+    gone from all three ``wiki_page_version`` snapshot paths in
+    ``_shared/storage/wiki.py``, from ``insert_wiki_page_version``'s
+    ``snapshot.get("branch")``, and from this module's own 013 seeder. The seeding
+    kwargs ``insert_memory(branch=)`` / ``insert_wiki_page(branch=)`` /
+    ``anchor_memory(branch=)`` — which re-created the column on ``memory`` and
+    ``wiki_page`` AFTER 029 dropped it — are gone with them.
+
+    Rows are NULLED, never deleted: the version row is the audit trail ADR-0226
+    preserves; only the retired concept leaves.
+
+    Idempotent end-to-end: on replay the count is 0 so the UPDATE is skipped, and
+    ``REMOVE FIELD IF EXISTS`` is a no-op.
+    """
+    n = _m029_count(storage, "wiki_page_version", "branch != NONE")
+    if n:
+        storage._q("UPDATE wiki_page_version SET branch = NONE WHERE branch != NONE")
+    _log.info("migration_032: nulled branch on %d wiki_page_version row(s)", n)
+
+    remaining = _m029_count(storage, "wiki_page_version", "branch != NONE")
+    if remaining:
+        raise Migration032Abort(
+            f"migration_032: {remaining} wiki_page_version row(s) still carry a "
+            f"non-null branch after the nulling sweep — refusing to drop the field "
+            f"while values survive."
+        )
+
+    storage._q("REMOVE FIELD IF EXISTS branch ON TABLE wiki_page_version;")
+    _log.info("migration_032: retired wiki_page_version.branch (ADR-0226)")
 
 
 # ── C11 (0047 PR#40 §5) — the OTHER directory-bearing tables ───────────────
@@ -1734,7 +1822,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
         "version": "031_project_id_backfill",
         "fn": _migration_031_project_id_backfill,
     },
-    # NOTE: 032 is RESERVED for C12 (drop wiki_page_version.branch). Do not use.
+    {
+        "version": "032_drop_wiki_page_version_branch",
+        "fn": _migration_032_drop_wiki_page_version_branch,
+    },
     {
         "version": "033_project_id_other_tables",
         "fn": _migration_033_project_id_other_tables,
