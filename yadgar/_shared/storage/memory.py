@@ -105,10 +105,20 @@ class _MemoryMixin:
         ``INFO FOR TABLE`` still reporting clean. *"The kwargs were kept for test
         convenience and are in fact the exact mechanism by which the dropped
         column comes back."*
+
+        Car F1: ``embedding`` joins that convention. Binding a Python ``None``
+        into ``embedding = $embedding`` is not a no-op — over the HTTP transport
+        it serialises to JSON ``null`` and lands as SurrealDB **NULL**, which is
+        a DIFFERENT value from NONE and passes ``embedding IS NOT NONE``. The
+        row then reaches ``vector::similarity::cosine()`` and the whole query
+        dies with "Expected `array<number>` but found `NULL`". A literal
+        ``embedding = NONE`` stores the same absence the rest of this builder
+        already stores for its optional fields.
         """
+        emb_assign = "embedding = $embedding" if emb_floats is not None else "embedding = NONE"
         sql = (
             "CREATE type::record('memory', $id) SET "
-            "content = $content, embedding = $embedding, tags = $tags, "
+            f"content = $content, {emb_assign}, tags = $tags, "
             "source_episode_id = $source_episode_id, "
             "directory_context = $directory_context, "
             "project_id = $project_id, "
@@ -162,6 +172,10 @@ class _MemoryMixin:
             "vector_clock": memory.get("vector_clock", "{}"),
             "is_protected": bool(memory.get("is_protected", False)),
         }
+        if emb_floats is None:
+            # ``embedding = NONE`` is a literal — leaving a dead $embedding bind
+            # behind would emit ``LET $embedding = null`` for no reader.
+            params.pop("embedding")
         # v5.8.0: tier / valid_until / migration_grace (optional, nullable)
         if memory.get("tier") is not None:
             sql += ", tier = $tier"
@@ -950,12 +964,22 @@ class _MemoryMixin:
         params: dict = {
             "id": memory_id,
             "content": content,
-            "emb": floats,
             "level": compression_level,
         }
+        # Car F1: clearing the embedding must write NONE, not NULL. A Python
+        # ``None`` bound here becomes JSON ``null`` → SurrealDB NULL over the
+        # HTTP transport, which passes ``IS NOT NONE`` and then crashes
+        # ``vector::similarity::cosine()``. Assigning is kept (rather than
+        # omitted) so a compression that drops the embedding still CLEARS the
+        # stale one rather than leaving it attached to rewritten content.
+        if floats is None:
+            emb_assign = "embedding = NONE"
+        else:
+            emb_assign = "embedding = $emb"
+            params["emb"] = floats
         sql = (
             "UPDATE type::record('memory', $id) SET "
-            "content = $content, embedding = $emb, compression_level = $level, "
+            f"content = $content, {emb_assign}, compression_level = $level, "
             "compressed = true"
         )
         if original_content is not None:

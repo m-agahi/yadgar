@@ -106,10 +106,14 @@ class _WikiMixin:
         embedding = page_copy.get("embedding")
         emb_floats = self._bytes_to_floats(embedding) if isinstance(embedding, bytes) else embedding
 
+        # Car F1: no embedding ⇒ store NONE. A bound Python None lands SurrealDB
+        # NULL (see ``get_wiki_pages_without_embedding`` below), which passes
+        # ``IS NOT NONE`` and then crashes ``cosine()``.
+        emb_assign = "embedding = $embedding" if emb_floats is not None else "embedding = NONE"
         page_set = (
             "title = $title, slug = $slug, content = $content, "
             "category = $category, tags = $tags, links = $links, "
-            "confidence = $confidence, embedding = $embedding, "
+            f"confidence = $confidence, {emb_assign}, "
             "source_memory_ids = $source_memory_ids, "
             "created_at = $created_at, updated_at = $updated_at"
         )
@@ -122,7 +126,7 @@ class _WikiMixin:
             "tags": page_copy.get("tags", []),
             "links": page_copy.get("links", []),
             "confidence": page_copy.get("confidence", 1.0),
-            "embedding": emb_floats,
+            **({"embedding": emb_floats} if emb_floats is not None else {}),
             "source_memory_ids": page_copy.get("source_memory_ids", []),
             "created_at": page_copy.get("created_at", now),
             "updated_at": page_copy.get("updated_at", now),
@@ -239,6 +243,11 @@ class _WikiMixin:
         set_parts = []
         params: dict = {"pid": int(page_id)}
         for col, val in updates.items():
+            if col == "embedding" and val is None:
+                # Car F1: a LIVE NULL source — ``_compute_embedding`` returns
+                # None when the embed service is down. Same reason as insert.
+                set_parts.append("embedding = NONE")
+                continue
             set_parts.append(f"{col} = $upd_{col}")
             params[f"upd_{col}"] = val
 
@@ -671,11 +680,15 @@ class _WikiMixin:
         Car C7 — TWO SHAPES. Unscoped → HNSW KNN. Scoped → BRUTE-FORCE cosine:
         ``AND project_id = $p`` on the KNN form is NOT a pre-filter (KNN picks
         neighbours FIRST) so it under-returns. See ``storage/directory.py``.
+
+        Car F1 — BOTH emptiness guards, for the reason spelled out on the memory
+        arm (``storage/vector.py::search_vectors``). Not belt-and-braces: NONE
+        and NULL are different values and each guard admits the other's.
         """
         floats = self._bytes_to_floats(query_embedding)
         params: dict = {"qv": floats}
         if scope_sql:
-            where = f"embedding IS NOT NONE AND ({scope_sql})"
+            where = f"embedding IS NOT NONE AND embedding IS NOT NULL AND ({scope_sql})"
             tail = "ORDER BY sim DESC LIMIT $lim"
             params.update({"lim": top_k, **(scope_params or {})})
         else:
@@ -707,9 +720,13 @@ class _WikiMixin:
     ) -> list[tuple[int, float]]:
         """Brute-force cosine over ``tags CONTAINS $tag`` rows → (page_id, similarity).
         No HNSW — avoids dilution. Similarity NOT distance: accumulate directly.
+
+        Car F1 — brute-force UNCONDITIONALLY (no KNN arm to fall back to when
+        ``scope_sql`` is empty), so the NONE/NULL double guard is exposed on
+        EVERY call here. See ``storage/vector.py::search_vectors``.
         """
         floats = self._bytes_to_floats(query_embedding)
-        where = "tags CONTAINS $tag AND embedding IS NOT NONE"
+        where = "tags CONTAINS $tag AND embedding IS NOT NONE AND embedding IS NOT NULL"
         params = {"qv": floats, "tag": include_tag, "lim": top_k}
         # Car C7: this path already skipped HNSW, so the scope composes for free.
         where = where + (f" AND ({scope_sql})" if scope_sql else "")
