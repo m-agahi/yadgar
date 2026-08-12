@@ -91,10 +91,25 @@ def _slugify(title: str) -> str:
 
 #: Identity the direct-insert helpers stamp. C5 (ADR-0227) made the storage
 #: chokepoint "the caller's value, or a raise" — an insert with no project_id
-#: no longer falls back to 'global'. These fixtures exercise DIRECTORY scoping,
-#: which is a separate axis that survives until C11, so they all share one
-#: project_id: varying it would change what the directory assertions mean.
+#: no longer falls back to 'global'. The WIKI fixtures below exercise DIRECTORY
+#: scoping (§25 slug resolution, wiki_list), which is a live axis on that path,
+#: so they all share one project_id: varying it would change what the directory
+#: assertions mean.
+#:
+#: RECALL IS THE EXCEPTION AND IT IS NOT A NAMING QUIRK. Car C7 re-keyed the
+#: recall read path from ``directory_context`` onto ``project_id``
+#: (``_shared/storage/directory.py``): the stage-1 WHERE emits
+#: ``(project_id = $sc_pid OR $sc_reach IN tags)`` and mentions ``directory_context``
+#: nowhere, on any arm. So ``TestRecallDirectoryScope`` below MUST vary
+#: ``project_id`` to have anything to assert — two rows that share a project and
+#: differ only by directory are BOTH in scope, and a recall returning both is the
+#: contract working. Seeding them identically and asserting exclusion tests a
+#: mechanism that no longer exists.
 _TEST_PROJECT_ID = "owner/repo"
+
+#: A second, unrelated project. Used only by ``TestRecallDirectoryScope`` — see
+#: the note above for why that one class varies identity where the rest do not.
+_OTHER_PROJECT_ID = "other/repo"
 
 
 def _insert_wiki_direct(
@@ -122,24 +137,35 @@ def _insert_wiki_direct(
     return slug
 
 
-def _insert_memory_direct(storage, content: str, directory_context: str) -> None:
-    """Insert a memory record directly to storage with a directory_context.
+def _insert_memory_direct(
+    storage,
+    content: str,
+    directory_context: str,
+    project_id: str = _TEST_PROJECT_ID,
+    tags: list[str] | None = None,
+) -> None:
+    """Insert a memory record directly to storage.
 
     Embedding left as None — embedded DB (surrealdb-python) does not require
-    it for FTS search; test only verifies directory-scoped recall exclusion.
+    it for FTS search; the recall assertions ride the FTS arm.
+
+    ``project_id`` and ``tags`` are parameters because the recall scope test
+    needs to vary BOTH arms of C7's stage-1 predicate
+    (``project_id = $sc_pid OR $sc_reach IN tags``). They default to the shared
+    identity and a plain marker tag, so every other caller is unaffected.
     """
     storage.insert_memory(
         {
             "content": content,
             "embedding": None,
-            "tags": ["test"],
+            "tags": tags if tags is not None else ["test"],
             "directory_context": directory_context,
             "heat": 0.8,
             "confidence": 0.7,
             "is_stale": False,
             "file_hash": None,
             "embedding_model": "all-MiniLM-L6-v2",
-            "project_id": _TEST_PROJECT_ID,
+            "project_id": project_id,
             "_internal": True,
         }
     )
@@ -514,24 +540,45 @@ class TestBlocksProjectScopeRequiresDirectory:
         assert result.get("error") != "missing_directory"
 
 
-# ── T8: recall scoped by directory ───────────────────────────────────────────
+# ── T8: recall scoped by project ─────────────────────────────────────────────
 
 
 class TestRecallDirectoryScope:
-    """recall(directory=...) excludes memories from other directories."""
+    """recall(...) excludes memories belonging to another project.
+
+    THE SETUP HERE VARIES ``project_id``, NOT ``directory_context``, and that is
+    the whole point of the class. Car C7 re-keyed the recall read path off
+    directory: every stage-1 WHERE this recall emits reads
+
+        ``(project_id = $sc_pid OR $sc_reach IN tags)``
+
+    on the memory FTS arm, the memory vector arm, and both wiki arms, plus
+    ``project_id = $pid`` on the profile/belief arms — and NONE of them mentions
+    ``directory_context``. Two rows sharing a project and differing only by
+    directory are therefore BOTH in scope, and a recall returning both is the
+    contract working, not a leak.
+
+    The class kept its name because the guarantee it protects is unchanged —
+    "an agent working in proj A does not see proj B's writes". Only the key
+    that expresses "proj" moved, from the checkout path to the project id.
+    """
 
     def test_agent_in_proj_A_does_not_see_proj_B_writes(self):
-        """recall with directory=/proj/A includes /proj/A and global, excludes /proj/B.
+        """recall scoped to project A excludes a memory written under project B.
 
-        v5.65 Fix D: directory is now required (no os.getcwd() fallback in recall).
-        directory=/proj/A is passed explicitly; no os-patching needed.
+        v5.65 Fix D: directory is still passed explicitly (no os.getcwd()
+        fallback in recall) — it just no longer decides what is in scope.
         """
         import yadgar._shared.runtime.state as _st
 
         storage = _st._storage
 
-        _insert_memory_direct(storage, "proj-A-secret content here", "/proj/A")
-        _insert_memory_direct(storage, "proj-B-secret content here", "/proj/B")
+        _insert_memory_direct(
+            storage, "proj-A-secret content here", "/proj/A", project_id=_TEST_PROJECT_ID
+        )
+        _insert_memory_direct(
+            storage, "proj-B-secret content here", "/proj/B", project_id=_OTHER_PROJECT_ID
+        )
 
         from yadgar.core.server.tools.recall import recall
 
@@ -547,3 +594,127 @@ class TestRecallDirectoryScope:
         # proj-A should be found (if embedding similarity is high enough)
         # Note: zero embeddings may not have high cosine similarity; test the exclusion more than inclusion
         # The critical assertion is that B is excluded.
+
+    def test_reach_tagged_row_from_another_project_is_still_admitted(self):
+        """The ``global`` reach arm admits an out-of-project row that carries it.
+
+        Car F6 pins the OTHER half of C7's predicate. The exclusion test above
+        would pass just as happily if the ``$sc_reach IN tags`` arm were deleted
+        and the clause narrowed to ``project_id = $sc_pid``, and
+        ``_shared/storage/directory.py`` says in as many words why that must not
+        go unnoticed: dropping the reach arm "silently narrows ~429 rows down to
+        one project — the failure looks like 'recall got worse', not like a bug".
+
+        Both rows below live in the SAME foreign project and the SAME foreign
+        directory. The only thing separating them is the reach tag, so nothing
+        but that arm can explain a result set holding one and not the other.
+        """
+        import yadgar._shared.runtime.state as _st
+
+        storage = _st._storage
+
+        _insert_memory_direct(
+            storage,
+            "reach-tagged wombat parable",
+            "/proj/Z",
+            project_id=_OTHER_PROJECT_ID,
+            tags=["test", "global"],
+        )
+        _insert_memory_direct(
+            storage,
+            "untagged wombat parable",
+            "/proj/Z",
+            project_id=_OTHER_PROJECT_ID,
+        )
+
+        from yadgar.core.server.tools.recall import recall
+
+        results = recall(
+            query="wombat parable",
+            max_results=10,
+            directory="/proj/A",
+            project=_TEST_PROJECT_ID,
+        )
+
+        contents = [r.get("content", "") for r in results]
+        assert any("reach-tagged wombat" in c for c in contents), (
+            f"reach arm dropped a 'global'-tagged row from another project: {contents}"
+        )
+        assert not any("untagged wombat" in c for c in contents), (
+            f"untagged out-of-project row leaked: {contents}"
+        )
+
+    def test_every_candidate_query_carries_the_scope_predicate(self):
+        """The scope is enforced IN THE QUERY, not by a post-filter downstream.
+
+        Car F6 adds this because the two result-level tests above CANNOT see the
+        difference. Measured: gutting ``build_project_scope_clause`` to return
+        ``("", {})`` leaves both of them GREEN — ``MemoryProvider.candidates``
+        runs ``is_project_eligible`` over everything the retriever returns, so
+        the Python residual guard alone still produces a correctly-scoped result
+        LIST. What it cannot restore is the thing C7 exists for: ADR-0206's
+        point is that a filter running after the query has already SPENT the
+        query's LIMIT, so a scoped recall over a corpus where the caller's
+        project is a minority silently under-returns instead of erroring.
+
+        So this test asserts on the SQL, not on the rows. Every query that
+        spends a candidate budget — ``ORDER BY … LIMIT`` over ``memory`` or
+        ``wiki_page`` — must carry the predicate itself. A future refactor that
+        drops ``scope_sql`` from one arm while leaving the clause BUILDER intact
+        passes ``test_c7_recall_scope_clause.py`` and both tests above; it fails
+        here, which is the only place it can.
+
+        The ``WHERE id IN [...]`` hydration queries are deliberately exempt:
+        they re-read rows whose ids a scoped query already chose, so they spend
+        no budget and have nothing to narrow.
+        """
+        import yadgar._shared.runtime.state as _st
+        from yadgar._shared.storage import client as _client_mod
+
+        storage = _st._storage
+        _insert_memory_direct(
+            storage, "budget-probe content here", "/proj/A", project_id=_TEST_PROJECT_ID
+        )
+
+        captured: list[tuple[str, dict]] = []
+        original_q = _client_mod._ClientMixin._q
+
+        def _spy(self, surql, params=None):
+            captured.append((surql, dict(params or {})))
+            return original_q(self, surql, params)
+
+        from yadgar.core.server.tools.recall import recall
+
+        with patch.object(_client_mod._ClientMixin, "_q", _spy):
+            recall(
+                query="budget probe",
+                max_results=10,
+                directory="/proj/A",
+                project=_TEST_PROJECT_ID,
+            )
+
+        assert captured, "no SQL captured — the spy never saw the recall"
+
+        budgeted = [
+            (sql, params)
+            for sql, params in captured
+            if "ORDER BY" in sql
+            and "LIMIT" in sql
+            and (" FROM memory " in sql or " FROM wiki_page " in sql)
+        ]
+        unscoped = [
+            sql for sql, params in budgeted if "sc_pid" not in params or "sc_reach" not in params
+        ]
+        assert not unscoped, (
+            "candidate query spends its LIMIT before any scoping — "
+            f"the C7 predicate is missing from: {unscoped}"
+        )
+
+        # The four arms C7 names must all be present, or "none were unscoped"
+        # would be vacuously true for an arm that simply stopped running.
+        joined = " ".join(sql for sql, _ in budgeted)
+        assert "FROM memory " in joined and "@1@" in joined, "memory FTS arm did not run"
+        assert "FROM memory " in joined and "vector::similarity::cosine" in joined, (
+            "memory vector arm did not run"
+        )
+        assert "FROM wiki_page " in joined, "wiki arms did not run"
