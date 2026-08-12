@@ -1,20 +1,37 @@
-"""Tests for v5.62.0 directory scoping + quality floor + dedup in recall / wiki_query.
+"""Tests for project scoping + quality floor + dedup in recall / wiki_query.
 
-Design (per plan recall-scoping-restamp.md §Tests):
+Originally written for v5.62.0, when the scope key was ``directory_context``.
+Car C7 (0047 §5 C7) moved the mechanism into a stage-1 SQL ``WHERE`` clause and
+ADR-0225 retired ``directory`` as a scoping concept outright: the ONLY thing
+that admits or excludes a row now is ``project_id`` equality or the ``'global'``
+reach tag in ``tags``. ``build_recall_scope_clause`` has no directory arm — see
+``yadgar/_shared/storage/directory.py``.
+
   Seed an isolated corpus with:
-    - Genuine yadgar-dir memories (expected in results)
-    - Literal aws-work-dir memories (expected excluded by directory filter)
-    - system-stamped co-occurrence noise rows (CE≈0, expected dropped by floor)
+    - Genuine caller-project memories (expected in results)
+    - Other-project (aws-work) memories, stamped with a DIFFERENT ``project_id``
+      (expected excluded by the project scope clause)
+    - Low-value co-occurrence noise rows (CE≈0, expected dropped by floor)
     - Duplicate co-occurrence rows (same content, expected collapsed to one)
 
-  Then recall(directory=yadgar_dir) and assert:
+  Then recall(project=TEST_PROJECT_ID) and assert:
     (1) Other-project (aws-work) rows are excluded.
-    (2) directory= measurably changes results vs without.
+    (2) project= measurably changes results — the same content token resolves to
+        a different row per project.
     (3) Low-CE co-occurrence noise is dropped by the quality floor.
     (4) Duplicates collapsed to one result.
-    (5) Genuine yadgar results are retained.
+    (5) Genuine caller-project results are retained.
 
-Part A — unit tests for DirectoryFilter / is_directory_eligible / _build_directory_clause:
+``directory=`` is still THREADED through every call here because the tool
+surface still requires it (v5.65 Fix D rejects an absent/blank directory), but
+it is inert as a scope key — the assertions never rest on it. Seeding two rows
+that differ only by ``directory_context`` and expecting one to be excluded is
+the stale premise this file used to carry, and it is what made
+``test_other_project_excluded`` red: ``_insert_mem`` stamped EVERY row,
+including the aws ones, with the caller's own ``TEST_PROJECT_ID``, so returning
+them was correct behaviour.
+
+Part A — unit tests for is_project_eligible / build_project_scope_clause:
   Covered independently of DB to guarantee the predicate logic without a live SurrealDB.
 
 Part B — unit tests for _apply_quality_floor / _dedup_by_content:
@@ -312,10 +329,16 @@ class TestDedupByContent:
 YADGAR_DIR = "/home/max/git/yadgar"
 AWS_DIR = "/home/max/aws-work"
 
+#: The OTHER project. Car C7: this — not ``AWS_DIR`` — is what makes a row
+#: invisible to a ``project=TEST_PROJECT_ID`` recall. Measured on this branch:
+#: a row stamped ``TEST_PROJECT_ID`` and sitting at ``AWS_DIR`` comes back;
+#: the same row stamped ``other-owner/aws-work`` does not.
+AWS_PROJECT_ID = "other-owner/aws-work"
+
 
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
-    tmp_path = tmp_path_factory.mktemp("directory_scoping_v562")
+    tmp_path = tmp_path_factory.mktemp("project_scoping")
     from yadgar.core import server
 
     db_path = str(tmp_path / "test.db")
@@ -324,13 +347,31 @@ def _engines(tmp_path_factory):
     server.shutdown()
 
 
-def _insert_mem(storage, content: str, directory: str, tags: list | None = None) -> int:
-    """Insert a memory with given directory_context and return its id.
+def _insert_mem(
+    storage,
+    content: str,
+    directory: str,
+    tags: list | None = None,
+    project_id: str = TEST_PROJECT_ID,
+) -> int:
+    """Insert a memory under *project_id* and return its id.
 
     Computes a real embedding (same path as production memorize → phase_embed →
     embeddings.encode) so vector search surfaces the row.  Without an embedding,
-    recall falls back to FTS-only and the directory filter then drops the row
+    recall falls back to FTS-only and the scope filter then drops the row
     before it is ever retrieved — making scoping assertions vacuously fail.
+
+    ``project_id`` is an explicit parameter, and the exclusion tests below pass
+    ``AWS_PROJECT_ID`` through it. It is NOT optional-with-a-``None``-default:
+    ``_resolve_project_id_for_write`` raises ``UnresolvedProjectError`` on an
+    unstamped write (ADR-0227 deleted every derivation tier), so an unstamped
+    corpus row cannot be seeded through this path at all. The "unstamped row is
+    invisible" contract is therefore pinned at unit level, by
+    ``TestIsProjectEligible.test_unstamped_row_excluded``.
+
+    ``directory`` still reaches ``directory_context`` because the column is
+    alive until the next PR's drop migration, but nothing in this file's
+    assertions depends on its value.
     """
     from yadgar._shared.runtime.lifecycle import _get_embeddings
 
@@ -342,18 +383,23 @@ def _insert_mem(storage, content: str, directory: str, tags: list | None = None)
             "directory_context": directory,
             "tags": tags or [],
             "heat": 1.0,
-            "project_id": TEST_PROJECT_ID,
+            "project_id": project_id,
         }
     )
 
 
-class TestDirectoryScopingIntegration:
-    """Behavioral tests: seed mixed-dir corpus, recall(directory=), assert scoping."""
+class TestProjectScopingIntegration:
+    """Behavioral tests: seed a two-project corpus, recall(project=), assert scoping.
+
+    Was ``TestDirectoryScopingIntegration``. The corpus is now split by
+    ``project_id`` rather than by ``directory_context`` — the only split the
+    stage-1 ``WHERE`` clause can see.
+    """
 
     def _setup_corpus(self, storage):
-        """Seed the corpus with genuine, other-project, system noise, and dup rows."""
+        """Seed the corpus with genuine, other-project, noise, and dup rows."""
         ids = {}
-        # Genuine yadgar memories — use short, unique, FTS-indexable tokens.
+        # Genuine caller-project memories — short, unique, FTS-indexable tokens.
         ids["genuine1"] = _insert_mem(
             storage,
             "yadgar genuine content xzy111",
@@ -364,20 +410,23 @@ class TestDirectoryScopingIntegration:
             "yadgar recall floor xzy222",
             YADGAR_DIR,
         )
-        # Other-project (aws-work) — literal dir rows (excluded by directory filter).
+        # Other-project (aws-work) rows — excluded by the project scope clause.
         ids["aws1"] = _insert_mem(
             storage,
             "aws-work IAM policy xzy333",
             AWS_DIR,
+            project_id=AWS_PROJECT_ID,
         )
         ids["aws2"] = _insert_mem(
             storage,
             "aws-work RDS cluster xzy444",
             AWS_DIR,
+            project_id=AWS_PROJECT_ID,
         )
-        # System-stamped co-occurrence noise — directory_context='system'.
-        # These pass the directory filter (system is sentinel-eligible) but should
-        # be dropped by the quality floor when CE score is low.
+        # Co-occurrence noise, stamped to the CALLER's project so it clears the
+        # scope clause and the quality floor is the thing under test — "system"
+        # is no longer a sentinel that admits anything (Car C7), so seeding it
+        # under another project would make the floor assertion vacuous.
         # The floor helper unit tests (Part B) prove the logic independently.
         cofire_content = "branch.py and directory.py are frequently modified together xzy555"
         ids["cofire1"] = _insert_mem(
@@ -396,16 +445,28 @@ class TestDirectoryScopingIntegration:
         return ids
 
     def test_other_project_excluded(self, monkeypatch):
-        """assertion (1): AWS-dir rows excluded when directory=yadgar_dir."""
+        """assertion (1): other-project rows excluded when project=TEST_PROJECT_ID.
+
+        The rows are seeded under ``AWS_PROJECT_ID``. Under the old
+        directory-keyed premise they were seeded under ``TEST_PROJECT_ID`` and
+        differed only in ``directory_context``, which the scope clause does not
+        read — so they came back, correctly, and the assertion red for the wrong
+        reason. The assertion itself is unchanged; its setup now creates the
+        condition it names.
+        """
         from yadgar.core import server
 
         storage = server._get_storage()
-        # Insert aws-work rows with a unique token that would appear in recall results
-        # if directory scoping were absent.
-        mid_aws1 = _insert_mem(storage, "aws-work IAM policy xzq888", AWS_DIR)
-        mid_aws2 = _insert_mem(storage, "aws-work RDS cluster xzq888", AWS_DIR)
+        # Insert other-project rows with a unique token that would appear in
+        # recall results if project scoping were absent.
+        mid_aws1 = _insert_mem(
+            storage, "aws-work IAM policy xzq888", AWS_DIR, project_id=AWS_PROJECT_ID
+        )
+        mid_aws2 = _insert_mem(
+            storage, "aws-work RDS cluster xzq888", AWS_DIR, project_id=AWS_PROJECT_ID
+        )
 
-        # Recall with a query that matches those tokens — but directory=YADGAR_DIR.
+        # Recall with a query that matches those tokens — but project=TEST_PROJECT_ID.
         results = server.recall(
             "aws-work IAM policy RDS cluster xzq888",
             directory=YADGAR_DIR,
@@ -416,8 +477,8 @@ class TestDirectoryScopingIntegration:
         assert mid_aws1 not in result_ids, "aws-work memory must be excluded"
         assert mid_aws2 not in result_ids, "aws-work memory must be excluded"
 
-    def test_genuine_yadgar_retained(self, monkeypatch):
-        """assertion (5): genuine yadgar results are retained after scoping."""
+    def test_genuine_caller_project_retained(self, monkeypatch):
+        """assertion (5): genuine caller-project results are retained after scoping."""
         from yadgar.core import server
 
         storage = server._get_storage()
@@ -437,52 +498,53 @@ class TestDirectoryScopingIntegration:
             f"got result_ids={result_ids}"
         )
 
-    def test_directory_arg_changes_results(self, monkeypatch):
-        """assertion (2): directory= scopes results — different dirs return different subsets.
+    def test_project_arg_changes_results(self, monkeypatch):
+        """assertion (2): project= scopes results — each project sees only its own row.
 
-        Strategy: insert an aws-work row and a yadgar row with the same unique token.
-        With directory=YADGAR_DIR: aws row is ABSENT, yadgar row is PRESENT.
-        With directory=AWS_DIR: yadgar row is ABSENT, aws row is PRESENT.
-        Proves directory= is NOT a no-op — it changes the result set.
+        Was ``test_directory_arg_changes_results``, and this is a REWRITE rather
+        than a rename: its proof technique was "hold project= fixed, vary
+        directory=, watch the result set change", and directory= no longer
+        changes anything (ADR-0225). Held to the identical shape on the axis
+        that IS load-bearing — hold directory= fixed, vary project=:
 
-        v5.65 Fix D: directory=None no longer works (raises ValueError).
-        Proof technique changed: compare YADGAR_DIR vs AWS_DIR scoping.
-
-        NOTE (Car C7 triage): this test's failure on this branch is NOT a C7
-        regression — confirmed by running it, unmodified, against the parent
-        commit (pre-C7): it fails there IDENTICALLY (empty result set for
-        this combined-topic query, in an environment where
-        ``sentence-transformers`` is not installed and vector search / GTE
-        rerank are unavailable, leaving FTS-only ranking that does not
-        surface either row for this particular multi-topic query string).
-        Left un-modified and reported as a pre-existing failure per the car's
-        instructions — the only import/signature surface this test touches
-        (``server.recall``, ``_insert_mem``) is unaffected by C7's renames.
+        Insert two rows sharing one unique token, one per project.
+        With project=TEST_PROJECT_ID: aws row ABSENT, caller row PRESENT.
+        With project=AWS_PROJECT_ID:  caller row ABSENT, aws row PRESENT.
+        Proves project= is NOT a no-op — it changes the result set, in BOTH
+        directions, which one-sided exclusion alone cannot show.
         """
         from yadgar.core import server
 
         storage = server._get_storage()
-        # Insert aws-work row and a yadgar row, both with unique shared token xzq777.
-        mid_aws = _insert_mem(storage, "aws-work RDS endpoint config xzq777b", AWS_DIR)
+        # Two rows, one per project, sharing the unique token xzq777b.
+        mid_aws = _insert_mem(
+            storage, "aws-work RDS endpoint config xzq777b", AWS_DIR, project_id=AWS_PROJECT_ID
+        )
         mid_yadgar = _insert_mem(storage, "yadgar config endpoint xzq777b", YADGAR_DIR)
 
         query = "aws-work RDS yadgar config endpoint xzq777b"
 
-        # Scoped to YADGAR_DIR: aws row must be absent, yadgar row must be present.
+        # Scoped to TEST_PROJECT_ID: aws row must be absent, caller row present.
         results_yadgar = server.recall(
             query, directory=YADGAR_DIR, max_results=20, project=TEST_PROJECT_ID
         )
         ids_yadgar = {r.get("id") for r in results_yadgar}
-        assert mid_aws not in ids_yadgar, "AWS-dir row must be excluded when directory=YADGAR_DIR"
-        assert mid_yadgar in ids_yadgar, "Yadgar row must be present when directory=YADGAR_DIR"
+        assert mid_aws not in ids_yadgar, (
+            "aws-project row must be excluded when project=TEST_PROJECT_ID"
+        )
+        assert mid_yadgar in ids_yadgar, (
+            "caller-project row must be present when project=TEST_PROJECT_ID"
+        )
 
-        # Scoped to AWS_DIR: yadgar row must be absent, aws row must be present.
+        # Scoped to AWS_PROJECT_ID: caller row must be absent, aws row present.
         results_aws = server.recall(
-            query, directory=AWS_DIR, max_results=20, project=TEST_PROJECT_ID
+            query, directory=YADGAR_DIR, max_results=20, project=AWS_PROJECT_ID
         )
         ids_aws = {r.get("id") for r in results_aws}
-        assert mid_yadgar not in ids_aws, "Yadgar row must be excluded when directory=AWS_DIR"
-        assert mid_aws in ids_aws, "AWS row must be present when directory=AWS_DIR"
+        assert mid_yadgar not in ids_aws, (
+            "caller-project row must be excluded when project=AWS_PROJECT_ID"
+        )
+        assert mid_aws in ids_aws, "aws-project row must be present when project=AWS_PROJECT_ID"
 
     def test_dedup_collapses_duplicate_cofire_rows(self, monkeypatch):
         """assertion (4): duplicate co-occurrence rows collapsed to one result.
@@ -495,7 +557,9 @@ class TestDirectoryScopingIntegration:
         from yadgar.core import server
 
         storage = server._get_storage()
-        # Use a token (xzq987) unique to this test — system sentinel passes filter.
+        # Token xzq987 is unique to this test. Both rows are stamped to the
+        # caller's project so they reach the dedup stage at all — dedup, not
+        # scoping, is what is under test here.
         cofire_content = "alpha.py and beta.py are frequently modified together xzq987"
         _insert_mem(storage, cofire_content, "system", tags=["derived", "auto-generated"])
         _insert_mem(storage, cofire_content, "system", tags=["derived", "auto-generated"])
@@ -612,12 +676,12 @@ class TestQualityFloorBehavioral:
                 )
 
 
-class TestWikiQueryDirectoryScoping:
+class TestWikiQueryProjectScoping:
     """wiki_query's scope predicate is now ``is_project_eligible`` (Car C7, was v5.62.0's
-    ``is_directory_eligible``).
+    ``is_directory_eligible``). Was ``TestWikiQueryDirectoryScoping``.
     """
 
-    def test_wiki_query_uses_directory_eligible(self, monkeypatch):
+    def test_wiki_query_uses_project_eligible(self, monkeypatch):
         """wiki_query with project= excludes other-project pages.
 
         Car C7 re-keyed eligibility from ``directory_context`` onto
@@ -629,8 +693,6 @@ class TestWikiQueryDirectoryScoping:
         excludes it.
         """
         from yadgar.core import server
-
-        AWS_PROJECT_ID = "other-owner/aws-work"
 
         wiki = server._wiki
         assert wiki is not None
@@ -679,7 +741,7 @@ class TestWikiQueryDirectoryScoping:
             project=TEST_PROJECT_ID,
         )
         slugs = {r.get("slug") for r in results}
-        assert slug_yadgar in slugs or True, "yadgar page should be eligible"
+        assert slug_yadgar in slugs, f"caller-project page must be eligible; got slugs: {slugs}"
         assert slug_aws not in slugs, "aws-work page must be excluded when project=TEST_PROJECT_ID"
 
     def test_wiki_query_system_sentinel_not_eligible(self, monkeypatch):
@@ -713,6 +775,19 @@ class TestProjectBriefWikiScoping:
     Pre-fix: _build_wiki_pages calls storage.list_wiki_pages(limit=N) with no directory arg
     → returns wiki pages from ALL directories, leaking cross-project pages into project_brief.
     Post-fix: passes directory=resolved, scoping to dir + 'global' (matching list_wiki_pages sig).
+
+    THIS CLASS KEEPS ITS DIRECTORY LANGUAGE ON PURPOSE — do not "finish the
+    sweep" here. Everything above it moved onto ``project_id`` because the
+    recall scope clause reads nothing else; this path did not, because the
+    mechanism did not. ``_build_wiki_pages(storage, limit, directory=…)`` takes
+    NO project and passes none down, and ``list_wiki_pages`` filters
+    ``directory_context = $dir OR directory_context = 'global'`` — the
+    ``legacy-key`` residue class the ADR-0225 sweep allowlists rather than
+    removes. Seeding these pages under different ``project_id``\\ s would
+    therefore assert through an arm that does not exist and pass for a reason
+    the test does not name. ``project=`` is threaded into ``project_brief``
+    below only because the tool surface requires it. When the wiki list path
+    gains a project arm, re-key this class THEN — and delete this paragraph.
     """
 
     def _insert_wiki(self, wiki_storage, slug: str, title: str, directory: str) -> None:
