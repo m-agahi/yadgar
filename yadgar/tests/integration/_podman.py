@@ -158,7 +158,7 @@ def _mount_crosses(runtime: str, image: str, candidate: Path, env: dict[str, str
             return False
         sentinel = probe_dir / "sentinel"
         return sentinel.is_file() and sentinel.read_text(encoding="utf-8") == token
-    except OSError, subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):  # fmt: skip
         return False
     finally:
         remove_container_dir(runtime, probe_dir, image=image, env=env)
