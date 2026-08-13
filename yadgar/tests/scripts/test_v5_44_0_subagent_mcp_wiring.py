@@ -142,11 +142,17 @@ class TestAgentDispatchPreludeX1:
                 subagent_type="general-purpose",
                 include_context=True,
             )
+            # Car 3: ``project`` joins the call. The prelude validated the
+            # caller's override and then discarded it, so both fan-outs inside
+            # the context block ran with a directory and no identity. ``None``
+            # here is the no-override case, and it is exactly what must be
+            # forwarded — not omitted.
             mock_ctx.assert_called_once_with(
                 task_topic="some topic",
                 directory="/tmp/test",
                 subagent_type="general-purpose",
                 storage=storage,
+                project=None,
             )
 
         assert "Yadgar Context" in result

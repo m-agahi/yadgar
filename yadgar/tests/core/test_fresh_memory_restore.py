@@ -143,9 +143,13 @@ class TestRecentMemoriesTool:
             result = recent_memories(limit=10, since="24h", directory="global")
 
         assert "memories" in result
-        # When directory='global', should pass None or 'global' to storage
-        call_kwargs = mock_storage.get_recent_memories_since.call_args
-        assert call_kwargs is not None
+        # ``assert call_args is not None`` used to stand here, on a MagicMock —
+        # it is true the moment the method is called at all, so it verified
+        # nothing about the scope this test is named for. The tool passes
+        # ``directory=`` straight through (``effective_dir or None``), so
+        # 'global' must arrive verbatim and reach the callee's unfiltered arm.
+        _args, kwargs = mock_storage.get_recent_memories_since.call_args
+        assert kwargs["directory"] == "global"
 
     def test_recent_memories_since_24h_default(self):
         """Default since='24h' must compute cutoff ~24h ago."""
@@ -159,19 +163,21 @@ class TestRecentMemoriesTool:
             recent_memories(limit=10, directory="/home/user/project")
         after = datetime.now(UTC)
 
-        call_kwargs = mock_storage.get_recent_memories_since.call_args
-        assert call_kwargs is not None
-        # Extract since cutoff from call
-        args, kwargs = call_kwargs
-        # Cutoff should be between (before - 24h) and (after - 24h)
-        since_arg = kwargs.get("since") or (args[1] if len(args) > 1 else None)
-        if since_arg is not None and isinstance(since_arg, str):
-            cutoff_dt = datetime.fromisoformat(since_arg.replace("Z", "+00:00"))
-            expected_min = before - timedelta(hours=24, seconds=5)
-            expected_max = after - timedelta(hours=24) + timedelta(seconds=5)
-            assert expected_min <= cutoff_dt <= expected_max, (
-                f"Cutoff {cutoff_dt} outside expected 24h range"
-            )
+        # The cutoff assertion below used to sit under ``if since_arg is not
+        # None and isinstance(since_arg, str)`` — so a call that passed no
+        # ``since`` at all, or passed a non-string, skipped the whole check and
+        # the test still went green. Both the presence and the type are now
+        # asserted, then the value.
+        _args, kwargs = mock_storage.get_recent_memories_since.call_args
+        assert kwargs["directory"] == "/home/user/project"
+        since_arg = kwargs["since"]
+        assert isinstance(since_arg, str)
+        cutoff_dt = datetime.fromisoformat(since_arg.replace("Z", "+00:00"))
+        expected_min = before - timedelta(hours=24, seconds=5)
+        expected_max = after - timedelta(hours=24) + timedelta(seconds=5)
+        assert expected_min <= cutoff_dt <= expected_max, (
+            f"Cutoff {cutoff_dt} outside expected 24h range"
+        )
 
     def test_recent_memories_since_duration_strings(self):
         """since='1h', '7d' etc. must parse correctly."""

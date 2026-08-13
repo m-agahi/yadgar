@@ -581,28 +581,95 @@ def resource_stats() -> str:
     return json.dumps(storage.get_memory_stats())
 
 
+@observe(tier="stage", metric="tools.misc._resource_project_or_none")
+def _resource_project_or_none(resource: str) -> str | None:
+    """Resolve the project for a parameterless MCP resource, or ``None``.
+
+    Car 3 — the two resources below read the whole ``memory`` table. An MCP
+    resource takes NO parameters, and ``session_project`` is hardcoded ``None``
+    at every core call site today, so this raises for every real read: there is
+    no identity source at this boundary to resolve FROM. That is the finding,
+    not an omission — and it is why both resources fail CLOSED rather than
+    keep returning the corpus.
+
+    Deliberately written as a resolution rather than a bare ``return None``: the
+    rule the resources follow is "scope or nothing", and when an identity source
+    IS wired to this boundary they start working without another edit. Restoring
+    the capability sooner needs a parameterised ``memory://hot/{project}``
+    template — new API surface, queued, not built here.
+    """
+    try:
+        return resolve_effective_project(
+            project=None,
+            directory=None,
+            session_project=None,
+            tool=resource,
+        )
+    except (UnresolvedProjectError, InvalidProjectOverrideError) as exc:
+        logger.warning(
+            "%s: no project identity is resolvable at this boundary — returning "
+            "no rows rather than the whole corpus (%s)",
+            resource,
+            exc,
+        )
+        return None
+
+
+def _unresolved_resource_payload(resource: str) -> str:
+    """The fail-closed body: no rows, and a machine-readable reason."""
+    return json.dumps(
+        {
+            "memories": [],
+            "reason": "unresolved_project",
+            "detail": (
+                f"{resource} takes no parameters and no session identity is "
+                "available, so it cannot be scoped to a project. Returning no "
+                "rows: an unscoped read here returns every project's memories. "
+                "Use recall(project=...) or restore(project=...) instead."
+            ),
+        }
+    )
+
+
 @mcp_server.resource("memory://hot")
 @observe(tier="boundary", metric="resource.hot")
 def resource_hot() -> str:
-    """All memories with heat >= HOT_THRESHOLD."""
+    """This project's memories with heat >= HOT_THRESHOLD.
+
+    Car 3: was ``get_memories_by_heat(settings.HOT_THRESHOLD)`` with zero
+    scoping — and ``HOT_THRESHOLD`` defaults to ``0.0``, so the resource served
+    every memory row in the database to whoever read it.
+    """
+    project_id = _resource_project_or_none("memory://hot")
+    if not project_id:
+        return _unresolved_resource_payload("memory://hot")
+
     storage = _get_storage()
-    memories = storage.get_memories_by_heat(settings.HOT_THRESHOLD)
+    memories = storage.get_memories_for_directory(project_id, min_heat=settings.HOT_THRESHOLD)
     for m in memories:
         m.pop("embedding", None)
 
-    return json.dumps(memories, default=str)
+    return json.dumps({"memories": memories, "project_id": project_id}, default=str)
 
 
 @mcp_server.resource("memory://stale")
 @observe(tier="boundary", metric="resource.stale")
 def resource_stale() -> str:
-    """All stale memories."""
+    """This project's stale memories.
+
+    Car 3: was ``get_stale_memories()`` — a bare ``WHERE is_stale = true`` over
+    the whole corpus, with no project predicate of any kind.
+    """
+    project_id = _resource_project_or_none("memory://stale")
+    if not project_id:
+        return _unresolved_resource_payload("memory://stale")
+
     storage = _get_storage()
-    memories = storage.get_stale_memories()
+    memories = storage.get_stale_memories(project_id=project_id)
     for m in memories:
         m.pop("embedding", None)
 
-    return json.dumps(memories, default=str)
+    return json.dumps({"memories": memories, "project_id": project_id}, default=str)
 
 
 @mcp_server.resource("memory://processes")

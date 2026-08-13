@@ -377,13 +377,28 @@ class CheckpointRestore:
             return None
 
     @observe(tier="stage")
-    def _fetch_recent_memories_safe(self, max_memories: int) -> list[dict]:
-        """Fetch recently stored memories, suppressing errors (step 3 of restore).
+    def _fetch_recent_memories_safe(self, project_id: str, max_memories: int) -> list[dict]:
+        """Fetch this project's recently stored memories (step 3 of restore).
 
         Returns [] on any storage failure so restore() stays unblocked.
+
+        Car 3 — **this was the sink that leaked on EVERY restore.** It called
+        ``get_recent_memories(limit=...)`` with no project against a callee that
+        had no project parameter to receive one, and the result is rendered into
+        ``## Working Memory (Recently Stored)``. Unlike the other four sinks it
+        did not even have a no-scope guard to fall back to, so a caller whose
+        identity did not resolve — where every other bucket correctly came back
+        empty — still got the corpus's newest rows. Restoring
+        ``/home/max/git/nix`` returned quinyx/ai and quinyx/application-gitops
+        memories on two shipped versions.
+
+        Same posture as ``_fetch_hot_memories``: NO SCOPE MEANS EMPTY, NOT
+        CORPUS-WIDE. Losing an injection is recoverable, leaking one is not.
         """
+        if not project_id:
+            return []
         try:
-            memories = self._storage.get_recent_memories(limit=max_memories)
+            memories = self._storage.get_recent_memories(limit=max_memories, project_id=project_id)
             for m in memories:
                 m.pop("embedding", None)
             return memories
@@ -458,8 +473,32 @@ class CheckpointRestore:
         """Run SR cognitive-map navigation to predict needed memories (step 5 of restore).
 
         Returns [] when cognitive map is absent or has insufficient data.
+
+        Car 3 — **the SR path had no project predicate anywhere along it.**
+        ``navigate_to`` walks a corpus-wide coordinate dict, the ``search_vectors``
+        call that seeds it takes the unscoped HNSW-KNN arm, and ``get_memory(mid)``
+        is a bare ``SELECT * FROM memory:{id}``. Every id the map offered was
+        hydrated and rendered regardless of owner.
+
+        The filter is applied HERE, at the consumer, rather than pushed into the
+        map: the SR matrix is built over the whole corpus and scoping only the
+        vector SEED would not scope the WALK that follows it. Re-keying the
+        matrix itself is a different, larger change.
+
+        Accepted consequence: other projects' ids still consume the ``top_k``
+        budget, so this bucket can come back short or empty even when in-project
+        rows exist. That is degradation, not leakage — this module's rule is
+        that losing an injection is recoverable and leaking one is not.
+
+        The ``project_id`` guard is load-bearing on its own: ``_build_sr_query``
+        returns the checkpoint's ``current_task`` when there is one, so the query
+        is non-empty even with no project — an early return keyed only on the
+        query string would let the whole path run unscoped for every restore
+        that had a checkpoint.
         """
         if self._cognitive_map is None or not self._cognitive_map.has_sufficient_data():
+            return []
+        if not project_id:
             return []
         query = self._build_sr_query(checkpoint, project_id)
         if not query:
@@ -476,11 +515,17 @@ class CheckpointRestore:
             if mid in local_seen:
                 continue
             mem = self._storage.get_memory(mid)
-            if mem:
-                mem.pop("embedding", None)
-                mem["_sr_proximity"] = round(proximity, 4)
-                predicted.append(mem)
+            if not mem:
+                continue
+            # The map is corpus-wide; the injection must not be. Same key the
+            # other memory-backed sinks use (C10f put the identity here).
+            if mem.get("directory_context") != project_id:
                 local_seen.add(mid)
+                continue
+            mem.pop("embedding", None)
+            mem["_sr_proximity"] = round(proximity, 4)
+            predicted.append(mem)
+            local_seen.add(mid)
         return predicted
 
     @observe(tier="stage")
@@ -538,6 +583,18 @@ class CheckpointRestore:
              backfill that would ever close that gap. See ``_fetch_blocks_safe``.
           5. ``detect_gaps``                  → forwards into sink 3
              — **project_id**, inherited.
+          6. ``get_recent_memories``          → ``memory.directory_context``
+             — **project_id (Car 3).** This sink was MISSING FROM THIS LIST, and
+             that is how it stayed unscoped through two cars that audited the
+             fan-out: the list enumerated the sinks someone had already reasoned
+             about, and a reader checking the routing against it saw five of six.
+             It had no project parameter on either side of the call, so it read
+             the corpus on every restore — including calls where every other
+             sink correctly returned empty.
+          7. ``get_memory`` via ``navigate_to`` → ``memory.directory_context``
+             — **project_id (Car 3), filtered at the CONSUMER.** The SR map is
+             built over the whole corpus, so the scope cannot live in the query;
+             ``_predict_memories`` drops out-of-project rows after hydration.
 
         The rule C10g stated for the next reader — a sink moves only when its
         WRITER has already moved — is why sinks 1 and 4 stayed put then and why
@@ -565,8 +622,9 @@ class CheckpointRestore:
         for m in anchored:
             m.pop("embedding", None)
 
-        # 3. Recently stored memories (working memory)
-        recent_memories = self._fetch_recent_memories_safe(max_memories)
+        # 3. Recently stored memories (working memory) — Car 3 re-keyed this
+        # sink onto the project_id; it used to read the corpus unconditionally.
+        recent_memories = self._fetch_recent_memories_safe(scope, max_memories)
 
         # 4. Hot project memories (deduplicated)
         anchor_ids = {m["id"] for m in anchored}
