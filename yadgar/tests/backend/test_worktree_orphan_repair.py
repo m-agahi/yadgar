@@ -4,9 +4,14 @@ Backfill half of the Q1 orphaned-memories fix: memory rows whose
 ``directory_context`` contains ``/.claude/worktrees/`` were written before
 write-path normalization landed and are invisible to canonical-repo recall
 (exact-match directory filter). check_invariants re-points them to the
-canonical root (the prefix before the marker) and clears ``branch`` to the
-canonical NULL slot so they become recall-visible again. Idempotent —
-repaired rows no longer match the pattern.
+canonical root (the prefix before the marker) so they become recall-visible
+again. Idempotent — repaired rows no longer match the pattern.
+
+The repair used to also write ``branch = NONE`` and both its log line and its
+``fixed`` entry claimed the branch had been "cleared to canonical slot".
+Migration 029 DROPPED that column, so the write was a no-op and the claim was
+false. Both are gone; ``test_repair_makes_no_claim_about_branch`` is what stops
+a reader re-adding a write for a column that no longer exists.
 
 ``/tmp/*`` orphans are NOT auto-repaired: the canonical root is not derivable
 from the path string alone.
@@ -54,8 +59,28 @@ def test_worktree_orphan_rows_repointed_to_canonical_root():
 
     row = storage.get_memory(mid)
     assert row["directory_context"] == "/home/u/proj"
-    assert row.get("branch") in (None, "NONE")
+    # ``row.get("branch") in (None, "NONE")`` used to stand here; it is
+    # satisfied by a column that does not exist, so it passed either way.
+    assert "branch" not in row, "the repair re-created memory.branch untyped"
     assert any("worktree" in f.lower() for f in result["fixed"])
+
+
+def test_repair_makes_no_claim_about_branch():
+    """The ``fixed`` entry must not describe work the repair does not do.
+
+    Migration 029 dropped ``memory.branch``. The repair's ``SET branch = NONE``
+    was a no-op against a column that no longer exists, and the operator-facing
+    string still announced it — a false receipt is worse than a silent one,
+    because it is the only thing an operator reads.
+    """
+    storage = server._get_storage()
+    _insert("/home/u/proj/.claude/worktrees/agent-abc")
+
+    result = _run_check_invariants(storage)
+
+    worktree_entries = [f for f in result["fixed"] if "worktree" in f.lower()]
+    assert worktree_entries, "the repair reported nothing at all"
+    assert not any("branch" in f.lower() for f in worktree_entries)
 
 
 def test_worktree_orphan_repair_is_idempotent():

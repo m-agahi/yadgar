@@ -99,13 +99,22 @@ def _insert_memorize_shaped_row(storage, embeddings, content: str, project_id: s
 
 
 #: ``REPLAY_MAX_RESTORE_MEMORIES`` (8) rows fill restore's step-3 "recently
-#: stored" bucket, which is corpus-wide and takes no scope at all. Every row it
-#: claims is then in ``exclude_ids`` and cannot appear in the hot bucket — so a
-#: hot-bucket test on a handful of fresh rows measures NOTHING. Overfilling past
-#: the cap is what pushes the oldest rows out of "recent" and into "hot", which
-#: is the only way to exercise this sink end-to-end through ``restore``.
-#: (That the recent bucket is unscoped is a separate pre-existing seam; it is
-#: not one of the five sinks this car routes, and it takes no directory.)
+#: stored" bucket. Every row it claims is then in ``exclude_ids`` and cannot
+#: appear in the hot bucket — so a hot-bucket test on a handful of fresh rows
+#: measures NOTHING. Overfilling past the cap is what pushes the oldest rows out
+#: of "recent" and into "hot", which is the only way to exercise this sink
+#: end-to-end through ``restore``. The overfill is still needed AFTER the recent
+#: bucket became project-scoped: the exclusion is within one project, so an
+#: in-project row still has to be pushed past the cap to reach ``hot``.
+#:
+#: **The comment that used to sit here said the recent bucket "is corpus-wide
+#: and takes no scope at all", and treated that as a separate seam this car did
+#: not own.** It was the documentation half of a live cross-project leak: step 3
+#: called ``get_recent_memories(limit=...)`` with no project, against a callee
+#: whose WHERE had no project predicate, and rendered the result into
+#: ``## Working Memory (Recently Stored)`` on EVERY restore. Restoring
+#: ``/home/max/git/nix`` returned quinyx/ai and quinyx/application-gitops rows.
+#: ``TestRecentMemoriesBucket`` below is what stops it coming back.
 _OVERFILL = 12
 
 
@@ -139,9 +148,13 @@ class TestHotMemoriesBucket:
     def test_another_projects_rows_are_not_in_the_hot_bucket(self, engines):
         """Routing must SCOPE, not merely stop being empty.
 
-        Asserts on the COUNT only: the corpus-wide "recently stored" bucket
-        will still surface these rows in the markdown, which is that other
-        seam's business, not this sink's.
+        **This test used to assert on the COUNT only, and said so:** its own
+        docstring excused the omission because "the corpus-wide 'recently
+        stored' bucket will still surface these rows in the markdown, which is
+        that other seam's business, not this sink's". A guard that watches one
+        counter while the payload it is guarding carries the other project's
+        text is vacuous — the markdown IS the thing injected into a session.
+        The ``formatted`` assertion is the one that would have caught the leak.
         """
         storage, embeddings, replay = engines
         _overfill(storage, embeddings, _OTHER_PROJECT, "someone elses row")
@@ -149,6 +162,10 @@ class TestHotMemoriesBucket:
         result = replay.restore(_PATH, project_id=_PROJECT)
 
         assert result["hot_memories"] == 0
+        assert "someone elses row" not in result["formatted"], (
+            "another project's rows reached the restored markdown — a bucket "
+            "count of 0 does not mean the payload is clean"
+        )
 
     def test_absent_project_does_not_widen_to_the_whole_corpus(self, engines):
         """No project named → EMPTY bucket, never a corpus-wide one.
@@ -171,6 +188,10 @@ class TestHotMemoriesBucket:
         result = replay.restore(_PATH)
 
         assert result["hot_memories"] == 0
+        assert "someone elses row" not in result["formatted"], (
+            "a restore that resolved NO project still rendered another "
+            "project's memories — no scope must mean empty, never corpus-wide"
+        )
 
 
 class TestAnchorBucket:
@@ -388,3 +409,172 @@ class TestProjectIdArmOnTheReKeyedSinks:
         row = storage.get_active_checkpoint("", project_id=_PROJECT)
         assert row is not None
         assert row.get("project_id") == _PROJECT
+
+
+class TestRecentMemoriesBucket:
+    """Sink 3b — ``_fetch_recent_memories_safe`` → ``get_recent_memories``.
+
+    THE LEAK THIS CAR CLOSES. Step 3 of ``restore`` called
+    ``get_recent_memories(limit=max_memories)`` with no project, against a callee
+    that had no project parameter to receive one, and rendered the result into
+    ``## Working Memory (Recently Stored)``. It fired on EVERY restore — with or
+    without a resolved identity — so it was the one sink that leaked even when
+    every other sink correctly returned empty.
+
+    The predicate added below is on ``directory_context``, NOT the separate
+    ``project_id`` column, for the same reason ``get_memories_for_directory``
+    states: C10f moved ``memorize``'s stamp onto ``directory_context``, so that
+    column is where the identity lives for every row written since. Re-keying
+    onto ``project_id`` here would strand the whole post-C10f corpus.
+    """
+
+    def test_another_projects_rows_are_not_in_the_recent_bucket(self, engines):
+        storage, embeddings, replay = engines
+        _overfill(storage, embeddings, _OTHER_PROJECT, "someone elses recent row")
+
+        result = replay.restore(_PATH, project_id=_PROJECT)
+
+        assert result["recent_memories"] == 0
+        assert "someone elses recent row" not in result["formatted"]
+
+    def test_this_projects_rows_do_reach_the_recent_bucket(self, engines):
+        """Scoping must not empty the bucket for its OWN project."""
+        storage, embeddings, replay = engines
+        _insert_memorize_shaped_row(storage, embeddings, "my own recent row", _PROJECT)
+
+        result = replay.restore(_PATH, project_id=_PROJECT)
+
+        assert result["recent_memories"] >= 1
+        assert "my own recent row" in result["formatted"]
+
+    def test_absent_project_yields_an_empty_recent_bucket(self, engines):
+        """No project named → EMPTY, never corpus-wide.
+
+        Same posture as ``_fetch_hot_memories``: the two ``_forward_restore``
+        callers that bypass the MCP tool (the post-compact HTTP hook and the
+        CLI) resolve their project non-fatally, so ``None`` is a COMMON case
+        here, not a rare one.
+        """
+        storage, embeddings, replay = engines
+        _overfill(storage, embeddings, _OTHER_PROJECT, "someone elses recent row")
+
+        result = replay.restore(_PATH)
+
+        assert result["recent_memories"] == 0
+        assert "someone elses recent row" not in result["formatted"]
+
+    def test_the_storage_primitive_still_supports_an_unscoped_read(self, engines):
+        """``get_recent_memories(project_id=None)`` stays corpus-wide.
+
+        The empty-on-no-scope rule belongs to the RESTORE sink, not to the
+        storage primitive — the same split ``get_recent_memories_since`` already
+        uses, where ``directory=None`` means "all directories". Pinning it stops
+        a later car pushing restore's policy down into a general-purpose read
+        other callers may legitimately want whole.
+        """
+        storage, embeddings, _replay = engines
+        _insert_memorize_shaped_row(storage, embeddings, "row a", _PROJECT)
+        _insert_memorize_shaped_row(storage, embeddings, "row b", _OTHER_PROJECT)
+
+        rows = storage.get_recent_memories(limit=10)
+
+        assert {r["directory_context"] for r in rows} == {_PROJECT, _OTHER_PROJECT}
+
+    def test_the_storage_primitive_filters_when_given_a_project(self, engines):
+        storage, embeddings, _replay = engines
+        _insert_memorize_shaped_row(storage, embeddings, "row a", _PROJECT)
+        _insert_memorize_shaped_row(storage, embeddings, "row b", _OTHER_PROJECT)
+
+        rows = storage.get_recent_memories(limit=10, project_id=_PROJECT)
+
+        assert [r["content"] for r in rows] == ["row a"]
+
+
+class _StubCognitiveMap:
+    """Minimal SR map: returns whatever ids it was handed, at max proximity.
+
+    ``CognitiveMap.navigate_to`` walks a corpus-wide coordinate dict (every
+    memory that made it into the SR matrix), and the ``search_vectors`` call
+    that seeds it takes the unscoped HNSW-KNN arm. Neither is project-aware and
+    neither can be made so without re-keying the SR matrix itself — so the
+    filter belongs at the ``_predict_memories`` consumer. This stub stands in
+    for that corpus-wide walk so the test measures the FILTER, not the map.
+    """
+
+    def __init__(self, ids: list[int]):
+        self._ids = ids
+
+    def has_sufficient_data(self) -> bool:
+        return True
+
+    def navigate_to(self, query_embedding, embeddings_engine, top_k: int = 10):
+        return [(mid, 0.9) for mid in self._ids[:top_k]]
+
+
+class _StubEmbeddings:
+    """``encode`` that always yields bytes.
+
+    The real engine returns ``None`` when ``sentence-transformers`` is absent,
+    and ``_predict_memories`` early-returns on that — which would make the SR
+    tests below pass vacuously in exactly the environment they run in.
+    """
+
+    @staticmethod
+    def encode(_text):
+        return b"\x00\x00\x00\x00"
+
+
+class TestPredictedMemoriesBucket:
+    """Sink 5 — ``_predict_memories`` (SR cognitive-map navigation).
+
+    ``navigate_to`` walks the whole SR coordinate space and ``get_memory(mid)``
+    is a bare ``SELECT * FROM memory:{id}`` with no predicate, so every id the
+    map offered was hydrated and rendered regardless of owner.
+
+    Accepted consequence of filtering at the consumer: other projects' ids still
+    consume the ``top_k`` budget, so this bucket can come back short or empty
+    even when in-project rows exist. That is degradation, not leakage — the
+    module's own rule is that losing an injection is recoverable and leaking one
+    is not. No test here asserts a specific predicted COUNT.
+    """
+
+    @staticmethod
+    def _replay_with_map(storage, ids):
+        return CheckpointRestore(
+            storage=storage,
+            embeddings=_StubEmbeddings(),
+            settings=Settings(),
+            cognitive_map=_StubCognitiveMap(ids),
+        )
+
+    def test_another_projects_predicted_row_is_dropped(self, engines):
+        storage, embeddings, _replay = engines
+        mine = _insert_memorize_shaped_row(storage, embeddings, "my predicted row", _PROJECT)
+        theirs = _insert_memorize_shaped_row(
+            storage, embeddings, "their predicted row", _OTHER_PROJECT
+        )
+        replay = self._replay_with_map(storage, [theirs, mine])
+
+        predicted = replay._predict_memories(None, _PROJECT, set(), 8)
+
+        contents = [m["content"] for m in predicted]
+        assert "their predicted row" not in contents
+        assert "my predicted row" in contents
+
+    def test_no_project_predicts_nothing_even_with_a_checkpoint_task(self, engines):
+        """The guard is load-bearing precisely BECAUSE of the checkpoint arm.
+
+        ``_build_sr_query`` returns the checkpoint's ``current_task`` when there
+        is one, so it yields a non-empty query even with no project — an
+        early return keyed only on the query string would let the SR path run
+        unscoped for every restore that had a checkpoint.
+        """
+        storage, embeddings, _replay = engines
+        theirs = _insert_memorize_shaped_row(
+            storage, embeddings, "their predicted row", _OTHER_PROJECT
+        )
+        replay = self._replay_with_map(storage, [theirs])
+
+        predicted = replay._predict_memories({"current_task": "some task"}, "", set(), 8)
+
+        assert predicted == []

@@ -331,11 +331,13 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1241
+      "file_loc": 1526
     },
-    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) — the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately.",
+    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) — the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately. RE-REVIEWED 2026-08-13 (car3/unscoped-reads): the recorded 1241 was ALREADY stale by 246 lines — the file stood at 1487 before this car, i.e. +19.8%, parked just under the 20% tolerance where the gate could not see it. This car adds +39 (1487 -> 1526) and is what pushed it into view: get_recent_memories and get_stale_memories each gain an optional project_id arm plus the note recording why the predicate is directory_context and not the project_id column — both were corpus-wide reads that served every project's rows through restore and the memory://stale MCP resource. The +39 is fixing a cross-project leak, not a feature, and the honest remedy for the file remains the _MemoryMixin split tracked with its storage/wiki.py and storage/migrations.py siblings. The number is corrected here rather than left drifting so the next +20% is measured from the truth.",
     "added": "2026-06-25",
-    "added_by": "feat/v5.104-perf-train"
+    "added_by": "feat/v5.104-perf-train",
+    "reviewed": "2026-08-13",
+    "reviewed_by": "car3/unscoped-reads"
   },
   {
     "path": "yadgar/core/server/tools/adr_render.py",
