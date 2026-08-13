@@ -91,7 +91,7 @@ services:
       start_period: 60s  # model load can take a while
 
   core:
-    image: openfantasy/yadgar:${CORE_VERSION:-5.181.54}
+    image: openfantasy/yadgar:${CORE_VERSION:-5.181.56}
     build:
       context: .
       dockerfile: Dockerfile
