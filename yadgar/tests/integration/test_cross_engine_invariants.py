@@ -42,9 +42,20 @@ import pytest
 pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed (sql extra)")
 pytest.importorskip("alembic", reason="alembic not installed (sql extra)")
 
-from yadgar._shared.storage.sql import MariaStorageEngine  # noqa: E402
+from yadgar._shared.storage.sql import (
+    MariaStorageEngine,  # noqa: E402
+    migrate,  # noqa: E402
+)
 from yadgar._shared.storage.sql.migrate import upgrade_to_head  # noqa: E402
 from yadgar.backend.admin_exec import invariants_cross_engine as ce  # noqa: E402
+from yadgar.tests.integration._podman import (  # noqa: E402
+    container_is_running,
+    container_logs,
+    make_socket_dir,
+    podman_env,
+    remove_container_dir,
+    select_container_runtime,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -53,6 +64,9 @@ _DB = "yadgar"
 _APP_USER = "yadgar_app"
 _APP_PASS = "carh-integration-password"
 _BOOT_TIMEOUT_SEC = 180.0
+# The socket file is the FIRST thing mysqld creates; if it has not reached our
+# side of the mount by here, waiting out the full boot timeout cannot help.
+_MOUNT_VISIBLE_TIMEOUT_SEC = 30.0
 
 
 def _cnf_body(socket: str) -> str:
@@ -72,15 +86,22 @@ def _cnf_body(socket: str) -> str:
 
 @pytest.fixture(scope="module")
 def live_mariadb():
-    """Scratch MariaDB over a unix socket, torn down with its anonymous volume."""
-    runtime = shutil.which("podman") or shutil.which("docker")
+    """Scratch MariaDB over a unix socket, torn down with its anonymous volume.
+
+    Runtime selection PROBES rather than checks presence (car G5) and the
+    socket directory comes from ``shared_mount_root`` rather than ``/tmp``
+    (car G6) — this file is not in the CI job's file list, so it carried both
+    defects latently after its three siblings were fixed.
+    """
+    runtime = select_container_runtime()
     if runtime is None:
-        pytest.skip("docker/podman not available on this host")
+        pytest.skip(
+            "no working container runtime on this host "
+            "(podman/docker absent, or present but non-functional)"
+        )
 
     name = f"yadgar-carh-mdb-{uuid.uuid4().hex[:8]}"
-    sock_dir = Path(f"/tmp/ymdbh-{uuid.uuid4().hex[:8]}")
-    sock_dir.mkdir(mode=0o777, parents=True)
-    sock_dir.chmod(0o777)
+    sock_dir = make_socket_dir(runtime, image=_IMAGE, prefix="ymdbh")
     socket_path = sock_dir / "mysqld.sock"
 
     started = subprocess.run(
@@ -95,7 +116,7 @@ def live_mariadb():
             _IMAGE,
             "--socket=/sockets/mysqld.sock",
         ],
-        capture_output=True, text=True, check=False, timeout=300,
+        capture_output=True, text=True, check=False, timeout=300, env=podman_env(),
     )  # fmt: skip
     if started.returncode != 0:
         shutil.rmtree(sock_dir, ignore_errors=True)
@@ -106,33 +127,43 @@ def live_mariadb():
     cnf.chmod(0o600)
 
     try:
-        _await_ready(cnf)
+        _await_ready(cnf, runtime, name, socket_path)
         yield {"cnf": cnf}
     finally:
         subprocess.run(
-            [runtime, "rm", "-f", "-v", name], capture_output=True, check=False, timeout=120
-        )
-        _remove_socket_dir(runtime, sock_dir)
-
-
-def _remove_socket_dir(runtime: str, sock_dir: Path) -> None:
-    """The image chowns the mount to a subuid; ``podman unshare`` can remove it."""
-    shutil.rmtree(sock_dir, ignore_errors=True)
-    if sock_dir.exists() and Path(runtime).name == "podman":
-        subprocess.run(
-            [runtime, "unshare", "rm", "-rf", str(sock_dir)],
-            capture_output=True, check=False, timeout=120,
+            [runtime, "rm", "-f", "-v", name],
+            capture_output=True, check=False, timeout=120, env=podman_env(),
         )  # fmt: skip
+        remove_container_dir(runtime, sock_dir, image=_IMAGE)
 
 
-def _await_ready(cnf: Path) -> None:
-    """The socket appears before the server is usable (bootstrap server first)."""
+def _await_ready(cnf: Path, runtime: str, name: str, socket_path: Path) -> None:
+    """The socket appears before the server is usable (bootstrap server first).
+
+    Exits early on a dead container or a socket that never crosses the mount,
+    rather than retrying for the full timeout against something that cannot
+    start answering (car G6).
+    """
     import asyncio
 
     async def _probe() -> None:
         deadline = time.monotonic() + _BOOT_TIMEOUT_SEC
+        mount_deadline = time.monotonic() + _MOUNT_VISIBLE_TIMEOUT_SEC
         last: Exception | None = None
         while time.monotonic() < deadline:
+            if not container_is_running(runtime, name):
+                raise AssertionError(
+                    f"the MariaDB container {name} exited during boot; "
+                    f"last logs:\n{container_logs(runtime, name)}"
+                )
+            if not socket_path.exists() and time.monotonic() > mount_deadline:
+                raise AssertionError(
+                    f"{socket_path} never appeared on this side of the mount "
+                    f"within {_MOUNT_VISIBLE_TIMEOUT_SEC}s while the container was "
+                    "still running — the bind mount is not shared with the "
+                    f"{Path(runtime).name} daemon. Set "
+                    "YADGAR_TEST_SHARED_MOUNT_ROOT to a directory both sides see."
+                )
             engine = MariaStorageEngine.from_option_file(cnf)
             try:
                 await engine.verify()
@@ -156,18 +187,56 @@ async def engine(live_mariadb):
         await eng.dispose()
 
 
+async def _reset_to_base(engine: MariaStorageEngine) -> None:
+    """Undo every migration — leave a database with NO yadgar tables at all.
+
+    Deliberately NOT ``alembic downgrade base``: that walks the STAMPED
+    revision backwards, and ``test_stamp_that_disagrees_with_the_chain_is_a_violation``
+    deliberately corrupts ``alembic_version`` to prove the head-mismatch check
+    red — so alembic can no longer find its own way back
+    (``CommandError: Can't locate revision identified by '0000_stale'``) and
+    a downgrade-by-stamp teardown dies right there, taking every test after
+    it down with a fixture-setup error on top of the one teardown error.
+    Measured empirically running this file end to end.
+
+    Instead: enumerate whatever tables the schema ACTUALLY has (real
+    catalog state, not the possibly-corrupted stamp) and drop every one of
+    them with FK checks off. This is what the fixture's PREVIOUS version got
+    wrong — it hardcoded ``DROP TABLE config`` / ``DROP TABLE
+    alembic_version``, which was complete when the chain had one migration
+    and silently fell behind the moment ``002_ledger_tables`` added five more
+    tables (``task``, ``adr``, ``agent_pattern``, ``agent_discipline``,
+    ``task_blocked_by``, ``adr_supersedes``, ``agent_pattern_composes``) plus
+    ``003``/``004`` added three more still. Those survived teardown, and the
+    NEXT test's ``upgrade_to_head`` died on ``1050 Table 'task' already
+    exists`` (docs/issues/0001-pr40-carryover.md §2 item 3; measured by car
+    G6 as ``1 failed, 1 passed, 6 errors`` — the 6 errors are every test
+    after the first that needs a second ``migrated`` fixture instantiation).
+    Catalog-driven enumeration self-updates with the migration chain instead
+    of drifting from it again the next time a migration adds a table.
+    """
+    from sqlalchemy import text  # noqa: PLC0415
+
+    tables = await engine.list_tables()
+    if not tables:
+        return
+    async with engine.engine.begin() as conn:
+        await conn.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+        for table in tables:
+            # table names come straight from information_schema.tables — DB
+            # catalog state, not user input.
+            await conn.execute(text(f"DROP TABLE IF EXISTS `{table}`"))
+        await conn.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+
+
 @pytest.fixture
 async def migrated(engine):
     """An engine at head — the state the backend boots into."""
-    from sqlalchemy import text  # noqa: PLC0415
-
     await upgrade_to_head(engine.engine)
     try:
         yield engine
     finally:
-        async with engine.engine.begin() as conn:
-            await conn.execute(text("DROP TABLE IF EXISTS config"))
-            await conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+        await _reset_to_base(engine)
 
 
 async def _exec(engine: MariaStorageEngine, sql: str) -> None:
@@ -191,6 +260,18 @@ async def _arm(monkeypatch: pytest.MonkeyPatch, engine) -> dict:
     return await ce.run_cross_engine_checks(_SurrealAtHead())
 
 
+def _expected_head() -> str:
+    """The alembic chain's real head, read live rather than hardcoded.
+
+    A literal revision id in a test goes stale the moment a new migration
+    lands — it did: this repo's head moved from ``0001_config`` to
+    ``004_agent_pattern_model_client`` without these assertions being
+    touched, and the chain will move again. Asking the same script directory
+    the production code asks keeps the assertion tied to reality instead.
+    """
+    return migrate.heads()[0]
+
+
 # ── the healthy state, read from a real server ───────────────────────────────
 
 
@@ -202,16 +283,24 @@ async def test_at_head_and_empty_is_ok_with_engine_direct_evidence(
 
     head = result["checks"][ce.CHECK_ENGINE_TWO_SCHEMA_HEAD]
     assert head["status"] == ce.STATUS_OK, head
-    assert head["detail"]["current"] == head["detail"]["head"] == "0001_config"
+    assert head["detail"]["current"] == head["detail"]["head"] == _expected_head()
 
     baseline = result["checks"][ce.CHECK_CONFIG_ROW_BASELINE]
     assert baseline["status"] == ce.STATUS_OK, baseline
     assert baseline["detail"] == {"rows": 0, "expected": 0}
 
-    # Still not globally ok: the spine-gated desync check cannot run yet, and
-    # "cannot run" must never be reported as ok.
+    # The spine ledger tables (agent_pattern, agent_discipline) now exist —
+    # migrations 002-004 shipped since this test was first written, so
+    # REASON_SPINE_NOT_SHIPPED no longer applies — the desync check actually
+    # RUNS: both tables are present and empty, nothing to compare, ok.
+    desync = result["checks"][ce.CHECK_PAGE_ROW_DESYNC]
+    assert desync["status"] == ce.STATUS_OK, desync
+    assert desync["detail"]["compared"] == 0
+
+    # Still not globally ok: the SurrealDB stand-in used here (_SurrealAtHead)
+    # carries no `_db_url`, so check_surreal_schema_head reports UNAVAILABLE
+    # (embedded mode) — "cannot run" must never be reported as ok.
     assert result["status"] == ce.STATUS_UNAVAILABLE
-    assert result["checks"][ce.CHECK_PAGE_ROW_DESYNC]["reason"] == ce.REASON_SPINE_NOT_SHIPPED
     assert result["violations"] == []
 
 
@@ -239,7 +328,7 @@ async def test_stamp_that_disagrees_with_the_chain_is_a_violation(
 
     head = result["checks"][ce.CHECK_ENGINE_TWO_SCHEMA_HEAD]
     assert head["status"] == ce.STATUS_VIOLATION
-    assert head["detail"] == {"current": "0000_stale", "head": "0001_config"}
+    assert head["detail"] == {"current": "0000_stale", "head": _expected_head()}
     assert any(ce.CHECK_ENGINE_TWO_SCHEMA_HEAD in v for v in result["violations"])
 
 

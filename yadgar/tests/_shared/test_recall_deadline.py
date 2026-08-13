@@ -265,7 +265,10 @@ class TestRetrieverRecallDeadline:
         mock._apply_rerank_pipeline.side_effect = lambda mems, _seen, _ctx: mems
         mock._strip_embeddings.side_effect = lambda mems: mems
 
-        out = Retriever.recall(mock, "q", max_results=5, deadline=deadline)
+        # Car H1 (§1.3): a falsy project_id now raises at the clause builder
+        # instead of silently unscoping — this suite is about deadline
+        # behavior, not scoping, so a real project_id keeps the premise true.
+        out = Retriever.recall(mock, "q", max_results=5, deadline=deadline, project_id=_DIR)
         return mock, out
 
     def test_exceeded_deadline_skips_all_collect_stages(self):
@@ -305,7 +308,10 @@ class TestRetrieverRecallDeadline:
         mock._build_initial_results.return_value = ([], set(), False)
         mock._strip_embeddings.side_effect = lambda mems: mems
 
-        Retriever.recall(mock, "q", max_results=5, deadline=time.monotonic() + 60.0)
+        # Car H1 (§1.3): see the identical comment in ``_run_recall`` above.
+        Retriever.recall(
+            mock, "q", max_results=5, deadline=time.monotonic() + 60.0, project_id=_DIR
+        )
         mock._apply_rerank_pipeline.assert_not_called()
 
 

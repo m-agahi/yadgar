@@ -26,11 +26,16 @@ Per PD-45 (2026-06-06): internal dev workflow vs production CI separation.
 Superseded by v5.57 design: always-on per-PR CI + version-bump-gated release.
 """
 
+import sys
 from pathlib import Path
 
 from ruamel.yaml import YAML as _YAML
 
 from yadgar.tests._paths import REPO_ROOT
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from ci_group_manifest import groups as _manifest_groups  # noqa: E402
 
 CI_YAML = REPO_ROOT / ".forgejo" / "workflows" / "ci-pr.yaml"
 RELEASE_YAML = REPO_ROOT / ".forgejo" / "workflows" / "ci-release.yaml"
@@ -98,21 +103,61 @@ class TestCiPrYamlTriggers:
         )
 
     def test_subsystem_test_jobs_present_in_ci_pr(self):
-        """R3 CI regroup: ci-pr.yaml must have all four subsystem test jobs + test-gate.
+        """ci-pr.yaml must carry the `tests` matrix + test-gate.
 
-        Migrated from test_test_job_present_in_ci_pr (old monolithic 'test' job
-        replaced by test-fast, test-shared, test-backend, test-core in R3).
+        History: the original monolithic `test` job became four subsystem jobs
+        in the R3 regroup (test-fast/test-shared/test-backend/test-core), and
+        Car J1 collapsed those four into ONE `tests` matrix job whose groups
+        are the `include:` entries — the `needs:` chain between them had never
+        been a dependency, only a RAM throttle, and now lives on max-parallel.
+
+        The group list is NOT hardcoded here. It is read from
+        scripts/ci_group_manifest.py, which parses the matrix — a literal list
+        would have to be edited in lockstep with the workflow and would go
+        stale silently, which is the failure mode this file exists to catch.
+        Superseded job names are asserted ABSENT so a half-finished revert
+        (matrix added, old jobs left behind) fails instead of passing twice.
         """
         data = _load_yaml(CI_YAML)
         jobs = data.get("jobs", {})
-        required_jobs = ["test-fast", "test-shared", "test-backend", "test-core", "test-gate"]
-        for job_id in required_jobs:
+        for job_id in ("tests", "test-gate"):
             assert job_id in jobs, (
                 f"ci-pr.yaml missing required job '{job_id}'; present: {list(jobs)}"
             )
-        assert "test" not in jobs, (
-            f"ci-pr.yaml still has old monolithic 'test' job — must be removed (R3 regroup). "
-            f"Present jobs: {list(jobs)}"
+
+        superseded = ["test", "test-fast", "test-shared", "test-backend", "test-core"]
+        leftover = [j for j in superseded if j in jobs]
+        assert not leftover, (
+            f"ci-pr.yaml still declares superseded test job(s) {leftover} alongside the "
+            f"`tests` matrix that replaced them. Present jobs: {list(jobs)}"
+        )
+
+        # CI_YAML is the FORGEJO mirror; the manifest parses the GitHub one. So
+        # this doubles as the only guard on matrix parity between the mirrors —
+        # test_ci_mirror_parity.py projects job keys / needs / if and does NOT
+        # look at `strategy`, so a group added to one mirror only would
+        # otherwise run on one platform and silently not on the other.
+        declared = jobs["tests"]["strategy"]["matrix"]["include"]
+        declared_names = [entry["group"] for entry in declared]
+        manifest_names = [entry["group"] for entry in _manifest_groups()]
+        assert declared_names == manifest_names, (
+            "the Forgejo mirror's `tests` matrix groups disagree with the GitHub "
+            "mirror's (read via scripts/ci_group_manifest.py):\n"
+            f"  .forgejo : {declared_names}\n  .github  : {manifest_names}\n"
+            "Both mirrors are canonical — a group present in one only runs on one "
+            "platform. Every consumer (check-skip-inventory's derived artifact "
+            "count, check_ci_local_parity's leg structure) reads the GitHub mirror."
+        )
+        assert declared_names, "the `tests` matrix declares no groups"
+
+        fj_paths = {entry["group"]: entry["paths"] for entry in declared}
+        gh_paths = {entry["group"]: entry["paths"] for entry in _manifest_groups()}
+        assert fj_paths == gh_paths, (
+            "the mirrors' `tests` matrix groups share names but select DIFFERENT "
+            f"paths:\n  .forgejo : {fj_paths}\n  .github  : {gh_paths}\n"
+            "Matching names with diverging selections is worse than a missing "
+            "group — every count still agrees while the two platforms test "
+            "different things."
         )
 
     def test_ci_pr_yaml_parses_valid(self):

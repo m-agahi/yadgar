@@ -46,6 +46,14 @@ from yadgar._shared.storage.sql import (  # noqa: E402
     MariaStorageEngine,
     default_option_file_path,
 )
+from yadgar.tests.integration._podman import (  # noqa: E402
+    container_is_running,
+    container_logs,
+    make_socket_dir,
+    podman_env,
+    remove_container_dir,
+    select_container_runtime,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -55,6 +63,9 @@ _DB = "yadgar"
 _APP_USER = "yadgar_app"
 _APP_PASS = "carc-integration-password"
 _BOOT_TIMEOUT_SEC = 180.0
+# The socket file is the FIRST thing mysqld creates; if it has not reached our
+# side of the mount by here, waiting out the full boot timeout cannot help.
+_MOUNT_VISIBLE_TIMEOUT_SEC = 30.0
 
 
 def _cnf_body(socket: str, *, password: str | None = _APP_PASS) -> str:
@@ -75,21 +86,27 @@ def live_mariadb():
     """Spin a scratch MariaDB reachable over a unix socket; tear it down.
 
     NOT ``tmp_path``: a unix socket path caps at ~107 bytes and pytest's tmp
-    dirs are long enough to blow it. A short ``/tmp`` dir keeps the path well
-    inside the limit.
+    dirs are long enough to blow it. ``make_socket_dir`` keeps the leaf short.
+
+    The directory comes from ``shared_mount_root`` rather than ``/tmp``: the
+    socket is created by the container and consumed by THIS process, so the
+    mount source has to mean the same directory on both sides. It does not
+    under a dind-backed runner, where ``/tmp`` is the daemon's own — see the
+    long note in ``_podman.py``.
 
     The container mirrors car A's shape where it matters — a database plus a
     password-auth app account scoped to it — and nothing else. It never touches
     the live data root.
     """
-    runtime = shutil.which("podman") or shutil.which("docker")
+    runtime = select_container_runtime()
     if runtime is None:
-        pytest.skip("docker/podman not available on this host")
+        pytest.skip(
+            "no working container runtime on this host "
+            "(podman/docker absent, or present but non-functional)"
+        )
 
     name = f"yadgar-carc-mdb-{uuid.uuid4().hex[:8]}"
-    sock_dir = Path(f"/tmp/ymdb-{uuid.uuid4().hex[:8]}")
-    sock_dir.mkdir(mode=0o777, parents=True)
-    sock_dir.chmod(0o777)  # mkdir mode is umask-masked
+    sock_dir = make_socket_dir(runtime, image=_IMAGE, prefix="ymdb")
     socket_path = sock_dir / "mysqld.sock"
 
     started = subprocess.run(
@@ -104,7 +121,7 @@ def live_mariadb():
             _IMAGE,
             "--socket=/sockets/mysqld.sock",
         ],
-        capture_output=True, text=True, check=False, timeout=300,
+        capture_output=True, text=True, check=False, timeout=300, env=podman_env(),
     )  # fmt: skip
     if started.returncode != 0:
         shutil.rmtree(sock_dir, ignore_errors=True)
@@ -115,44 +132,50 @@ def live_mariadb():
     cnf.chmod(0o600)
 
     try:
-        _await_ready(cnf)
+        _await_ready(cnf, runtime, name, socket_path)
         yield {"cnf": cnf, "socket": socket_path, "dir": sock_dir}
     finally:
         # -v: the image declares /var/lib/mysql a VOLUME, so every run creates an
         # anonymous one. Without this each run leaks a datadir-sized volume.
         subprocess.run(
-            [runtime, "rm", "-f", "-v", name], capture_output=True, check=False, timeout=120
-        )
-        _remove_socket_dir(runtime, sock_dir)
-
-
-def _remove_socket_dir(runtime: str, sock_dir: Path) -> None:
-    """Delete the mount dir, including what the container's uid took ownership of.
-
-    The image's entrypoint chowns the socket mount to its own ``mysql`` user,
-    which under rootless podman is a SUBUID — the host user then cannot even
-    rmdir it ("Operation not permitted") despite owning the parent. ``podman
-    unshare`` re-enters the user namespace where that subuid maps to root, so
-    the delete succeeds. Leaving it behind would leak a directory per run.
-    """
-    shutil.rmtree(sock_dir, ignore_errors=True)
-    if sock_dir.exists() and Path(runtime).name == "podman":
-        subprocess.run(
-            [runtime, "unshare", "rm", "-rf", str(sock_dir)],
-            capture_output=True, check=False, timeout=120,
+            [runtime, "rm", "-f", "-v", name],
+            capture_output=True, check=False, timeout=120, env=podman_env(),
         )  # fmt: skip
+        remove_container_dir(runtime, sock_dir, image=_IMAGE)
 
 
-def _await_ready(cnf: Path) -> None:
+def _await_ready(cnf: Path, runtime: str, name: str, socket_path: Path) -> None:
     """Block until a real query succeeds. The socket appears before the server
     is usable — the official image runs a bootstrap server first, so waiting on
-    the socket file alone races the account creation."""
+    the socket file alone races the account creation.
+
+    Two fast exits keep a hopeless wait from consuming the whole timeout, which
+    is what the pre-fix run did: 180s of retries against a socket that could
+    never appear, four times over. If the container has DIED the retry cannot
+    succeed, and if the socket file has not shown up long after the server is
+    answering inside the container, the mount is not reaching us — both fail
+    immediately and name what they observed.
+    """
     import asyncio
 
     async def _probe() -> None:
         deadline = time.monotonic() + _BOOT_TIMEOUT_SEC
+        mount_deadline = time.monotonic() + _MOUNT_VISIBLE_TIMEOUT_SEC
         last: Exception | None = None
         while time.monotonic() < deadline:
+            if not container_is_running(runtime, name):
+                raise AssertionError(
+                    f"the MariaDB container {name} exited during boot; "
+                    f"last logs:\n{container_logs(runtime, name)}"
+                )
+            if not socket_path.exists() and time.monotonic() > mount_deadline:
+                raise AssertionError(
+                    f"{socket_path} never appeared on this side of the mount "
+                    f"within {_MOUNT_VISIBLE_TIMEOUT_SEC}s while the container was "
+                    "still running — the bind mount is not shared with the "
+                    f"{Path(runtime).name} daemon. Set "
+                    "YADGAR_TEST_SHARED_MOUNT_ROOT to a directory both sides see."
+                )
             engine = MariaStorageEngine.from_option_file(cnf)
             try:
                 await engine.verify()

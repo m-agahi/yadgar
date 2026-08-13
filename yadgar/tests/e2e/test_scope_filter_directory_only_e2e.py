@@ -101,23 +101,35 @@ def _select_labels(storage, clause: str, params: dict, marker: str) -> list:
 class TestScopeClauseContract:
     """The clause-builder API surface — pure, no DB."""
 
-    def test_empty_scope_is_legacy_noop(self):
+    def test_empty_scope_requires_explicit_unscoped_opt_in(self):
         """PORTED from the deleted file's ``test_scope_filter_none_is_legacy_noop``.
 
-        An absent project must produce NO predicate at all, not a predicate that
-        matches nothing — the difference between "no filtering requested" and
-        "filter everything out".
+        Car H1 (§1.3) replaced the silent empty-clause answer with a raise: an
+        absent project used to produce NO predicate at all (the whole corpus),
+        which made the resolver a single point of failure for cross-project
+        isolation. A falsy ``project_id`` now RAISES unless the caller spells
+        the whole-corpus read explicitly via ``unscoped=True`` — "no filtering
+        requested" and "no project and didn't notice" no longer share one
+        representation. Full coverage lives in ``test_h1_scope_guard.py``.
         """
+        from yadgar._shared.errors import UnresolvedProjectError
         from yadgar._shared.storage.directory import build_project_scope_clause
 
-        sql, params = build_project_scope_clause(None)
-        assert sql == "", f"An empty scope must produce empty SQL, got: {sql!r}"
-        assert params == {}, f"An empty scope must produce empty params, got: {params}"
+        with pytest.raises(UnresolvedProjectError):
+            build_project_scope_clause(None)
 
-    def test_empty_string_project_is_also_a_noop(self):
+        sql, params = build_project_scope_clause(None, unscoped=True)
+        assert sql == "", f"An unscoped read must produce empty SQL, got: {sql!r}"
+        assert params == {}, f"An unscoped read must produce empty params, got: {params}"
+
+    def test_empty_string_project_also_requires_unscoped_opt_in(self):
+        from yadgar._shared.errors import UnresolvedProjectError
         from yadgar._shared.storage.directory import build_project_scope_clause
 
-        sql, params = build_project_scope_clause("")
+        with pytest.raises(UnresolvedProjectError):
+            build_project_scope_clause("")
+
+        sql, params = build_project_scope_clause("", unscoped=True)
         assert sql == ""
         assert params == {}
 

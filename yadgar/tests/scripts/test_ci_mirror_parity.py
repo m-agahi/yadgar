@@ -66,26 +66,32 @@ WORKFLOWS = [
 # `ci-pr.test-gate.needs`: the GitHub mirror's aggregate gate waits on three
 # extra jobs (`invariant-checks`, `viz-tests`, `verify-version-bump`) that the
 # Forgejo mirror's gate does not — so on Forgejo those three can fail without
-# failing the gate.
+# failing the gate. `test-engine2-integration` (Car G4) was added to BOTH
+# mirrors' `test-gate.needs` in the same relative position — it is a fixed
+# job, not part of this recorded drift — so it appears in both lists below.
+#
+# UPDATED 2026-08-13 (Car J1) — THE DRIFT ITSELF IS UNCHANGED. Car J1 collapsed
+# the four `needs:`-chained test jobs (test-fast/test-shared/test-backend/
+# test-core) into ONE `tests` matrix job, so both lists shrank by three entries
+# on the same line. The recorded divergence is still exactly the same three
+# GitHub-only jobs, still unadjudicated: this entry was re-expressed against the
+# new job names, NOT resolved. It is deliberately NOT deleted — deleting it is
+# reserved for when the Forgejo gate actually starts waiting on those three.
 KNOWN_DRIFT_NEEDS: dict[tuple[str, str], tuple[list[str], list[str]]] = {
     ("ci-pr", "test-gate"): (
         [
-            "test-fast",
-            "test-shared",
-            "test-backend",
-            "test-core",
+            "tests",
             "test-perf",
+            "test-engine2-integration",
             "check-skip-inventory",
             "invariant-checks",
             "viz-tests",
             "verify-version-bump",
         ],
         [
-            "test-fast",
-            "test-shared",
-            "test-backend",
-            "test-core",
+            "tests",
             "test-perf",
+            "test-engine2-integration",
             "check-skip-inventory",
         ],
     ),

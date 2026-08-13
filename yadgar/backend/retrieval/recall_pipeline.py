@@ -528,6 +528,11 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
         min_heat=min_heat,
         opt_in_tags=tags,
         excluded_slugs=recall_scope.excluded_slugs,
+        # Car H1 (§1.3): carry the caller's deliberate whole-corpus intent
+        # through — dropping it here would make BOTH providers raise for the
+        # BC-VZ2 viz search and the "instructions-loaded" hook, which forward
+        # with an empty project on purpose.
+        unscoped=recall_scope.unscoped,
     )
 
     # Candidate pool size: ask for more than max_results so fusion + dedup

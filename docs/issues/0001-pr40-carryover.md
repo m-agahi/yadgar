@@ -11,6 +11,119 @@ The single remaining CI failure is `test_daemon_obs_gauges.py::test_loop_lag_mon
 
 ---
 
+## 00. DEPLOY FAILED 2026-08-12 — engine #2 alembic migration aborts backend boot
+
+Applying core `5.181.43` / backend `5.72.33` put both units in a crashloop. **Rolled back to
+`5.181.0` / `5.71.0`.**
+
+```
+ERROR:  Application startup failed. Exiting.
+yadgar-backend.service: Main process exited, code=exited, status=3    NRestarts=13
+yadgar.service:         Main process exited, code=exited, status=137  NRestarts=2
+```
+
+**Chain.** `_migrate_engine_two()` (`embed_service.py:471`) runs `alembic upgrade head` inside the
+FastAPI lifespan. It raises `OperationalError` at
+`_shared/storage/sql/migrations/versions/002_ledger_tables.py:185` — `op.create_table("task", …)` —
+and **re-raises by design**, so startup aborts and the process exits 3. Core then blocks on
+`Waiting for backend embed service...` and is SIGKILLed (137) at its start timeout. Both loop.
+
+**The fail-loud is correct and must not be reverted.** `_migrate_engine_two`'s docstring records that
+cars D/F/G/I/K of this PR repointed real reads onto engine #2, so the old swallow would run the daemon
+against a schema-less database — ADR-0222's "logged as an error, health check green, systemd active,
+the daemon running BROKEN". Making it non-fatal again would restore exactly that. **The schema is what
+is wrong, not the guard.**
+
+**ROOT CAUSE — CONFIRMED 2026-08-13 on a clean VM.** (An earlier hypothesis in this file blamed the
+in-place edits to revision `002` by C6 `8c04f683` and C15a `eb8c6e6b`. That was WRONG and is
+retracted: the chain applies cleanly on both `mariadb:11.4` and `mariadb:11.8` when run by a
+privileged account.)
+
+The real defect is **GRANT-before-CREATE ordering in `entrypoint-backend.sh`**, and it makes a
+first-time install of yadgar 100% non-functional:
+
+1. The entrypoint applies its per-table `GRANT` heredoc during MariaDB bootstrap, **before any
+   migration has created a table**.
+2. **MariaDB REJECTS a table-level GRANT naming a table that does not exist**, and the `mariadb`
+   client runs without `--force`, so the first failure aborts every statement behind it:
+   `ERROR 1146 (42S02) at line 11: Table 'yadgar.alembic_version' doesn't exist`
+   → `WARNING: MariaDB account bootstrap failed — engine #2 present but unusable by the app`
+3. The app account is left with `USAGE` only. Alembic then runs **as that account** and dies:
+   `(1142, "CREATE command denied to user 'yadgar_app'@'localhost' for table `yadgar`.`task`")`
+4. Because the failed bootstrap leaves no usable connection, `_get_sql_storage()` returns `None`, so
+   `_migrate_engine_two` takes its **"engine #2 absent — skipping"** branch. ABSENT-is-not-FAILED
+   means boot CONTINUES: the deliberate fail-loud never fires.
+5. `/health` reports `{"status":"degraded", …, "ledger":false}` and returns **503**.
+6. The unit's healthcheck is `curl -f …/health`, so it fails forever; with `--sdnotify=healthy`
+   systemd never gets `READY=1`; the unit stays `activating`; **the core never starts.**
+
+**Measured on a fresh VM** (Debian 13, empty datadir, images 5.181.43 / 5.72.33, pipx + `yadgar setup`
++ `yadgar daemon install-service`): zero ledger tables ever created (`ls …/mariadb/yadgar/` → `db.opt`
+only), backend `unhealthy` with `FailingStreak: 23` after 12 minutes, core never started.
+
+**Why the long-lived host looked different:** on 8 Aug the app account still had broad grants, so
+`0001` created `alembic_version` + `config`. The tightened heredoc then aborted one line later, at
+`GRANT … ON yadgar.task` — hence exactly two granted tables, no DDL privilege, and `002` frozen ever
+since. Backend `5.71.0` swallowed the migration failure; `5.72.33` made it fatal, which is what
+surfaced it. The `ledger:false` health gate would ALSO have pinned that host unhealthy on upgrade —
+two independent blockers.
+
+**Why no test caught it:** `yadgar/tests/integration/test_mariadb_migrations.py` provisions its user
+via `MARIADB_USER=yadgar_app` on the stock mariadb image, which grants that user **ALL PRIVILEGES on
+the database** — same username, opposite privileges. And `test_entrypoint_grants.py` only text-matches
+the heredoc, so it confirms every table is named while being structurally unable to notice the
+privilege set cannot create them. The suite is also `integration`-marked and CI runs
+`-m 'not integration …'`, so it had never executed at all (task #26).
+
+**Fixed** by `fix(engine-2): migrations run as a DDL-capable account, and grants follow the tables`
+(core `5.181.44` / backend `5.72.34`): three-phase bootstrap — accounts, then the alembic chain under
+a dedicated DDL-capable `yadgar_migrate` account, then the app account's per-table narrowing gated on
+the migration succeeding. A bootstrap failure on a running mysqld is now **fatal** rather than a
+WARNING that lets a dead container come up.
+
+**Note for future designs:** "just run migrations as the socket admin" is BLOCKED — asyncmy implements
+only `mysql_native_password` / `caching_sha2_password` / `sha256_password` / `client_ed25519` and
+cannot authenticate against MariaDB's `unix_socket` auth plugin.
+
+### VERIFIED END-TO-END on a clean VM, 2026-08-13
+
+Debian 13 VM, datadir wiped to empty, backend image rebuilt from this branch (`5.72.34`), core
+`5.181.43`, started via the same systemd units `yadgar daemon install-service` renders.
+
+| | before (5.72.33) | after (5.72.34) |
+|---|---|---|
+| `/health` | `{"status":"degraded", … "ledger":false}` → HTTP 503 | `{"status":"ok","db":true,"model":true,"drainer":true,"ledger":true}` |
+| container | `unhealthy`, `FailingStreak: 23`, never green | `(healthy)` in **54 s** |
+| ledger tables | **0** (`db.opt` only) | **13** — `adr adr_supersedes agent_discipline agent_pattern agent_pattern_composes agent_pattern_model alembic_version client config project task task_blocked_by` |
+| alembic | never ran | `engine #2 migrated to alembic head 004_agent_pattern_model_client` |
+| core | never started | `active`, MCP answers 401 (auth required, correct) |
+| `1146` / bootstrap-failed in the run | present | **0** |
+
+### Testing-environment traps hit while proving this (worth knowing, cost real time)
+
+- **`Linger=no` on a fresh VM kills the unit when the SSH session ends.** A poll loop that reconnects
+  per iteration tears down the user systemd manager each time — the unit dies every cycle and reads as
+  a product crash. Symptom: the systemd user-manager PID changes between checks. Fix:
+  `loginctl enable-linger root`. This is already documented in the wiki page
+  `connecting-to-libvirt-test-vms-debian-13-dev-etc-ssh-gotcha` and was read past anyway.
+- **`yadgar daemon install-service` before `yadgar setup`** renders a unit with
+  `EnvironmentFile=~/.config/yadgar/secrets.env` (no `-` prefix) that `setup` has not created yet, so
+  systemd aborts the unit before any `Exec*` runs and reports a misleading "failed to spawn start-pre".
+  Correct order is `setup` → `install-service` → `start`; `install-service` warns about neither.
+- The template's `pipx` is at `/usr/bin/pipx`, not `/root/.local/bin/pipx` as that wiki page states.
+
+**Blocking observability defect found while diagnosing:** the failure logs the exception TYPE
+(`"error": "OperationalError"`) and a traceback truncated before the MySQL error, so **the one string
+that identifies the fault is never recorded**. `logger.exception` drops `str(exc)` here. Fix this
+first — it cost an entire diagnosis cycle and forced an operator into the container.
+
+**Also unverified:** SurrealDB migrations 032/033 run *earlier* in the boot sequence than engine #2,
+so they almost certainly applied — 13 times — before each abort. Rolling back to `5.181.0` therefore
+runs old code against a 033 schema. Additive columns should be tolerated; **not proven**, and this is
+precisely what the §8 rehearsal (item 3.1) was meant to exercise.
+
+---
+
 ## 0. BLOCKING FOR DEPLOY — ~42% of the memory corpus goes dark
 
 Measured on the live corpus 2026-08-12 via read-only `db_inspect`, **3070 memory rows total**:

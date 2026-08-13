@@ -17,6 +17,7 @@ from dataclasses import replace
 
 import pytest
 
+from yadgar._shared.storage.directory import RecallScope
 from yadgar._shared.wiki import WikiAddOptions
 from yadgar.core import server
 from yadgar.tests.core.conftest import TEST_PROJECT_ID
@@ -41,6 +42,19 @@ def _engines(tmp_path_factory):
 
 def _wiki():
     return server._wiki
+
+
+def _query(*args, **kwargs):
+    """``WikiStore.query`` with this file's project NAMED.
+
+    ADR-0230 / Car H1 §1.3: ``query()``'s ``scope or RecallScope()`` fallback
+    used to mean "no predicate", i.e. the whole corpus. A falsy project_id now
+    raises, so the scope has to be stated. These pages are written by ``_add``
+    under TEST_PROJECT_ID, so the honest scope is that project — NOT
+    ``unscoped=True``, which would bypass the very predicate the rows carry.
+    """
+    kwargs.setdefault("scope", RecallScope(project_id=TEST_PROJECT_ID))
+    return _wiki().query(*args, **kwargs)
 
 
 def _add(*args, **kwargs):
@@ -309,7 +323,7 @@ class TestSearch:
 
     def test_query_finds_by_keyword(self):
         _add("SurrealDB Guide", "SurrealDB is an embedded database engine.", "reference")
-        results = _wiki().query("SurrealDB")
+        results = _query("SurrealDB")
         assert len(results) >= 1
         assert any(r["slug"] == "surrealdb-guide" for r in results)
 
@@ -319,13 +333,13 @@ class TestSearch:
             "Heat decreases over time following an exponential curve with configurable factors.",
             "architecture",
         )
-        results = _wiki().query("how does memory temperature change")
+        results = _query("how does memory temperature change")
         assert len(results) >= 1
         assert any(r["slug"] == "memory-decay" for r in results)
 
     def test_query_returns_scores(self):
         _add("Scored Page", "This page has scored content.", "reference")
-        results = _wiki().query("scored content")
+        results = _query("scored content")
         assert len(results) >= 1
         assert "_retrieval_score" in results[0]
         assert results[0]["_retrieval_score"] > 0
@@ -333,7 +347,7 @@ class TestSearch:
     def test_query_filters_by_category(self):
         _add("Arch Item", "Architecture content.", "architecture")
         _add("Debug Item", "Debug content.", "debugging")
-        results = _wiki().query("content", category="architecture")
+        results = _query("content", category="architecture")
         slugs = [r["slug"] for r in results]
         assert "arch-item" in slugs
         assert "debug-item" not in slugs
@@ -341,13 +355,13 @@ class TestSearch:
     def test_query_filters_by_tags(self):
         _add("Tagged A", "Some content.", "reference", ["alpha"])
         _add("Tagged B", "Some content.", "reference", ["beta"])
-        results = _wiki().query("content", tags=["alpha"])
+        results = _query("content", tags=["alpha"])
         slugs = [r["slug"] for r in results]
         assert "tagged-a" in slugs
         assert "tagged-b" not in slugs
 
     def test_query_no_results(self):
-        results = _wiki().query("xyzzy nonexistent gibberish")
+        results = _query("xyzzy nonexistent gibberish")
         assert results == []
 
 

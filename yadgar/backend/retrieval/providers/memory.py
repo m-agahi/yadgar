@@ -80,17 +80,28 @@ class MemoryProvider(SourceProvider):
             profile=self._profile,
             deadline=self._deadline,
             project_id=caller_project,
+            unscoped=scope.unscoped,
         )
 
         # Car C7: residual guard for graph-walk candidates only — the SQL arms
         # are already scoped. Same two arms as the clause, so this cannot
         # disagree with it.
+        #
+        # Car H1 (§1.3): ``is_project_eligible`` raises on a falsy caller
+        # project — it has no ``unscoped`` opt-in of its own (see its
+        # docstring). A deliberate whole-corpus scope (BC-VZ2, the
+        # "instructions-loaded" hook) skips the guard here instead, the same
+        # shape as ``http.py::_filter_prompt_recall_results``: no project to
+        # filter BY means every candidate is admitted, not that filtering is
+        # attempted against nothing.
         candidates: list[Candidate] = []
         for m in results:
             mid = m.get("id")
             if mid is None:
                 continue
-            if not is_project_eligible(m.get("project_id"), m.get("tags"), caller_project):
+            if not scope.unscoped and not is_project_eligible(
+                m.get("project_id"), m.get("tags"), caller_project
+            ):
                 continue
             # native_score: prefer explicit retrieval score, fall back to heat
             native_score = float(m.get("_retrieval_score", m.get("heat", 0.0)))

@@ -27,6 +27,7 @@ import dataclasses
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 
 
@@ -42,8 +43,12 @@ class RecallScope:
     no obviously-wrong result.
 
     Attributes:
-        project_id: Resolved project id, or ``None``/empty for an explicitly
-            unscoped read (legacy whole-corpus mode).
+        project_id: Resolved project id. ``None``/empty is a DEFECT unless
+            ``unscoped`` is also set — see ``build_project_scope_clause``.
+        unscoped: Car H1 (§1.3) — the caller DELIBERATELY wants the whole
+            corpus. It is a separate field rather than "project_id is falsy"
+            because those were two different intents sharing one
+            representation, and the accidental one silently won.
         opt_in_tags: Tags the caller explicitly requested; relaxes the
             policy-derived ``page_type`` exclusion for the types that declare
             them.
@@ -59,6 +64,7 @@ class RecallScope:
     project_id: str | None = None
     opt_in_tags: list[str] | None = field(default=None)
     excluded_slugs: tuple[str, ...] | None = field(default=None)
+    unscoped: bool = False
 
     @observe(exempt="pure dataclass copy; no I/O, no branching beyond one guard")
     def with_default_opt_in(self, tags: list[str] | None) -> RecallScope:
@@ -87,6 +93,7 @@ class RecallScope:
             excluded_slugs=self.excluded_slugs,
             page_types=page_types,
             prefix=prefix,
+            unscoped=self.unscoped,
         )
 
 
@@ -100,6 +107,7 @@ def build_project_scope_clause(
     project_id: str | None,
     *,
     prefix: str = "sc",
+    unscoped: bool = False,
 ) -> tuple[str, dict]:
     """Return ``(sql_fragment, params)`` scoping rows to *project_id*.
 
@@ -129,19 +137,56 @@ def build_project_scope_clause(
         quarantine). They correctly stay invisible here — that is the
         quarantine working, not a backfill gap to close.
 
-    An empty/None *project_id* yields ``("", {})`` — no filtering. Callers that
-    must not fall back silently resolve their project upstream, where the
-    resolver raises ``UnresolvedProjectError`` (C5).
+    A FALSY *project_id* RAISES — Car H1 (§1.3), the guard behind the resolver:
+
+        This used to answer ``("", {})``: no WHERE arm, i.e. the whole corpus.
+        It was documented as "by design — the resolver raises upstream", which
+        made C5's resolver a single point of failure with NOTHING behind it. A
+        defect that let an empty project through did not raise, did not log,
+        and returned MORE rows rather than fewer — the shape of a leak that
+        reads as the system working well.
+
+        ADR-0227 is binding one layer lower: a missing identity fails loud. The
+        deliberate whole-corpus read did not disappear — it moved to an
+        EXPLICIT ``unscoped=True``, so "I want the corpus" and "I have no
+        project and did not notice" stopped sharing one representation. Only
+        the first is now spellable.
+
+        ``unscoped=True`` is an opt-OUT of the project arm, never a widening:
+        a call that names a project gets the scoped clause regardless, so a
+        caller threading the flag from a config default cannot unscope a read
+        that already knew its project.
+
+        NOTE FOR READERS OF A ZERO-ROW RECALL: this raise and the sanctioned
+        pre-backfill empty window (see above) are DIFFERENT states. Zero rows
+        means the corpus is un-backfilled; ``UnresolvedProjectError`` means the
+        CALLER named no project. Paths that wrap reads in a broad ``except``
+        turn the second into the first, so the exception text names the tool.
 
     Args:
         project_id: The caller's resolved project id (e.g. ``"m-agahi/yadgar"``).
         prefix: Bind-parameter prefix so this fragment can be AND-ed with
             others without a param-name collision.
+        unscoped: Deliberate whole-corpus read. Only meaningful when
+            *project_id* is falsy.
 
     Returns:
-        ``(sql_fragment, params_dict)``.
+        ``(sql_fragment, params_dict)``; ``("", {})`` only under ``unscoped``.
+
+    Raises:
+        UnresolvedProjectError: *project_id* is falsy and *unscoped* is False.
     """
     if not project_id:
+        if not unscoped:
+            raise UnresolvedProjectError(
+                "build_project_scope_clause",
+                detail=(
+                    "A falsy project_id would emit NO scope predicate, i.e. an "
+                    "unscoped read of the entire corpus. Pass a resolved "
+                    "project_id, or unscoped=True if a whole-corpus read is "
+                    "genuinely intended."
+                ),
+            )
         return "", {}
     key = f"{prefix}_pid"
     tag_key = f"{prefix}_reach"
@@ -198,6 +243,7 @@ def build_recall_scope_clause(
     excluded_slugs: Iterable[str] | None = None,
     page_types: bool = True,
     prefix: str = "sc",
+    unscoped: bool = False,
 ) -> tuple[str, dict]:
     """Return the ONE stage-1 recall WHERE clause: project + reach + type + slug.
 
@@ -230,20 +276,30 @@ def build_recall_scope_clause(
     derived exclusion would hide the entire agent-prompt library from its own
     documented lookup.
 
+    Car H1 (§1.3): a falsy *project_id* RAISES unless *unscoped* is set — this
+    builder must not launder past the guard the value ``build_project_scope_clause``
+    now refuses. ``unscoped=True`` drops arms 1–2 ONLY: arms 3 and 4 are not
+    project-scoped, and silently dropping them here would surface page types no
+    recall is meant to return.
+
     Args:
-        project_id: Caller's resolved project id. Falsy → arms 1–2 omitted.
+        project_id: Caller's resolved project id. Falsy raises unless *unscoped*.
         opt_in_tags: Tags the caller explicitly requested.
         excluded_slugs: Slugs to exclude (arm 4). Falsy → arm omitted.
         page_types: Include the wiki-only arms 3 and 4.
         prefix: Bind-parameter prefix.
+        unscoped: Deliberate whole-corpus read — omits arms 1–2.
 
     Returns:
         ``(sql_fragment, params_dict)``; ``("", {})`` when nothing to filter.
+
+    Raises:
+        UnresolvedProjectError: *project_id* is falsy and *unscoped* is False.
     """
     fragments: list[str] = []
     params: dict = {}
 
-    proj_sql, proj_params = build_project_scope_clause(project_id, prefix=prefix)
+    proj_sql, proj_params = build_project_scope_clause(project_id, prefix=prefix, unscoped=unscoped)
     if proj_sql:
         fragments.append(proj_sql)
         params.update(proj_params)
@@ -286,8 +342,18 @@ def is_project_eligible(
     it agrees with the SQL arm by construction (same two arms, same treatment
     of unstamped rows) instead of implementing a wider sentinel set.
 
-    ``caller_project_id`` of ``None`` means no filtering (daemon-internal /
-    legacy callers), matching the clause builder's empty-fragment case.
+    A FALSY *caller_project_id* RAISES — Car H1 (§1.3). It used to return
+    ``True``, i.e. ADMIT EVERY ROW, and this is the arm with no WHERE clause
+    behind it: graph-walk candidates reach the caller through here and nowhere
+    else, so failing open here is a whole-corpus leak with no second gate.
+
+    There is deliberately NO ``unscoped`` opt-in on this function, unlike its
+    SQL twin. A caller that genuinely wants no filtering does not need a
+    per-row predicate at all — and the codebase already spells that:
+    ``http.py::_filter_prompt_recall_results`` checks the project itself, logs
+    a warning, and returns the results UNFILTERED without ever calling here.
+    Adding a flag would give the failing-open shape a second life under a name
+    that looks deliberate.
 
     Args:
         row_project_id: The row's ``project_id`` (``None`` when unstamped).
@@ -296,9 +362,19 @@ def is_project_eligible(
 
     Returns:
         True when the row is in scope for the caller.
+
+    Raises:
+        UnresolvedProjectError: *caller_project_id* is falsy.
     """
     if not caller_project_id:
-        return True
+        raise UnresolvedProjectError(
+            "is_project_eligible",
+            detail=(
+                "A falsy caller project would admit EVERY row, including the "
+                "graph-walk candidates no WHERE clause filters. Skip this "
+                "guard explicitly at the call site if no filtering is intended."
+            ),
+        )
     if row_project_id == caller_project_id:
         return True
     return GLOBAL_REACH_TAG in (row_tags or ())

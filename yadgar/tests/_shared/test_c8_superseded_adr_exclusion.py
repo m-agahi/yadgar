@@ -110,7 +110,11 @@ class TestComposedClauseCarriesTheSlugArm:
         superseded ADRs when a set was supplied; coupling the two arms would
         make the exclusion silently vanish on exactly those paths.
         """
-        sql, params = build_recall_scope_clause(None, excluded_slugs=_SUPERSEDED)
+        # Car H1 §1.3: the whole-corpus read this test is about is now an
+        # EXPLICIT `unscoped=True` rather than a falsy project_id, which raises.
+        # The test's premise is unchanged — the slug arm must survive a read
+        # that carries no project predicate — only how that read is spelled.
+        sql, params = build_recall_scope_clause(None, excluded_slugs=_SUPERSEDED, unscoped=True)
         assert "slug NOT IN" in sql
         assert _slug_param(params) == list(_SUPERSEDED)
 

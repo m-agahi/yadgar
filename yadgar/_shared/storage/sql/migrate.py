@@ -57,6 +57,57 @@ HEAD = "head"
 
 
 @observe(tier="stage")
+def describe_dbapi_error(exc: BaseException) -> dict[str, object]:
+    """Pull the DRIVER's errno + message out of a SQLAlchemy wrapper exception.
+
+    THE DIAGNOSIS THIS EXISTS FOR. A failed engine-#2 migration used to log
+
+        {"level":"ERROR","event":"engine #2 migration FAILED …",
+         "error":"OperationalError","traceback":"… [truncated]"}
+
+    and nothing else. ``OperationalError`` is the same class for "access
+    denied", "server has gone away" and "unknown database"; the one string that
+    says WHICH — ``(1142, "CREATE command denied to user 'yadgar_app'@'localhost'
+    for table `yadgar`.`task`")`` — lives on ``exc.orig.args`` and was never
+    recorded. That cost an entire diagnosis cycle.
+
+    ``exc.orig.args`` rather than ``str(exc)``: SQLAlchemy's ``str`` appends the
+    full failing statement and, on a DML path, its bound parameters. The DBAPI
+    args are the errno and the server's own message and carry neither. Nothing
+    here can reach a password: the credential never enters this process (asyncmy
+    reads it straight out of the 0600 option file via ``read_default_file``).
+
+    IT LIVES HERE AND NOT IN ``errors.py``, which would otherwise be its
+    natural home. That module is STDLIB-ONLY by contract
+    (``test_errors_module_is_stdlib_only``) so the registry guard can import it
+    without dragging in the ``sql`` extra — and I33 requires an ``@observe``
+    decorator, whose import would break exactly that guarantee. This module
+    already carries ``observe`` and stays importable without the extra (every
+    alembic/sqlalchemy import in it is function-local).
+
+    Args:
+        exc: the exception as caught — a SQLAlchemy ``DBAPIError`` wrapper, or
+            any exception at all.
+
+    Returns:
+        ``{"error": <class name>}``, plus ``error_code`` / ``error_message``
+        when a DBAPI ``(errno, message)`` pair could be read. Never raises: a
+        logging helper that can throw inside an ``except`` block would replace
+        the failure it was meant to describe.
+    """
+    described: dict[str, object] = {"error": type(exc).__name__}
+    orig = getattr(exc, "orig", None) or exc
+    described["error_class"] = type(orig).__name__
+    args = getattr(orig, "args", None)
+    if isinstance(args, tuple) and len(args) >= 2 and isinstance(args[0], int):
+        described["error_code"] = args[0]
+        described["error_message"] = str(args[1])
+    elif args:
+        described["error_message"] = str(args[0])
+    return described
+
+
+@observe(tier="stage")
 def build_alembic_config(script_location: Path | str | None = None) -> Config:
     """Build the ``Config`` in code — no ini file (see the module docstring)."""
     from alembic.config import Config as _Config  # noqa: PLC0415 — `sql` extra
@@ -142,6 +193,37 @@ async def upgrade_to_head(engine: AsyncEngine) -> str:
 
 
 @observe(tier="boundary")
+async def upgrade_to_head_as_migrator(option_file: Path | str | None = None) -> str:
+    """Run the chain on a THROWAWAY engine built from the migration credentials.
+
+    THE PRIVILEGE SPLIT, IN ONE FUNCTION. The runtime engine authenticates as
+    the DDL-less app account (D19), so it cannot create a table — a fact this
+    train exists because nothing enforced. Migrations get their own account and
+    their own engine, and the engine is disposed the moment the chain is done
+    so no pooled DDL-capable connection outlives the migration.
+
+    Args:
+        option_file: the migration account's option file;
+            ``default_migrate_option_file_path()`` when omitted.
+
+    Returns:
+        The head revision id the chain was brought to.
+    """
+    from yadgar._shared.storage.sql.config import (  # noqa: PLC0415 — `sql` extra
+        default_migrate_option_file_path,
+    )
+    from yadgar._shared.storage.sql.mariadb import MariaStorageEngine  # noqa: PLC0415
+
+    resolved = Path(option_file) if option_file is not None else default_migrate_option_file_path()
+    # pool_size=1: one connection, one chain, then gone.
+    migrator = MariaStorageEngine.from_option_file(resolved, pool_size=1, max_overflow=0)
+    try:
+        return await upgrade_to_head(migrator.engine)
+    finally:
+        await migrator.dispose()
+
+
+@observe(tier="boundary")
 async def current_revision(engine: AsyncEngine) -> str | None:
     """The revision the database is stamped at, or None when never migrated.
 
@@ -158,3 +240,45 @@ async def current_revision(engine: AsyncEngine) -> str | None:
     async with engine.connect() as conn:
         result: Any = await conn.run_sync(_read)
     return None if result is None else str(result)
+
+
+@observe(tier="boundary")
+def main(argv: list[str] | None = None) -> int:
+    """``python3 -m yadgar._shared.storage.sql.migrate`` — the entrypoint's step.
+
+    WHY THE ENTRYPOINT RUNS THIS AND NOT ONLY THE LIFESPAN. MariaDB rejects a
+    table-level ``GRANT`` on a table that does not exist (``1146``), and
+    ``entrypoint-backend.sh`` applies the app account's per-table grants from a
+    heredoc with no ``--force``, so the first such statement aborts every one
+    after it. The tables must therefore exist BETWEEN account creation and
+    grant narrowing — an ordering only the process that owns both steps can
+    honour. See ``_migrate_engine_two_schema`` in the entrypoint.
+
+    Reads no argument but the optional option-file path; credentials come from
+    the 0600 file, never from a flag (a password in ``argv`` lands in
+    ``/proc/<pid>/cmdline``).
+
+    Returns:
+        0 on success; 1 on failure, with the driver's errno and message on
+        stderr so the container log names the actual cause.
+    """
+    import asyncio  # noqa: PLC0415
+    import json  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    args = sys.argv[1:] if argv is None else argv
+    option_file = args[0] if args else None
+    try:
+        head = asyncio.run(upgrade_to_head_as_migrator(option_file))
+    except Exception as exc:  # noqa: BLE001 — a CLI boundary reports, never propagates
+        print(
+            "engine #2 migration FAILED: " + json.dumps(describe_dbapi_error(exc), default=str),
+            file=sys.stderr,
+        )
+        return 1
+    print(f"engine #2 migrated to alembic head {head}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover — exercised as a subprocess
+    raise SystemExit(main())

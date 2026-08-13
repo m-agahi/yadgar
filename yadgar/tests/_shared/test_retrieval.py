@@ -323,13 +323,13 @@ class TestUnifiedRecall:
     def test_recall_returns_results(self, storage, embeddings, graph, retriever):
         _setup_graph_with_memories(storage, embeddings, graph)
 
-        results = retriever.recall("FastAPI server", max_results=5)
+        results = retriever.recall("FastAPI server", max_results=5, unscoped=True)
         assert len(results) > 0
 
     def test_recall_results_have_score(self, storage, embeddings, graph, retriever):
         _setup_graph_with_memories(storage, embeddings, graph)
 
-        results = retriever.recall("FastAPI", max_results=5)
+        results = retriever.recall("FastAPI", max_results=5, unscoped=True)
         for mem in results:
             assert "_retrieval_score" in mem
             assert mem["_retrieval_score"] >= 0
@@ -337,7 +337,7 @@ class TestUnifiedRecall:
     def test_recall_respects_max_results(self, storage, embeddings, graph, retriever):
         _setup_graph_with_memories(storage, embeddings, graph)
 
-        results = retriever.recall("FastAPI pydantic SQLite", max_results=2)
+        results = retriever.recall("FastAPI pydantic SQLite", max_results=2, unscoped=True)
         assert len(results) <= 2
 
     def test_recall_respects_min_heat(self, storage, embeddings, graph, retriever):
@@ -346,7 +346,7 @@ class TestUnifiedRecall:
         # Set one memory to low heat
         storage.update_memory_heat(1, 0.01)
 
-        results = retriever.recall("FastAPI", max_results=10, min_heat=0.5)
+        results = retriever.recall("FastAPI", max_results=10, min_heat=0.5, unscoped=True)
         for mem in results:
             assert mem["heat"] >= 0.5
 
@@ -354,7 +354,7 @@ class TestUnifiedRecall:
         """Verify that all four retrieval signals contribute to results."""
         _setup_graph_with_memories(storage, embeddings, graph)
 
-        results = retriever.recall("FastAPI pydantic", max_results=5)
+        results = retriever.recall("FastAPI pydantic", max_results=5, unscoped=True)
         # Should have results from the combination of signals
         assert len(results) > 0
         # All results should have retrieval scores
@@ -367,14 +367,14 @@ class TestUnifiedRecall:
     def test_recall_deduplicates(self, storage, embeddings, graph, retriever):
         _setup_graph_with_memories(storage, embeddings, graph)
 
-        results = retriever.recall("FastAPI server", max_results=10)
+        results = retriever.recall("FastAPI server", max_results=10, unscoped=True)
         ids = [m["id"] for m in results]
         assert len(ids) == len(set(ids))  # no duplicates
 
     def test_recall_strips_embeddings(self, storage, embeddings, graph, retriever):
         _setup_graph_with_memories(storage, embeddings, graph)
 
-        results = retriever.recall("FastAPI", max_results=5)
+        results = retriever.recall("FastAPI", max_results=5, unscoped=True)
         for mem in results:
             assert "embedding" not in mem
 
@@ -404,7 +404,7 @@ class TestRecallRanking:
             tags=["search"],
         )
 
-        results = retriever.recall("PageRank graph retrieval", max_results=3)
+        results = retriever.recall("PageRank graph retrieval", max_results=3, unscoped=True)
         assert len(results) >= 1
         # Top result should mention PageRank
         assert "PageRank" in results[0]["content"] or "graph" in results[0]["content"]
@@ -436,11 +436,11 @@ class TestRecallPerformance:
             )
 
         # Warm up
-        retriever.recall("Python Flask", max_results=5)
+        retriever.recall("Python Flask", max_results=5, unscoped=True)
 
         # Timed run
         start = time.monotonic()
-        results = retriever.recall("Python web development", max_results=5)
+        results = retriever.recall("Python web development", max_results=5, unscoped=True)
         elapsed_ms = (time.monotonic() - start) * 1000
 
         assert len(results) > 0
@@ -577,7 +577,7 @@ class TestCandidatePoolMultiplier:
 
         storage.search_memories_fts_scored = patched_fts
 
-        retriever.recall("retrieval", max_results=3)
+        retriever.recall("retrieval", max_results=3, unscoped=True)
         # candidate_k should be max_results * CANDIDATE_POOL_MULTIPLIER = 3 * 7 = 21
         assert captured.get("limit") == 3 * 7
 
@@ -690,7 +690,7 @@ class TestPseudoHydeExpand:
         retriever = Retriever(storage, embeddings, graph, settings_on)
         _make_memory(storage, embeddings, "Alice's hobby is painting landscapes")
 
-        results = retriever.recall("What is Alice's hobby?", max_results=5)
+        results = retriever.recall("What is Alice's hobby?", max_results=5, unscoped=True)
         assert isinstance(results, list)
 
     def test_recall_expansion_disabled(self, storage, embeddings, graph, tmp_path):
@@ -705,5 +705,5 @@ class TestPseudoHydeExpand:
         retriever = Retriever(storage, embeddings, graph, settings_off)
         _make_memory(storage, embeddings, "Alice's hobby is painting landscapes")
 
-        results = retriever.recall("What is Alice's hobby?", max_results=5)
+        results = retriever.recall("What is Alice's hobby?", max_results=5, unscoped=True)
         assert isinstance(results, list)

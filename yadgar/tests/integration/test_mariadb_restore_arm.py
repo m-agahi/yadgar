@@ -51,6 +51,14 @@ import pytest
 
 from yadgar.backend.admin_exec import backup_sql, restore_sql
 from yadgar.backend.admin_exec.restore_sql import RestoreVerificationError
+from yadgar.tests.integration._podman import (
+    container_is_running,
+    container_logs,
+    make_socket_dir,
+    podman_env,
+    remove_container_dir,
+    select_container_runtime,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -97,7 +105,7 @@ def _as_root(runtime: str, name: str, sql: str) -> subprocess.CompletedProcess[s
             runtime, "exec", name, "mariadb", "--socket=/sockets/mysqld.sock",
             "-uroot", f"-p{_ROOT_PASS}", "-e", sql,
         ],
-        capture_output=True, text=True, check=False, timeout=60,
+        capture_output=True, text=True, check=False, timeout=60, env=podman_env(),
     )  # fmt: skip
 
 
@@ -117,7 +125,7 @@ def _as_app(runtime: str, name: str, sql: str) -> subprocess.CompletedProcess[st
             runtime, "exec", name, "mariadb", "--socket=/sockets/mysqld.sock",
             f"-u{_APP_USER}", f"-p{_APP_PASS}", _DB, "-e", sql,
         ],
-        capture_output=True, text=True, check=False, timeout=60,
+        capture_output=True, text=True, check=False, timeout=60, env=podman_env(),
     )  # fmt: skip
 
 
@@ -144,25 +152,22 @@ def _host_sql(cnf: Path, sql: str) -> subprocess.CompletedProcess[str]:
 
 
 def _await_ready(runtime: str, name: str) -> None:
+    """A container that has DIED cannot start answering — end the wait there,
+    with its logs, rather than spending the remaining timeout on it."""
     deadline = time.monotonic() + _BOOT_TIMEOUT_SEC
     last = ""
     while time.monotonic() < deadline:
         probe = _as_app(runtime, name, "SELECT 1")
         if probe.returncode == 0:
             return
+        if not container_is_running(runtime, name):
+            pytest.fail(
+                f"the MariaDB container {name} exited during boot; "
+                f"last logs:\n{container_logs(runtime, name)}"
+            )
         last = (probe.stderr or probe.stdout).strip()
         time.sleep(2.0)
     pytest.fail(f"MariaDB never became ready within {_BOOT_TIMEOUT_SEC}s: {last}")
-
-
-def _remove_socket_dir(runtime: str, sock_dir: Path) -> None:
-    """Delete the mount dir, including what the container's uid took ownership of."""
-    shutil.rmtree(sock_dir, ignore_errors=True)
-    if sock_dir.exists() and Path(runtime).name == "podman":
-        subprocess.run(
-            [runtime, "unshare", "rm", "-rf", str(sock_dir)],
-            capture_output=True, check=False, timeout=60,
-        )  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -170,20 +175,23 @@ def live_mariadb():
     """Scratch MariaDB with a ZERO-row table and a table that HAS rows; torn down after.
 
     NOT ``tmp_path``: a unix socket path caps at ~107 bytes and pytest's tmp
-    dirs are long enough to blow it.
+    dirs are long enough to blow it. Not ``/tmp`` either — the mount source is
+    resolved by the container DAEMON, which is a separate filesystem under a
+    dind-backed runner (``_podman.shared_mount_root``).
     """
-    runtime = shutil.which("podman") or shutil.which("docker")
+    runtime = select_container_runtime()
     if runtime is None:
-        pytest.skip("docker/podman not available on this host")
+        pytest.skip(
+            "no working container runtime on this host "
+            "(podman/docker absent, or present but non-functional)"
+        )
     if shutil.which("mariadb-dump") is None:
         pytest.skip("mariadb-dump not available on this host")
     if shutil.which("mariadb") is None:
         pytest.skip("mariadb client not available on this host")
 
     name = f"yadgar-carg-mdb-{uuid.uuid4().hex[:8]}"
-    sock_dir = Path(f"/tmp/ymdbg-{uuid.uuid4().hex[:8]}")
-    sock_dir.mkdir(mode=0o777, parents=True)
-    sock_dir.chmod(0o777)  # mkdir mode is umask-masked
+    sock_dir = make_socket_dir(runtime, image=_IMAGE, prefix="ymdbg")
     socket_path = sock_dir / "mysqld.sock"
 
     started = subprocess.run(
@@ -198,7 +206,7 @@ def live_mariadb():
             _IMAGE,
             "--socket=/sockets/mysqld.sock",
         ],
-        capture_output=True, text=True, check=False, timeout=300,
+        capture_output=True, text=True, check=False, timeout=300, env=podman_env(),
     )  # fmt: skip
     if started.returncode != 0:
         shutil.rmtree(sock_dir, ignore_errors=True)
@@ -226,9 +234,10 @@ def live_mariadb():
         # -v: the image declares /var/lib/mysql a VOLUME, so every run creates an
         # anonymous one. Without this each run leaks a datadir-sized volume.
         subprocess.run(
-            [runtime, "rm", "-f", "-v", name], capture_output=True, check=False, timeout=120
-        )
-        _remove_socket_dir(runtime, sock_dir)
+            [runtime, "rm", "-f", "-v", name],
+            capture_output=True, check=False, timeout=120, env=podman_env(),
+        )  # fmt: skip
+        remove_container_dir(runtime, sock_dir, image=_IMAGE)
 
 
 @pytest.fixture

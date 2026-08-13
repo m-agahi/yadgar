@@ -262,6 +262,32 @@ async def _migrate_engine_two() -> str | None:
     MariaDB composes no engine #2 (``_init_sql_storage`` degrades to None), and
     boot there is correct; only a migration that ran and raised is fatal.
 
+    WHICH ACCOUNT IT CONNECTS AS. Not the runtime one. ``sql_storage.engine``
+    authenticates as the app account, whose grant is per-table
+    SELECT/INSERT/UPDATE/DELETE/REFERENCES with no CREATE/ALTER/INDEX/DROP
+    (D19), so driving the chain through it dies on 002's first
+    ``op.create_table`` with ``(1142, "CREATE command denied to user
+    'yadgar_app'@'localhost' for table `yadgar`.`task`")``. When the
+    entrypoint's migration option file is present the chain runs on a
+    throwaway engine built from THOSE credentials and disposed immediately, so
+    no DDL-capable connection outlives it. The runtime engine is never widened.
+
+    THE FOUR BOOT CASES, all of them intended:
+
+    ===================  ============  =======  =====================================
+    engine #2            migrate.cnf   at head  outcome
+    ===================  ============  =======  =====================================
+    absent               —             —        skip, INFO (absent is not failed)
+    present              present       —        migrate as the migration account
+    present              absent        yes      no-op — alembic only READS
+                                                ``alembic_version``, which the app
+                                                account may do
+    present              absent        no       FATAL — there is no credential here
+                                                that can create a table, and
+                                                pretending otherwise is how a
+                                                schema-less database gets served
+    ===================  ============  =======  =====================================
+
     Returns:
         The head revision id, or None when engine #2 is absent.
 
@@ -276,11 +302,44 @@ async def _migrate_engine_two() -> str | None:
         return None
 
     try:
-        from yadgar._shared.storage.sql.migrate import upgrade_to_head  # noqa: PLC0415
+        from yadgar._shared.storage.sql.config import (  # noqa: PLC0415
+            default_migrate_option_file_path,
+        )
+        from yadgar._shared.storage.sql.migrate import (  # noqa: PLC0415
+            describe_dbapi_error,
+            upgrade_to_head,
+            upgrade_to_head_as_migrator,
+        )
 
-        head = await upgrade_to_head(sql_storage.engine)
-    except Exception:
-        logger.exception("engine #2 migration FAILED — the relational schema is not at head")
+        migrate_cnf = default_migrate_option_file_path()
+        if migrate_cnf.is_file():
+            head = await upgrade_to_head_as_migrator(migrate_cnf)
+        else:
+            # No migration credentials on this host. Alembic still runs, but
+            # the only thing the app account can do is read the stamp — which
+            # is exactly right when the schema is already at head, and fails
+            # loudly (1142) when it is not.
+            logger.info(
+                "engine #2 migration credentials absent at %s — "
+                "checking the stamp with the runtime account",
+                migrate_cnf,
+            )
+            head = await upgrade_to_head(sql_storage.engine)
+    except Exception as exc:
+        # ``describe_dbapi_error`` puts the driver's errno + message into the
+        # record's own fields. The traceback alone did not: it is truncated at
+        # TRACEBACK_MAX_CHARS from the FRONT, and the DBAPI message is the last
+        # line — so the one string identifying the failure was the one string
+        # cut off, and every failure read as a bare "OperationalError".
+        logger.exception(
+            "engine #2 migration FAILED — the relational schema is not at head",
+            extra={
+                "component": "engine_two",
+                "action": "alembic_upgrade",
+                "outcome": "error",
+                **describe_dbapi_error(exc),
+            },
+        )
         raise
 
     logger.info("engine #2 migrated to alembic head %s", head)

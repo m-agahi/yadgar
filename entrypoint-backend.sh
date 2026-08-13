@@ -98,8 +98,19 @@ MARIADB_DB="${MARIADB_DB:-yadgar}"
 #     but NOT the unix_socket auth plugin (asyncmy/auth.py).
 #   * APP — password auth, privileges scoped to the engine-#2 database alone.
 #     This is what car C connects with.
+#   * MIGRATE — password auth, DDL on the engine-#2 database and NOTHING else.
+#     The Alembic chain runs as this account, never as APP (which must keep no
+#     CREATE/ALTER/INDEX/DROP — D19) and never as ADMIN (which asyncmy cannot
+#     authenticate as: the socket account uses the unix_socket auth plugin, and
+#     asyncmy implements only mysql_native_password / caching_sha2_password /
+#     sha256_password / client_ed25519 — see `_get_auth_plugin_handler` in
+#     asyncmy/connection.pyx:1141-1290. A third, DATABASE-SCOPED account is the
+#     narrowest credential that can actually run the chain; giving ADMIN a
+#     password instead would put a root-equivalent secret on disk.
 MARIADB_ADMIN_USER="$(id -un 2>/dev/null || echo yadgar)"
 MARIADB_APP_USER="${MARIADB_APP_USER:-yadgar_app}"
+MARIADB_MIGRATE_USER="${MARIADB_MIGRATE_USER:-yadgar_migrate}"
+MARIADB_MIGRATE_CNF="${MARIADB_DATA_DIR}/migrate.cnf"
 
 # EXPORTED, and the "no env plumbing at all" note above is why this is easy to
 # get wrong (engine-#2 car F). The Python side does need to FIND the option file
@@ -114,6 +125,7 @@ MARIADB_APP_USER="${MARIADB_APP_USER:-yadgar_app}"
 # F (dump) all resolve through that one ladder, so exporting it is what makes
 # engine #2 addressable from Python at all.
 export SURREAL_DATA_ROOT MARIADB_DATA_DIR MARIADB_CLIENT_CNF MARIADB_DB
+export MARIADB_MIGRATE_CNF
 
 # --- safe-stop begin (P0 #37 Option B: writers-first ordered stop) ---------
 # SurrealKV never flushes the store on close upstream: surrealkv's
@@ -416,22 +428,79 @@ _mariadb_ready() {
         --user="${MARIADB_ADMIN_USER}" ping >/dev/null 2>&1
 }
 
+_mariadb_read_password() {
+    # $1 = option file. Echo the [client] password, or nothing when absent.
+    [ -r "$1" ] || return 0
+    awk -F'[ \t]*=[ \t]*' '/^password/ {print $2; exit}' "$1"
+}
+
+_write_mariadb_option_file() {
+    # $1 = path, $2 = user, $3 = password. 0600, written by umask not chmod so
+    # the secret is never briefly world-readable.
+    ( umask 077 && cat > "$1" <<CNFEOF
+[client]
+socket = ${MARIADB_SOCKET}
+user = $2
+password = $3
+database = ${MARIADB_DB}
+CNFEOF
+    )
+}
+
+_migrate_engine_two_schema() {
+    # PHASE B — the Alembic chain, as the MIGRATE account.
+    #
+    # This step exists HERE, in the entrypoint, rather than only in the backend
+    # lifespan, because of an ordering constraint the shell owns and Python
+    # cannot: MariaDB REJECTS a table-level GRANT naming a table that does not
+    # exist (`ERROR 1146 (42S02)`), and `mariadb` runs the heredoc without
+    # `--force`, so ONE such statement aborts every statement after it. The
+    # app account's per-table grants (phase C) can therefore only be applied
+    # once the tables exist — which means the schema must be created between
+    # account creation and grant narrowing, in the same process that owns both.
+    #
+    # This is the bug that froze engine #2: on a fresh install the very first
+    # grant (`alembic_version`) failed 1146 and the app account was left with
+    # USAGE only; on a long-lived host `alembic_version` and `config` existed
+    # from a pre-D19 bootstrap, so the abort landed one line later at `task`
+    # and every ledger table stayed ungranted and uncreated.
+    #
+    # `python3 -m` rather than an inline `-c`: Dockerfile.backend installs
+    # `/app[ml,sql]`, so alembic/sqlalchemy/asyncmy are present, and the module
+    # entry point is the same code path `_migrate_engine_two` uses at boot.
+    #
+    # The option file is passed as an ARGUMENT, not through the environment.
+    # It is the migration account's file and nothing else must be able to
+    # decide that: an env var would leave the choice to
+    # `default_migrate_option_file_path()`'s ladder, so dropping the
+    # `MARIADB_MIGRATE_CNF` export — or exporting the app's path into the
+    # wrong variable — would silently point the DDL run at some other
+    # credential. The path is not a secret (the password lives inside the 0600
+    # file, never on a command line).
+    python3 -m yadgar._shared.storage.sql.migrate "${MARIADB_MIGRATE_CNF}"
+}
+
 _bootstrap_mariadb_accounts() {
     # Idempotent, runs on EVERY start — same shape as the surreal
-    # `DEFINE USER IF NOT EXISTS` block above. Creates the engine-#2 DATABASE
-    # (empty: no tables, no rows — car D owns the schema, and the knob train
-    # owns the first row) and the password-auth app account car C connects with.
+    # `DEFINE USER IF NOT EXISTS` block above. THREE phases, and the order is
+    # load-bearing (see `_migrate_engine_two_schema` for why):
+    #
+    #   A  database + both accounts        (no table-level grant — none can work yet)
+    #   B  alembic upgrade head            (as MIGRATE; creates every table)
+    #   C  the app account's narrow grants (as ADMIN; the tables now exist)
     #
     # An existing password is REUSED from the option file so a restart does not
     # rotate credentials underneath a running client; ALTER USER then forces the
     # server to agree with the file, so a hand-edited or half-written file
     # self-heals rather than locking the app out.
-    local _pass=""
-    if [ -r "${MARIADB_CLIENT_CNF}" ]; then
-        _pass="$(awk -F'[ \t]*=[ \t]*' '/^password/ {print $2; exit}' "${MARIADB_CLIENT_CNF}")"
-    fi
+    local _pass _mig_pass
+    _pass="$(_mariadb_read_password "${MARIADB_CLIENT_CNF}")"
     if [ -z "${_pass}" ]; then
         _pass="$(python3 -c 'import secrets; print(secrets.token_hex(24))')" || return 1
+    fi
+    _mig_pass="$(_mariadb_read_password "${MARIADB_MIGRATE_CNF}")"
+    if [ -z "${_mig_pass}" ]; then
+        _mig_pass="$(python3 -c 'import secrets; print(secrets.token_hex(24))')" || return 1
     fi
     # The FIRST grant is the engine-#2 ledger schema's GRANT (D19). Car A of
     # 0047 spine train narrows the app user's privilege from omnipotent
@@ -454,11 +523,40 @@ _bootstrap_mariadb_accounts() {
     # line — it must not land in /proc/<pid>/cmdline, same rule as the surreal
     # bootstrap above. Escape any literal single-quote by doubling it.
     local _pass_esc="${_pass//\'/\'\'}"
+    local _mig_pass_esc="${_mig_pass//\'/\'\'}"
+    # ── phase A: database + accounts ────────────────────────────────────────
+    # NO table-level grant here. Every statement in this heredoc is legal
+    # against an EMPTY database; a per-table GRANT is not, and one 1146 would
+    # abort the accounts themselves.
+    #
+    # The MIGRATE account's grant is DATABASE-scoped because that is the only
+    # scope at which DDL can be granted before the tables exist — but it is an
+    # explicit privilege LIST rather than `ALL PRIVILEGES`, so the intent
+    # ("run migrations, nothing else") is legible and it holds no GRANT OPTION,
+    # no `CREATE USER`, no `FILE`, and nothing outside `${MARIADB_DB}`.
     mariadb --socket="${MARIADB_SOCKET}" --protocol=socket \
-        --user="${MARIADB_ADMIN_USER}" <<SQLEOF || return 1
+        --user="${MARIADB_ADMIN_USER}" <<MDBACCOUNTSEOF || return 1
 CREATE DATABASE IF NOT EXISTS \`${MARIADB_DB}\`;
 CREATE USER IF NOT EXISTS '${MARIADB_APP_USER}'@'localhost' IDENTIFIED BY '${_pass_esc}';
 ALTER USER '${MARIADB_APP_USER}'@'localhost' IDENTIFIED BY '${_pass_esc}';
+CREATE USER IF NOT EXISTS '${MARIADB_MIGRATE_USER}'@'localhost' IDENTIFIED BY '${_mig_pass_esc}';
+ALTER USER '${MARIADB_MIGRATE_USER}'@'localhost' IDENTIFIED BY '${_mig_pass_esc}';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${MARIADB_MIGRATE_USER}'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES ON \`${MARIADB_DB}\`.* TO '${MARIADB_MIGRATE_USER}'@'localhost';
+MDBACCOUNTSEOF
+    _write_mariadb_option_file "${MARIADB_CLIENT_CNF}" "${MARIADB_APP_USER}" "${_pass}" || return 1
+    _write_mariadb_option_file "${MARIADB_MIGRATE_CNF}" "${MARIADB_MIGRATE_USER}" "${_mig_pass}" || return 1
+
+    # ── phase B: the schema ─────────────────────────────────────────────────
+    _migrate_engine_two_schema || return 1
+
+    # ── phase C: narrow the app account ─────────────────────────────────────
+    # Runs ONLY after phase B, and only when phase B succeeded — a partial
+    # chain plus this REVOKE would leave the app account with strictly less
+    # than it has today (the REVOKE lands, the grants abort at the first
+    # missing table), which is worse than not touching it at all.
+    mariadb --socket="${MARIADB_SOCKET}" --protocol=socket \
+        --user="${MARIADB_ADMIN_USER}" <<MDBGRANTSEOF || return 1
 -- D19: least-privilege grant. The app account owns a per-table list
 -- (every ledger table + ``config`` + ``alembic_version``) rather than
 -- the broad `${MARIADB_DB}.*`. The REVOKE removes the legacy broad grant
@@ -479,20 +577,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.adr_supers
 GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.agent_pattern_composes TO '${MARIADB_APP_USER}'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.project TO '${MARIADB_APP_USER}'@'localhost';
 GRANT ALL PRIVILEGES ON \`${MARIADB_DB}\\_restorecheck\\_%\`.* TO '${MARIADB_APP_USER}'@'localhost';
-SQLEOF
-    # Client credentials as a MySQL option file: asyncmy reads user/password/
-    # socket/database straight out of it via read_default_file
-    # (asyncmy/connection.pyx:375-390), so car C needs no env var — no new
-    # secret reaches the compose env block, /etc/yadgar/secrets.env or any of
-    # task 0122's unit renderers.
-    ( umask 077 && cat > "${MARIADB_CLIENT_CNF}" <<CNFEOF
-[client]
-socket = ${MARIADB_SOCKET}
-user = ${MARIADB_APP_USER}
-password = ${_pass}
-database = ${MARIADB_DB}
-CNFEOF
-    ) || return 1
+MDBGRANTSEOF
     echo "entrypoint: MariaDB bootstrap complete (db=${MARIADB_DB}, app user=${MARIADB_APP_USER}, creds: ${MARIADB_CLIENT_CNF})" >&2
 }
 
@@ -516,8 +601,30 @@ if [ "${_mariadb_start_status}" -eq 0 ]; then
     done
     if [ -n "${MARIADB_PID}" ] && _mariadb_ready; then
         echo "entrypoint: MariaDB ready (socket ${MARIADB_SOCKET})" >&2
-        _bootstrap_mariadb_accounts || \
-            echo "WARNING: MariaDB account bootstrap failed — engine #2 present but unusable by the app" >&2
+        # FATAL, and only in this branch. ADR-0222's rule, one layer below the
+        # lifespan: ABSENT is not FAILED. mysqld missing or never ready leaves
+        # engine #2 absent and the container boots (the branches below/above
+        # keep their WARNING). mysqld RUNNING and its bootstrap failing is the
+        # other case entirely — engine #2 present and BROKEN — and it used to
+        # be a WARNING too. That is why a bootstrap that has aborted at its
+        # first GRANT on every start since 8 Aug went unnoticed: the container
+        # came up, the health check was green, systemd said active.
+        #
+        # It also closes the hole that would otherwise survive the lifespan
+        # gate: a phase-A failure leaves no usable option file, so
+        # `_init_sql_storage` degrades to None, and `_migrate_engine_two`
+        # correctly SKIPS (absent-is-not-failed) — the broken deployment would
+        # boot green through the very check meant to catch it.
+        #
+        # Surreal is ALREADY RUNNING by this point, so the exit goes through
+        # the same writers-first safe stop `cleanup` uses rather than dropping
+        # PID 1 on a live surrealkv store (P0 #37 — an unclean stop is how the
+        # store gets torn).
+        if ! _bootstrap_mariadb_accounts; then
+            echo "FATAL: MariaDB bootstrap failed — engine #2 is present but has no usable schema or account; refusing to start (see ${YADGAR_LOG_DIR}/mariadb-error.log)" >&2
+            _stop_surreal_and_wait || true
+            exit 3
+        fi
     fi
 else
     echo "WARNING: MariaDB start/bootstrap failed — continuing without engine #2" >&2
