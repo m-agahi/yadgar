@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.181.49"
+version = "5.181.51"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -314,6 +314,25 @@ filterwarnings = [
     # Same uvicorn import chain: websockets.server.WebSocketServerProtocol is a
     # deprecated alias. REVISIT: same trigger as above (next uvicorn bump).
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+    # A huggingface_hub-opened ssl.SSLSocket gets garbage-collected mid-suite;
+    # CPython 3.14's socket finalizer reports the failure via sys.unraisablehook
+    # with err_msg="Exception ignored while finalizing socket <repr>", which
+    # pytest's unraisableexception plugin re-raises as
+    # PytestUnraisableExceptionWarning and — because it fires during GC, not
+    # inside the test body — lands on whichever test happens to be running
+    # when the collector runs (docs/issues/0001-pr40-carryover.md §2.2).
+    # Reproduced at train-head; intermittent (absent in at least one full CI
+    # run). Message format verified empirically against this repo's actual
+    # pytest 9.1.1 / Python 3.14 runtime (not guessed): the raised warning's
+    # message is `f"{err_msg}: {unraisable.object!r}"` where err_msg embeds
+    # the socket repr and unraisable.object is None, so the visible text is
+    # "Exception ignored while finalizing socket <ssl.SSLSocket ...>: None"
+    # (_pytest/unraisableexception.py:unraisable_hook). SCOPED to that exact
+    # prefix, not the whole PytestUnraisableExceptionWarning category: a real
+    # unraisable in OUR OWN code (checked empirically — a bare __del__
+    # RuntimeError, and a plain non-SSL socket.socket leak, whose repr has no
+    # "ssl.SSLSocket" substring) does not match this pattern and still errors.
+    "ignore:Exception ignored while finalizing socket <ssl\\.SSLSocket.*:pytest.PytestUnraisableExceptionWarning",
 ]
 
 [dependency-groups]
