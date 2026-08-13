@@ -80,7 +80,15 @@ def _forward_admin(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
             "R3 Car 3a: CRUD writes are forward-only — core touches zero DB directly."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 5 item 4 (follow-on): route through the ONE sanctioned bearer-token
+    # resolver (env var, else secrets.env) rather than a bare os.environ.get —
+    # that pattern is exactly the "fourth hand-rolled copy" its own docstring
+    # forbids, and on a bare host CLI nothing exports the env var, so a bare
+    # lookup here silently sent every forwarded admin/viz/read_query/restore
+    # op unauthenticated (401 from the backend's fail-secure gate).
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     timeout_s = max(timeout_s, _SLOW_OP_TIMEOUTS_S.get(op, 0.0))
@@ -118,7 +126,15 @@ def _forward_viz(op: str, payload: dict, timeout_s: float = 60.0) -> dict:
             "T2 Car E3: graph data assembly is forward-only — core assembles zero graph data."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 5 item 4 (follow-on): route through the ONE sanctioned bearer-token
+    # resolver (env var, else secrets.env) rather than a bare os.environ.get —
+    # that pattern is exactly the "fourth hand-rolled copy" its own docstring
+    # forbids, and on a bare host CLI nothing exports the env var, so a bare
+    # lookup here silently sent every forwarded admin/viz/read_query/restore
+    # op unauthenticated (401 from the backend's fail-secure gate).
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     resp = httpx.post(
@@ -166,7 +182,15 @@ def _forward_read_query(query: str, params: dict | None = None, timeout_ms: int 
             "core touches zero DB directly."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 5 item 4 (follow-on): route through the ONE sanctioned bearer-token
+    # resolver (env var, else secrets.env) rather than a bare os.environ.get —
+    # that pattern is exactly the "fourth hand-rolled copy" its own docstring
+    # forbids, and on a bare host CLI nothing exports the env var, so a bare
+    # lookup here silently sent every forwarded admin/viz/read_query/restore
+    # op unauthenticated (401 from the backend's fail-secure gate).
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     # httpx timeout = DB timeout + a forward margin so the backend's own timeout
@@ -225,7 +249,15 @@ def _forward_restore(
             "T2 Car B: restore is forward-only — the compute runs backend-side."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 5 item 4 (follow-on): route through the ONE sanctioned bearer-token
+    # resolver (env var, else secrets.env) rather than a bare os.environ.get —
+    # that pattern is exactly the "fourth hand-rolled copy" its own docstring
+    # forbids, and on a bare host CLI nothing exports the env var, so a bare
+    # lookup here silently sent every forwarded admin/viz/read_query/restore
+    # op unauthenticated (401 from the backend's fail-secure gate).
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     resp = httpx.post(

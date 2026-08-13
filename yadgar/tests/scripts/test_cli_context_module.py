@@ -114,9 +114,28 @@ class TestCmdContext:
             patch("yadgar._shared.config.Settings"),
         ):
             cmd_context(_make_args())
-        # No output, no exception
+        # No output on stdout — stdout stays the clean machine-readable
+        # payload the hook parses. No exception either.
         out = capsys.readouterr().out
         assert out.strip() == ""
+
+    def test_exception_notes_reason_on_stderr(self, capsys):
+        """Car 5 item 2 (second sub-defect): before this, a DB-access
+        failure (e.g. the host CLI unable to reach the database — the same
+        root cause as item 3's `yadgar stats` failure) made `context`
+        return silently with ZERO explanation anywhere, which is what "yadgar
+        context <dir> returns NO context" meant in practice — an operator
+        had nothing to go on. stdout must stay clean (still asserted above),
+        but stderr should carry a one-line reason so the failure isn't
+        completely invisible."""
+        mock_storage = _make_storage_mock(raise_on_q=True)
+        with (
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
+        ):
+            cmd_context(_make_args())
+        err = capsys.readouterr().err
+        assert "db error" in err  # the underlying exception message surfaces
 
     def test_storage_closed_after_query(self, capsys):
         mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=[])

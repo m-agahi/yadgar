@@ -36,6 +36,26 @@ MCP Resources: memory://stats, memory://hot, memory://stale,
 """
 
 
+def _default_host_embed_url() -> None:
+    """Default YADGAR_EMBED_URL for the host CLI subcommand path (Car 5 item 4).
+
+    It has no default anywhere on the host — it is only ever set INSIDE a
+    container (e.g. `http://yadgar-backend:8001`, wired by daemon.py/systemd
+    units). Every subcommand that forwards an admin/read op to the backend
+    (`yadgar.core.forward`, consolidation orchestrator, drain/restore) reads
+    this var and fails loud when it is unset — correct for a container that
+    genuinely has no backend, but on a bare host invocation nothing ever
+    sets it, so `yadgar seed <dir>` etc. always died with "YADGAR_EMBED_URL
+    is not set". Default it to the published host port (docker-compose maps
+    the backend's embed/admin service to 127.0.0.1:8001) — `setdefault` so
+    an explicit value (container hostname, operator override) is never
+    clobbered, and no container hostname is hardcoded on this host-only path.
+    """
+    import os as _os
+
+    _os.environ.setdefault("YADGAR_EMBED_URL", "http://127.0.0.1:8001")
+
+
 def cli():
     parser = argparse.ArgumentParser(description="Yadgar memory engine MCP server")
     subparsers = parser.add_subparsers(dest="command")
@@ -166,6 +186,8 @@ def cli():
 
         main(port=args.port, db_path=args.db_path, transport=args.transport)
     else:
+        _default_host_embed_url()
+
         try:
             args.func(args)
         finally:

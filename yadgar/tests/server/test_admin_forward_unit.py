@@ -68,6 +68,48 @@ def test_forward_admin_no_url_raises():
 
 
 # ---------------------------------------------------------------------------
+# Car 5 item 4 (follow-on): forward.py's bearer resolution must go through
+# the single sanctioned resolver, not a bare os.environ.get.
+#
+# `yadgar/core/install/auth_token.py::resolve_auth_token` exists specifically
+# because three hand-rolled copies of "read YADGAR_MCP_AUTH_TOKEN" already
+# caused a real outage-class bug (its own docstring: "A FOURTH copy is not
+# acceptable — extend this module instead."). forward.py's four functions
+# were exactly that fourth copy: `os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")`
+# with no secrets.env fallback. On a bare host CLI (Car 5's fresh-install VM)
+# nothing exports that env var — `yadgar seed <dir>` would clear the
+# YADGAR_EMBED_URL hurdle (item 4's __main__.py fix) only to land on a silent
+# 401 from the backend's `_require_admin_token` gate, since no Authorization
+# header was ever sent.
+# ---------------------------------------------------------------------------
+
+
+def test_forward_admin_resolves_token_via_resolver_when_env_unset():
+    """_forward_admin must fall back to resolve_auth_token()'s secrets.env
+    path (not send an unauthenticated request) when the env var is unset."""
+    from yadgar.core.forward import _forward_admin
+
+    captured: dict = {}
+
+    def _fake_post(url, *, json=None, headers=None, timeout=None):
+        captured["headers"] = headers
+        resp = MagicMock()
+        resp.json.return_value = {"result": {}}
+        resp.raise_for_status.return_value = None
+        return resp
+
+    with (
+        patch("httpx.post", _fake_post),
+        patch.dict("os.environ", {"YADGAR_EMBED_URL": "http://127.0.0.1:8001"}, clear=False),
+        patch.dict("os.environ", {"YADGAR_MCP_AUTH_TOKEN": ""}, clear=False),
+        patch("yadgar.core.install.auth_token.resolve_auth_token", return_value="from-secrets-env"),
+    ):
+        _forward_admin("bookmark_add", {"slug": "s"})
+
+    assert captured["headers"]["Authorization"] == "Bearer from-secrets-env"
+
+
+# ---------------------------------------------------------------------------
 # 3: run_admin_op dispatch
 # ---------------------------------------------------------------------------
 def test_run_admin_op_dispatches_known_op():

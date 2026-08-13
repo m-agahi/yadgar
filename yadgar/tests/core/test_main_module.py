@@ -29,11 +29,12 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _restore_yadgar_env():
-    """cli() mutates os.environ directly (YADGAR_PORT/HOST/DB_PATH/TRANSPORT) — it
-    does NOT go through monkeypatch, so those writes leak across xdist worker tests
-    (e.g. --port 9876 leaked into yadgar.hooks.subagent_stop's _PORT). Snapshot +
-    restore the cli()-touched env vars around every test in this module."""
-    _keys = ("YADGAR_PORT", "YADGAR_HOST", "YADGAR_DB_PATH", "YADGAR_TRANSPORT")
+    """cli() mutates os.environ directly (YADGAR_PORT/HOST/DB_PATH/TRANSPORT,
+    and — Car 5 item 4 — YADGAR_EMBED_URL) — it does NOT go through
+    monkeypatch, so those writes leak across xdist worker tests (e.g. --port
+    9876 leaked into yadgar.hooks.subagent_stop's _PORT). Snapshot + restore
+    the cli()-touched env vars around every test in this module."""
+    _keys = ("YADGAR_PORT", "YADGAR_HOST", "YADGAR_DB_PATH", "YADGAR_TRANSPORT", "YADGAR_EMBED_URL")
     _saved = {k: os.environ.get(k) for k in _keys}
     yield
     for k, v in _saved.items():
@@ -413,6 +414,59 @@ class TestCliSubcommandDispatch:
             main_mod.cli()
 
         mock_func.assert_called_once()
+
+    def test_subcommand_defaults_yadgar_embed_url_when_unset(self, monkeypatch):
+        """Car 5 item 4: on a bare host CLI, YADGAR_EMBED_URL is never set by
+        anything — it only exists inside containers (e.g.
+        `http://yadgar-backend:8001`, wired by daemon.py/systemd units).
+        Every host CLI subcommand that forwards an admin op (`seed`,
+        `drain`, `restore`, `stats`'s /read_query debug path, ...) needs it
+        — without a default, `yadgar seed <dir>` used to die with
+        "YADGAR_EMBED_URL is not set". cli() must default it to the
+        published host port (docker-compose maps the backend's embed/admin
+        service to 127.0.0.1:8001 — see docker-compose.yml) before running
+        any subcommand, WITHOUT hardcoding a container hostname."""
+        monkeypatch.delenv("YADGAR_EMBED_URL", raising=False)
+        monkeypatch.setattr(sys, "argv", ["yadgar", "stats"])
+
+        mock_func = MagicMock()
+
+        def _fake_register(subparsers):
+            p = subparsers.add_parser("stats")
+            p.set_defaults(func=mock_func)
+
+        with patch("yadgar.core.cli.stats.register", side_effect=_fake_register):
+            import importlib
+
+            import yadgar.__main__ as main_mod
+
+            importlib.reload(main_mod)
+            main_mod.cli()
+
+        assert os.environ.get("YADGAR_EMBED_URL") == "http://127.0.0.1:8001"
+
+    def test_subcommand_preserves_explicit_yadgar_embed_url(self, monkeypatch):
+        """An explicitly-configured YADGAR_EMBED_URL (e.g. the in-container
+        `http://yadgar-backend:8001` form, or an operator override) must NOT
+        be clobbered by the host-CLI fallback default."""
+        monkeypatch.setenv("YADGAR_EMBED_URL", "http://yadgar-backend:8001")
+        monkeypatch.setattr(sys, "argv", ["yadgar", "stats"])
+
+        mock_func = MagicMock()
+
+        def _fake_register(subparsers):
+            p = subparsers.add_parser("stats")
+            p.set_defaults(func=mock_func)
+
+        with patch("yadgar.core.cli.stats.register", side_effect=_fake_register):
+            import importlib
+
+            import yadgar.__main__ as main_mod
+
+            importlib.reload(main_mod)
+            main_mod.cli()
+
+        assert os.environ.get("YADGAR_EMBED_URL") == "http://yadgar-backend:8001"
 
 
 # ---------------------------------------------------------------------------

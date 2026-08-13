@@ -117,6 +117,45 @@ def test_cmd_stats_http_daemon_not_running_falls_through(monkeypatch):
     assert exc_info.value.code == 1
 
 
+def test_run_db_path_locked_datastore_gets_actionable_message(monkeypatch, capsys):
+    """Car 5 item 3: the observed fresh-install failure was
+
+        Failed to query database: Failed to create datastore: ... IO error:
+        kind=unexpected end of file, message=failed to fill whole buffer
+
+    — the host CLI opening the SurrealKV file directly while a running
+    container holds it. That raw datastore error must NOT reach the user;
+    _run_db_path must recognise this failure signature and print a clear,
+    actionable message instead (still exits 1 — this is still a failure,
+    just not an unexplained one)."""
+    from yadgar.core.cli.stats import cmd_stats
+
+    monkeypatch.setattr("urllib.request.urlopen", MagicMock(side_effect=OSError("refused")))
+
+    class _LockedSurreal:
+        def __init__(self, *a, **k):
+            raise RuntimeError(
+                "Failed to create datastore: Failed to load index: IO error: "
+                "kind=unexpected end of file, message=failed to fill whole buffer"
+            )
+
+    fake_module = MagicMock()
+    fake_module.Surreal = _LockedSurreal
+    with patch.dict(sys.modules, {"surrealdb": fake_module}):
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_stats(_make_args())
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "unexpected end of file" not in captured.err
+    assert "failed to fill whole buffer" not in captured.err
+    # Must name the actual problem (another process holding the DB) rather
+    # than surface the raw driver error verbatim.
+    assert (
+        "another process" in captured.err or "container" in captured.err or "daemon" in captured.err
+    )
+
+
 def test_cmd_stats_http_avg_heat_displayed(capsys):
     from yadgar.core.cli.stats import cmd_stats
 
