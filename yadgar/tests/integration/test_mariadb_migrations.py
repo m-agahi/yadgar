@@ -51,21 +51,26 @@ Neither can reach:
     is not evidence: it returned ``[]`` before this train and cannot tell the
     engines apart.
 
-The container fixture is car C's, duplicated rather than shared. Extracting it to
-a conftest would put a refactor of a landed car in this one's diff for no gain,
-and the ``xdist_group`` marker below is what keeps the two files off each other.
+The container fixture is car C's, duplicated rather than shared — the
+``xdist_group`` marker below is what keeps the two files off each other.
+
+That duplication used to extend to the podman helpers, on the grounds that
+extracting a landed car's helper bought no behaviour. Car G6 inverted the
+reasoning: the socket directory can no longer be ``/tmp``, because a
+dind-backed runner resolves a bind-mount source on the DAEMON's filesystem, not
+ours (see ``_podman.py``). Deriving that directory is behaviour, it is needed
+identically by all four files, and a third private copy would be the drift this
+file exists to oppose. The env/runtime helpers are therefore imported now, and
+only the fixture body remains local.
 """
 
 from __future__ import annotations
 
-import os
-import pwd
 import shutil
 import subprocess
 import sys
 import time
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -80,6 +85,14 @@ from yadgar._shared.storage.sql.migrate import (  # noqa: E402
     upgrade_to_head_as_migrator,
 )
 from yadgar.tests import _entrypoint_sql as eps  # noqa: E402
+from yadgar.tests.integration._podman import (  # noqa: E402
+    container_is_running,
+    container_logs,
+    make_socket_dir,
+    podman_env,
+    remove_container_dir,
+    select_container_runtime,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -130,61 +143,6 @@ _SUBSTITUTIONS = {
 }
 
 
-def _podman_env() -> dict[str, str]:
-    """Environment for every container command — with the REAL home restored.
-
-    ``yadgar/tests/conftest.py`` redirects ``HOME`` / ``XDG_DATA_HOME`` to a tmp
-    dir, at session scope and AGAIN per test (#64 hook-install isolation). A
-    rootless podman reads its container store from ``$XDG_DATA_HOME/containers``,
-    so a container created under one redirect is invisible to a command run
-    under the next: ``podman exec`` answers ``no such container`` for a
-    container that is demonstrably running, and — worse and silently — a
-    teardown ``podman rm -f`` removes nothing and leaks the container.
-
-    Restoring the real home from the PASSWORD DATABASE rather than from
-    ``os.environ`` is what makes this immune: by the time any test body runs,
-    the environment no longer holds the value we need.
-    """
-    env = dict(os.environ)
-    real_home = pwd.getpwuid(os.getuid()).pw_dir
-    env["HOME"] = real_home
-    env["XDG_DATA_HOME"] = f"{real_home}/.local/share"
-    env["XDG_CONFIG_HOME"] = f"{real_home}/.config"
-    env["XDG_STATE_HOME"] = f"{real_home}/.local/state"
-    return env
-
-
-def _select_container_runtime() -> str | None:
-    """Return the path to the first container runtime that actually WORKS.
-
-    ``shutil.which("podman") or shutil.which("docker")`` only proves a binary
-    is on PATH. Car G5 found the self-hosted GH runner (github-runners_runner_1)
-    carries a `podman` binary that fails EVERY invocation with ``Error: cannot
-    re-exec process`` (rootless podman cannot nest inside the runner's own
-    container — confirmed live: ``podman info`` and ``podman run`` both fail
-    instantly, no timeout), while `docker` — proxied through the
-    ``docker:dind`` sidecar — works fine. A presence-only check picks the
-    broken binary every time, so the container-start attempt below fails
-    instantly and every dependent test skips.
-
-    Duplicated from ``yadgar.tests.integration._podman.select_container_runtime``
-    rather than imported — this file keeps its own copy of the podman helpers
-    on purpose (see this file's module docstring / ``_podman_env`` above).
-    """
-    probe_env = _podman_env()
-    for name in ("podman", "docker"):
-        path = shutil.which(name)
-        if path is None:
-            continue
-        probe = subprocess.run(
-            [path, "info"],
-            capture_output=True, check=False, timeout=15, env=probe_env,
-        )  # fmt: skip
-        if probe.returncode == 0:
-            return path
-    return None
-
-
 def _cnf_body(socket: str, user: str, password: str) -> str:
     """Byte-shape of the option files entrypoint-backend.sh writes (car A)."""
     return (
@@ -213,12 +171,14 @@ def live_mariadb():
     about, not which auth plugin the admin uses).
 
     NOT ``tmp_path``: a unix socket path caps at ~107 bytes and pytest's tmp
-    dirs are long enough to blow it. Resource-capped and removed with its
-    anonymous volume — the image declares ``/var/lib/mysql`` a VOLUME, so
-    without ``-v`` every run leaks a datadir-sized one. Never touches the live
-    data root.
+    dirs are long enough to blow it. Not ``/tmp`` either — the mount source is
+    resolved by the container DAEMON, which is a separate filesystem under a
+    dind-backed runner (``_podman.shared_mount_root``). Resource-capped and
+    removed with its anonymous volume — the image declares ``/var/lib/mysql`` a
+    VOLUME, so without ``-v`` every run leaks a datadir-sized one. Never
+    touches the live data root.
     """
-    runtime = _select_container_runtime()
+    runtime = select_container_runtime()
     if runtime is None:
         pytest.skip(
             "no working container runtime on this host "
@@ -226,9 +186,7 @@ def live_mariadb():
         )
 
     name = f"yadgar-card-mdb-{uuid.uuid4().hex[:8]}"
-    sock_dir = Path(f"/tmp/ymdb-{uuid.uuid4().hex[:8]}")
-    sock_dir.mkdir(mode=0o777, parents=True)
-    sock_dir.chmod(0o777)  # mkdir mode is umask-masked
+    sock_dir = make_socket_dir(runtime, image=_IMAGE, prefix="ymdb")
     socket_path = sock_dir / "mysqld.sock"
 
     started = subprocess.run(
@@ -240,7 +198,7 @@ def live_mariadb():
             _IMAGE,
             f"--socket={_SOCKET_IN_CONTAINER}",
         ],
-        capture_output=True, text=True, check=False, timeout=300, env=_podman_env(),
+        capture_output=True, text=True, check=False, timeout=300, env=podman_env(),
     )  # fmt: skip
     if started.returncode != 0:
         shutil.rmtree(sock_dir, ignore_errors=True)
@@ -260,25 +218,9 @@ def live_mariadb():
     finally:
         subprocess.run(
             [runtime, "rm", "-f", "-v", name],
-            capture_output=True, check=False, timeout=120, env=_podman_env(),
+            capture_output=True, check=False, timeout=120, env=podman_env(),
         )  # fmt: skip
-        _remove_socket_dir(runtime, sock_dir)
-
-
-def _remove_socket_dir(runtime: str, sock_dir: Path) -> None:
-    """Delete the mount dir, including what the container's uid took ownership of.
-
-    The image's entrypoint chowns the socket mount to its own ``mysql`` user,
-    which under rootless podman is a SUBUID — the host user then cannot even
-    rmdir it despite owning the parent. ``podman unshare`` re-enters the user
-    namespace where that subuid maps to root.
-    """
-    shutil.rmtree(sock_dir, ignore_errors=True)
-    if sock_dir.exists() and Path(runtime).name == "podman":
-        subprocess.run(
-            [runtime, "unshare", "rm", "-rf", str(sock_dir)],
-            capture_output=True, check=False, timeout=120, env=_podman_env(),
-        )  # fmt: skip
+        remove_container_dir(runtime, sock_dir, image=_IMAGE)
 
 
 def admin_sql(server: dict, sql: str) -> subprocess.CompletedProcess:
@@ -293,19 +235,30 @@ def admin_sql(server: dict, sql: str) -> subprocess.CompletedProcess:
             "mariadb", f"--socket={_SOCKET_IN_CONTAINER}", "-uroot", f"-p{_ROOT_PASS}",
         ],
         input=sql, capture_output=True, text=True, check=False, timeout=120,
-        env=_podman_env(),
+        env=podman_env(),
     )  # fmt: skip
 
 
 def _await_ready(server: dict) -> None:
     """Block until the server answers — the socket appears before it is usable,
-    because the official image runs a bootstrap server first."""
+    because the official image runs a bootstrap server first.
+
+    A container that has DIED cannot start answering, so the wait ends there
+    rather than spending the remaining timeout on it, and reports the logs that
+    say why.
+    """
+    runtime, name = server["runtime"], server["name"]
     deadline = time.monotonic() + _BOOT_TIMEOUT_SEC
     last = ""
     while time.monotonic() < deadline:
         probe = admin_sql(server, "SELECT 1")
         if probe.returncode == 0:
             return
+        if not container_is_running(runtime, name):
+            raise AssertionError(
+                f"the MariaDB container {name} exited during boot; "
+                f"last logs:\n{container_logs(runtime, name)}"
+            )
         last = probe.stderr.strip()
         time.sleep(1.0)
     raise AssertionError(f"MariaDB not ready within {_BOOT_TIMEOUT_SEC}s: {last}")

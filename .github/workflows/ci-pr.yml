@@ -402,9 +402,41 @@ jobs:
         # test_mariadb_dump_arm.py / test_mariadb_restore_arm.py skip via
         # their own `shutil.which("mariadb-dump")` / `shutil.which("mariadb")`
         # guards even once a working container runtime is found (car G5).
+        #
+        # NOT THE DISTRO PACKAGE. This runner is Ubuntu 20.04 — its
+        # `mariadb-client` is MariaDB 10.3, which predates the
+        # `mysqldump` -> `mariadb-dump` rename (10.5). So apt SUCCEEDED while
+        # `mariadb-dump` stayed absent, and every one of the 15 skips left in
+        # run 31677402827 was that single cause. Production resolves the
+        # binary by that exact name (`backup_sql.py`: which("mariadb-dump")),
+        # so pointing a symlink at 10.3's `mysqldump` would satisfy the guard
+        # with the wrong binary under a false name — a green tick for an
+        # untested path. MariaDB's own repo publishes 11.4 for focal, the
+        # same series as the server image the fixtures start, so client and
+        # server match.
         run: |
+          set -euo pipefail
+          . /etc/os-release
+          codename="${VERSION_CODENAME:-}"
+          if [ -z "$codename" ]; then
+            echo "/etc/os-release carries no VERSION_CODENAME; cannot pick a MariaDB repo" >&2
+            exit 1
+          fi
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://mariadb.org/mariadb_release_signing_key.pgp \
+            | sudo tee /etc/apt/keyrings/mariadb.pgp > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/mariadb.pgp] https://mirror.mariadb.org/repo/11.4/${ID} ${codename} main" \
+            | sudo tee /etc/apt/sources.list.d/mariadb.list > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends mariadb-client
+          # Fail HERE rather than as a skip three minutes into the suite.
+          for binary in mariadb-dump mariadb; do
+            command -v "$binary" >/dev/null 2>&1 || {
+              echo "$binary is STILL absent after installing mariadb-client" >&2
+              exit 1
+            }
+          done
+          mariadb-dump --version
 
       - name: Install uv (bare host, no container to inherit it from)
         # `python3 -m pip install uv` (the original approach) resolves through
