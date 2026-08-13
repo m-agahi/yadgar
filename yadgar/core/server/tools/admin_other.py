@@ -854,6 +854,21 @@ def anchor_renew(
         },
     )
 
+    # Car 6 (bug-train 2026-08-13): the result was previously discarded here —
+    # this function unconditionally returned ok:True regardless of what the
+    # backend reported. A success envelope carries no "ok" key at all (KEY
+    # INVARIANT — see backend/admin_exec/ledger.py), so this only ever fires
+    # on an explicit rejection. NOTE: as of this fix the concrete backend body
+    # (backend/admin_exec/memory.py's anchor_renew) raises ValueError rather
+    # than returning ok:False on a not-found row, and the /admin route does
+    # not convert that raise into an ok:False envelope (only KeyError is
+    # caught there) — so that raise propagates as an httpx error instead of
+    # reaching this check. This guard is therefore contract hygiene against
+    # the general _forward_admin contract (any admin op MAY return
+    # ok:False), not a fix for a presently-reachable path.
+    if isinstance(updated, dict) and updated.get("ok") is False:
+        return updated
+
     return {
         "ok": True,
         "memory_id": mid,
