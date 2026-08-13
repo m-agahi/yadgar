@@ -508,3 +508,98 @@ def test_emit_error_survives_closed_log_stream(monkeypatch, in_memory_tracer, ob
     # replace it or raise on its own.
     with pytest.raises(RuntimeError, match="teardown boom"):
         boom()
+
+
+# ---------------------------------------------------------------------------
+# Car 5 bug-train item 2 — bare-qualname leak via logging.lastResort
+#
+# The host CLI subcommand path (`yadgar context`, `yadgar seed`, ...) never
+# calls `configure_logging()` — that only runs for the bare `yadgar` MCP
+# server invocation in `yadgar/__main__.py::cli()`. When an `@observe`-wrapped
+# function raises, `_emit_error()` calls `logger.error(spec.event, ...)`
+# where `spec.event` defaults to `f"{fn.__module__}.{fn.__qualname__}"` (the
+# bare fn qualname) whenever the decorator was applied without an explicit
+# `log_event=`. With zero handlers configured anywhere in the
+# "yadgar.observe" -> "yadgar" -> root chain, Python's own
+# `logging.lastResort` fallback (a bare `_StderrHandler(WARNING)` with NO
+# formatter — it writes only `record.getMessage()`) kicks in and dumps the
+# raw qualname straight to stderr, e.g.:
+#     yadgar._shared.storage.client._ClientMixin._q_embedded
+# Fix: `yadgar/__init__.py` installs a `logging.NullHandler()` on the
+# "yadgar" logger at package-import time (the standard library-logging
+# pattern) so `logging.lastResort` never fires for any yadgar logger.
+# ---------------------------------------------------------------------------
+
+
+def test_yadgar_import_installs_null_handler_fresh_process():
+    """Direct check for the fix, run in a FRESH interpreter subprocess.
+
+    This matches the real host-CLI scenario: every `yadgar <subcommand>`
+    invocation is a brand-new process. Out-of-process is also necessary for
+    a reliable test: many OTHER tests in this suite call
+    `configure_logging()`, which intentionally clears the "yadgar" logger's
+    own handler list as part of its own idempotent setup
+    (`log_config._configure_yadgar_logger` — propagate=True, root's handler
+    covers output once configured). That's an unrelated, pre-existing
+    same-process test-isolation wrinkle with no bearing on the real bug —
+    the host CLI subcommand path never calls `configure_logging()` — but it
+    would make an in-process assertion on `logging.getLogger("yadgar").handlers`
+    order-dependent under xdist.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import logging, yadgar; "
+            "print(any(isinstance(h, logging.NullHandler) "
+            "for h in logging.getLogger('yadgar').handlers))",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.stdout.strip() == "True", (
+        "yadgar package must install a NullHandler at import time — see "
+        f"yadgar/__init__.py. stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+def test_no_bare_qualname_leak_via_lastresort_fresh_process():
+    """Regression for Car 5 item 2, run in a fresh interpreter subprocess for
+    a guaranteed "nothing has configured logging yet" state — exactly what
+    every `yadgar <subcommand>` sees on the host CLI (only the bare
+    MCP-server invocation in `yadgar/__main__.py::cli()` calls
+    `configure_logging()`). Asserts an `@observe`-wrapped function raising
+    produces NO stderr/stdout output at all — before the fix, Python's
+    `logging.lastResort` dumped the bare fn qualname to stderr.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import yadgar
+        from yadgar._shared.observability.observe import observe
+
+        @observe(tier="stage", metric="test.car5.leak_probe")
+        def _boom():
+            raise RuntimeError("boom")
+
+        try:
+            _boom()
+        except RuntimeError:
+            pass
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.stderr == "", f"unexpected stderr leak: {result.stderr!r}"
+    assert result.stdout == "", f"unexpected stdout leak: {result.stdout!r}"

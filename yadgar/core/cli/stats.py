@@ -27,6 +27,24 @@ def _q(db, project, sql, sql_proj):
     return db.query(sql)
 
 
+# Car 5 item 3: signature substrings SurrealKV's embedded engine raises when
+# it opens a datastore file another process already has open (observed on a
+# fresh-install container deploy — the host CLI trying direct embedded
+# access to a file the backend container holds exclusively). Matching these
+# lets _run_db_path give an actionable message instead of the raw driver
+# error, without misclassifying genuine corruption/other datastore failures.
+_LOCKED_DATASTORE_SIGNATURES = (
+    "unexpected end of file",
+    "failed to fill whole buffer",
+)
+
+
+def _looks_like_locked_datastore(exc: BaseException) -> bool:
+    """True if *exc* matches the SurrealKV lock-contention failure signature."""
+    msg = str(exc)
+    return any(sig in msg for sig in _LOCKED_DATASTORE_SIGNATURES)
+
+
 # ── Stats data container ───────────────────────────────────────────────────────
 
 
@@ -755,7 +773,20 @@ def _run_db_path(args):
         _query_data_quality(db, sd)
 
     except Exception as e:
-        print(f"Failed to query database: {e}", file=sys.stderr)
+        if _looks_like_locked_datastore(e):
+            print(
+                "Failed to query database directly: the database file appears to be "
+                "held by another process (a running yadgar container/daemon).\n"
+                "Direct host-side access only works when nothing else has the "
+                "database file open.\n"
+                "  - If the daemon is running, use its own API (e.g. `yadgar stats` "
+                "picks this up automatically once the daemon's /api/stats endpoint "
+                "is available), or\n"
+                "  - Stop the container/daemon holding the database, then retry.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Failed to query database: {e}", file=sys.stderr)
         sys.exit(1)
 
     if args.format == "json":
