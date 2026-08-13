@@ -4,10 +4,10 @@
 #
 # WHY THIS EXISTS
 # ----------------
-# `make ci-local` used to run ONE pytest invocation over the union of all 8
+# `make ci-local` used to run ONE pytest invocation over the union of all the
 # CI test dirs. `.github/workflows/ci-pr.yml` never does that — it runs the
-# same union as FOUR SEPARATE processes (test-fast/test-shared/test-backend/
-# test-core, one per container). The lumped local invocation accumulates
+# same union as SEVERAL SEPARATE processes (one per `tests` matrix group, each
+# in its own container). The lumped local invocation accumulates
 # memory no single CI job ever does: measured OOM-killed at 20G/MemoryMax
 # 1h32m in even with TEST_TIMEOUT=18000. This script restores the process
 # boundary CI actually has: one `run_leg` call per CI subsystem job.
@@ -65,7 +65,9 @@
 #   CI_LOCAL_MARKER          pytest -m expression, shared by every leg
 #   TEST_LOCK                flock path serializing against test/test-ci/e2e
 #   CI_LOCAL_DIRS_override   non-empty ONLY for `make ci-local DIRS=...`
-#   CI_LOCAL_DIRS_fast/shared/backend/core   one leg's dirs each (full run)
+#   CI_LOCAL_DIRS_<leg>      one leg's dirs each (full run). The authoritative
+#                            leg list comes from ci-pr.yml's `tests` matrix:
+#                            `python scripts/ci_group_manifest.py --legs`.
 #   CI_LOCAL_PARALLEL        max concurrent legs (Makefile default 2)
 # Ambient env inherited straight through to every leg's test-capped.sh call,
 # unmodified except TEST_MEM_MAX (divided, see above): TEST_TIMEOUT,
@@ -88,7 +90,25 @@ fi
 if [ -n "${CI_LOCAL_DIRS_override:-}" ]; then
   _num_legs_this_run=1
 else
-  _num_legs_this_run=4
+  # Keep in step with the run_leg calls at the bottom of this file. This number
+  # feeds _leg_mem_max's division, so an understated value would hand each leg a
+  # LARGER share than the concurrency actually warrants — i.e. quietly raise the
+  # worst-case total ceiling F10 exists to bound. scripts/check_ci_local_parity.py
+  # pins the run_leg SET against ci-pr.yml; this count is the one number it does
+  # not check, so it is verified against this file's own call sites HERE —
+  # before any leg starts, since the division has already been applied by then.
+  _num_legs_this_run=6
+  # Excludes `run_leg override` by NAME, not by first letter — a future leg
+  # whose name merely begins with "o" must not be silently uncounted.
+  _declared_legs=$(grep -E '^[[:space:]]*run_leg[[:space:]]+' "${BASH_SOURCE[0]}" \
+    | grep -cvE '^[[:space:]]*run_leg[[:space:]]+override([[:space:]]|$)' || true)
+  if [ "$_declared_legs" -ne "$_num_legs_this_run" ]; then
+    echo "ci-local-legs: _num_legs_this_run=${_num_legs_this_run} but this file makes" \
+         "${_declared_legs} non-override run_leg calls. That number divides TEST_MEM_MAX" \
+         "across concurrent legs — a stale value silently raises the worst-case memory" \
+         "ceiling F10 exists to bound. Fix _num_legs_this_run." >&2
+    exit 2
+  fi
 fi
 if [ "$CI_LOCAL_PARALLEL" -gt "$_num_legs_this_run" ]; then
   CI_LOCAL_PARALLEL="$_num_legs_this_run"
@@ -173,15 +193,18 @@ if [ -n "${CI_LOCAL_DIRS_override:-}" ]; then
   # split entirely (see the Makefile's `ci-local` comment).
   run_leg override $CI_LOCAL_DIRS_override
 else
-  # Full run: CI's four subsystem legs, in the same order ci-pr.yml stages
-  # them (test-core `needs: [test-fast, test-shared, test-backend]` — see
-  # ci-pr.yml's own wave-staggering comments for why fast goes first). Order
-  # only affects QUEUEING now, not execution — up to CI_LOCAL_PARALLEL of
-  # these run at the same time.
-  run_leg fast    $CI_LOCAL_DIRS_fast
-  run_leg shared  $CI_LOCAL_DIRS_shared
-  run_leg backend $CI_LOCAL_DIRS_backend
-  run_leg core    $CI_LOCAL_DIRS_core
+  # Full run: one leg per ci-pr.yml `tests` matrix group, sharded groups
+  # collapsed (core-1 + core-2 -> one `core` leg). Order is QUEUEING order only
+  # — up to CI_LOCAL_PARALLEL of these run at the same time, and since Car J1
+  # there is no ordering between the CI groups either (the `needs:` chain that
+  # used to imply one was a RAM throttle, now expressed as max-parallel).
+  # Cheapest legs first so a fast failure surfaces early.
+  run_leg repo_guards      $CI_LOCAL_DIRS_repo_guards
+  run_leg server_api       $CI_LOCAL_DIRS_server_api
+  run_leg client_surfaces  $CI_LOCAL_DIRS_client_surfaces
+  run_leg shared_storage   $CI_LOCAL_DIRS_shared_storage
+  run_leg backend_services $CI_LOCAL_DIRS_backend_services
+  run_leg core             $CI_LOCAL_DIRS_core
 fi
 
 # Drain whatever is still running past the last run_leg call's throttle.
