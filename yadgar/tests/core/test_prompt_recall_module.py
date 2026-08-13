@@ -301,6 +301,72 @@ class TestMain:
                 pass
         # No exception = pass
 
+    def test_request_url_carries_project_param(self):
+        """Car 2 of the bug train: the minted project_id must reach the daemon.
+
+        Without ``?project=``, ``/hooks/prompt-recall`` cannot scope (C7
+        deleted directory derivation server-side) and degrades to an empty
+        injection — this standalone script mirrors the CLI handler's fix
+        (test_hook_runner_module.py::test_prompt_recall_forwards_project_param).
+        """
+        import runpy
+
+        payload = {"prompt": "how to configure auth", "cwd": "/project"}
+        seen: dict = {}
+
+        def _capture(req, timeout=None):
+            seen["url"] = req.full_url
+            raise OSError("daemon down")
+
+        with (
+            patch("sys.stdin", io.StringIO(json.dumps(payload))),
+            patch("yadgar._shared.paths"),
+            patch(
+                "yadgar.core.hooks._identity_mint.mint_project_id",
+                return_value="m-agahi/yadgar",
+            ),
+            patch("urllib.request.urlopen", side_effect=_capture),
+        ):
+            try:
+                runpy.run_path(str(_SCRIPT_PATH), run_name="__main__")
+            except SystemExit:
+                pass
+
+        assert "url" in seen, "the hook never called the daemon"
+        assert (
+            "project=m-agahi%2Fyadgar" in seen["url"] or "project=m-agahi/yadgar" in seen["url"]
+        ), f"the minted project_id must be forwarded as a query param; got {seen['url']!r}"
+
+    def test_mint_failure_degrades_without_project_param(self):
+        """An unmintable tree must still fire the recall, just without project=."""
+        import runpy
+
+        payload = {"prompt": "how to configure auth", "cwd": "/project"}
+        seen: dict = {}
+
+        def _capture(req, timeout=None):
+            seen["url"] = req.full_url
+            raise OSError("daemon down")
+
+        with (
+            patch("sys.stdin", io.StringIO(json.dumps(payload))),
+            patch("yadgar._shared.paths"),
+            patch(
+                "yadgar.core.hooks._identity_mint.mint_project_id",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("urllib.request.urlopen", side_effect=_capture),
+        ):
+            try:
+                runpy.run_path(str(_SCRIPT_PATH), run_name="__main__")
+            except SystemExit:
+                pass
+
+        assert "url" in seen, "the hook never called the daemon"
+        assert "project=" not in seen["url"], (
+            f"a mint failure must never forward a guessed project; got {seen['url']!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _fts_search — supplement query scoping (Fix A, v5.65)

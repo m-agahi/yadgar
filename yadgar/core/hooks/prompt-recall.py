@@ -216,7 +216,23 @@ def main():
             import urllib.parse as _parse
             import urllib.request as _req
 
-            _params = _parse.urlencode({"query": query, "directory": directory})
+            # Bug train Car 2: stamp the identity HERE, mirroring
+            # yadgar.core.cli.hook.hook_prompt_recall's fix. The daemon-side
+            # resolver (http.py's hook_project_id) RAISES on a directory with
+            # no project (C7 scopes on project_id; ADR-0227 deleted directory
+            # derivation), which degraded this endpoint to an empty injection
+            # — auto-recall was silently dead on every prompt. Fail-OPEN on a
+            # mint failure: SessionStart already printed the loud error for an
+            # unresolvable tree; this script still fires the recall without
+            # `project` rather than bricking the prompt.
+            _query_params = {"query": query, "directory": directory}
+            try:
+                from yadgar.core.hooks._identity_mint import mint_project_id
+
+                _query_params["project"] = mint_project_id(directory)
+            except Exception:  # noqa: BLE001 — never brick the prompt over identity
+                pass
+            _params = _parse.urlencode(_query_params)
             _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
             _req_obj = _req.Request(
                 f"http://127.0.0.1:{_port}/hooks/prompt-recall?{_params}",

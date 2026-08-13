@@ -393,6 +393,67 @@ def test_prompt_recall_handles_malformed_stdin():
     mock_get.assert_not_called()
 
 
+def test_prompt_recall_forwards_project_param():
+    """Car 2 of the bug train: the minted project_id must reach the daemon.
+
+    Without ``project``, ``/hooks/prompt-recall`` cannot scope (C7 deleted
+    directory derivation server-side) and degrades to an empty injection —
+    auto-recall was silently dead on every prompt. Mirrors the SessionStart
+    handlers' ``project=`` forwarding (test_session_start_emits_project_id.py).
+    """
+    data = {"prompt": "What is the meaning of life?", "cwd": "/repo"}
+    seen: dict = {}
+
+    def _capture(path, params=None, timeout=None):
+        seen["path"] = path
+        seen["params"] = params
+        return {"text": "42"}
+
+    with (
+        patch(
+            "yadgar.core.hooks._identity_mint.mint_project_id",
+            return_value="m-agahi/yadgar",
+        ),
+        patch.object(hr, "_http_get", _capture),
+    ):
+        _run_hook_with_stdin(hr.hook_prompt_recall, data)
+
+    assert seen.get("path") == "/hooks/prompt-recall"
+    assert seen["params"].get("project") == "m-agahi/yadgar", (
+        f"hook_prompt_recall must forward the minted project_id; got {seen.get('params')!r}"
+    )
+
+
+def test_prompt_recall_degrades_silently_on_mint_failure(capsys):
+    """An unmintable tree must not crash the prompt or inject error noise.
+
+    SessionStart already prints the loud ``[yadgar] ERROR`` notice for an
+    unresolvable tree; repeating it on every prompt into the model's context
+    would be pure noise. The hook still fires (without ``project``) so the
+    daemon's own degrade-to-empty-injection path is what the user sees.
+    """
+    data = {"prompt": "What is the meaning of life?", "cwd": "/repo"}
+    seen: dict = {}
+
+    def _capture(path, params=None, timeout=None):
+        seen["params"] = params
+        return {"text": "42"}
+
+    with (
+        patch(
+            "yadgar.core.hooks._identity_mint.mint_project_id",
+            side_effect=RuntimeError("boom"),
+        ),
+        patch.object(hr, "_http_get", _capture),
+    ):
+        _run_hook_with_stdin(hr.hook_prompt_recall, data)
+
+    assert "project" not in seen.get("params", {}), (
+        "a mint failure must never forward a guessed project"
+    )
+    assert "42" in capsys.readouterr().out, "the hook must still fire without project"
+
+
 # ── hook_db_lockdown_check ────────────────────────────────────────────────────
 
 
@@ -461,3 +522,33 @@ def test_block_reflect_handles_bad_stdin():
         with patch("sys.stdin", io.StringIO("{{bad")):
             hr.hook_block_reflect()
     mock_get.assert_not_called()
+
+
+def test_block_reflect_forwards_project_param():
+    """Car 2 of the bug train: mirror the other hooks' project= forwarding.
+
+    (The daemon's ``/hooks/block-reflect`` route does not yet consume
+    ``project`` — queued as a separate finding — but the client must not be
+    the party omitting it.)
+    """
+    data = {"tool_name": "mcp__yadgar__block_create", "cwd": "/repo"}
+    seen: dict = {}
+
+    def _capture(path, params=None, timeout=None):
+        seen["path"] = path
+        seen["params"] = params
+        return {"text": "block content"}
+
+    with (
+        patch(
+            "yadgar.core.hooks._identity_mint.mint_project_id",
+            return_value="m-agahi/yadgar",
+        ),
+        patch.object(hr, "_http_get", _capture),
+    ):
+        _run_hook_with_stdin(hr.hook_block_reflect, data)
+
+    assert seen.get("path") == "/hooks/block-reflect"
+    assert seen["params"].get("project") == "m-agahi/yadgar", (
+        f"hook_block_reflect must forward the minted project_id; got {seen.get('params')!r}"
+    )

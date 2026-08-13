@@ -235,10 +235,19 @@ def test_resolve_session_project_failure_emits_no_guess(tmp_path):
 # fail-soft in the SESSION sense only — an unmintable tree yields None and the
 # record is written identity-less, to be rejected loudly at import; no key is
 # ever invented.
+#
+# Bug train Car 2 adds a FIFTH: `core/hooks/prompt-recall.py`. Same category
+# again — a host-side script (installed verbatim, invoked with the user's own
+# interpreter) whose `/hooks/prompt-recall` HTTP call was silently degrading to
+# an empty injection because it never sent `?project=` (the daemon-side
+# resolver raises without one — C7 deleted directory derivation, ADR-0227).
+# Fail-open like `hook_post_tool_capture`: an unmintable tree still fires the
+# recall, just without `project`, rather than bricking the prompt.
 _ALLOWED_IMPORTERS = frozenset(
     {
         "yadgar/core/hooks/session-start-context.py",
         "yadgar/core/hooks/session-end-capture.py",
+        "yadgar/core/hooks/prompt-recall.py",
         "yadgar/core/cli/hook.py",
         "yadgar/core/cli/_shared.py",
     }
