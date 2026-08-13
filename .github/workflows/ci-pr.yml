@@ -370,18 +370,30 @@ jobs:
             exit 1
           }
 
-      - name: Install uv
-        run: python3 -m pip install --quiet --disable-pip-version-check uv==0.9.7
+      - name: Install uv (bare host, no container to inherit it from)
+        # `python3 -m pip install uv` (the original approach) resolves through
+        # WHATEVER `python3` is on the runner's PATH -- that turned out to be
+        # the host's system Python 3.8, and the pip-installed `uv` package's
+        # binary-fetch landed somewhere `python3 -m uv` doesn't search
+        # (uv._find_uv.UvNotFound — PR #41's actual CI failure). The official
+        # installer places a real `uv` binary at ~/.local/bin/uv directly,
+        # independent of whatever system python is on PATH.
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Provision Python 3.14 (requires-python >=3.14; system python3 here is 3.8)
+        run: uv python install 3.14
 
       - name: Sync the sql + test extras
         # The `sql` extra (sqlalchemy + asyncmy + alembic) is NOT baked into
         # yadgar-ci, and this job does not use that image anyway.
-        run: python3 -m uv sync --extra sql --extra test
+        run: uv sync --python 3.14 --extra sql --extra test
 
       - name: Run the engine-#2 integration suite
         run: |
           set -o pipefail
-          python3 -m uv run --extra sql --extra test python -m pytest \
+          uv run --python 3.14 --extra sql --extra test python -m pytest \
             yadgar/tests/integration/test_mariadb_migrations.py \
             yadgar/tests/integration/test_mariadb_connection.py \
             yadgar/tests/integration/test_mariadb_dump_arm.py \

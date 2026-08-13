@@ -308,6 +308,87 @@ jobs:
             -n 0 \
             -q --tb=short
 
+  # engine #2 (MariaDB) integration — task #26; mirrors .github's job of the
+  # same name. The engine-#2 tests carry the integration marker, and every
+  # other job's marker filter excludes it, so this suite never ran in CI —
+  # that is how a migration chain that cannot run under production's own
+  # grants shipped and stayed broken for months.
+  #
+  # BARE ON THE RUNNER HOST — no `container:`. The yadgar-ci image the other
+  # jobs use has no podman; this suite needs a real mariadb container, and
+  # the runner host does have podman.
+  #
+  # A SKIPPED RUN IS NOT A PASS. The fixture calls pytest.skip when no
+  # container runtime is found, and a job that skips everything exits 0 and
+  # looks green — the runtime is asserted up front, and the run must have
+  # COLLECTED tests and reported zero skips.
+  test-engine2-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+
+      - name: Assert a container runtime is present (a skip here is a failure)
+        run: |
+          set -euo pipefail
+          command -v podman >/dev/null 2>&1 || command -v docker >/dev/null 2>&1 || {
+            echo "no podman/docker on the runner host — the engine-#2 suite cannot run," >&2
+            echo "and a silent skip is what let a broken migration ship. Failing loudly." >&2
+            exit 1
+          }
+
+      - name: Install uv (bare host, no container to inherit it from)
+        # An earlier version of the .github mirror's twin job did
+        # `python3 -m pip install uv`, which resolves through whatever
+        # `python3` is on the runner's PATH and left `python3 -m uv` unable
+        # to find the fetched binary (uv._find_uv.UvNotFound). The official
+        # installer places a real `uv` binary at ~/.local/bin/uv directly.
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Provision Python 3.14 (requires-python >=3.14; system python3 here is 3.8)
+        run: uv python install 3.14
+
+      - name: Sync the sql + test extras
+        # The `sql` extra (sqlalchemy + asyncmy + alembic) is NOT baked into
+        # yadgar-ci, and this job does not use that image anyway.
+        run: uv sync --python 3.14 --extra sql --extra test
+
+      - name: Run the engine-#2 integration suite
+        run: |
+          set -o pipefail
+          uv run --python 3.14 --extra sql --extra test python -m pytest \
+            yadgar/tests/integration/test_mariadb_migrations.py \
+            yadgar/tests/integration/test_mariadb_connection.py \
+            yadgar/tests/integration/test_mariadb_dump_arm.py \
+            yadgar/tests/integration/test_mariadb_restore_arm.py \
+            -m integration \
+            -n 0 \
+            -q -rf --tb=short \
+            2>&1 | tee pytest-engine2.txt
+
+      - name: Gate on tests having actually RUN
+        # `0 passed` and `N skipped` both exit 0. Neither is evidence.
+        run: |
+          set -euo pipefail
+          if grep -qE '[0-9]+ skipped' pytest-engine2.txt; then
+            echo "the engine-#2 suite skipped tests — a skipped privilege test is not a pass:" >&2
+            grep -E '[0-9]+ skipped' pytest-engine2.txt >&2
+            exit 1
+          fi
+          grep -qE '[1-9][0-9]* passed' pytest-engine2.txt || {
+            echo "the engine-#2 suite collected nothing" >&2
+            exit 1
+          }
+
+      - name: Upload output
+        if: ${{ always() }}
+        uses: https://data.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: pytest-engine2
+          path: pytest-engine2.txt
+          retention-days: 1
+
   check-skip-inventory:
     runs-on: ubuntu-latest
     # Wave 3 — validates the four legs' pytest -rs skip summaries WITHOUT
@@ -464,7 +545,7 @@ jobs:
   # when any subsystem job fails, which would leave the PR green incorrectly.
   test-gate:
     runs-on: ubuntu-latest
-    needs: [test-fast, test-shared, test-backend, test-core, test-perf, check-skip-inventory]
+    needs: [test-fast, test-shared, test-backend, test-core, test-perf, test-engine2-integration, check-skip-inventory]
     if: ${{ always() }}
     steps:
       - name: Assert all subsystem test jobs passed
@@ -487,6 +568,10 @@ jobs:
           fi
           if [ "${{ needs.test-perf.result }}" != "success" ]; then
             echo "test-perf failed (result: ${{ needs.test-perf.result }})"
+            exit 1
+          fi
+          if [ "${{ needs.test-engine2-integration.result }}" != "success" ]; then
+            echo "test-engine2-integration failed (result: ${{ needs.test-engine2-integration.result }})"
             exit 1
           fi
           if [ "${{ needs.check-skip-inventory.result }}" != "success" ]; then
