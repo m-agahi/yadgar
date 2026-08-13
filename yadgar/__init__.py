@@ -37,4 +37,7 @@ except PackageNotFoundError:
 # __version__ = yadgar core (pip package version, set via importlib.metadata above).
 # BACKEND_VERSION = independent backend image track (docker.io/openfantasy/yadgar-backend).
 # Bumping either requires updating CHANGELOG + nix module sync (nix tracks both manually via release notes).
-BACKEND_VERSION = "5.72.38"  # car3: restore's recent + SR buckets stop reading the whole corpus
+# v5.182 bug train: scoped restore reads, live hooks, honest write results.
+# Keep this assignment on ONE line — scripts/sync_version.py matches
+# `^BACKEND_VERSION\s*=\s*"` and a wrapped form silently breaks the sync hook.
+BACKEND_VERSION = "5.73.0"
