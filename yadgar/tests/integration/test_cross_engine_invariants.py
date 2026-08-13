@@ -42,7 +42,10 @@ import pytest
 pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed (sql extra)")
 pytest.importorskip("alembic", reason="alembic not installed (sql extra)")
 
-from yadgar._shared.storage.sql import MariaStorageEngine  # noqa: E402
+from yadgar._shared.storage.sql import (
+    MariaStorageEngine,  # noqa: E402
+    migrate,  # noqa: E402
+)
 from yadgar._shared.storage.sql.migrate import upgrade_to_head  # noqa: E402
 from yadgar.backend.admin_exec import invariants_cross_engine as ce  # noqa: E402
 from yadgar.tests.integration._podman import (  # noqa: E402
@@ -184,18 +187,56 @@ async def engine(live_mariadb):
         await eng.dispose()
 
 
+async def _reset_to_base(engine: MariaStorageEngine) -> None:
+    """Undo every migration — leave a database with NO yadgar tables at all.
+
+    Deliberately NOT ``alembic downgrade base``: that walks the STAMPED
+    revision backwards, and ``test_stamp_that_disagrees_with_the_chain_is_a_violation``
+    deliberately corrupts ``alembic_version`` to prove the head-mismatch check
+    red — so alembic can no longer find its own way back
+    (``CommandError: Can't locate revision identified by '0000_stale'``) and
+    a downgrade-by-stamp teardown dies right there, taking every test after
+    it down with a fixture-setup error on top of the one teardown error.
+    Measured empirically running this file end to end.
+
+    Instead: enumerate whatever tables the schema ACTUALLY has (real
+    catalog state, not the possibly-corrupted stamp) and drop every one of
+    them with FK checks off. This is what the fixture's PREVIOUS version got
+    wrong — it hardcoded ``DROP TABLE config`` / ``DROP TABLE
+    alembic_version``, which was complete when the chain had one migration
+    and silently fell behind the moment ``002_ledger_tables`` added five more
+    tables (``task``, ``adr``, ``agent_pattern``, ``agent_discipline``,
+    ``task_blocked_by``, ``adr_supersedes``, ``agent_pattern_composes``) plus
+    ``003``/``004`` added three more still. Those survived teardown, and the
+    NEXT test's ``upgrade_to_head`` died on ``1050 Table 'task' already
+    exists`` (docs/issues/0001-pr40-carryover.md §2 item 3; measured by car
+    G6 as ``1 failed, 1 passed, 6 errors`` — the 6 errors are every test
+    after the first that needs a second ``migrated`` fixture instantiation).
+    Catalog-driven enumeration self-updates with the migration chain instead
+    of drifting from it again the next time a migration adds a table.
+    """
+    from sqlalchemy import text  # noqa: PLC0415
+
+    tables = await engine.list_tables()
+    if not tables:
+        return
+    async with engine.engine.begin() as conn:
+        await conn.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+        for table in tables:
+            # table names come straight from information_schema.tables — DB
+            # catalog state, not user input.
+            await conn.execute(text(f"DROP TABLE IF EXISTS `{table}`"))
+        await conn.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+
+
 @pytest.fixture
 async def migrated(engine):
     """An engine at head — the state the backend boots into."""
-    from sqlalchemy import text  # noqa: PLC0415
-
     await upgrade_to_head(engine.engine)
     try:
         yield engine
     finally:
-        async with engine.engine.begin() as conn:
-            await conn.execute(text("DROP TABLE IF EXISTS config"))
-            await conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+        await _reset_to_base(engine)
 
 
 async def _exec(engine: MariaStorageEngine, sql: str) -> None:
@@ -219,6 +260,18 @@ async def _arm(monkeypatch: pytest.MonkeyPatch, engine) -> dict:
     return await ce.run_cross_engine_checks(_SurrealAtHead())
 
 
+def _expected_head() -> str:
+    """The alembic chain's real head, read live rather than hardcoded.
+
+    A literal revision id in a test goes stale the moment a new migration
+    lands — it did: this repo's head moved from ``0001_config`` to
+    ``004_agent_pattern_model_client`` without these assertions being
+    touched, and the chain will move again. Asking the same script directory
+    the production code asks keeps the assertion tied to reality instead.
+    """
+    return migrate.heads()[0]
+
+
 # ── the healthy state, read from a real server ───────────────────────────────
 
 
@@ -230,16 +283,24 @@ async def test_at_head_and_empty_is_ok_with_engine_direct_evidence(
 
     head = result["checks"][ce.CHECK_ENGINE_TWO_SCHEMA_HEAD]
     assert head["status"] == ce.STATUS_OK, head
-    assert head["detail"]["current"] == head["detail"]["head"] == "0001_config"
+    assert head["detail"]["current"] == head["detail"]["head"] == _expected_head()
 
     baseline = result["checks"][ce.CHECK_CONFIG_ROW_BASELINE]
     assert baseline["status"] == ce.STATUS_OK, baseline
     assert baseline["detail"] == {"rows": 0, "expected": 0}
 
-    # Still not globally ok: the spine-gated desync check cannot run yet, and
-    # "cannot run" must never be reported as ok.
+    # The spine ledger tables (agent_pattern, agent_discipline) now exist —
+    # migrations 002-004 shipped since this test was first written, so
+    # REASON_SPINE_NOT_SHIPPED no longer applies — the desync check actually
+    # RUNS: both tables are present and empty, nothing to compare, ok.
+    desync = result["checks"][ce.CHECK_PAGE_ROW_DESYNC]
+    assert desync["status"] == ce.STATUS_OK, desync
+    assert desync["detail"]["compared"] == 0
+
+    # Still not globally ok: the SurrealDB stand-in used here (_SurrealAtHead)
+    # carries no `_db_url`, so check_surreal_schema_head reports UNAVAILABLE
+    # (embedded mode) — "cannot run" must never be reported as ok.
     assert result["status"] == ce.STATUS_UNAVAILABLE
-    assert result["checks"][ce.CHECK_PAGE_ROW_DESYNC]["reason"] == ce.REASON_SPINE_NOT_SHIPPED
     assert result["violations"] == []
 
 
@@ -267,7 +328,7 @@ async def test_stamp_that_disagrees_with_the_chain_is_a_violation(
 
     head = result["checks"][ce.CHECK_ENGINE_TWO_SCHEMA_HEAD]
     assert head["status"] == ce.STATUS_VIOLATION
-    assert head["detail"] == {"current": "0000_stale", "head": "0001_config"}
+    assert head["detail"] == {"current": "0000_stale", "head": _expected_head()}
     assert any(ce.CHECK_ENGINE_TWO_SCHEMA_HEAD in v for v in result["violations"])
 
 

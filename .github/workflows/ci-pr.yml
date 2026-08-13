@@ -18,6 +18,24 @@ on:
       - 'flake.lock'
       - 'MIGRATION_NOTES.md'
       - '.gitignore'
+  # Nightly master baseline (docs/issues/0001-pr40-carryover.md §2.4). Before
+  # this, ci-release.yml (push-triggered) runs zero pytest — nothing ever
+  # exercised the suite against master, so every "introduced by this PR"
+  # verdict rested on `git diff master...HEAD` plus inference, not a real A/B.
+  # Deliberately `schedule:`, not a trigger on every push to master: the
+  # runner is a SINGLE self-hosted box (see the wave-staggering comments on
+  # test-core/test-backend below — three concurrent heavy legs already OOM
+  # it), and master here receives many merges a day, so a push trigger would
+  # queue a ~60-90 min full suite behind every single one of them, on top of
+  # concurrent PR runs and ci-release's image builds on version-bump pushes.
+  # Nightly amortizes that cost to once/day while still giving a real,
+  # green-or-red baseline to A/B a PR's failures against.
+  schedule:
+    - cron: '17 3 * * *'  # 03:17 UTC — off-peak, off the top of the hour
+  # Manual escape hatch — verify the baseline on demand without waiting for
+  # the next cron tick (e.g. right after landing this change, or to
+  # re-confirm a suspected master regression before it ages another day).
+  workflow_dispatch:
 
 # Cancel superseded test runs on a fresh push to the same PR branch.
 concurrency:
