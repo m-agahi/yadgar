@@ -526,8 +526,8 @@ config knobs.
 - **migrations:** —
 - **bc:** —
 - **refs:** —
-- **wiring:** Both settings deleted from `config.py` in v6 T3. Never read by production code — embedding engine uses `MODEL_QUERY_PREFIX` constant dict; embed service cache uses `YADGAR_EMBED_CACHE_MAX_ENTRIES`.
-- **explanation:** Two dead configuration knobs removed in v6 T3 (#41). `QUERY_PREFIX` was never wired into `encode_query()`. `EMBEDDING_CACHE_SIZE` was superseded by env-var-driven LRU cache.
+- **wiring:** Both settings deleted from `config.py` in v6 T3. Never read by production code — embedding engine uses `MODEL_QUERY_PREFIX` constant dict; the query-embedding LRU cache (`embeddings.py:14`, `remote_embeddings.py:25`) hard-codes `_CACHE_MAX = 512`, no env var. `YADGAR_EMBED_CACHE_MAX_ENTRIES` is a different, backend-side embed-service cache knob (`embed_service_config.py`), itself superseded by a byte-budget (`YADGAR_BACKEND_CACHE_RAM_PCT`) and not what `EMBEDDING_CACHE_SIZE` sized.
+- **explanation:** Two dead configuration knobs removed in v6 T3 (#41). `QUERY_PREFIX` was never wired into `encode_query()`. `EMBEDDING_CACHE_SIZE` was NOT superseded by an env-var-driven cache — corrected 2026-08-13 (Car 7): the query-embedding LRU caches it once sized remain hard-coded at `_CACHE_MAX = 512`.
 
 ---
 

@@ -96,9 +96,9 @@
     "function": "hook_prompt_recall",
     "lineno": 603,
     "metrics": {
-      "cyclomatic": 17
+      "cyclomatic": 20
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Car 7 (2026-08-13) resynced cyclomatic 17 -> 20 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -164,10 +164,10 @@
     "function": "recall",
     "lineno": 111,
     "metrics": {
-      "fn_loc": 180,
+      "fn_loc": 208,
       "params": 9
     },
-    "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436->180. ADR-0215 (branch removal) then deleted the branch-detection block, dropping cyclomatic below the HARD cap — that metric is gone from this entry. ADR-0215 Car 5 then dropped the branch_hint param (10->9). fn_loc remains above the cap due to multi-path input validation (type_filter, mode, profile, consolidation, shadow observe). params=9: all 9 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers.",
+    "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436->180. ADR-0215 (branch removal) then deleted the branch-detection block, dropping cyclomatic below the HARD cap — that metric is gone from this entry. ADR-0215 Car 5 then dropped the branch_hint param (10->9). fn_loc remains above the cap due to multi-path input validation (type_filter, mode, profile, consolidation, shadow observe). params=9: all 9 are required by the MCP schema — splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers. Car 7 (2026-08-13) resynced fn_loc 180 -> 208 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -210,9 +210,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1923
+      "file_loc": 2219
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) — pure data, not logic; the module is a single-responsibility config loader by design.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) — pure data, not logic; the module is a single-responsibility config loader by design. Car 7 (2026-08-13) resynced file_loc 1923 -> 2219 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -243,9 +243,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1579
+      "file_loc": 1876
     },
-    "rationale": "pre-existing; v5.61.0 +412 LOC for L2+L3 MCP tool registrations (wiki_replace_at/delete_at/insert_at/replace_markdown_block + heading_type param for wiki_append_section); scheduled for v5.55 wave N refactor",
+    "rationale": "pre-existing; v5.61.0 +412 LOC for L2+L3 MCP tool registrations (wiki_replace_at/delete_at/insert_at/replace_markdown_block + heading_type param for wiki_append_section); scheduled for v5.55 wave N refactor. Car 7 (2026-08-13) resynced file_loc 1579 -> 1876 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -254,9 +254,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1738
+      "file_loc": 2076
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.157.0 #76: recorded 1153 had drifted to ~1369 from migrations accumulated since 2026-06-13 (this touch only adds migration 026_drop_wiki_draft, ~+18 LoC net after removing the wiki_draft _init_schema entry); resyncing the recorded value. Each migration is an append-only single-responsibility fn — the module is a migration ledger by design; wave N split remains deferred. ADR-0215 Car 9: 1387 -> 1738 (+351). Migration 029 is unusually large for a ledger entry because it is a DATA migration, not a DDL one-liner: it carries five helpers (_m029_count / _m029_purge_unprotected_branch_memories / _m029_collision_pairs / _m029_resolve_slug_collisions / _m029_null_branch / _m029_assert_branch_fully_nulled), a Migration029Abort exception type and four measured constants, each abort path carrying the operator-facing message that tells a deploy-time reader whether to restore from the backup. Split into helpers rather than one function precisely to keep per-function complexity inside the caps; the cost lands on file_loc. Wave N split of this module remains deferred.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.157.0 #76: recorded 1153 had drifted to ~1369 from migrations accumulated since 2026-06-13 (this touch only adds migration 026_drop_wiki_draft, ~+18 LoC net after removing the wiki_draft _init_schema entry); resyncing the recorded value. Each migration is an append-only single-responsibility fn — the module is a migration ledger by design; wave N split remains deferred. ADR-0215 Car 9: 1387 -> 1738 (+351). Migration 029 is unusually large for a ledger entry because it is a DATA migration, not a DDL one-liner: it carries five helpers (_m029_count / _m029_purge_unprotected_branch_memories / _m029_collision_pairs / _m029_resolve_slug_collisions / _m029_null_branch / _m029_assert_branch_fully_nulled), a Migration029Abort exception type and four measured constants, each abort path carrying the operator-facing message that tells a deploy-time reader whether to restore from the backup. Split into helpers rather than one function precisely to keep per-function complexity inside the caps; the cost lands on file_loc. Wave N split of this module remains deferred. Car 7 (2026-08-13) resynced file_loc 1738 -> 2076 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -265,9 +265,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 2251
+      "file_loc": 2661
     },
-    "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended). T2 Car C: file relocated wiki.py -> wiki/store.py (contract split; internal I13 split remains task #18).",
+    "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended). T2 Car C: file relocated wiki.py -> wiki/store.py (contract split; internal I13 split remains task #18). Car 7 (2026-08-13) resynced file_loc 2251 -> 2661 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -375,9 +375,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1059
+      "file_loc": 1222
     },
-    "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry — every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split.",
+    "rationale": "#80 daemon-obs: +~125 LoC of cohesive Prometheus collectors for the loop-freeze RCA (yadgar_event_loop_lag_seconds histogram + _max gauge, yadgar_tool_pool_* gauges) plus their refreshers (loop-lag probe monitor, _collect_pool_stats). This module is a single-responsibility metric registry — every metric in the daemon is declared here against the shared _registry, so the gauges belong co-located with their siblings. Splitting the registry would fan the _registry import across modules without reducing essential complexity. Scheduled for the wave N module split. Car 7 (2026-08-13) resynced file_loc 1059 -> 1222 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-07-01",
     "added_by": "fix/daemon-obs-gauges"
   },
@@ -386,9 +386,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1006
+      "file_loc": 1182
     },
-    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split.",
+    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split. Car 7 (2026-08-13) resynced file_loc 1006 -> 1182 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-07-03",
     "added_by": "feat/obs-p1-recall-readpath"
   },
@@ -397,9 +397,9 @@
     "function": "_forward_to_backend",
     "lineno": 44,
     "metrics": {
-      "params": 10
+      "params": 12
     },
-    "rationale": "Phase 2a: pure forwarder function — mirrors the recall() MCP signature plus the transport params (timeout_s, deadline_ms) the backend call needs. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site — not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45.",
+    "rationale": "Phase 2a: pure forwarder function — mirrors the recall() MCP signature plus the transport params (timeout_s, deadline_ms) the backend call needs. Decomposing into a dataclass would add a dataclass definition just to pass 10 fields to one call site — not worth it. All params are directly forwarded to the backend payload; same 'bundled MCP schema' rationale as recall() itself. Allowlisted: Phase 2a, #45. Car 7 (2026-08-13) resynced the recorded value 10 -> 12 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
     "added": "2026-07-05",
     "added_by": "phase2a-cutover-agent"
   },

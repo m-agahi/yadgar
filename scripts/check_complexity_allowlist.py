@@ -287,6 +287,16 @@ def run_check(repo_root: Path) -> tuple[list[str], list[str], list[str], list[st
     # govern test-file complexity; _collect_production_hard_violations() already
     # skips is_test functions/files, so test-path allowlist entries would always
     # appear stale when cross-checked against production violations only.
+    #
+    # Car 7 (2026-08-13) found the side effect: this filter excludes those
+    # entries from check_drift too, not just check_stale — 4 entries
+    # (scripts/check_complexity.py::_check_function, ::_check_class;
+    # yadgar/tests/server/test_integration.py <file>,
+    # ::test_clean_startup_and_shutdown) are permanently ungated by drift.
+    # Measured that day: all 4 at 0% or shrinking — not an active problem —
+    # but nothing will ever flag them if that changes. Not fixed here
+    # (would need a separate scripts/tests-scoped drift pass); flagged as a
+    # train finding.
     audited_prefix = "yadgar/"
     audited_entries = [
         e for e in allowlist if e.path.startswith(audited_prefix) and "/tests/" not in e.path
