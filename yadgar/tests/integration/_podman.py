@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 import pwd
+import shutil
+import subprocess
 
 
 def podman_env() -> dict[str, str]:
@@ -42,3 +44,37 @@ def podman_env() -> dict[str, str]:
     env["XDG_CONFIG_HOME"] = f"{real_home}/.config"
     env["XDG_STATE_HOME"] = f"{real_home}/.local/state"
     return env
+
+
+def select_container_runtime(*, env: dict[str, str] | None = None) -> str | None:
+    """Return the path to the first container runtime that actually WORKS.
+
+    ``shutil.which("podman") or shutil.which("docker")`` only proves a binary
+    is on PATH. Car G5 found the self-hosted GH runner (github-runners_runner_1)
+    carries a `podman` binary that fails EVERY invocation with ``Error: cannot
+    re-exec process`` (rootless podman cannot nest inside the runner's own
+    container — confirmed live: ``podman info`` and ``podman run`` both fail
+    instantly, no timeout), while `docker` — proxied through the
+    ``docker:dind`` sidecar (``DOCKER_HOST=tcp://dind:2375``) — works fine. A
+    presence-only check picks the broken binary every time, so the fixture's
+    subsequent container-start attempt fails instantly and every dependent
+    test skips — for all four engine-#2 test modules, in well under the ~2s
+    it takes pytest to even report the run.
+
+    Probing ``<runtime> info`` catches this: near-instant, no image pull, and
+    it fails the exact same way ``run`` would if the runtime cannot actually
+    start anything. Preference order (podman before docker) is unchanged —
+    only presence-vs-function changed.
+    """
+    probe_env = podman_env() if env is None else env
+    for name in ("podman", "docker"):
+        path = shutil.which(name)
+        if path is None:
+            continue
+        probe = subprocess.run(
+            [path, "info"],
+            capture_output=True, check=False, timeout=15, env=probe_env,
+        )  # fmt: skip
+        if probe.returncode == 0:
+            return path
+    return None

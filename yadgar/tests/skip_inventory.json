@@ -157,8 +157,8 @@
       "id": "engine2-carf-container-runtime-absent-01",
       "file": "yadgar/tests/integration/test_mariadb_dump_arm.py",
       "verdict": "LEGIT-CONDITIONAL",
-      "reason_pattern": "docker/podman not available on this host",
-      "note": "Engine-#2 car F. The dump arm's integration test spins a scratch MariaDB container to prove the real argv + credential path; no container runtime means no server to dump. Mirrors the same guard in yadgar/tests/integration/test_mariadb_connection.py (car C). Torn down with -v so no anonymous datadir volume leaks."
+      "reason_pattern": "no working container runtime on this host",
+      "note": "Engine-#2 car F. The dump arm's integration test spins a scratch MariaDB container to prove the real argv + credential path; no working container runtime means no server to dump. Mirrors the same guard in yadgar/tests/integration/test_mariadb_connection.py (car C). Torn down with -v so no anonymous datadir volume leaks. Car G5: message changed from presence-only (\"docker/podman not available on this host\") to a functional-probe result (\"no WORKING container runtime\") — the self-hosted runner carries a podman binary that is present but non-functional (rootless podman cannot nest inside the runner's own container), so a presence check alone no longer describes what actually happened."
     },
     {
       "id": "engine2-carf-mariadb-client-absent-01",
@@ -178,8 +178,8 @@
       "id": "engine2-carg-container-runtime-absent-01",
       "file": "yadgar/tests/integration/test_mariadb_restore_arm.py",
       "verdict": "LEGIT-CONDITIONAL",
-      "reason_pattern": "docker/podman not available on this host",
-      "note": "Engine-#2 car G. The restore arm's integration test is the ONLY evidence exit criterion 4 holds — a deliberately partial restore is rejected — and it needs a real server to replay a dump into a scratch schema and enumerate it row-for-row. No container runtime means no server. Same guard shape as car F's dump arm. Torn down with -v so no anonymous datadir volume leaks."
+      "reason_pattern": "no working container runtime on this host",
+      "note": "Engine-#2 car G. The restore arm's integration test is the ONLY evidence exit criterion 4 holds — a deliberately partial restore is rejected — and it needs a real server to replay a dump into a scratch schema and enumerate it row-for-row. No working container runtime means no server. Same guard shape as car F's dump arm. Torn down with -v so no anonymous datadir volume leaks. Car G5: message changed from presence-only to a functional-probe result — see engine2-carf-container-runtime-absent-01's note for why."
     },
     {
       "id": "engine2-carg-mariadb-client-absent-01",

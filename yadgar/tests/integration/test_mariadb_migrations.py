@@ -154,6 +154,37 @@ def _podman_env() -> dict[str, str]:
     return env
 
 
+def _select_container_runtime() -> str | None:
+    """Return the path to the first container runtime that actually WORKS.
+
+    ``shutil.which("podman") or shutil.which("docker")`` only proves a binary
+    is on PATH. Car G5 found the self-hosted GH runner (github-runners_runner_1)
+    carries a `podman` binary that fails EVERY invocation with ``Error: cannot
+    re-exec process`` (rootless podman cannot nest inside the runner's own
+    container — confirmed live: ``podman info`` and ``podman run`` both fail
+    instantly, no timeout), while `docker` — proxied through the
+    ``docker:dind`` sidecar — works fine. A presence-only check picks the
+    broken binary every time, so the container-start attempt below fails
+    instantly and every dependent test skips.
+
+    Duplicated from ``yadgar.tests.integration._podman.select_container_runtime``
+    rather than imported — this file keeps its own copy of the podman helpers
+    on purpose (see this file's module docstring / ``_podman_env`` above).
+    """
+    probe_env = _podman_env()
+    for name in ("podman", "docker"):
+        path = shutil.which(name)
+        if path is None:
+            continue
+        probe = subprocess.run(
+            [path, "info"],
+            capture_output=True, check=False, timeout=15, env=probe_env,
+        )  # fmt: skip
+        if probe.returncode == 0:
+            return path
+    return None
+
+
 def _cnf_body(socket: str, user: str, password: str) -> str:
     """Byte-shape of the option files entrypoint-backend.sh writes (car A)."""
     return (
@@ -187,9 +218,12 @@ def live_mariadb():
     without ``-v`` every run leaks a datadir-sized one. Never touches the live
     data root.
     """
-    runtime = shutil.which("podman") or shutil.which("docker")
+    runtime = _select_container_runtime()
     if runtime is None:
-        pytest.skip("docker/podman not available on this host")
+        pytest.skip(
+            "no working container runtime on this host "
+            "(podman/docker absent, or present but non-functional)"
+        )
 
     name = f"yadgar-card-mdb-{uuid.uuid4().hex[:8]}"
     sock_dir = Path(f"/tmp/ymdb-{uuid.uuid4().hex[:8]}")

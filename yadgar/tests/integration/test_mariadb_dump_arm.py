@@ -40,7 +40,7 @@ from pathlib import Path
 import pytest
 
 from yadgar.backend.admin_exec import backup_sql
-from yadgar.tests.integration._podman import podman_env
+from yadgar.tests.integration._podman import podman_env, select_container_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -121,9 +121,12 @@ def live_mariadb():
     NOT ``tmp_path``: a unix socket path caps at ~107 bytes and pytest's tmp
     dirs are long enough to blow it.
     """
-    runtime = shutil.which("podman") or shutil.which("docker")
+    runtime = select_container_runtime()
     if runtime is None:
-        pytest.skip("docker/podman not available on this host")
+        pytest.skip(
+            "no working container runtime on this host "
+            "(podman/docker absent, or present but non-functional)"
+        )
     if shutil.which("mariadb-dump") is None:
         pytest.skip("mariadb-dump not available on this host")
 

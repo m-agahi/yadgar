@@ -345,14 +345,23 @@ jobs:
   # BARE ON THE RUNNER HOST — no `container:`. The other jobs run inside the
   # yadgar-ci image, which has no podman (that is exactly what the
   # YADGAR_TEST_SKIP_RUNTIME_CHECK env at the top of this file is for), and
-  # these tests need to start a real mariadb container. The runner host does
-  # have podman.
+  # these tests need to start a real mariadb container. The runner host has
+  # BOTH `podman` and `docker` binaries on PATH — but only `docker` actually
+  # works: this runner is itself a container (github-runners_runner_1) with a
+  # `docker:dind` sidecar (ADR-0166), and rootless podman cannot nest inside
+  # it — `podman info` / `podman run` fail INSTANTLY with "Error: cannot
+  # re-exec process" (car G5, confirmed live on the runner). `docker`, proxied
+  # through the dind sidecar, works fine. Presence-only checks (`command -v`,
+  # `shutil.which`) pick the broken podman every time; the assert below and
+  # the four test fixtures (`yadgar.tests.integration._podman.
+  # select_container_runtime`) both probe FUNCTION, not presence, so they
+  # correctly fall through to docker.
   #
   # A SKIPPED RUN IS NOT A PASS. The fixture calls `pytest.skip` when no
-  # container runtime is found, and a job that skips everything exits 0 and
-  # looks green — the same "green means nothing" failure this job is here to
-  # end. So the runtime is asserted up front, and the run is required to have
-  # COLLECTED tests and reported zero skips.
+  # WORKING container runtime is found, and a job that skips everything
+  # exits 0 and looks green — the same "green means nothing" failure this
+  # job is here to end. So a working runtime is asserted up front, and the
+  # run is required to have COLLECTED tests and reported zero skips.
   test-engine2-integration:
     runs-on: [self-hosted, linux, x64, yadgar]
     steps:
@@ -361,14 +370,41 @@ jobs:
       - name: Trust workspace
         run: git config --global --add safe.directory '*'
 
-      - name: Assert a container runtime is present (a skip here is a failure)
+      - name: Assert a WORKING container runtime is present (a skip here is a failure)
+        # `command -v` (the original check) only proves a binary is on PATH.
+        # It passed while the suite still skipped everything: `podman` is on
+        # PATH here but cannot actually start anything (car G5 — nested
+        # rootless podman fails "cannot re-exec process" inside this runner's
+        # own docker:dind sidecar container). Run a real throwaway container
+        # per candidate runtime instead of just checking the binary exists —
+        # exercises the exact capability the tests below need.
         run: |
           set -euo pipefail
-          command -v podman >/dev/null 2>&1 || command -v docker >/dev/null 2>&1 || {
-            echo "no podman/docker on the runner host — the engine-#2 suite cannot run," >&2
-            echo "and a silent skip is what let a broken migration ship. Failing loudly." >&2
+          runtime=""
+          for candidate in podman docker; do
+            if command -v "$candidate" >/dev/null 2>&1 && \
+               "$candidate" run --rm docker.io/library/alpine:3 true >/dev/null 2>&1; then
+              runtime="$candidate"
+              break
+            fi
+          done
+          if [ -z "$runtime" ]; then
+            echo "no WORKING container runtime on the runner host (podman/docker may be" >&2
+            echo "on PATH but unable to actually start a container) — the engine-#2 suite" >&2
+            echo "cannot run, and a silent skip is what let a broken migration ship." >&2
+            echo "Failing loudly." >&2
             exit 1
-          }
+          fi
+          echo "using $runtime as the working container runtime"
+
+      - name: Install mariadb client (mariadb-dump / mariadb — needed by the dump/restore arms)
+        # Bare runner host, no image to inherit these from. Without this,
+        # test_mariadb_dump_arm.py / test_mariadb_restore_arm.py skip via
+        # their own `shutil.which("mariadb-dump")` / `shutil.which("mariadb")`
+        # guards even once a working container runtime is found (car G5).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mariadb-client
 
       - name: Install uv (bare host, no container to inherit it from)
         # `python3 -m pip install uv` (the original approach) resolves through
@@ -391,6 +427,11 @@ jobs:
         run: uv sync --python 3.14 --extra sql --extra test
 
       - name: Run the engine-#2 integration suite
+        # `-rf` (the original flag) reports FAILURES only — a skip reason is
+        # never printed, so a run that skips everything leaves the artifact
+        # with nothing to diagnose from but "s" characters (car G5: 41
+        # skipped in 2.31s, cause invisible from the artifact alone). `-ra`
+        # reports every non-passing outcome, including skip reasons.
         run: |
           set -o pipefail
           uv run --python 3.14 --extra sql --extra test python -m pytest \
@@ -400,7 +441,7 @@ jobs:
             yadgar/tests/integration/test_mariadb_restore_arm.py \
             -m integration \
             -n 0 \
-            -q -rf --tb=short \
+            -q -ra --tb=short \
             2>&1 | tee pytest-engine2.txt
 
       - name: Gate on tests having actually RUN

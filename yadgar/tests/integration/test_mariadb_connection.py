@@ -46,7 +46,10 @@ from yadgar._shared.storage.sql import (  # noqa: E402
     MariaStorageEngine,
     default_option_file_path,
 )
-from yadgar.tests.integration._podman import podman_env  # noqa: E402
+from yadgar.tests.integration._podman import (  # noqa: E402
+    podman_env,
+    select_container_runtime,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -83,9 +86,12 @@ def live_mariadb():
     password-auth app account scoped to it — and nothing else. It never touches
     the live data root.
     """
-    runtime = shutil.which("podman") or shutil.which("docker")
+    runtime = select_container_runtime()
     if runtime is None:
-        pytest.skip("docker/podman not available on this host")
+        pytest.skip(
+            "no working container runtime on this host "
+            "(podman/docker absent, or present but non-functional)"
+        )
 
     name = f"yadgar-carc-mdb-{uuid.uuid4().hex[:8]}"
     sock_dir = Path(f"/tmp/ymdb-{uuid.uuid4().hex[:8]}")
