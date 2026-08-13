@@ -226,7 +226,12 @@ def _recall_results(
     retriever: Retriever, id_to_content: dict[int, str], query: str, max_results: int = 5
 ) -> dict:
     """Run recall and return {ordered_contents: [...], scores: [...]} for fixture."""
-    results = retriever.recall(query, max_results=max_results, min_heat=0.01)
+    # Car H1 §1.3: this characterizes RANKING over the 20-memory fixture
+    # corpus, not scoping. The fixture rows carry no project_id, so a
+    # project-scoped read would return nothing and every ordering
+    # assertion would pass vacuously. A falsy project_id now raises, so
+    # the whole-corpus intent has to be stated.
+    results = retriever.recall(query, max_results=max_results, min_heat=0.01, unscoped=True)
     ordered_contents = []
     scores = []
     for mem in results:
@@ -379,7 +384,9 @@ class TestRetrievalCoreCharacterization:
         """Every query must return at least 1 result from the 20-memory corpus."""
         retriever, id_to_content = retrieval_env
         for query in QUERIES:
-            results = retriever.recall(query, max_results=5, min_heat=0.01)
+            results = retriever.recall(
+                query, max_results=5, min_heat=0.01, unscoped=True
+            )  # H1 §1.3: fixture-corpus ranking, not scoping
             assert len(results) >= 1, f"Query {query!r} returned 0 results"
 
     def test_scores_are_non_negative(self, retrieval_env, expected_fixture):
