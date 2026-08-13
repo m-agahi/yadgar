@@ -116,36 +116,16 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# v5.4.3 grandfathering: pre-existing C901/PLR0913 violations that existed before
-# b27d218 enabled ruff --select=C901,PLR0913 without grandfathering existing code.
-# Each entry is technical debt; refactor target: v5.4.4.
+# Grandfathered C901/PLR0913 violations that predate strict enforcement.
+# Each entry is technical debt, not a pattern to imitate.
 # DO NOT add new entries here — fix violations in new code.
+# Verified 2026-08-13 (repo on v5.181.56) against the repo's own thresholds
+# (mccabe max-complexity=15, pylint max-args=8):
+#   uv run ruff check --select C901,PLR0913 --config 'lint.per-file-ignores={}' yadgar/
+# returns exactly these 5 violations — the only files that still need an ignore.
 "yadgar/backend/causal_discovery/pc.py" = ["C901"]
-"yadgar/core/cli/daemon.py" = ["C901"]
-"yadgar/core/cli/stats.py" = ["C901"]
-"yadgar/backend/cls_store/clustering.py" = ["C901"]
-"yadgar/backend/consolidation/cls.py" = ["C901"]
-"yadgar/backend/curation/__init__.py" = ["PLR0913"]
-"yadgar/backend/curation/ingestion.py" = ["PLR0913"]
-"yadgar/backend/curation/prune_passes.py" = ["C901"]
-"yadgar/_shared/metacognition/cognitive_load.py" = ["C901"]
-"yadgar/_shared/metacognition/coverage.py" = ["C901"]
-"yadgar/_shared/metacognition/gap_detection.py" = ["C901"]
-"yadgar/backend/restoration/checkpoint_restore.py" = ["C901", "PLR0913"]
-"yadgar/_shared/retrieval/_reranking_heuristic.py" = ["C901"]
-"yadgar/_shared/retrieval/fusion.py" = ["C901"]
-"yadgar/_shared/retrieval/query_analysis.py" = ["C901"]
-"yadgar/_shared/retrieval/reranking.py" = ["C901", "PLR0913"]
-"yadgar/_shared/retrieval/scoring.py" = ["C901"]
-"yadgar/_shared/rules_engine/rules_engine.py" = ["C901"]
-"yadgar/core/seed/_generate.py" = ["C901"]
-"yadgar/core/seed/_scan.py" = ["C901"]
-"yadgar/core/server/tools/admin_invariants.py" = ["C901"]
-"yadgar/core/server/tools/admin_other.py" = ["C901"]
 "yadgar/core/server/tools/project.py" = ["C901"]
-"yadgar/core/server/tools/recall.py" = ["C901"]
 "yadgar/core/server/tools/wiki.py" = ["PLR0913"]
-"yadgar/_shared/storage/entity.py" = ["PLR0913"]
 "yadgar/tests/_shared/test_metacognition.py" = ["PLR0913"]
 "yadgar/tests/_shared/test_rules_engine.py" = ["PLR0913"]
 

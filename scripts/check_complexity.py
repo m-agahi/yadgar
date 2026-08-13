@@ -798,6 +798,21 @@ def gc_baseline(filepaths: list[str], baseline_path: str) -> int:
 
     Stale entries arise when a function is renamed, moved, or deleted —
     the old ``<file>::<name>@<lineno>`` key is left behind.
+
+    STANDING DECISION (Car 7 allowlist-debt audit, 2026-08-13): ``--gc``
+    stays opt-in / manually-invoked. Measured that day: 1628 of 3334
+    ``.complexity-baseline.json`` entries (48.8%) are stale (no matching
+    live symbol). This is NOT dangerous — a stale key just means that
+    symbol is invisible to the baseline ratchet, so it falls through to
+    FULL enforcement (the strictest path, never the loosest; see
+    ``main()`` below). Wiring ``--gc`` into pre-commit was deliberately
+    rejected when the flag was added (docs/plans/archive/PLAN_V5_49_5.md
+    §8: "the flag is opt-in; pre-commit hook doesn't auto-`--gc`" —
+    mitigating the risk of silently removing real entries on a bad scan).
+    That decision still holds. The 48.8% stale rate is accepted cost, not
+    an oversight: pay it down by running
+    ``python scripts/check_complexity.py --gc --all-files`` by hand when
+    someone wants a clean baseline, not automatically.
     """
     baseline = load_baseline(baseline_path)
     if not baseline:

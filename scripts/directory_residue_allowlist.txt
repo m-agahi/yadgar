@@ -147,8 +147,8 @@ wire-contract  yadgar/backend/admin_exec/seed.py           # core-owned admin pa
 # ── legacy-key: a real scope key, blocked by Amendment 3's two conditions ────
 legacy-key  yadgar/_shared/storage/blocks.py               # memory_block: C11 declared project_id, the directory arm keeps pre-C11 rows reachable
 legacy-key  yadgar/_shared/storage/runtime_config.py       # runtime_config: C11 shipped the COLUMN only; no caller holds an identity (plan §6 knob train)
-legacy-key  yadgar/_shared/storage/queue.py                # action_log: dual-write; three live consumers still read the legacy column
-legacy-key  yadgar/_shared/storage/episode.py              # episode: dual-write; causal_discovery/pc.py filters on e['directory']
+legacy-key  yadgar/_shared/storage/queue.py                # action_log: dual-write; get_unprocessed_actions has exactly ONE non-test consumer, backend/consolidation/cleanup.py:192
+legacy-key  yadgar/_shared/storage/episode.py              # episode: dual-write; backend/consolidation/cls.py:208 (_process_new_episodes) filters on ep['directory'] (causal_discovery/pc.py:60 already filters project_id)
 legacy-key  yadgar/_shared/storage/ops.py                  # get_active_checkpoint — the checkpoint table's transitional dual key
 legacy-key  yadgar/_shared/storage/memory.py               # get_recent_memories_since: both callers would have to resolve, and resolve raises;
                                                            # project_brief has no error envelope and runs on the session-start hook path.
@@ -156,7 +156,7 @@ legacy-key  yadgar/_shared/storage/wiki.py                 # list_wiki_pages / l
                                                            # (a two-parameter merge is a redesign, not a rename).
 legacy-key  yadgar/_shared/sensory_buffer/sensory_buffer.py  # episode capture dual-writes the legacy column
 legacy-key  yadgar/_shared/rules_engine/rules_engine.py    # _LEGACY_SCOPE_KINDS maps the RETIRED kind "directory" onto "project" so writes reject it
-legacy-key  yadgar/backend/restoration/checkpoint_restore.py  # five sinks; checkpoint and memory_block have no project_id, so restore must pass both
+legacy-key  yadgar/backend/restoration/checkpoint_restore.py  # 9 residue sites (not five); checkpoint + memory_block DO carry project_id (migration 033, _C11_PROJECT_ID_TABLES), but callers can still pass project_id=None (arm 2: no identity to resolve)
 legacy-key  yadgar/backend/restoration/__init__.py         # run_restore forwards into checkpoint_restore.restore
 legacy-key  yadgar/backend/write_exec/checkpoint_impl.py   # forwards into replay.create_checkpoint — the checkpoint table again
 legacy-key  yadgar/backend/write_exec/action_log_impl.py   # storage.insert_action_log(directory=) — the action_log dual-write, same block as _shared/storage/queue.py
@@ -167,7 +167,7 @@ legacy-key  yadgar/backend/admin_exec/project.py           # storage.get_block /
 legacy-key  yadgar/backend/admin_exec/audit.py             # storage.insert_action_log(directory=) plus the payload key it reads back
 legacy-key  yadgar/backend/admin_exec/runtime_config.py    # plan §6 — runtime_config scoping belongs to the knob train, not a mechanical rename
 legacy-key  yadgar/core/server/http.py                     # MIXED Starlette hook routes: checkpoint, memory_block, runtime_config, action_log
-legacy-key  yadgar/core/forward.py                         # _forward_restore — the checkpoint table, which has no project_id column yet
+legacy-key  yadgar/core/forward.py                         # _forward_restore — checkpoint DOES carry project_id (migration 033), but http.py:884 and cli/restore.py can still pass project_id=None (arm 2: no identity to resolve)
 legacy-key  yadgar/core/runtime_config_client.py           # the host-side runtime_config client; blocked with its storage layer
 legacy-key  yadgar/core/code_graph/digest.py               # memory_block injection scope is an exact directory match (the block NAME carries the discriminator)
 legacy-key  yadgar/core/cli/_shared.py                     # forward_restore / forward_pre_compact_drain — checkpoint
@@ -189,7 +189,7 @@ tool-surface  yadgar/core/server/tools/adr.py              # resolve_effective_p
 tool-surface  yadgar/core/server/tools/adr_render.py       # resolve_effective_project class over wiki_page
 tool-surface  yadgar/core/server/tools/agent_prompts.py    # resolve_effective_project class over wiki_page
 tool-surface  yadgar/core/server/tools/dispatch_helper.py  # resolve_effective_project class over memory + wiki_page
-tool-surface  yadgar/core/server/tools/misc.py             # checkpoint/restore are accept_project_param and STILL directory-keyed
+tool-surface  yadgar/core/server/tools/misc.py             # checkpoint (misc.py:137) is accept_project_param and STILL directory-keyed; restore (misc.py:216-234) was promoted to resolve_effective_project
 tool-surface  yadgar/core/server/tools/project.py          # project_brief is accept_project_param and STILL directory-keyed
 tool-surface  yadgar/core/server/tools/blocks.py           # block_* are accept_project_param and STILL directory-keyed (memory_block)
 tool-surface  yadgar/core/server/tools/audit.py            # audit_anchors is accept_project_param and STILL directory-keyed
