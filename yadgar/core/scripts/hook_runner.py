@@ -36,8 +36,12 @@ import sys
 # was repointed at ``yadgar.core.cli.hook`` in Car 0, so the canonical patch
 # target is that module. These re-exports keep import-only back-compat
 # (`from yadgar.core.scripts.hook_runner import hook_db_lockdown_check`).
+#
+# Car 9: `_AUTH_TOKEN` dropped from this list — it is no longer a module-level
+# constant on the impl module (resolve_auth_token() is now called inside
+# `_auth_headers()` at request time instead), so there is nothing left to
+# re-export under that name.
 from yadgar.core.cli.hook import (  # noqa: F401
-    _AUTH_TOKEN,
     _BLOCK_REFLECT_TOOLS,
     _BLOCKED_EXEC_PATTERNS,
     _HOOKS,

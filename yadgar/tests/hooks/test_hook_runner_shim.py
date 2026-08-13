@@ -20,8 +20,10 @@ import yadgar.core.cli.hook as impl
 import yadgar.core.scripts.hook_runner as hr
 
 # The surface the characterization suite + external importers reach through the shim.
+# Car 9: "_AUTH_TOKEN" removed — no longer a module-level constant on the impl
+# module (resolve_auth_token() is called inside _auth_headers() at request
+# time instead), so there is nothing to re-export under that name.
 _REEXPORTED = [
-    "_AUTH_TOKEN",
     "_PORT",
     "_HOOKS",
     "_auth_headers",
