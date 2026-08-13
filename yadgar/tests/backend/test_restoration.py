@@ -355,17 +355,45 @@ class TestPayloadProvidedInFlight:
 class TestCLISubcommandsForwardOnly:
     """T2 Car B: drain/restore CLI are thin HTTP forwarders to the backend.
 
-    Without YADGAR_EMBED_URL they must fail LOUD (RuntimeError naming the env
-    var) — no in-core fallback exists anymore (CheckpointRestore moved to
-    yadgar.backend.restoration). The forward behavior itself is unit-covered in
-    tests/scripts/test_cli_restore_module.py / test_cli_drain_module.py.
+    The contract under test is unchanged: these subcommands are FORWARD-ONLY —
+    no in-core fallback exists anymore (CheckpointRestore moved to
+    ``yadgar.backend.restoration``) — so when they cannot reach the backend they
+    must fail LOUD, naming ``YADGAR_EMBED_URL``. The forward behavior itself is
+    unit-covered in tests/scripts/test_cli_restore_module.py /
+    test_cli_drain_module.py.
+
+    **How that contract is expressed changed in the v5.182 bug train, and the
+    old expression had become non-deterministic.** These tests used to unset
+    ``YADGAR_EMBED_URL`` and assert the "not set" error. Car 5 made
+    ``yadgar/__main__.py`` ``setdefault`` the variable to the published host
+    port so the host CLI works out of the box, which makes "no URL configured"
+    UNREACHABLE — and left the outcome depending on whether a daemon happened to
+    be listening on 127.0.0.1:8001. Observed both ways on this branch: a raw
+    ``ConnectError`` traceback in CI (nothing listening) and a **clean exit 0
+    with real restored content** on a developer box running the daemon. A test
+    that passes or fails on ambient machine state is not a guard.
+
+    So the unreachable-backend case is now pinned at a deliberately dead
+    address, which is deterministic everywhere, and the assertions are STRICTER
+    than before: exit non-zero, ``YADGAR_EMBED_URL`` named, the address actually
+    tried echoed back, and no traceback-only failure. A third test pins the
+    default itself, which nothing covered before. This is a re-expression of the
+    same contract plus new coverage — not a relaxation to accommodate the change
+    (the defect task #0139 exists to prevent).
     """
 
-    def _run_cli(self, *args):
+    #: Port 1 (tcpmux) — reserved, never bound by anything in this repo's test
+    #: or dev topology, so the connect refusal is deterministic in CI and on a
+    #: developer machine with a live daemon alike.
+    _DEAD_URL = "http://127.0.0.1:1"
+
+    def _run_cli(self, *args, url=_DEAD_URL):
         import os
         import subprocess
 
         env = {k: v for k, v in os.environ.items() if k != "YADGAR_EMBED_URL"}
+        if url is not None:
+            env["YADGAR_EMBED_URL"] = url
         return subprocess.run(
             [sys.executable, "-m", "yadgar", *args],
             capture_output=True,
@@ -374,15 +402,53 @@ class TestCLISubcommandsForwardOnly:
             env=env,
         )
 
-    def test_cli_drain_fails_loud_without_backend_url(self):
-        result = self._run_cli("drain", "/test/project")
-        assert result.returncode != 0
-        assert "YADGAR_EMBED_URL" in result.stderr
+    def _assert_loud_and_actionable(self, result):
+        assert result.returncode != 0, (
+            f"forward-only CLI silently succeeded against a dead backend: {result.stdout[:400]!r}"
+        )
+        combined = result.stderr + result.stdout
+        assert "YADGAR_EMBED_URL" in combined, (
+            f"failure did not name the env var an operator must fix: {result.stderr[-600:]!r}"
+        )
+        assert "127.0.0.1:1" in combined, (
+            "failure did not echo the address actually tried, so the operator "
+            f"cannot tell WHICH backend was unreachable: {result.stderr[-600:]!r}"
+        )
 
-    def test_cli_restore_fails_loud_without_backend_url(self):
-        result = self._run_cli("restore", "/test/project")
-        assert result.returncode != 0
-        assert "YADGAR_EMBED_URL" in result.stderr
+    def test_cli_drain_fails_loud_when_backend_unreachable(self):
+        self._assert_loud_and_actionable(self._run_cli("drain", "/test/project"))
+
+    def test_cli_restore_fails_loud_when_backend_unreachable(self):
+        self._assert_loud_and_actionable(self._run_cli("restore", "/test/project"))
+
+    def test_unset_env_is_defaulted_to_the_published_host_port(self):
+        """Car 5's default is itself pinned — it had no coverage before.
+
+        Passing ``url=None`` leaves ``YADGAR_EMBED_URL`` genuinely unset, which
+        is what a bare host CLI invocation looks like. The default must land on
+        the published host port; without it every forwarding subcommand died
+        with "not set" on a normal container install.
+        """
+        import os
+        import subprocess
+
+        env = {k: v for k, v in os.environ.items() if k != "YADGAR_EMBED_URL"}
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import yadgar.__main__ as m; m._default_host_embed_url()\n"
+                "import os; print(os.environ.get('YADGAR_EMBED_URL', ''))",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr[-600:]
+        assert result.stdout.strip() == "http://127.0.0.1:8001", (
+            f"host-CLI default changed or stopped being applied: {result.stdout!r}"
+        )
 
 
 class TestAutoCheckpoint:
