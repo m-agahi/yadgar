@@ -17,6 +17,7 @@ from pathlib import Path
 import yadgar._shared.paths as _paths
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import shutdown_tracing
+from yadgar.core.install.auth_token import resolve_auth_token
 
 # Tool name prefixes that are self-referential — never capture
 _SKIP_PREFIXES = (
@@ -96,7 +97,9 @@ def main():
                 }
             ).encode()
             _headers = {"Content-Type": "application/json"}
-            _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+            # Car 9: route through the ONE sanctioned bearer-token resolver
+            # (env var, else secrets.env) rather than a bare os.environ.get.
+            _token = resolve_auth_token()
             if _token:
                 _headers["Authorization"] = f"Bearer {_token}"
             _r = _req.Request(

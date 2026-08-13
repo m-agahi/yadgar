@@ -21,6 +21,7 @@ from pathlib import Path
 import yadgar._shared.paths as _paths
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import shutdown_tracing
+from yadgar.core.install.auth_token import resolve_auth_token
 
 
 @observe(tier="hot")
@@ -217,7 +218,9 @@ def main():
             import urllib.request as _req
 
             _params = _parse.urlencode({"query": query, "directory": directory})
-            _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+            # Car 9: route through the ONE sanctioned bearer-token resolver
+            # (env var, else secrets.env) rather than a bare os.environ.get.
+            _token = resolve_auth_token()
             _req_obj = _req.Request(
                 f"http://127.0.0.1:{_port}/hooks/prompt-recall?{_params}",
             )

@@ -357,6 +357,8 @@ def _forward_to_backend(  # noqa: PLR0913 — 11 args match full recall signatur
 
     import httpx  # noqa: PLC0415
 
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
     backend_base = os.environ.get("YADGAR_EMBED_URL", "").rstrip("/")
     if not backend_base:
         raise RuntimeError(
@@ -364,7 +366,10 @@ def _forward_to_backend(  # noqa: PLR0913 — 11 args match full recall signatur
             "Phase 2a: recall is forward-only — no in-core fallback."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    # else secrets.env) rather than a bare os.environ.get — matches
+    # core/forward.py's Car 5 fix for the same forward-only-call shape.
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     payload: dict = {

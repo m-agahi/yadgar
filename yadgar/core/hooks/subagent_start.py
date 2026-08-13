@@ -37,9 +37,12 @@ import urllib.request
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import shutdown_tracing
+from yadgar.core.install.auth_token import resolve_auth_token
 
 _PORT = os.environ.get("YADGAR_PORT", "8765")
-_AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+# Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+# else secrets.env) rather than a bare os.environ.get.
+_AUTH_TOKEN = resolve_auth_token()
 
 
 @observe(tier="hot")
