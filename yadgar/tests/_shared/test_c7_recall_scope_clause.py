@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import pytest
 
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.storage.directory import (
     build_project_scope_clause,
     build_recall_scope_clause,
@@ -85,9 +86,21 @@ class TestProjectAndReachArms:
             f"both this project AND global: {sql!r}"
         )
 
-    def test_absent_project_disables_filtering(self):
-        assert build_project_scope_clause(None) == ("", {})
-        assert build_project_scope_clause("") == ("", {})
+    def test_absent_project_requires_an_explicit_opt_in_to_disable_filtering(self):
+        """Car H1 (§1.3) REPLACED the silent empty-clause answer with a raise.
+
+        C7 shipped ``build_project_scope_clause(None) == ("", {})`` — a falsy
+        project produced NO WHERE arm, i.e. the whole corpus, on the reasoning
+        that the resolver raises upstream. That left the isolation guarantee
+        resting on one resolver with nothing behind it. The deliberate
+        whole-corpus read survives as an EXPLICIT flag; the accidental one now
+        fails loud. Full coverage lives in ``test_h1_scope_guard.py``.
+        """
+        with pytest.raises(UnresolvedProjectError):
+            build_project_scope_clause(None)
+        with pytest.raises(UnresolvedProjectError):
+            build_project_scope_clause("")
+        assert build_project_scope_clause(None, unscoped=True) == ("", {})
 
     def test_prefix_prevents_param_collision(self):
         _, a = build_project_scope_clause(_PROJECT, prefix="aa")
@@ -123,8 +136,18 @@ class TestUnstampedRowsDoNotMatch:
     def test_row_guard_admits_other_project_with_reach_tag(self):
         assert is_project_eligible(_OTHER, ["global"], _PROJECT)
 
-    def test_row_guard_is_a_noop_without_a_caller_project(self):
-        assert is_project_eligible(None, None, None)
+    def test_row_guard_refuses_a_falsy_caller_project(self):
+        """Car H1 (§1.3) REPLACED the no-op-on-falsy-caller behaviour with a raise.
+
+        C7 shipped ``is_project_eligible(None, None, None) is True`` — a falsy
+        caller admitted EVERY row. This is the arm with no WHERE clause behind
+        it (graph-walk candidates arrive only through here), so failing open
+        was a whole-corpus leak with no second gate. Callers that want no
+        filtering skip the guard at the call site instead (see
+        ``http.py::_filter_prompt_recall_results``).
+        """
+        with pytest.raises(UnresolvedProjectError):
+            is_project_eligible(None, None, None)
 
 
 # ── 3. The page_type exclusion is DERIVED (the anti-drift test) ──────────────

@@ -113,12 +113,22 @@ class TestIsProjectEligible:
     def test_empty_string_project_no_longer_sentinel(self):
         assert not self.elig("", [], "test-owner/test-repo")
 
-    # Legacy mode (caller_project_id=None): unchanged semantics — no filtering.
-    def test_legacy_mode_all_pass(self):
-        assert self.elig("other-owner/other-repo", [], None)
-        assert self.elig(None, [], None)
-        assert self.elig("", [], None)
-        assert self.elig("test-owner/test-repo", [], None)
+    # Car H1 (§1.3): "legacy mode = no filtering" is DELETED. A falsy caller
+    # project used to admit every row — on the arm that has no SQL WHERE clause
+    # behind it (graph-walk candidates) — so it raises now. Callers that want no
+    # filtering skip the guard at the call site instead.
+    def test_falsy_caller_project_raises_instead_of_admitting_everything(self):
+        from yadgar._shared.errors import UnresolvedProjectError
+
+        for row_project in ("other-owner/other-repo", None, "", "test-owner/test-repo"):
+            with pytest.raises(UnresolvedProjectError):
+                self.elig(row_project, [], None)
+
+    def test_a_real_caller_project_still_admits_and_rejects(self):
+        """Bucket proof: the guard did not simply make the function raise always."""
+        assert self.elig("test-owner/test-repo", [], "test-owner/test-repo")
+        assert self.elig("other-owner/other-repo", ["global"], "test-owner/test-repo")
+        assert not self.elig("other-owner/other-repo", [], "test-owner/test-repo")
 
     def test_other_project_excluded(self):
         assert not self.elig("quinyx/meridian", [], "test-owner/test-repo")
@@ -146,19 +156,25 @@ class TestProjectScopeClauseDeletionPins:
 
         assert not hasattr(directory_mod, "DirectoryFilter")
 
-    def test_build_project_scope_clause_empty_for_none(self):
+    # Car H1 (§1.3): the empty clause on a falsy project WAS the single point of
+    # failure — it emitted no WHERE arm, i.e. the whole corpus, whenever the
+    # resolver returned empty for any reason. The whole-corpus read survives as
+    # an EXPLICIT opt-in; the accidental one raises.
+    def test_build_project_scope_clause_raises_for_none(self):
+        from yadgar._shared.errors import UnresolvedProjectError
         from yadgar._shared.storage.directory import build_project_scope_clause
 
-        sql, params = build_project_scope_clause(None)
-        assert sql == ""
-        assert params == {}
+        with pytest.raises(UnresolvedProjectError):
+            build_project_scope_clause(None)
+        assert build_project_scope_clause(None, unscoped=True) == ("", {})
 
-    def test_build_project_scope_clause_empty_for_empty_string(self):
+    def test_build_project_scope_clause_raises_for_empty_string(self):
+        from yadgar._shared.errors import UnresolvedProjectError
         from yadgar._shared.storage.directory import build_project_scope_clause
 
-        sql, params = build_project_scope_clause("")
-        assert sql == ""
-        assert params == {}
+        with pytest.raises(UnresolvedProjectError):
+            build_project_scope_clause("")
+        assert build_project_scope_clause("", unscoped=True) == ("", {})
 
 
 class TestBuildProjectScopeClause:
@@ -176,10 +192,13 @@ class TestBuildProjectScopeClause:
 
         self.build = build_project_scope_clause
 
-    def test_none_project_returns_empty(self):
-        sql, params = self.build(None)
-        assert sql == ""
-        assert params == {}
+    def test_none_project_raises_unless_explicitly_unscoped(self):
+        """Car H1 (§1.3) — see ``TestProjectScopeClauseDeletionPins``."""
+        from yadgar._shared.errors import UnresolvedProjectError
+
+        with pytest.raises(UnresolvedProjectError):
+            self.build(None)
+        assert self.build(None, unscoped=True) == ("", {})
 
     def test_project_id_injects_param(self):
         sql, params = self.build("/home/max/git/yadgar")
@@ -765,8 +784,15 @@ class TestWikiQueryProjectScoping:
         # "system" got custom treatment regardless of what it was compared to).
         assert not is_project_eligible("system", [], TEST_PROJECT_ID)
         assert not is_project_eligible("system", [], "other-owner/aws-work")
-        # Legacy/no-caller-project mode still passes everything, regardless of value.
-        assert is_project_eligible("system", [], None)
+        # Car H1 (§1.3): "legacy mode passes everything, regardless of value"
+        # WAS the leak. A falsy caller admitted every row through the one arm
+        # with no WHERE clause behind it, so it now raises. The two assertions
+        # above are unchanged — the sentinel decision this test exists to pin
+        # is untouched.
+        from yadgar._shared.errors import UnresolvedProjectError
+
+        with pytest.raises(UnresolvedProjectError):
+            is_project_eligible("system", [], None)
 
 
 class TestProjectBriefWikiScoping:

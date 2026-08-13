@@ -995,6 +995,8 @@ class _MemoryMixin:
         store_type: str,
         project_id: str | None = None,
         limit: int | None = None,
+        *,
+        unscoped: bool = False,
     ) -> list[dict]:
         """Return memories for a store type, optionally scoped to one project.
 
@@ -1018,11 +1020,15 @@ class _MemoryMixin:
         not match: admitting them would rebuild the permissive fallback ADR-0227
         exists to delete. Zero results over an un-backfilled corpus is the
         sanctioned cost of that window, recorded in the plan's §8 step 5b runbook.
+
+        Car H1 (§1.3): a falsy ``project_id`` now RAISES rather than emitting an
+        unscoped corpus-wide SELECT. The deliberate corpus read — consolidation
+        clustering, which is corpus-wide BY INTENT — passes ``unscoped=True``.
         """
         order_clause = " ORDER BY last_accessed DESC" if limit is not None else ""
         limit_clause = " LIMIT $lim" if limit is not None else ""
-        # Empty/None project_id yields ("", {}) — an unscoped, corpus-wide read.
-        scope_clause, scope_params = build_project_scope_clause(project_id)
+        # Car H1: raises on a falsy project_id unless the caller opted out.
+        scope_clause, scope_params = build_project_scope_clause(project_id, unscoped=unscoped)
         scope_sql = f" AND {scope_clause}" if scope_clause else ""
         params: dict = {"st": store_type, **scope_params}
         if limit is not None:

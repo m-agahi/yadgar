@@ -215,10 +215,20 @@ def _zero_gap_6_reinjection(ctx: MemorizeContext, settings) -> None:
         return
 
     try:
+        # Car H1 (§1.3): this was the ONE production caller reaching
+        # ``Retriever.recall`` with no project at all, so write-time reinjection
+        # searched the WHOLE corpus and could surface another project's
+        # memories back to this writer. ``ctx.project_id`` is the row's own
+        # resolved owner (C4b) and is the honest scope for "what do I already
+        # know about this". A legacy payload with no project_id now raises
+        # inside the ``except`` below, which degrades to NO reinjection —
+        # correct: reinjection is an enrichment, and returning nothing is
+        # strictly better than returning another project's content.
         related = _st._retriever.recall(
             ctx.content[:300],
             max_results=settings.REINJECTION_MAX_RESULTS + 1,
             min_heat=0.0,
+            project_id=ctx.project_id,
         )
         for r in related:
             if r["id"] != ctx.memory_id:
