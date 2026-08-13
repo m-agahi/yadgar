@@ -121,7 +121,7 @@ Hard caps NO override. If hit, decomposition design must prove I5 preservation.
 
 **Decision log — 2026-05-22 — v5.4.6 LOW-risk refactor batch:** 4 functions / 2 files fully removed from per-file-ignores / 1 partial removal. No topology drift per I5 — all helpers remain in same module, same sync/async context. MEDIUM and HIGH violations deferred (topology proof required per I5 or metrics gate per I12).
 
-**Drift note — 2026-08-13 — Car 7 allowlist-debt audit:** `curation/ingestion.py` and `storage/entity.py` had drifted back INTO `pyproject.toml` per-file-ignores at some undocumented point after the 2026-05-22 removal above — both entries sat there vacuous (ruff re-checked clean at the repo's own thresholds without them). Removed again, this time along with 21 further rotted per-file-ignores entries (5 dead-path, 16 more vacuous); of the original 28-entry list only 5 genuine entries remain. See `pyproject.toml` `[tool.ruff.lint.per-file-ignores]` header comment for the current verification command.
+**Drift note — 2026-08-13 — Car 7 allowlist-debt audit:** `curation/ingestion.py` and `storage/entity.py` had drifted back INTO `pyproject.toml` per-file-ignores at some undocumented point after the 2026-05-22 removal above — both entries sat there vacuous (ruff re-checked clean at the repo's own thresholds without them). Removed again, this time along with 21 further rotted per-file-ignores lines (5 dead-path lines, 16 more vacuous lines); of the original 28-line list only 5 genuine lines remain. See `pyproject.toml` `[tool.ruff.lint.per-file-ignores]` header comment for the current verification command.
 
 ### I14. Structured logging contract (SCOPED)
 

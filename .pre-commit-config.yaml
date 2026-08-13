@@ -246,8 +246,9 @@ repos:
         # change that fixes an allowlisted violation (or moves/deletes an
         # allowlisted file) with zero pyproject.toml lines staged is exactly
         # the input that must make this fail. Car 7 (2026-08-13) found the
-        # table 23/28 entries rotten (5 dead-path, 18 vacuous) with no guard
-        # catching either class; this closes that gap. One ruff subprocess.
+        # table 23/28 path entries rotten (5 dead-path lines, 18 vacuous
+        # lines) with no guard catching either class; this closes that gap.
+        # One ruff subprocess.
         always_run: true
 
       - id: check-model-id-liveness

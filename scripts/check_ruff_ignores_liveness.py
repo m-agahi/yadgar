@@ -4,16 +4,18 @@
 WHY THIS EXISTS (Car 7 allowlist-debt audit, 2026-08-13)
 ----------------------------------------------------------
 NO GUARD existed for this table before this script. It rotted to 23 of 28
-entries (82%) before anyone re-verified it against the repo's own ruff
-thresholds (mccabe max-complexity=15, pylint max-args=8):
+path entries (25 of 30 (path, code) pairs — two rotten lines each named two
+codes) before anyone re-verified it against the repo's own ruff thresholds
+(mccabe max-complexity=15, pylint max-args=8):
 
-  * 5 entries named files under `yadgar/_shared/retrieval/` that had already
-    moved to `backend/retrieval` — ruff silently drops a per-file-ignores
-    entry whose path matches nothing, so these were dead weight with zero
-    signal.
-  * 18 more entries named files that ruff re-checks CLEAN at the repo's
-    thresholds without the ignore at all — each one silently suppressed
-    the NEXT violation of that code in that file, with no signal either.
+  * 5 lines (6 pairs) named files under `yadgar/_shared/retrieval/` that had
+    already moved to `backend/retrieval` — ruff silently drops a
+    per-file-ignores entry whose path matches nothing, so these were dead
+    weight with zero signal.
+  * 18 more lines (19 pairs) named files that ruff re-checks CLEAN at the
+    repo's thresholds without the ignore at all — each one silently
+    suppressed the NEXT violation of that code in that file, with no signal
+    either.
 
 Two failure classes, both silent, both caught only by a from-scratch manual
 audit. This script makes both classes a HARD pre-commit failure so the table
