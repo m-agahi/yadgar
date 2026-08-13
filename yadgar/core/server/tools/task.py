@@ -343,6 +343,11 @@ def task_write(
                 blocks,
             )
             result = _forward_admin(_UPDATE_OP, payload)
+            if result.get("ok") is False:
+                # Backend-side rejection (e.g. unknown project_id, ADR-0202) —
+                # propagate it intact. Do NOT hardcode ok=True over a result
+                # that says otherwise (Car 4, bug train).
+                return {"ok": False, "error": result.get("error", "update_task_row rejected")}
             return {"ok": True, "id": result.get("id", id)}
         # CREATE — ``normalized_title`` is the validated string; the param
         # ``title`` may have been None-on-update, but here is_update is False
@@ -358,6 +363,11 @@ def task_write(
             body_slug,
         )
         result = _forward_admin(_CREATE_OP, payload)
+        if result.get("ok") is False:
+            # Backend-side rejection (e.g. unknown project_id, ADR-0202) —
+            # propagate it intact. Do NOT hardcode ok=True over a result
+            # that says otherwise (Car 4, bug train).
+            return {"ok": False, "error": result.get("error", "create_task_row rejected")}
         return {"ok": True, "id": result.get("id")}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"backend forward failed: {exc}"}
