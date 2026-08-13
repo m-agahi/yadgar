@@ -45,6 +45,14 @@ pytest.importorskip("alembic", reason="alembic not installed (sql extra)")
 from yadgar._shared.storage.sql import MariaStorageEngine  # noqa: E402
 from yadgar._shared.storage.sql.migrate import upgrade_to_head  # noqa: E402
 from yadgar.backend.admin_exec import invariants_cross_engine as ce  # noqa: E402
+from yadgar.tests.integration._podman import (  # noqa: E402
+    container_is_running,
+    container_logs,
+    make_socket_dir,
+    podman_env,
+    remove_container_dir,
+    select_container_runtime,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("engine2_mariadb")]
 
@@ -53,6 +61,9 @@ _DB = "yadgar"
 _APP_USER = "yadgar_app"
 _APP_PASS = "carh-integration-password"
 _BOOT_TIMEOUT_SEC = 180.0
+# The socket file is the FIRST thing mysqld creates; if it has not reached our
+# side of the mount by here, waiting out the full boot timeout cannot help.
+_MOUNT_VISIBLE_TIMEOUT_SEC = 30.0
 
 
 def _cnf_body(socket: str) -> str:
@@ -72,15 +83,22 @@ def _cnf_body(socket: str) -> str:
 
 @pytest.fixture(scope="module")
 def live_mariadb():
-    """Scratch MariaDB over a unix socket, torn down with its anonymous volume."""
-    runtime = shutil.which("podman") or shutil.which("docker")
+    """Scratch MariaDB over a unix socket, torn down with its anonymous volume.
+
+    Runtime selection PROBES rather than checks presence (car G5) and the
+    socket directory comes from ``shared_mount_root`` rather than ``/tmp``
+    (car G6) — this file is not in the CI job's file list, so it carried both
+    defects latently after its three siblings were fixed.
+    """
+    runtime = select_container_runtime()
     if runtime is None:
-        pytest.skip("docker/podman not available on this host")
+        pytest.skip(
+            "no working container runtime on this host "
+            "(podman/docker absent, or present but non-functional)"
+        )
 
     name = f"yadgar-carh-mdb-{uuid.uuid4().hex[:8]}"
-    sock_dir = Path(f"/tmp/ymdbh-{uuid.uuid4().hex[:8]}")
-    sock_dir.mkdir(mode=0o777, parents=True)
-    sock_dir.chmod(0o777)
+    sock_dir = make_socket_dir(runtime, image=_IMAGE, prefix="ymdbh")
     socket_path = sock_dir / "mysqld.sock"
 
     started = subprocess.run(
@@ -95,7 +113,7 @@ def live_mariadb():
             _IMAGE,
             "--socket=/sockets/mysqld.sock",
         ],
-        capture_output=True, text=True, check=False, timeout=300,
+        capture_output=True, text=True, check=False, timeout=300, env=podman_env(),
     )  # fmt: skip
     if started.returncode != 0:
         shutil.rmtree(sock_dir, ignore_errors=True)
@@ -106,33 +124,43 @@ def live_mariadb():
     cnf.chmod(0o600)
 
     try:
-        _await_ready(cnf)
+        _await_ready(cnf, runtime, name, socket_path)
         yield {"cnf": cnf}
     finally:
         subprocess.run(
-            [runtime, "rm", "-f", "-v", name], capture_output=True, check=False, timeout=120
-        )
-        _remove_socket_dir(runtime, sock_dir)
-
-
-def _remove_socket_dir(runtime: str, sock_dir: Path) -> None:
-    """The image chowns the mount to a subuid; ``podman unshare`` can remove it."""
-    shutil.rmtree(sock_dir, ignore_errors=True)
-    if sock_dir.exists() and Path(runtime).name == "podman":
-        subprocess.run(
-            [runtime, "unshare", "rm", "-rf", str(sock_dir)],
-            capture_output=True, check=False, timeout=120,
+            [runtime, "rm", "-f", "-v", name],
+            capture_output=True, check=False, timeout=120, env=podman_env(),
         )  # fmt: skip
+        remove_container_dir(runtime, sock_dir, image=_IMAGE)
 
 
-def _await_ready(cnf: Path) -> None:
-    """The socket appears before the server is usable (bootstrap server first)."""
+def _await_ready(cnf: Path, runtime: str, name: str, socket_path: Path) -> None:
+    """The socket appears before the server is usable (bootstrap server first).
+
+    Exits early on a dead container or a socket that never crosses the mount,
+    rather than retrying for the full timeout against something that cannot
+    start answering (car G6).
+    """
     import asyncio
 
     async def _probe() -> None:
         deadline = time.monotonic() + _BOOT_TIMEOUT_SEC
+        mount_deadline = time.monotonic() + _MOUNT_VISIBLE_TIMEOUT_SEC
         last: Exception | None = None
         while time.monotonic() < deadline:
+            if not container_is_running(runtime, name):
+                raise AssertionError(
+                    f"the MariaDB container {name} exited during boot; "
+                    f"last logs:\n{container_logs(runtime, name)}"
+                )
+            if not socket_path.exists() and time.monotonic() > mount_deadline:
+                raise AssertionError(
+                    f"{socket_path} never appeared on this side of the mount "
+                    f"within {_MOUNT_VISIBLE_TIMEOUT_SEC}s while the container was "
+                    "still running — the bind mount is not shared with the "
+                    f"{Path(runtime).name} daemon. Set "
+                    "YADGAR_TEST_SHARED_MOUNT_ROOT to a directory both sides see."
+                )
             engine = MariaStorageEngine.from_option_file(cnf)
             try:
                 await engine.verify()
