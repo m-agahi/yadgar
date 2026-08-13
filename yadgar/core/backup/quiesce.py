@@ -99,6 +99,7 @@ from typing import Any
 from yadgar._shared.observability.observe import observe
 from yadgar.core.backup.backup import create_snapshot
 from yadgar.core.forward import _forward_admin
+from yadgar.core.install.auth_token import resolve_auth_token
 
 _log = logging.getLogger("yadgar.backup.quiesce")
 
@@ -170,7 +171,10 @@ def _maintenance_post(path: str, body: dict | None = None) -> dict:
     """
     import httpx  # noqa: PLC0415 — lazy, matching the rest of the host-ops path
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    # else secrets.env) — this is a host-ops path where the env var may not
+    # be exported even though secrets.env holds it.
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     resp = httpx.post(f"{_core_url()}{path}", json=body or {}, headers=headers, timeout=15.0)
     if resp.status_code not in (200, 202):

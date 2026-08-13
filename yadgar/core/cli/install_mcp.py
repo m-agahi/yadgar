@@ -15,12 +15,12 @@ Usage:
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
 
 def cmd_install_mcp(args) -> None:
+    from yadgar.core.install.auth_token import resolve_auth_token
     from yadgar.core.install.clients.mcp_register import register_mcp
     from yadgar.core.install.clients.registry import CLIENT_REGISTRY
 
@@ -33,7 +33,10 @@ def cmd_install_mcp(args) -> None:
     descriptor = CLIENT_REGISTRY[client_name]
     port = args.port or 8765
     url = f"http://127.0.0.1:{port}/mcp"
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "").strip()
+    # Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    # else secrets.env) — `yadgar install-mcp` is a host CLI invocation where
+    # the env var may not be exported even though secrets.env holds it.
+    token = resolve_auth_token().strip()
     scope = args.scope or "global"
     project_dir = Path(args.project_directory).resolve() if args.project_directory else None
 

@@ -558,10 +558,10 @@ MDBACCOUNTSEOF
     mariadb --socket="${MARIADB_SOCKET}" --protocol=socket \
         --user="${MARIADB_ADMIN_USER}" <<MDBGRANTSEOF || return 1
 -- D19: least-privilege grant. The app account owns a per-table list
--- (every ledger table + ``config`` + ``alembic_version``) rather than
--- the broad `${MARIADB_DB}.*`. The REVOKE removes the legacy broad grant
+-- (every ledger table + \`\`config\`\` + \`\`alembic_version\`\`) rather than
+-- the broad \`${MARIADB_DB}.*\`. The REVOKE removes the legacy broad grant
 -- that pre-car-A bootstrap left behind — without it, a stale
--- ``GRANT ALL PRIVILEGES ON \`yadgar\`.*`` would still let the app account
+-- \`\`GRANT ALL PRIVILEGES ON \`yadgar\`.*\`\` would still let the app account
 -- CREATE / DROP tables it should not be able to touch.
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${MARIADB_APP_USER}'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON \`${MARIADB_DB}\`.alembic_version TO '${MARIADB_APP_USER}'@'localhost';

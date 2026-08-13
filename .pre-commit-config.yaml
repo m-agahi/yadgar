@@ -121,6 +121,14 @@ repos:
         pass_filenames: false
         files: ^yadgar/.*\.py$
 
+      - id: check-auth-token-pattern
+        name: "Check bearer-token resolution chokepoint (bug train car 9: every YADGAR_MCP_AUTH_TOKEN read routes through resolve_auth_token())"
+        language: system
+        entry: python scripts/check_auth_token_pattern.py
+        types: [python]
+        pass_filenames: false
+        files: ^yadgar/.*\.py$
+
       - id: check-secret-gate
         name: Check I26 secret-gate invariant (all write tools call gate_or_reject)
         language: system

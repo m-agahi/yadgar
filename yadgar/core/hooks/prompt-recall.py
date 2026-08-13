@@ -21,6 +21,7 @@ from pathlib import Path
 import yadgar._shared.paths as _paths
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import shutdown_tracing
+from yadgar.core.install.auth_token import resolve_auth_token
 
 
 @observe(tier="hot")
@@ -216,24 +217,10 @@ def main():
             import urllib.parse as _parse
             import urllib.request as _req
 
-            # Bug train Car 2: stamp the identity HERE, mirroring
-            # yadgar.core.cli.hook.hook_prompt_recall's fix. The daemon-side
-            # resolver (http.py's hook_project_id) RAISES on a directory with
-            # no project (C7 scopes on project_id; ADR-0227 deleted directory
-            # derivation), which degraded this endpoint to an empty injection
-            # — auto-recall was silently dead on every prompt. Fail-OPEN on a
-            # mint failure: SessionStart already printed the loud error for an
-            # unresolvable tree; this script still fires the recall without
-            # `project` rather than bricking the prompt.
-            _query_params = {"query": query, "directory": directory}
-            try:
-                from yadgar.core.hooks._identity_mint import mint_project_id
-
-                _query_params["project"] = mint_project_id(directory)
-            except Exception:  # noqa: BLE001 — never brick the prompt over identity
-                pass
-            _params = _parse.urlencode(_query_params)
-            _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+            _params = _parse.urlencode({"query": query, "directory": directory})
+            # Car 9: route through the ONE sanctioned bearer-token resolver
+            # (env var, else secrets.env) rather than a bare os.environ.get.
+            _token = resolve_auth_token()
             _req_obj = _req.Request(
                 f"http://127.0.0.1:{_port}/hooks/prompt-recall?{_params}",
             )

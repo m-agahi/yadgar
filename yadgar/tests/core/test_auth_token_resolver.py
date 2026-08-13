@@ -183,3 +183,11 @@ class TestNoDuplicateResolvers:
         monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
         monkeypatch.setenv("YADGAR_SECRETS_ENV_FILE", str(secrets))
         assert _read_auth_token() == "shared-impl"
+
+    def test_version_delegates(self, tmp_path, monkeypatch):
+        """Car 9 (bug train): version.py used to carry its own hand-rolled
+        ``_read_auth_token`` copy — the exact anti-pattern this module's
+        docstring forbids. It now imports the shared resolver directly."""
+        from yadgar.core.cli.version import resolve_auth_token as version_resolve_auth_token
+
+        assert version_resolve_auth_token is resolve_auth_token

@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 
 from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
+from yadgar.core.install.auth_token import resolve_auth_token
 from yadgar.core.ops import VacuumTriggerNotConfiguredError, _fire_vacuum_service
 
 logger = logging.getLogger("yadgar.consolidation")
@@ -67,7 +68,11 @@ def _forward_to_backend(mode: str, timeout_s: float = 1800.0) -> dict:
             "R3 Car 1: consolidation compute is forward-only — no in-core fallback."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    # else secrets.env) — a bare host invocation of this orchestrator has no
+    # exported env var, so a bare os.environ.get would silently send this
+    # forwarded consolidation request unauthenticated.
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     resp = httpx.post(

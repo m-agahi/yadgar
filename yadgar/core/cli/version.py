@@ -5,32 +5,17 @@ import sys
 import urllib.error
 import urllib.request
 
-import yadgar._shared.paths as _paths
-
-
-def _read_auth_token() -> str | None:
-    """Read YADGAR_MCP_AUTH_TOKEN from env or ~/.config/yadgar/secrets.env."""
-    import os
-
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN")
-    if token:
-        return token
-    secrets_path = _paths.SECRETS_ENV_PATH
-    if secrets_path.exists():
-        try:
-            for line in secrets_path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line.startswith("YADGAR_MCP_AUTH_TOKEN="):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
-        except Exception:
-            pass
-    return None
+# Car 9: this module used to carry its own hand-rolled copy of the "env, else
+# secrets.env" resolution — exactly the "fourth hand-rolled copy"
+# yadgar/core/install/auth_token.py's docstring forbids. Route through the
+# ONE sanctioned resolver instead.
+from yadgar.core.install.auth_token import resolve_auth_token
 
 
 def _probe_daemon() -> dict:
     """Probe http://localhost:8765/health.  Returns dict with 'running' key."""
     url = "http://localhost:8765/health"
-    token = _read_auth_token()
+    token = resolve_auth_token()
     req = urllib.request.Request(url)
     if token:
         req.add_header("Authorization", f"Bearer {token}")

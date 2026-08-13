@@ -66,6 +66,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 
 from yadgar._shared.observability.observe import observe
 from yadgar.core._surreal_runner import _resolve_db_creds
+from yadgar.core.install.auth_token import resolve_auth_token
 from yadgar.core.ops import ServiceController, detect_service_mode
 from yadgar.core.vacuum.phases import (
     _atomic_swap,
@@ -1114,7 +1115,11 @@ def _check_invariants_verified(yadgar_url: str) -> tuple[bool, str]:
     ``violations`` list when the response carried one (the operator needs to
     know WHICH invariant failed, not merely that one did).
     """
-    _ci_token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    # else secrets.env) rather than a bare os.environ.get — vacuum runs as a
+    # host systemd unit / manual invocation where the env var may not be
+    # exported even though secrets.env holds it.
+    _ci_token = resolve_auth_token()
     if not _ci_token:
         print(
             "[vacuum] WARNING: YADGAR_MCP_AUTH_TOKEN not set — "
@@ -1709,7 +1714,7 @@ def _maintenance_post(path: str, body: dict | None = None) -> dict:
     raise into WARN-and-proceed — an unreachable gate must never fail a vacuum
     (precedent: ``nightly_cycle.py`` step 1).
     """
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     resp = httpx.post(f"{_core_url()}{path}", json=body or {}, headers=headers, timeout=15.0)
     if resp.status_code not in (200, 202):

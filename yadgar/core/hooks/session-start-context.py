@@ -29,6 +29,15 @@ try:
 except ImportError:  # yadgar not importable from this interpreter
     resolve_session_project = None
 
+# Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+# else secrets.env) rather than a bare os.environ.get — falls back to the
+# bare env read if yadgar (or its lazy _shared.paths dependency) is not
+# importable from this interpreter, mirroring resolve_session_project above.
+try:
+    from yadgar.core.install.auth_token import resolve_auth_token
+except ImportError:  # yadgar not importable from this interpreter
+    resolve_auth_token = None
+
 
 @observe(tier="stage")
 def _close_http_error(http_exc) -> None:
@@ -90,7 +99,11 @@ def main():
             if _project_id:
                 _params["project"] = _project_id
             _url = f"http://127.0.0.1:{_port}/hooks/session-context?{_parse.urlencode(_params)}"
-            _token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+            _token = (
+                resolve_auth_token()
+                if resolve_auth_token is not None
+                else os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+            )
             _req_obj = _req.Request(_url)
             if _token:
                 _req_obj.add_header("Authorization", f"Bearer {_token}")

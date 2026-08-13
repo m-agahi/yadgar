@@ -34,13 +34,16 @@ import yadgar.core.cli.hook as hr
 
 
 def test_auth_headers_empty_when_no_token(monkeypatch):
-    monkeypatch.setattr(hr, "_AUTH_TOKEN", "")
+    # Car 9: _auth_headers() now calls resolve_auth_token() at request time
+    # instead of reading a module-level _AUTH_TOKEN constant — patch the
+    # resolver, not a constant that no longer exists.
+    monkeypatch.setattr(hr, "resolve_auth_token", lambda: "")
     result = hr._auth_headers()
     assert result == {}
 
 
 def test_auth_headers_returns_bearer_when_token_set(monkeypatch):
-    monkeypatch.setattr(hr, "_AUTH_TOKEN", "secret-tok")
+    monkeypatch.setattr(hr, "resolve_auth_token", lambda: "secret-tok")
     result = hr._auth_headers()
     assert result == {"Authorization": "Bearer secret-tok"}
 

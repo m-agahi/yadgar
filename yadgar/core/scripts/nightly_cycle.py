@@ -78,6 +78,7 @@ from yadgar._shared.storage import StorageEngine
 from yadgar.core.backup import create_snapshot, default_retention, prune_snapshots
 from yadgar.core.backup.quiesce import run_cross_engine_backup
 from yadgar.core.consolidation import run_nightly_consolidation
+from yadgar.core.install.auth_token import resolve_auth_token
 from yadgar.core.vacuum import cmd_vacuum_impl
 
 _log = logging.getLogger("yadgar.nightly_cycle")
@@ -161,7 +162,10 @@ def _maintenance_http(
     url = f"{core_url}/api/control/maintenance/{action}"
     data = json.dumps({"ttl_seconds": ttl_seconds} if ttl_seconds else {}).encode()
     headers: dict[str, str] = {"Content-Type": "application/json"}
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    # else secrets.env) — nightly_cycle runs as a host systemd timer where
+    # the env var may not be exported even though secrets.env holds it.
+    token = resolve_auth_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
