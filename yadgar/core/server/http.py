@@ -282,13 +282,21 @@ def _forward_hook_recall(
     # resolve raises, which the hook handler's except-block degrades to
     # {"text": ""} — the designed behaviour for a hook that cannot be scoped
     # (ADR-0227: fail loud rather than silently widen).
+    _resolved_project = hook_project_id(directory, project)
     timeout_s = get_settings().HOOK_RECALL_TIMEOUT_S
     return _forward_to_backend(
         query=query,
         max_results=max_results,
         min_heat=min_heat,
         directory=directory,
-        project_id=hook_project_id(directory, project),
+        project_id=_resolved_project,
+        # Car H1 (§1.3): ``hook_project_id`` returns "" ONLY from the explicit
+        # "no project, no directory" case (see its docstring) — never as a
+        # failed-resolution placeholder, which always raises instead. That is
+        # the one place this fact is actually known, so the whole-corpus
+        # intent is spelled here rather than re-derived from falsiness
+        # downstream (the backend route, the clause builder's own callers).
+        unscoped=(_resolved_project == ""),
         type_filter="all",
         tags=None,
         mode=None,

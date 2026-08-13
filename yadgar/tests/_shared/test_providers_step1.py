@@ -183,6 +183,9 @@ class TestMemoryProvider:
         # ADR-0077: it also threads `deadline` (None when constructed without one).
         # Car C7: it also threads `project_id` (scope.project_id, was the
         # Python post-filter's `directory` — now the SQL-side scope key).
+        # Car H1 (§1.3): it also threads `unscoped` (scope.unscoped, False by
+        # default) — the deliberate whole-corpus opt-out that keeps a falsy
+        # project_id raising instead of silently unscoping the read.
         mock_retriever.recall.assert_called_once_with(
             "test query",
             max_results=10,
@@ -190,6 +193,7 @@ class TestMemoryProvider:
             profile=None,
             deadline=None,
             project_id="/home/user/project",
+            unscoped=False,
         )
 
     def test_candidates_returns_candidate_objects(self, mock_retriever, default_scope):

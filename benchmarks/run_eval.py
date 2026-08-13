@@ -287,7 +287,11 @@ def evaluate_pair(
 
     t0 = time.perf_counter()
     try:
-        results = retriever.recall(query, max_results=max_results, min_heat=0.0)
+        # Car H3: this is the LEGACY, deliberately project-less benchmark path
+        # (see the module docstring above) — retriever.recall() must spell that
+        # whole-corpus intent explicitly now that a falsy project_id raises
+        # (Car H1 §1.3) instead of silently scoping to nothing.
+        results = retriever.recall(query, max_results=max_results, min_heat=0.0, unscoped=True)
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return {

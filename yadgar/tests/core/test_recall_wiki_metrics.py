@@ -341,7 +341,8 @@ class TestRecallStageMetrics:
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="embed_query")
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        # Car H1 (§1.3): a falsy project_id now raises — pass a real one.
+        retriever.recall("test query", max_results=1, project_id=TEST_PROJECT_ID)
         after = _count_labeled(yadgar_recall_stage_ms, stage="embed_query")
         assert after > before, (
             f"Expected embed_query stage observation; before={before}, after={after}"
@@ -353,7 +354,8 @@ class TestRecallStageMetrics:
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="bm25")
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        # Car H1 (§1.3): a falsy project_id now raises — pass a real one.
+        retriever.recall("test query", max_results=1, project_id=TEST_PROJECT_ID)
         after = _count_labeled(yadgar_recall_stage_ms, stage="bm25")
         assert after > before, f"Expected bm25 stage observation; before={before}, after={after}"
 
@@ -363,7 +365,8 @@ class TestRecallStageMetrics:
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="hnsw")
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        # Car H1 (§1.3): a falsy project_id now raises — pass a real one.
+        retriever.recall("test query", max_results=1, project_id=TEST_PROJECT_ID)
         after = _count_labeled(yadgar_recall_stage_ms, stage="hnsw")
         assert after > before, f"Expected hnsw stage observation; before={before}, after={after}"
 
@@ -373,7 +376,8 @@ class TestRecallStageMetrics:
 
         before = _count_labeled(yadgar_recall_stage_ms, stage="rerank_final")
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        # Car H1 (§1.3): a falsy project_id now raises — pass a real one.
+        retriever.recall("test query", max_results=1, project_id=TEST_PROJECT_ID)
         after = _count_labeled(yadgar_recall_stage_ms, stage="rerank_final")
         assert after > before, (
             f"Expected rerank_final stage observation; before={before}, after={after}"
@@ -390,7 +394,8 @@ class TestRecallStageMetrics:
                     before_by_stage[s.labels["stage"]] = s.value
 
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        # Car H1 (§1.3): a falsy project_id now raises — pass a real one.
+        retriever.recall("test query", max_results=1, project_id=TEST_PROJECT_ID)
 
         observed_stages = set()
         for fam in yadgar_recall_stage_ms.collect():
@@ -419,7 +424,8 @@ class TestRecallSpanEmission:
         _, exporter = in_memory_tracer
 
         retriever = _make_retriever_with_mocks()
-        retriever.recall("test query", max_results=1)
+        # Car H1 (§1.3): a falsy project_id now raises — pass a real one.
+        retriever.recall("test query", max_results=1, project_id=TEST_PROJECT_ID)
 
         spans = exporter.get_finished_spans()
         span_names = [s.name for s in spans]
@@ -450,8 +456,13 @@ class TestWikiQuerySpanEmission:
         mock_embeddings = MagicMock()
         mock_embeddings.encode_query.return_value = None
 
+        # Car H1 (§1.3): a falsy project_id now raises at the clause builder
+        # instead of silently unscoping — this suite is about span emission,
+        # not scoping, so a real scope keeps the premise true.
+        from yadgar._shared.storage.directory import RecallScope
+
         wiki = WikiStore(storage=mock_storage, embeddings=mock_embeddings)
-        wiki.query("test query", max_results=3)
+        wiki.query("test query", max_results=3, scope=RecallScope(project_id=TEST_PROJECT_ID))
 
         spans = exporter.get_finished_spans()
         span_names = [s.name for s in spans]
@@ -499,7 +510,8 @@ class TestNliOffNoObservation:
         nli_before = _count_labeled(yadgar_recall_stage_ms, stage="nli")
 
         retriever = _make_retriever_with_mocks(settings_override=s)
-        retriever.recall("test query", max_results=1)
+        # Car H1 (§1.3): a falsy project_id now raises — pass a real one.
+        retriever.recall("test query", max_results=1, project_id=TEST_PROJECT_ID)
 
         nli_after = _count_labeled(yadgar_recall_stage_ms, stage="nli")
         assert nli_after == nli_before, (

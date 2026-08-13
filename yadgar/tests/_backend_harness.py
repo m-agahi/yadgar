@@ -189,6 +189,7 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         mode=None,
         profile=None,
         project_id=None,
+        unscoped=False,
         **kwargs,
     ):
         if os.environ.get("YADGAR_EMBED_URL"):
@@ -202,6 +203,7 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
                 mode=mode,
                 profile=profile,
                 project_id=project_id,
+                unscoped=unscoped,
                 **kwargs,
             )
         if mode is not None:
@@ -217,11 +219,17 @@ def patch_recall_bypass(monkeypatch: Any) -> None:
         # async route (``recall_route``), which this bypass replaces, and the
         # loader is async while this shim is sync. Tests that exercise the
         # exclusion drive the route or the clause builder directly.
+        # Car H1 (§1.3): mirror embed_service_routes.py's real /recall route —
+        # ``unscoped`` is the caller's EXPLICIT wire-level signal (set only by
+        # ``_forward_hook_recall`` when ``hook_project_id`` resolved the
+        # deliberate "no project, no directory" case), read straight through
+        # rather than re-derived from ``project_id`` being falsy — that
+        # derivation is exactly the failure shape Car H1 closed.
         return _fanout_recall(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
-            recall_scope=RecallScope(project_id=project_id),
+            recall_scope=RecallScope(project_id=project_id or None, unscoped=unscoped),
             type_filter=type_filter,
             tags=tags,
             profile=profile,

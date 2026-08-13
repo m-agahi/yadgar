@@ -45,12 +45,18 @@ class Scope:
             ``to_thread`` boundary) because ``asyncmy`` is async-only and a
             lookup down here would need a private event loop per recall. The
             memory table has no ``slug`` column, so MemoryProvider ignores it.
+        unscoped: Car H1 (§1.3) — the DELIBERATE whole-corpus read (e.g. the
+            BC-VZ2 viz god's-eye search, and the "instructions-loaded" hook,
+            both of which forward with an empty project on purpose). A falsy
+            ``project_id`` without this raises at the clause builder rather
+            than silently returning the whole corpus.
     """
 
     project_id: str
     min_heat: float = 0.0
     opt_in_tags: list[str] | None = None
     excluded_slugs: tuple[str, ...] | None = None
+    unscoped: bool = False
 
     def to_recall_scope(self, opt_in: list[str] | None) -> RecallScope:
         """Convert to the storage-layer ``RecallScope`` pushed into the WHERE.
@@ -75,6 +81,7 @@ class Scope:
             project_id=self.project_id or None,
             opt_in_tags=opt_in,
             excluded_slugs=self.excluded_slugs,
+            unscoped=self.unscoped,
         )
 
 

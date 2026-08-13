@@ -1463,6 +1463,7 @@ def recall_backend_bypass(monkeypatch):
         mode=None,
         profile=None,
         project_id=None,
+        unscoped=False,
         **kwargs,
     ):
         """Direct _fanout_recall call — bypasses HTTP, same _st engines.
@@ -1488,11 +1489,17 @@ def recall_backend_bypass(monkeypatch):
         # Car C8: the scope param is a RecallScope. ``excluded_slugs`` stays
         # EMPTY here — the superseded-ADR set is loaded in the async route this
         # bypass replaces, and the loader is async while this shim is sync.
+        # Car H1 (§1.3): mirror embed_service_routes.py's real /recall route —
+        # ``unscoped`` is the caller's EXPLICIT wire-level signal, read straight
+        # through rather than re-derived from ``project_id`` being falsy (see
+        # the identical comment in ``_backend_harness.patch_recall_bypass``);
+        # deriving it here would make this bypass diverge from the production
+        # route it stands in for.
         return _fanout_recall(
             query=query,
             max_results=max_results,
             min_heat=min_heat,
-            recall_scope=RecallScope(project_id=project_id),
+            recall_scope=RecallScope(project_id=project_id or None, unscoped=unscoped),
             type_filter=type_filter,
             tags=tags,
             profile=profile,

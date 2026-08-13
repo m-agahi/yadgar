@@ -72,6 +72,13 @@ class RecallRequest(BaseModel):
     # correct under ADR-0227 — and it means THE CORE AND BACKEND IMAGES MUST
     # DEPLOY TOGETHER. The runbook records it.
     project_id: str
+    # Car H1 (§1.3): the DELIBERATE whole-corpus read (BC-VZ2 viz search, the
+    # "instructions-loaded" hook) must spell its intent on the wire rather than
+    # being INFERRED from ``project_id`` being empty. Falsy ``project_id``
+    # without this flag still raises at the clause builder — the guarantee
+    # Car H1 exists to enforce. Only the handful of hook call sites that KNOW
+    # they have no project (``hook_project_id`` returning ``""``) may set it.
+    unscoped: bool = False
     # Retained as OPTIONAL, and deliberately NOT deleted: the directory is still
     # the caller's physical working path, which several response-side consumers
     # and the action-log correlation still key on. It no longer scopes anything.
