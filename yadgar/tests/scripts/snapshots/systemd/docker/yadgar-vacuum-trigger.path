@@ -11,7 +11,12 @@ Description=Watch for vacuum trigger file from MCP vacuum_now()
 # /tmp/yadgar-parity-fixture/state is deliberately the SAME token that appears on the left of that
 # `-v` bind, so the cross-generator test can compare the projected trigger dir
 # against this watched dir as an exact string. Keep it that way.
-PathExists=/tmp/yadgar-parity-fixture/state/triggers/vacuum_requested
+#
+# PathChanged, not PathExists (Car 10): PathExists edge-triggers only on a
+# non-existent -> existent transition, so a second vacuum request while a
+# stale trigger file exists (unit not yet re-armed) never fires. PathChanged
+# (close-after-write / atomic rename) re-fires on every fresh write.
+PathChanged=/tmp/yadgar-parity-fixture/state/triggers/vacuum_requested
 
 [Install]
 # NOT the activation mechanism — see yadgar.target's Wants=. Kept for manual enable.

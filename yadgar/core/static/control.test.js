@@ -546,6 +546,38 @@ describe('initControlTab DOM wiring', () => {
     window.confirm = origConfirm;
   });
 
+  // Car 10: HTTP 200 does not mean the vacuum actually started — the button
+  // must surface result.started/skipped_reason, not a blind "✓".
+  it('vacuum button shows the skip reason, not ✓, when the server reports started:false', async () => {
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      if (typeof url === 'string' && url.includes('/api/control/config') && (!opts?.method || opts.method === 'GET')) {
+        return { ok: true, status: 200, json: async () => ({ knobs: [] }) };
+      }
+      if (typeof url === 'string' && url.includes('/api/control/action/vacuum')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            action: 'vacuum',
+            result: { started: false, skipped_reason: 'db_below_threshold', trigger_path: null },
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    const origConfirm = window.confirm;
+    window.confirm = vi.fn(() => true);
+
+    await initControlTab(root);
+    const vacuumBtn = root.querySelector('.ctrl-btn[data-action="vacuum"]');
+    await vacuumBtn.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(vacuumBtn.textContent).not.toContain('✓');
+    expect(vacuumBtn.textContent).toContain('db_below_threshold');
+    window.confirm = origConfirm;
+  });
+
   // 20. Restart button disabled until correct name typed
   it('restart button disabled until correct name typed', async () => {
     globalThis.fetch = vi.fn(async (url, opts) => {

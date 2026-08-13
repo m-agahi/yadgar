@@ -13,7 +13,7 @@ Wants=yadgar-backend.service
 # yadgar-vacuum-trigger.path watches for it. Both halves are required: the env
 # var has no code default, so unset means "no watcher on this surface" and
 # vacuum_now() refuses rather than writing into a void.
-# /tmp/yadgar-parity-fixture/state must be spelled IDENTICALLY here and in that unit's PathExists=.
+# /tmp/yadgar-parity-fixture/state must be spelled IDENTICALLY here and in that unit's PathChanged=.
 
 [Service]
 # task:0105 — readiness is runtime-conditional. The Type below renders `notify`

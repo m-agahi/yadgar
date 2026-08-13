@@ -605,15 +605,23 @@
             # task:0044 silent no-op.  The weekly timer above is a schedule,
             # not a response to an explicit request.
             #
-            # The PathExists value deliberately uses the same `${stateDir}`
+            # The PathChanged value deliberately uses the same `${stateDir}`
             # token that appears on the LEFT of the core unit's `-v` bind (not
             # a re-spelled `${homeDir}/.local/state/yadgar/...`), so
             # yadgar/tests/scripts/test_vacuum_trigger_cross_generator.py can
             # compare the projected trigger dir to the watched dir as an exact
             # string rather than a post-evaluation heuristic.  Keep it that way.
+            #
+            # PathChanged, not PathExists (Car 10): PathExists edge-triggers
+            # only on a non-existent -> existent transition, so a second
+            # vacuum request while a stale trigger file exists (unit not yet
+            # re-armed) never fires. PathChanged (close-after-write / atomic
+            # rename) re-fires on every fresh write — the same fix already
+            # applied to the Control-tab RESTART watchers in the private nix
+            # module (2026-06-29 MIGRATION_NOTES.md).
             systemd.user.paths.yadgar-vacuum-trigger = {
               Unit.Description = "Watch for vacuum trigger file from MCP vacuum_now()";
-              Path.PathExists = "${stateDir}/triggers/vacuum_requested";
+              Path.PathChanged = "${stateDir}/triggers/vacuum_requested";
               Install.WantedBy = [ "paths.target" ];
             };
 

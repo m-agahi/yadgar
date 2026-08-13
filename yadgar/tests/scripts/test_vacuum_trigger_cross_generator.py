@@ -165,8 +165,13 @@ def _render_flake() -> tuple[str, str]:
     substring/heuristic match after Nix evaluation.
     """
     watcher_block = _flake_watcher_block()
-    m = re.search(r'PathExists\s*=\s*"([^"]+)"', watcher_block)
-    assert m, "flake.nix vacuum-trigger .path unit has no PathExists"
+    # Car 10: PathExists= edge-triggers only on a non-existent -> existent
+    # transition, so a second request while a stale trigger file exists
+    # (the .path unit not yet re-armed, or a previous vacuum's leftover)
+    # never fires. PathChanged= (close-after-write / atomic rename) re-fires
+    # on every fresh write, matching the nix module's RESTART-watcher fix.
+    m = re.search(r'PathChanged\s*=\s*"([^"]+)"', watcher_block)
+    assert m, "flake.nix vacuum-trigger .path unit has no PathChanged"
     watched_dir = m.group(1).rsplit("/", 1)[0]
     # The core ExecStart is a Nix list of quoted strings; blank the quotes so
     # `-v`/`-e` tokens parse the same way a rendered shell command line does.
@@ -186,8 +191,9 @@ def _render_systemd_sh_watcher(tmp_path: Path) -> tuple[str, str]:
     run_cmd = (tmp_path / "units" / "yadgar.service").read_text()
 
     watcher = (tmp_path / "units" / "yadgar-vacuum-trigger.path").read_text()
-    m = re.search(r"^PathExists=(.+)$", watcher, re.MULTILINE)
-    assert m, "yadgar-vacuum-trigger.path has no PathExists"
+    # Car 10: PathChanged=, not PathExists= — see _render_flake's comment.
+    m = re.search(r"^PathChanged=(.+)$", watcher, re.MULTILINE)
+    assert m, "yadgar-vacuum-trigger.path has no PathChanged"
     return run_cmd, m.group(1).strip().rsplit("/", 1)[0]
 
 

@@ -72,7 +72,7 @@ CORE_STATE_DOC = (
     "yadgar-vacuum-trigger.path watches for it. Both halves are required: the env",
     'var has no code default, so unset means "no watcher on this surface" and',
     "vacuum_now() refuses rather than writing into a void.",
-    "{state_dir} must be spelled IDENTICALLY here and in that unit's PathExists=.",
+    "{state_dir} must be spelled IDENTICALLY here and in that unit's PathChanged=.",
 )
 
 CORE_READINESS_DOC = (
