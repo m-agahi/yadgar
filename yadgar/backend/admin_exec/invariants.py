@@ -502,13 +502,19 @@ def _check_worktree_orphan_contexts(
 
     Backfill half of the Q1 orphaned-memories fix (T2 fold-in): rows written
     before write-path normalization carry directory_context like
-    ``/repo/.claude/worktrees/agent-N`` + an ephemeral car branch — invisible
-    to canonical-repo recall (exact-match directory filter) and never GC'd.
-    Repair: directory_context → the prefix before the marker (the canonical
-    repo root, derivable from the string alone); branch → NONE (canonical
-    slot — the car branch is dead by the time this runs). Idempotent:
-    repaired rows no longer match. ``/tmp/*`` orphans are NOT repaired —
-    canonical root is not derivable from the path string.
+    ``/repo/.claude/worktrees/agent-N`` — invisible to canonical-repo recall
+    (exact-match directory filter) and never GC'd. Repair: directory_context →
+    the prefix before the marker (the canonical repo root, derivable from the
+    string alone). Idempotent: repaired rows no longer match. ``/tmp/*``
+    orphans are NOT repaired — canonical root is not derivable from the path
+    string.
+
+    Car 3 removed a ``SET branch = NONE`` from the UPDATE and the two places
+    that announced it (the log line and the ``fixed`` entry, both claiming the
+    branch was "cleared to canonical slot"). Migration 029 DROPPED
+    ``memory.branch``, so the write did nothing and both receipts were false —
+    and on a SCHEMALESS table a stray write is how a dropped column gets
+    re-created untyped.
     """
     try:
         rows = _q_t(
@@ -528,13 +534,11 @@ def _check_worktree_orphan_contexts(
             root = dc[:idx]
             try:
                 storage._q(
-                    "UPDATE type::record('memory', $rid) "
-                    "SET directory_context = $root, branch = NONE",
+                    "UPDATE type::record('memory', $rid) SET directory_context = $root",
                     {"rid": rid, "root": root},
                 )
                 logger.info(
-                    "check_invariants: re-pointed worktree-orphan memory %s: %r -> %r "
-                    "(branch cleared to canonical slot)",
+                    "check_invariants: re-pointed worktree-orphan memory %s: %r -> %r",
                     rid,
                     dc,
                     root,
@@ -550,7 +554,7 @@ def _check_worktree_orphan_contexts(
         if repaired:
             fixed.append(
                 f"Re-pointed {repaired} memory rows from throwaway worktree paths "
-                f"to their canonical repo root (branch cleared to canonical slot)"
+                f"to their canonical repo root"
             )
             logger.info("check_invariants: auto-fixed %d worktree-orphan memory rows", repaired)
     except Exception as exc:

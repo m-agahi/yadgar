@@ -228,6 +228,57 @@ class TestTaskWriteUpdate:
         assert "origin" not in _forward_capture["payload"]
 
 
+class TestTaskWriteBackendRejection:
+    """Car 4 (bug train): a backend ``{"ok": False, ...}`` rejection MUST reach
+    the caller intact — task_write must NOT hardcode ``{"ok": True}`` when the
+    backend forward call itself reports failure (task.py:346, :361 discarded
+    the result and always returned ok=True)."""
+
+    def test_create_propagates_backend_rejection(self) -> None:
+        from yadgar.core.server.tools import task as task_mod
+
+        with patch.object(
+            task_mod,
+            "_forward_admin",
+            return_value={"ok": False, "error": "unknown project_id: 'm-agahi/yadgar'"},
+        ):
+            result = task_mod.task_write(project_id="m-agahi/yadgar", title="x")
+
+        assert result.get("ok") is False
+        assert "unknown project_id" in result.get("error", "")
+        assert result.get("id") is None
+
+    def test_update_propagates_backend_rejection(self) -> None:
+        from yadgar.core.server.tools import task as task_mod
+
+        with patch.object(
+            task_mod,
+            "_forward_admin",
+            return_value={"ok": False, "error": "unknown project_id: 'm-agahi/yadgar'"},
+        ):
+            result = task_mod.task_write(
+                project_id="m-agahi/yadgar", title="ignored", id=231, status="completed"
+            )
+
+        assert result.get("ok") is False
+        assert "unknown project_id" in result.get("error", "")
+
+    def test_create_success_still_returns_ok_true(self, _forward_capture: dict) -> None:
+        """Guard against over-fixing: a normal success envelope (no ``ok`` key,
+        just the row dict — see ``create_task_row``'s real return shape) must
+        still surface as ``ok: True``."""
+        from yadgar.core.server.tools.task import task_write
+
+        result = task_write(project_id="yadgar", title="ship car D")
+        assert result == {"ok": True, "id": 231}
+
+    def test_update_success_still_returns_ok_true(self, _forward_capture: dict) -> None:
+        from yadgar.core.server.tools.task import task_write
+
+        result = task_write(project_id="yadgar", title="ignored", id=231, status="completed")
+        assert result.get("ok") is True
+
+
 class TestTaskWriteBlockedBy:
     def test_update_with_blocked_by_forwards_join_edge_sync(self, _forward_capture: dict) -> None:
         """D39: ``blocked_by=[5, 7]`` drives ``task_blocked_by`` join-edge sync."""

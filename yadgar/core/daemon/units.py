@@ -484,7 +484,7 @@ def build_units(spec: UnitSpec) -> dict[str, UnitFile]:
     writes.
 
     ``spec.state_dir`` reaches both the core unit's ``-v`` bind source and the
-    ``.path`` unit's ``PathExists=``. One renderer makes that a shared input
+    ``.path`` unit's ``PathChanged=``. One renderer makes that a shared input
     rather than the exact-string cross-generator comparison it used to be
     (plan §4.2).
     """

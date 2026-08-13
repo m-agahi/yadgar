@@ -227,7 +227,10 @@ def test_state_dir_reaches_the_core_bind_and_the_path_unit():
     path = units["yadgar-vacuum-trigger.path"].section("Path")
     assert core is not None and path is not None
     assert f"-v {STATE_DIR}:/root/.local/state/yadgar" in core.values("ExecStart")[0]
-    assert path.values("PathExists") == [f"{STATE_DIR}/triggers/vacuum_requested"]
+    # Car 10: PathChanged=, not PathExists= — PathExists edge-triggers only on
+    # a non-existent -> existent transition, so a second vacuum request while
+    # a stale trigger file exists (unit not yet re-armed) never fires.
+    assert path.values("PathChanged") == [f"{STATE_DIR}/triggers/vacuum_requested"]
 
 
 # ── systemd-analyze verify ───────────────────────────────────────────────────

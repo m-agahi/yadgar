@@ -531,7 +531,17 @@ async def control_action_handler(request: Request) -> JSONResponse:
         if action == "consolidate":
             result = consolidate_now(mode="light")
         elif action == "vacuum":
-            result = vacuum_now(force=False)
+            # force=True (Car 10): a click here has already been confirmed
+            # twice over — the browser confirm() dialog, then the
+            # {"confirm": "vacuum"} body check above. vacuum_now's db-size
+            # refusal (yadgar/core/server/tools/admin_vacuum.py) exists for
+            # unattended/scheduled callers deciding whether a vacuum is worth
+            # the downtime on their own; an explicit interactive request has
+            # already made that call. Without force=True, any DB under 200
+            # MiB (e.g. right after a previous vacuum shrank it) silently
+            # skips writing the trigger file while this route still returns
+            # HTTP 200 — the click looks like it worked and nothing happens.
+            result = vacuum_now(force=True)
         elif action == "reembed":
             result = reembed_all()
         else:

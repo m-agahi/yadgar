@@ -235,6 +235,19 @@ def test_resolve_session_project_failure_emits_no_guess(tmp_path):
 # fail-soft in the SESSION sense only — an unmintable tree yields None and the
 # record is written identity-less, to be rejected loudly at import; no key is
 # ever invented.
+#
+# Bug train, integration note: Car 2 briefly added a FIFTH entry here,
+# `core/hooks/prompt-recall.py`, when it threaded the mint through that script's
+# `/hooks/prompt-recall` call (which was silently degrading to an empty
+# injection because it never sent `?project=` — the daemon-side resolver raises
+# without one, C7 having deleted directory derivation, ADR-0227). Car 8 then
+# established that nothing dispatches to that script at all — the wired path is
+# `_settings.py`'s `_runner_entry("prompt-recall")` -> `hook_runner.py` ->
+# `core/cli/hook.py` — and DELETED it as a vestigial second implementation.
+# The entry is therefore gone: the fix survives on the wired path
+# (`core/cli/hook.py`, already listed below), and an allowlist naming a file
+# that no longer exists is exactly the stale-subject rot this train spent a car
+# clearing out of the other allowlists.
 _ALLOWED_IMPORTERS = frozenset(
     {
         "yadgar/core/hooks/session-start-context.py",

@@ -46,9 +46,18 @@ Decisions:
     (§16.10). Enforced tool-side, not backend-side (one place, visible).
   * Title ≤ 200 chars (D12, reject-on-write).
   * ``id`` keyed payload, NOT ``number`` (§13.2 blocker 2).
+  * Car 6 (bug-train 2026-08-13): ``task_list``/``task_get`` RAISE when the
+    backend explicitly returns ``{"ok": False, "error": ...}`` — a rejection
+    is never folded into the existing fail-quiet-to-empty contract, which
+    stays reserved for a raised exception (network/backend-down) and for a
+    genuinely absent row/empty table. See each tool's docstring for why
+    raising (not silently returning ``[]``/``None``, and not widening the
+    return type to sometimes carry an envelope) is the chosen shape.
 """
 
 from __future__ import annotations
+
+import logging
 
 from yadgar._shared.observability.observe import observe
 from yadgar.core.forward import _forward_admin
@@ -61,6 +70,8 @@ from yadgar.core.server.tools._project_param import (
     InvalidProjectOverrideError,
     resolve_effective_project,
 )
+
+logger = logging.getLogger(__name__)
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -343,6 +354,11 @@ def task_write(
                 blocks,
             )
             result = _forward_admin(_UPDATE_OP, payload)
+            if result.get("ok") is False:
+                # Backend-side rejection (e.g. unknown project_id, ADR-0202) —
+                # propagate it intact. Do NOT hardcode ok=True over a result
+                # that says otherwise (Car 4, bug train).
+                return {"ok": False, "error": result.get("error", "update_task_row rejected")}
             return {"ok": True, "id": result.get("id", id)}
         # CREATE — ``normalized_title`` is the validated string; the param
         # ``title`` may have been None-on-update, but here is_update is False
@@ -358,6 +374,11 @@ def task_write(
             body_slug,
         )
         result = _forward_admin(_CREATE_OP, payload)
+        if result.get("ok") is False:
+            # Backend-side rejection (e.g. unknown project_id, ADR-0202) —
+            # propagate it intact. Do NOT hardcode ok=True over a result
+            # that says otherwise (Car 4, bug train).
+            return {"ok": False, "error": result.get("error", "create_task_row rejected")}
         return {"ok": True, "id": result.get("id")}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"backend forward failed: {exc}"}
@@ -413,6 +434,22 @@ def task_list(
     §13.2 blocker 2). Each row includes ``id``, ``project_id``, ``title``,
     ``status``, ``state``, ``active_form``, ``plan_path``, ``body_slug``,
     ``created_at``, ``updated_at``.
+
+    Car 6 (bug-train 2026-08-13) — DECISION on backend rejection vs. "empty":
+    the fail-quiet-to-``[]`` contract below covers two cases ONLY: an
+    argument/override validation error, and a raised exception forwarding to
+    the backend (network down, backend down — mirrors the ``wiki_query``
+    contract). It does NOT cover the backend explicitly reporting
+    ``{"ok": False, "error": ...}`` — that case RAISES ``RuntimeError``
+    instead of silently returning ``[]``, because an empty list is
+    indistinguishable from "the table is genuinely empty" and that ambiguity
+    has cost real debugging time. Raising (rather than widening the return
+    type to sometimes carry the envelope) is deliberate: the one production
+    caller, ``http.py``'s ``_task_list_restore_nudge``, already wraps this
+    call in its own ``try/except Exception`` and falls back to ``[]`` on any
+    exception — so raising changes nothing for that caller while making the
+    rejection visible to every other caller (including direct MCP
+    invocation).
     """
     try:
         _validate_project_id(project_id)
@@ -447,6 +484,20 @@ def task_list(
         result = _forward_admin(_LIST_OP, payload)
     except Exception:  # noqa: BLE001
         return []  # backend down → empty list (mirrors wiki_query contract)
+
+    # Car 6: a backend REJECTION (explicit ok:False) is never the same thing
+    # as "no rows" — see the docstring decision above. Success envelopes
+    # carry no "ok" key at all (KEY INVARIANT), so this only ever fires on an
+    # explicit rejection.
+    if isinstance(result, dict) and result.get("ok") is False:
+        logger.warning(
+            "task_list backend rejected the op: project_id=%s error=%s",
+            project_id,
+            result.get("error"),
+        )
+        raise RuntimeError(
+            f"task_list: backend rejected the op: {result.get('error', 'unknown error')}"
+        )
     return result.get("rows", [])
 
 
@@ -468,6 +519,14 @@ def task_get(
 
     Returns the row dict (id-keyed, §13.2 blocker 2) or ``None`` if absent.
     The forwarded payload keys on ``id``, NEVER ``number`` (§14.1).
+
+    Car 6 (bug-train 2026-08-13) — same DECISION as ``task_list``: fail-quiet
+    to ``None`` covers argument validation and a raised forwarding exception
+    only. A backend ``{"ok": False, "error": ...}`` RAISES ``RuntimeError``
+    instead — otherwise it is indistinguishable from "the row does not
+    exist". Kept symmetric with ``task_list`` (raise, not return-the-envelope)
+    even though this tool's ``-> dict | None`` signature could technically
+    carry the envelope through without a type-contract violation.
     """
     try:
         _validate_project_id(project_id)
@@ -496,4 +555,15 @@ def task_get(
         result = _forward_admin(_GET_OP, {"id": int(id)})
     except Exception:  # noqa: BLE001
         return None
+
+    # Car 6: see task_list — a backend rejection is never "absent row".
+    if isinstance(result, dict) and result.get("ok") is False:
+        logger.warning(
+            "task_get backend rejected the op: id=%s error=%s",
+            id,
+            result.get("error"),
+        )
+        raise RuntimeError(
+            f"task_get: backend rejected the op: {result.get('error', 'unknown error')}"
+        )
     return result.get("row")

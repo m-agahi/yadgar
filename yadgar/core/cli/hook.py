@@ -39,14 +39,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from yadgar.core.install.auth_token import resolve_auth_token
+
 _PORT = os.environ.get("YADGAR_PORT", "8765")
-_AUTH_TOKEN = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
 
 
 def _auth_headers() -> dict:
-    """Return Authorization header dict if token is set."""
-    if _AUTH_TOKEN:
-        return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
+    """Return Authorization header dict if token is set.
+
+    Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    else secrets.env) — auth_token.py's own docstring notes it is "Stdlib +
+    observability only" specifically so hook scripts like this one can import
+    it cheaply. Resolved HERE (call time), not as a module-level constant:
+    each hook invocation is a fresh short-lived process, and computing this
+    at import time would do the secrets.env file read unconditionally on
+    every process start rather than only when a header is actually needed.
+    """
+    token = resolve_auth_token()
+    if token:
+        return {"Authorization": f"Bearer {token}"}
     return {}
 
 
@@ -303,11 +314,29 @@ def hook_prompt_recall() -> None:
         return
 
     directory = data.get("cwd", "") or os.getcwd()
-    result = _http_get(
-        "/hooks/prompt-recall",
-        {"query": str(prompt).strip(), "directory": directory},
-        timeout=0.5,
-    )
+
+    # Bug train Car 2: stamp the identity HERE, same carve-out as
+    # hook_post_tool_capture — the daemon-side resolver (http.py's
+    # hook_project_id) RAISES on a directory with no project (C7 scopes on
+    # project_id; ADR-0227 deleted directory derivation), which degrades the
+    # whole recall to an empty injection. Without this, auto-recall was
+    # silently dead on every prompt.
+    #
+    # Fail-OPEN on a mint failure: SessionStart already printed the loud
+    # `[yadgar] ERROR` notice for an unresolvable tree, and UserPromptSubmit's
+    # stdout is injected straight into the model's context — repeating that
+    # notice on every prompt would be noise, not signal. The hook still fires
+    # without `project`; the daemon's own degrade-to-empty-injection path is
+    # what the user sees (unchanged from today).
+    params: dict = {"query": str(prompt).strip(), "directory": directory}
+    try:
+        from yadgar.core.hooks._identity_mint import mint_project_id  # noqa: PLC0415
+
+        params["project"] = mint_project_id(directory)
+    except Exception:  # noqa: BLE001 — never brick the prompt over identity
+        pass
+
+    result = _http_get("/hooks/prompt-recall", params, timeout=0.5)
     if result:
         text = result.get("text", "")
         if text:
@@ -384,7 +413,21 @@ def hook_block_reflect() -> None:
         return
 
     cwd = data.get("cwd", os.getcwd())
-    result = _http_get("/hooks/block-reflect", {"directory": cwd}, timeout=0.5)
+
+    # Bug train Car 2: mirror hook_post_tool_capture / hook_prompt_recall — pass
+    # the minted identity alongside directory rather than relying on the
+    # server-side os.getcwd() default (container cwd, never the user's tree).
+    # Fail-OPEN: an unmintable tree still fires the reflect with directory
+    # alone (today's behaviour), never brick the tool call over identity.
+    params: dict = {"directory": cwd}
+    try:
+        from yadgar.core.hooks._identity_mint import mint_project_id  # noqa: PLC0415
+
+        params["project"] = mint_project_id(cwd)
+    except Exception:  # noqa: BLE001 — never brick a tool call over identity
+        pass
+
+    result = _http_get("/hooks/block-reflect", params, timeout=0.5)
     if result:
         text = result.get("text", "")
         if text:

@@ -22,7 +22,7 @@
     "rationale": "Archaeology. The registry records that _dual_vector_search() and DUAL_VECTORS_ENABLED were deleted from backend/retrieval/core.py and config.py in v6 T3 (#41), leaving IMPLICIT_EMBEDDING_MODEL as the only surviving placeholder."
   },
   "EMBEDDING_CACHE_SIZE": {
-    "rationale": "Archaeology. Registry states it was one of two dead configuration knobs removed in v6 T3 (#41), superseded by the env-var-driven LRU cache. Named to record the supersession."
+    "rationale": "Archaeology. One of two dead configuration knobs removed in v6 T3 (#41). CAPABILITY_REGISTRY.md's original 'superseded by the env-var-driven LRU cache' claim was false — corrected 2026-08-13 (Car 7): the query-embedding LRU caches (embeddings.py:14, remote_embeddings.py:25) hard-code _CACHE_MAX = 512, no env var drives them. Allowlisted so the token stays archaeology-only, not a live-knob claim."
   },
   "FRACTAL_LEVELS": {
     "rationale": "Archaeology. Registry records this as CONFIG-ONLY and deleted in v6 T3: only two levels (community + root) are ever built regardless of the setting, so deeper fractal clustering stayed future work."

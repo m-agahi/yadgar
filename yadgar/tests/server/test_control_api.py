@@ -625,6 +625,12 @@ def test_action_vacuum_calls_vacuum_now(monkeypatch, tmp_path):
 
     ADR-0013: vacuum is ungated (auth-gated) but carries real daemon downtime
     (2-5 min), so it requires a server-side confirm field matching "vacuum".
+
+    force=True (Car 10): an interactive click has ALREADY been confirmed twice
+    over — the browser confirm() dialog, then this route's own {"confirm":
+    "vacuum"} body check — so the route must not let vacuum_now's db-size
+    heuristic (meant for unattended/scheduled callers) silently no-op an
+    explicit human request.
     """
     client = _make_app(monkeypatch, debug_apis_on=False)
     mock_result = {"vacuumed": 3}
@@ -638,8 +644,50 @@ def test_action_vacuum_calls_vacuum_now(monkeypatch, tmp_path):
             headers=_auth_headers(),
         )
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
-    mock_fn.assert_called_once_with(force=False)
+    mock_fn.assert_called_once_with(force=True)
     assert resp.json()["action"] == "vacuum"
+
+
+def test_action_vacuum_writes_trigger_sentinel_even_when_db_below_threshold(monkeypatch, tmp_path):
+    """CAR 10 regression: viz Vacuum click must write the sentinel, period.
+
+    Root cause of the "returns 200 and never vacuums" bug: the route called
+    ``vacuum_now(force=False)``, and vacuum_now's db-size refusal
+    (yadgar/core/server/tools/admin_vacuum.py) silently skips writing the
+    trigger file for any DB under 200 MiB — exactly what a freshly-vacuumed DB
+    looks like the next time someone clicks the button. The route returned
+    HTTP 200 regardless (control.py wraps whatever vacuum_now returns with no
+    check on result["started"]), so the skip was invisible.
+
+    This test does NOT mock vacuum_now — it exercises the real function
+    through the real route, with a small (100 MiB) DB, and asserts the
+    sentinel file actually lands on disk. RED before the force=True fix.
+    """
+    from yadgar.core import server as srv
+    from yadgar.tests.core.test_vacuum_now import _make_storage
+
+    trigger = tmp_path / "triggers" / "vacuum_requested"
+    client = _make_app(
+        monkeypatch,
+        debug_apis_on=False,
+        extra_env={"YADGAR_VACUUM_TRIGGER_PATH": str(trigger)},
+    )
+    storage = _make_storage(db_size_bytes=100 * 1024 * 1024)  # 100 MiB — below threshold
+    with patch.object(srv, "_get_storage", return_value=storage):
+        resp = client.post(
+            "/api/control/action/vacuum",
+            json={"confirm": "vacuum"},
+            headers=_auth_headers(),
+        )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert body["result"]["started"] is True, (
+        f"vacuum must actually start on an explicit interactive request, got: {body}"
+    )
+    assert trigger.exists(), (
+        "the vacuum trigger sentinel must be written on disk after a confirmed "
+        "interactive vacuum request, regardless of DB size"
+    )
 
 
 def test_action_vacuum_without_confirm_returns_400(monkeypatch, tmp_path):

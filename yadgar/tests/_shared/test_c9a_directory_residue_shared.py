@@ -222,7 +222,6 @@ _ALLOWLIST: dict[str, str] = {
     "storage/ops.py::get_active_checkpoint": _C11_DUAL_KEY,
     "storage/narrative.py::get_narratives_for_directory": _C11_DUAL_KEY,
     "storage/blocks.py::_canonical_dir": _C11_LEGACY_COLUMN_WRITE,
-    "storage/blocks.py::_block_dir_clause": _C11_DUAL_KEY,
     "storage/blocks.py::_block_project_clause": _C11_DUAL_KEY,
     "storage/blocks.py::_count_blocks_in_scope": _C11_DUAL_KEY,
     "storage/blocks.py::create_block": _C11_LEGACY_COLUMN_WRITE,

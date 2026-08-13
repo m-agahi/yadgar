@@ -92,15 +92,12 @@ def _canonical_dir(scope: str, directory: str | None) -> str | None:
 class _BlocksMixin:
     """Memory block CRUD — mixed into StorageEngine."""
 
-    @observe(tier="hot")
-    def _block_dir_clause(self, scope: str, directory: str | None) -> tuple[str, dict]:
-        """Return WHERE clause fragment + params for (scope, directory) lookup."""
-        if scope == "global":
-            return "scope = $scope AND directory IS NONE", {"scope": "global"}
-        return "scope = $scope AND directory = $directory", {
-            "scope": "project",
-            "directory": directory,
-        }
+    # Car 3 deleted ``_block_dir_clause`` here: a directory-only WHERE builder
+    # with zero production callers, fully superseded by
+    # ``_block_project_clause`` (which carries both the identity arm and the
+    # legacy directory arm). Its only remaining mention was the directory-residue
+    # lint's allowlist, removed with it — that lint hard-fails on an entry whose
+    # subject no longer exists.
 
     @observe(tier="stage")
     def _count_blocks_in_scope(

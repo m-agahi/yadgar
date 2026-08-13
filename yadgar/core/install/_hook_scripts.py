@@ -46,20 +46,32 @@ def _copy_hook(src: Path, dst: Path, dry_run: bool, shebang_python: str | None =
 
 # The non-prefixed hook basenames that PRE-#64 installs copied verbatim into
 # hooks_dir via the old ``_copy_scope_scripts._files`` dict. Nothing dispatches
-# to these on disk — the 5 runner-dispatched ones (post-tool-capture,
-# session-start-context, prompt-recall, pre-compact-drain, post-compact-rehydrate)
-# are executed via ``hook_runner.py <type>``'s internal ``_HOOKS`` dict, and the
-# 3 append hooks (subagent-start, instructions-loaded, file-changed) are
-# installed under ``yadgar-`` names by ``_install_append_hooks``. The non-prefixed
-# copies are pure vestige. #64 stops emitting them AND sweeps existing orphans.
+# to these on disk — the 4 runner-dispatched ones remaining here (post-tool-capture,
+# session-start-context, pre-compact-drain, post-compact-rehydrate) are executed
+# via ``hook_runner.py <type>``'s internal ``_HOOKS`` dict, and the 3 append
+# hooks (subagent-start, instructions-loaded, file-changed) are installed under
+# ``yadgar-`` names by ``_install_append_hooks``. The non-prefixed copies are
+# pure vestige. #64 stops emitting them AND sweeps existing orphans.
 # ADR-0156 removed the subagent-stop.py entry with the auto-store path.
+#
+# Car 8 (bug train): "prompt-recall" DROPPED from this set. It named a real,
+# second implementation at ``core/hooks/prompt-recall.py`` — its own raw FTS
+# query, its own HTTP forward that (unlike the wired path) never sent
+# ``?project=`` — which nothing dispatched to and Car 8 deleted outright as
+# vestige. The sweep below proves provenance by content-hashing an on-disk
+# orphan AGAINST the packaged source (``_sha256_file(package_hooks / name)``);
+# with the source gone that hash is permanently unobtainable, so leaving the
+# name in this set would only leave it forever on the "cannot prove
+# provenance → conservative, leave it" no-op branch. A pre-#64 install's
+# leftover ``prompt-recall.py`` orphan is now permanently un-swept — accepted:
+# it is inert dead bytes nothing ever executes, not the two-competing-
+# implementations hazard the file itself represented while it shipped.
 _MANAGED_NONPREFIXED: frozenset[str] = frozenset(
     {
         "pre-compact-drain.sh",
         "post-compact-rehydrate.sh",
         "post-tool-capture.py",
         "session-start-context.py",
-        "prompt-recall.py",
         "instructions-loaded.py",
         "subagent-start.py",
         "file-changed.py",

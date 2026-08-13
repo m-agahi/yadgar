@@ -4,7 +4,7 @@ The sweep removes vestigial NON-prefixed hook copies (`post-tool-capture.py`
 et al.) that prior global installs wrote into ~/.claude/hooks/ and nothing
 dispatches to (hook_runner dispatches internally via `_HOOKS`, never execs a
 sibling). Predicate = CONTENT-HASH vs the packaged source — the ONLY signal
-that works for the 5 runner-dispatched names (which have NO `yadgar-`-prefixed
+that works for the 4 runner-dispatched names (which have NO `yadgar-`-prefixed
 on-disk sibling). A user's coincidentally-named file with different content
 survives; a nix-store symlink survives (provenance skip).
 
@@ -23,24 +23,29 @@ import yadgar.core.install.install_hooks_lib as lib
 _PACKAGE_HOOKS = Path(lib.__file__).parents[1] / "hooks"
 
 # The non-prefixed names prior installs emitted (the sweep's target set).
-# ADR-0156 removed subagent-stop.py with the auto-store path.
+# ADR-0156 removed subagent-stop.py with the auto-store path. Car 8 (bug
+# train) removed prompt-recall.py: the sweep proves provenance by
+# content-hashing an on-disk orphan against the PACKAGED source, and Car 8
+# deleted that source outright (pure vestige — a second, unwired, project-
+# unaware auto-recall implementation). With no source to hash, a
+# pre-#64-install orphan of that one name is no longer provably ours, so it
+# is no longer a sweep target (accepted: it is inert dead bytes, not the
+# competing-implementation hazard the shipped file itself represented).
 _MANAGED_NONPREFIXED = {
     "pre-compact-drain.sh",
     "post-compact-rehydrate.sh",
     "post-tool-capture.py",
     "session-start-context.py",
-    "prompt-recall.py",
     "instructions-loaded.py",
     "subagent-start.py",
     "file-changed.py",
 }
 
-# The 5 with NO `yadgar-`-prefixed on-disk sibling — the ones a sibling-existence
+# The 4 with NO `yadgar-`-prefixed on-disk sibling — the ones a sibling-existence
 # predicate would silently miss.
 _RUNNER_DISPATCHED = {
     "post-tool-capture.py",
     "session-start-context.py",
-    "prompt-recall.py",
     "pre-compact-drain.sh",
     "post-compact-rehydrate.sh",
 }
@@ -69,14 +74,14 @@ def test_clean_install_emits_no_nonprefixed_names(tmp_path, monkeypatch):
     assert not leaked, f"clean global install emitted non-prefixed vestige names: {leaked}"
 
 
-# ── sweep removes ALL 9 real orphans incl. the 5 runner-dispatched (accept #3) ──
+# ── sweep removes ALL 7 real orphans incl. the 4 runner-dispatched (accept #3) ──
 
 
 def test_sweep_removes_all_real_orphans(tmp_path, monkeypatch):
     """Seed every non-prefixed name as a BYTE-IDENTICAL copy of the packaged
     source (exactly what a prior install produced — NO fabricated `yadgar-`
-    siblings for the 5 core names). A global install must sweep them all,
-    including the 5 runner-dispatched names a sibling-existence predicate misses."""
+    siblings for the 4 core names). A global install must sweep them all,
+    including the 4 runner-dispatched names a sibling-existence predicate misses."""
     claude_dir = tmp_path / ".claude"
     hooks_dir = claude_dir / "hooks"
     hooks_dir.mkdir(parents=True)
@@ -87,7 +92,7 @@ def test_sweep_removes_all_real_orphans(tmp_path, monkeypatch):
 
     survivors = {p.name for p in hooks_dir.iterdir()} & _MANAGED_NONPREFIXED
     assert not survivors, f"orphan non-prefixed copies survived the sweep: {survivors}"
-    # The 5 runner-dispatched specifically — the regression the audit flagged.
+    # The 4 runner-dispatched specifically — the regression the audit flagged.
     missed = {p.name for p in hooks_dir.iterdir()} & _RUNNER_DISPATCHED
     assert not missed, f"runner-dispatched orphans NOT swept (D1 regression): {missed}"
 

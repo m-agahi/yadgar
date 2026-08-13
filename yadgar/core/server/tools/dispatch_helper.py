@@ -503,7 +503,10 @@ def agent_dispatch_prelude(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car 3: the return value used to be discarded, so the context-block
+    # fan-out below was issued with a directory and NO identity. It is the
+    # validated override (``None`` when the caller named no project).
+    validated_project = accept_project_param(project, directory)
     if storage is None:
         from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
 
@@ -572,6 +575,7 @@ def agent_dispatch_prelude(
             directory=directory,
             subagent_type=subagent_type,
             storage=storage,
+            project=validated_project,
         )
         if context_block:
             tail.append(context_block)
@@ -594,11 +598,30 @@ def _build_context_block(
     directory: str | None,
     subagent_type: str | None,
     storage,
+    project: str | None = None,
 ) -> str:
     """Fetch and render a yadgar context block for auto-prefetch (X1).
 
-    Calls recall(directory) + wiki_query(directory). Returns empty string on
-    any error.
+    Calls ``recall`` + ``wiki_query``, both scoped by ``project`` when the
+    caller named one. Returns empty string on any error.
+
+    Car 3 — **the identity was validated and then dropped.**
+    ``agent_dispatch_prelude`` ran ``accept_project_param(project, directory)``
+    and discarded the return value, so both fan-outs were issued with a
+    ``directory=`` and no ``project=``. Threading the validated override is the
+    whole fix; ``None`` still means "fall back to the directory", which is
+    exactly ``recall``'s own contract for that parameter.
+
+    Both failures were swallowed into ``logger.debug``, so a raising fan-out was
+    indistinguishable from an empty corpus: ``include_context=True`` returned a
+    prelude with no context block and no way to tell why. They are now WARNINGs
+    with a traceback.
+
+    The catches stay BROAD on purpose. Narrowing them to storage errors would
+    let ``UnresolvedProjectError`` — an expected outcome once no identity is
+    named — escape and fail every ``include_context=True`` dispatch. Prelude
+    assembly must not be failed by its own optional enrichment; it must only
+    stop being silent about it.
     """
     import datetime  # noqa: PLC0415
 
@@ -613,14 +636,19 @@ def _build_context_block(
             query=task_topic or "context",
             max_results=5,
             directory=directory,
+            project=project,
         )
         if memories:
             lines.append("### Recent memories")
             for m in memories[:5]:
                 content = m.get("content", "")[:200] if isinstance(m, dict) else str(m)[:200]
                 lines.append(f"- {content}")
-    except Exception as _e:
-        logger.debug("agent_dispatch_prelude: recall failed: %s", _e)
+    except Exception as _e:  # noqa: BLE001 — backstop: enrichment must not fail a dispatch
+        logger.warning(
+            "agent_dispatch_prelude: recall failed, context block will omit memories: %s",
+            _e,
+            exc_info=True,
+        )
 
     try:
         from yadgar.core.server.tools.wiki import wiki_query  # noqa: PLC0415
@@ -629,6 +657,7 @@ def _build_context_block(
             query=task_topic or "context",
             max_results=3,
             directory=directory,
+            project=project,
         )
         if pages:
             lines.append("### Wiki pages")
@@ -636,8 +665,12 @@ def _build_context_block(
                 if isinstance(p, dict):
                     title = p.get("title", p.get("slug", ""))
                     lines.append(f"- [[{title}]]")
-    except Exception as _e:
-        logger.debug("agent_dispatch_prelude: wiki_query failed: %s", _e)
+    except Exception as _e:  # noqa: BLE001 — backstop: enrichment must not fail a dispatch
+        logger.warning(
+            "agent_dispatch_prelude: wiki_query failed, context block will omit pages: %s",
+            _e,
+            exc_info=True,
+        )
 
     if not lines:
         return ""

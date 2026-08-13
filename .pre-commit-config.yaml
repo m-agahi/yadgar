@@ -121,6 +121,14 @@ repos:
         pass_filenames: false
         files: ^yadgar/.*\.py$
 
+      - id: check-auth-token-pattern
+        name: "Check bearer-token resolution chokepoint (bug train car 9: every YADGAR_MCP_AUTH_TOKEN read routes through resolve_auth_token())"
+        language: system
+        entry: python scripts/check_auth_token_pattern.py
+        types: [python]
+        pass_filenames: false
+        files: ^yadgar/.*\.py$
+
       - id: check-secret-gate
         name: Check I26 secret-gate invariant (all write tools call gate_or_reject)
         language: system
@@ -234,6 +242,21 @@ repos:
         # so any narrower files: filter is blind by construction — a pure code
         # change with zero contract files staged is exactly the input that must
         # make this fail. Measured ~1.2s on this tree.
+        always_run: true
+
+      - id: check-ruff-ignores-liveness
+        name: Check pyproject.toml per-file-ignores liveness (no dead-path or vacuous entries)
+        language: system
+        entry: python scripts/check_ruff_ignores_liveness.py
+        pass_filenames: false
+        # always_run: the read set is pyproject.toml's per-file-ignores table
+        # PLUS a repo-wide ruff pass with that table cleared — a pure code
+        # change that fixes an allowlisted violation (or moves/deletes an
+        # allowlisted file) with zero pyproject.toml lines staged is exactly
+        # the input that must make this fail. Car 7 (2026-08-13) found the
+        # table 23/28 path entries rotten (5 dead-path lines, 18 vacuous
+        # lines) with no guard catching either class; this closes that gap.
+        # One ruff subprocess.
         always_run: true
 
       - id: check-model-id-liveness

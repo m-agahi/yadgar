@@ -1,8 +1,17 @@
 """Tests for yadgar/cli/version.py — version probe and summary.
 
 Wave 3 coverage: yadgar/cli/version.py (49 stmts, 0% pre-wave).
-Strategy: mock urllib.request.urlopen and yadgar.paths for _read_auth_token.
-Test _probe_daemon, _read_auth_token, print_version_summary in text + json mode.
+Strategy: mock urllib.request.urlopen and yadgar.core.cli.version.resolve_auth_token.
+Test _probe_daemon, print_version_summary in text + json mode.
+
+Car 9 (bug train): version.py's own hand-rolled ``_read_auth_token`` (env,
+else secrets.env) was the "fourth hand-rolled copy" auth_token.py's docstring
+forbids — replaced with a direct import of the ONE sanctioned resolver
+(``yadgar.core.install.auth_token.resolve_auth_token``). The resolver's own
+env/secrets-file/quote-stripping/missing-file coverage now lives exclusively
+in ``yadgar/tests/core/test_auth_token_resolver.py`` — no longer duplicated
+here, matching the precedent set for ``mcp_register`` and ``cli/seed.py``
+(``TestNoDuplicateResolvers`` in that file).
 """
 
 from __future__ import annotations
@@ -10,58 +19,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-from yadgar.core.cli.version import _probe_daemon, _read_auth_token, print_version_summary
-
-# ---------------------------------------------------------------------------
-# _read_auth_token
-# ---------------------------------------------------------------------------
-
-
-class TestReadAuthToken:
-    def test_reads_from_env(self, monkeypatch):
-        monkeypatch.setenv("YADGAR_MCP_AUTH_TOKEN", "env_token")
-        assert _read_auth_token() == "env_token"
-
-    def test_reads_from_secrets_file(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
-        secrets = tmp_path / "secrets.env"
-        secrets.write_text("YADGAR_MCP_AUTH_TOKEN=file_token\n")
-        import yadgar._shared.paths as _yp
-
-        with patch.object(_yp, "SECRETS_ENV_PATH", secrets):
-            result = _read_auth_token()
-        assert result == "file_token"
-
-    def test_returns_none_when_no_env_no_file(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
-        missing = tmp_path / "missing.env"
-        import yadgar._shared.paths as _yp
-
-        with patch.object(_yp, "SECRETS_ENV_PATH", missing):
-            result = _read_auth_token()
-        assert result is None
-
-    def test_returns_none_on_secrets_read_error(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
-        secrets = tmp_path / "secrets.env"
-        secrets.write_text("YADGAR_MCP_AUTH_TOKEN=tok\n")
-        import yadgar._shared.paths as _yp
-
-        with patch.object(_yp, "SECRETS_ENV_PATH", secrets):
-            with patch("pathlib.Path.read_text", side_effect=OSError("permission denied")):
-                result = _read_auth_token()
-        assert result is None
-
-    def test_strips_quotes_from_token(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("YADGAR_MCP_AUTH_TOKEN", raising=False)
-        secrets = tmp_path / "secrets.env"
-        secrets.write_text('YADGAR_MCP_AUTH_TOKEN="quoted_token"\n')
-        import yadgar._shared.paths as _yp
-
-        with patch.object(_yp, "SECRETS_ENV_PATH", secrets):
-            result = _read_auth_token()
-        assert result == "quoted_token"
-
+from yadgar.core.cli.version import _probe_daemon, print_version_summary
 
 # ---------------------------------------------------------------------------
 # _probe_daemon
@@ -80,7 +38,7 @@ class TestProbeDaemon:
         data = {"version": "5.49.8", "uptime_seconds": 3600, "db": "ok", "embed": "ok"}
         resp = self._mock_response(data)
         with (
-            patch("yadgar.core.cli.version._read_auth_token", return_value=None),
+            patch("yadgar.core.cli.version.resolve_auth_token", return_value=None),
             patch("yadgar.core.cli.version.urllib.request.urlopen", return_value=resp),
         ):
             result = _probe_daemon()
@@ -89,7 +47,7 @@ class TestProbeDaemon:
 
     def test_returns_running_false_on_connection_error(self):
         with (
-            patch("yadgar.core.cli.version._read_auth_token", return_value=None),
+            patch("yadgar.core.cli.version.resolve_auth_token", return_value=None),
             patch("yadgar.core.cli.version.urllib.request.urlopen", side_effect=OSError("refused")),
         ):
             result = _probe_daemon()
@@ -99,7 +57,7 @@ class TestProbeDaemon:
         import urllib.error
 
         with (
-            patch("yadgar.core.cli.version._read_auth_token", return_value=None),
+            patch("yadgar.core.cli.version.resolve_auth_token", return_value=None),
             patch(
                 "yadgar.core.cli.version.urllib.request.urlopen",
                 side_effect=urllib.error.URLError("timed out"),
@@ -112,7 +70,7 @@ class TestProbeDaemon:
         data = {"version": "5.0.0", "uptime_seconds": None, "db": True, "embed": True}
         resp = self._mock_response(data)
         with (
-            patch("yadgar.core.cli.version._read_auth_token", return_value="my_token"),
+            patch("yadgar.core.cli.version.resolve_auth_token", return_value="my_token"),
             patch(
                 "yadgar.core.cli.version.urllib.request.urlopen", return_value=resp
             ) as mock_open_url,
@@ -125,7 +83,7 @@ class TestProbeDaemon:
         data = {"version": "5.0", "db": True, "embed": "ok"}
         resp = self._mock_response(data)
         with (
-            patch("yadgar.core.cli.version._read_auth_token", return_value=None),
+            patch("yadgar.core.cli.version.resolve_auth_token", return_value=None),
             patch("yadgar.core.cli.version.urllib.request.urlopen", return_value=resp),
         ):
             result = _probe_daemon()
@@ -142,7 +100,7 @@ class TestProbeDaemon:
 
         http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
         with (
-            patch("yadgar.core.cli.version._read_auth_token", return_value=None),
+            patch("yadgar.core.cli.version.resolve_auth_token", return_value=None),
             patch("yadgar.core.cli.version.urllib.request.urlopen", side_effect=http_err),
         ):
             result = _probe_daemon()

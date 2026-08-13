@@ -572,8 +572,26 @@ class _MemoryMixin:
         )
         return self._rows_to_dicts(rows)
 
-    def get_stale_memories(self) -> list[dict]:
-        rows = self._q("SELECT * FROM memory WHERE is_stale = true")
+    @observe(tier="stage")
+    def get_stale_memories(self, project_id: str | None = None) -> list[dict]:
+        """Stale rows, optionally narrowed to one project.
+
+        Car 3 — the ``project_id`` arm exists because the ``memory://stale`` MCP
+        resource had no way to scope: the predicate was ``is_stale = true`` and
+        nothing else, so the resource served every project's stale rows.
+
+        Keyed on ``directory_context`` for the same reason as
+        ``get_memories_for_directory`` (C10f's stamp lives there).
+        ``None`` stays corpus-wide — this is a general-purpose primitive and the
+        scope policy belongs to its callers.
+        """
+        if project_id:
+            rows = self._q(
+                "SELECT * FROM memory WHERE is_stale = true AND directory_context = $dir",
+                {"dir": project_id},
+            )
+        else:
+            rows = self._q("SELECT * FROM memory WHERE is_stale = true")
         return self._rows_to_dicts(rows)
 
     def get_memories_by_file_hash(self, file_hash: str) -> list[dict]:
@@ -1326,21 +1344,43 @@ class _MemoryMixin:
         return self._rows_to_dicts(merged)
 
     @observe(tier="stage")
-    def get_recent_memories(self, limit: int = 20, exclude_anchored: bool = True) -> list[dict]:
-        """Return recent non-protected memories, ordered by creation date desc."""
+    def get_recent_memories(
+        self,
+        limit: int = 20,
+        exclude_anchored: bool = True,
+        project_id: str | None = None,
+    ) -> list[dict]:
+        """Return recent non-protected memories, ordered by creation date desc.
+
+        Car 3 — ``project_id`` did not exist here, and its ONE production caller
+        (``restore``'s "recently stored" bucket) therefore had nothing to pass:
+        the WHERE carried no project predicate at all, so every restore rendered
+        the whole corpus's newest rows into ``## Working Memory``, for every
+        project and even for a caller whose identity did not resolve.
+
+        The predicate is on ``directory_context``, NOT the separate
+        ``project_id`` column — the same choice ``get_memories_for_directory``
+        and ``get_anchored_memories_scoped`` state and for the same reason: C10f
+        moved ``memorize``'s stamp onto ``directory_context``, so that column is
+        where the identity lives for every row written since. Keying this on the
+        ``project_id`` column instead would strand the entire post-C10f corpus.
+
+        ``project_id=None`` stays corpus-wide, matching the sibling
+        ``get_recent_memories_since(directory=None)`` directly below. The
+        "no scope means EMPTY" rule is restore's policy and lives at restore's
+        sink (``_fetch_recent_memories_safe``), not in this primitive.
+        """
+        where = "heat > 0 AND (is_protected = false OR is_protected = NONE)"
+        params: dict = {"lim": limit}
         if exclude_anchored:
-            rows = self._q(
-                "SELECT * FROM memory "
-                "WHERE heat > 0 AND (is_protected = false OR is_protected = NONE) AND '_anchor' NOTINSIDE tags "
-                "ORDER BY created_at DESC LIMIT $lim",
-                {"lim": limit},
-            )
-        else:
-            rows = self._q(
-                "SELECT * FROM memory WHERE heat > 0 AND (is_protected = false OR is_protected = NONE) "
-                "ORDER BY created_at DESC LIMIT $lim",
-                {"lim": limit},
-            )
+            where += " AND '_anchor' NOTINSIDE tags"
+        if project_id:
+            where += " AND directory_context = $dir"
+            params["dir"] = project_id
+        rows = self._q(
+            f"SELECT * FROM memory WHERE {where} ORDER BY created_at DESC LIMIT $lim",
+            params,
+        )
         return self._rows_to_dicts(rows)
 
     @observe(tier="stage")

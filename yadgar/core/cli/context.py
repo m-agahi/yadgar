@@ -1,5 +1,6 @@
 """context subcommand — lightweight context query (used by SessionStart hooks)."""
 
+import sys
 from pathlib import Path
 
 
@@ -39,7 +40,16 @@ def cmd_context(args):
             )
             or []
         )
-    except Exception:
+    except Exception as exc:
+        # Car 5 item 2 (second sub-defect): stdout MUST stay the clean
+        # machine-readable payload the hook parses — never refuse to print
+        # context or raise just because this failed (e.g. an unresolvable
+        # tree, or the host CLI unable to reach the database — the same
+        # root cause as `yadgar stats`'s direct-DB failure mode). But a bare
+        # `return` here made every such failure completely invisible ("no
+        # context" with zero explanation). A one-line reason on stderr costs
+        # nothing on the hook's actual payload and stops that.
+        print(f"[yadgar context] no context available: {exc}", file=sys.stderr)
         return
     finally:
         # Q21: always release SurrealKV lock so daemon can reopen

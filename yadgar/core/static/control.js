@@ -428,10 +428,12 @@ function _disableSection(el) {
 // ── Actions row ──────────────────────────────────────────────────────────────
 
 /**
- * Fire a control action. vacuum carries 2-5 min of daemon downtime, so it
- * requires an explicit confirm (browser confirm dialog) and sends a
- * {"confirm":"vacuum"} body the server re-validates (ADR-0013). consolidate
- * (mode=light, ~30s) and re-embed (idempotent) fire one-click with an empty body.
+ * Fire a control action. vacuum pauses DB access for ~2-5 min while it runs —
+ * the core daemon itself stays up (no restart, no MCP session drop; DB-backed
+ * tools fast-fail during the window instead) — so it requires an explicit
+ * confirm (browser confirm dialog) and sends a {"confirm":"vacuum"} body the
+ * server re-validates (ADR-0013). consolidate (mode=light, ~30s) and re-embed
+ * (idempotent) fire one-click with an empty body.
  *
  * @param {HTMLButtonElement} btn
  * @param {string} label
@@ -441,7 +443,7 @@ async function _fireAction(btn, label, action) {
   let body = '{}';
   if (action === 'vacuum') {
     const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
-      ? window.confirm('Vacuum causes 2-5 min of daemon downtime. Proceed?')
+      ? window.confirm('Vacuum pauses DB access for ~2-5 min (the daemon itself stays up). Proceed?')
       : false;
     if (!ok) return;
     body = JSON.stringify({ confirm: 'vacuum' });
@@ -451,7 +453,12 @@ async function _fireAction(btn, label, action) {
   try {
     const r = await _apiFetch(`${_BASE}/api/control/action/${action}`, { method: 'POST', body });
     const respBody = await r.json().catch(() => ({}));
-    if (r.ok) {
+    if (r.ok && respBody.result && respBody.result.started === false) {
+      // HTTP 200 does NOT mean the action ran — vacuum_now() can accept the
+      // request and still skip (e.g. skipped_reason: "db_below_threshold").
+      // Surface the real outcome instead of a false "✓" (Car 10).
+      _flash(btn, `${label}: ${respBody.result.skipped_reason || 'skipped'}`, 3000, label);
+    } else if (r.ok) {
       _flash(btn, `${label} ✓`, 1500, label);
     } else {
       _flash(btn, `error: ${respBody.error || r.status}`, 2000, label);

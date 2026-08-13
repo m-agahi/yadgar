@@ -286,6 +286,24 @@ class TestMemoryHeatFiltering:
         assert len(stale) == 1
         assert stale[0]["content"] == "stale"
 
+    def test_get_stale_memories_scoped_to_a_project(self, storage):
+        """Car 3 — the ``memory://stale`` resource had no way to scope.
+
+        The predicate was ``is_stale = true`` and nothing else, so the resource
+        served every project's stale rows to whoever read it. Keyed on
+        ``directory_context`` (where C10f's stamp lives), and ``None`` stays
+        corpus-wide — pinned by ``test_get_stale_memories`` above.
+        """
+        mine = storage.insert_memory(_make_memory(content="mine", directory="mine/repo"))
+        theirs = storage.insert_memory(_make_memory(content="theirs", directory="them/repo"))
+        storage.update_memory_staleness(mine, True)
+        storage.update_memory_staleness(theirs, True)
+
+        scoped = storage.get_stale_memories(project_id="mine/repo")
+
+        assert [m["content"] for m in scoped] == ["mine"]
+        assert len(storage.get_stale_memories()) == 2
+
 
 class TestEntities:
     def test_insert_and_get_entity(self, storage):

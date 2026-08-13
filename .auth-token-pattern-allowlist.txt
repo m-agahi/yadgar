@@ -1,0 +1,32 @@
+# Allowlist for scripts/check_auth_token_pattern.py (bug train car 9).
+#
+# Format: path:lineno:reason  (one per line; '#'-prefixed / blank lines ignored)
+#
+# The reason categories are documented in the script's own docstring. Do NOT
+# add an entry here just to silence the guard — a genuinely fixable
+# os.environ.get("YADGAR_MCP_AUTH_TOKEN", ...) belongs routed through
+# yadgar.core.install.auth_token.resolve_auth_token(), not allowlisted.
+
+# --- category 1: server-side INCOMING-token verification, not a client resolving what to send ---
+yadgar/backend/embed_service/embed_service.py:300:server verifies an incoming request's bearer against its OWN configured env value (fail-secure /admin gate) — must read the literal env var the server was launched with, not fall back to secrets.env.
+yadgar/core/auth_middleware/auth_middleware.py:114:same as above: BearerAuthMiddleware re-reads the literal env var on EVERY request by design (docstring: "so the settings can be changed without restarting") — a secrets.env fallback would add per-request file I/O to a hot fail-secure path and would compare against the wrong value's source.
+
+# --- category 2: import-linter layering forbids backend/_shared -> core; container env is guaranteed anyway ---
+yadgar/backend/ml_client/remote_ml_client.py:42:physically under yadgar/backend/ — "backend must not import core" (pyproject.toml [tool.importlinter]) forbids importing core.install.auth_token. Runs only inside containers where docker-compose.yml requires YADGAR_MCP_AUTH_TOKEN (${VAR:?must set}) before the container starts, so the secrets.env fallback buys nothing here.
+yadgar/_shared/embeddings/remote_embeddings.py:39:physically under yadgar/_shared/ — "shared must not import core or backend" forbids importing core.install.auth_token. Same container-guaranteed-env reasoning as remote_ml_client.py.
+yadgar/_shared/storage/dbsize.py:61:physically under yadgar/_shared/ — same layering + container-guaranteed-env reasoning as remote_embeddings.py.
+
+# --- category 3: portability fallback branches — importing the resolver would defeat their own purpose ---
+yadgar/core/hooks/subagent-start.py:53:except-ImportError standalone fallback that exists specifically to keep the hook functional when the yadgar package is NOT importable from this interpreter; the primary path (yadgar.core.hooks.subagent_start.main) already routes through resolve_auth_token().
+yadgar/core/hooks/instructions-loaded.py:53:same as above for the InstructionsLoaded hook's standalone fallback; primary path (yadgar.core.hooks.instructions_loaded.main) already routes through resolve_auth_token().
+yadgar/core/hooks/file-changed.py:57:same as above for the FileChanged hook's standalone fallback; primary path (yadgar.core.hooks.file_changed.main) already routes through resolve_auth_token().
+yadgar/core/hooks/session-start-context.py:105:same portability pattern as the three fallbacks above, inline rather than a separate entry-point/module split — guarded by `resolve_auth_token is not None` (set to None on ImportError) so it degrades to the bare env read only when yadgar itself is not importable.
+
+# --- category 4: different purpose entirely — must read the literal env var, not the resolved value ---
+yadgar/core/install/_settings.py:378:not a client resolving a token to send — warns when the RAW env var equals a known test-fixture placeholder (BUG C guard) and never uses the value to authenticate anything; needs the literal env var, not the secrets.env-fallback value.
+
+# --- category 5: already fixed on a sibling branch pending merge; re-applying here would only conflict ---
+yadgar/core/forward.py:83:fixed on car5/host-cli-entrypoint (commit acde2191) via resolve_auth_token() — bug-train car 9 was explicitly told not to redo this to avoid a merge conflict when the two branches integrate.
+yadgar/core/forward.py:121:same as :83 — car5/host-cli-entrypoint (acde2191), pending merge.
+yadgar/core/forward.py:169:same as :83 — car5/host-cli-entrypoint (acde2191), pending merge.
+yadgar/core/forward.py:228:same as :83 — car5/host-cli-entrypoint (acde2191), pending merge.

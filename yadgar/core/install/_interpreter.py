@@ -230,7 +230,7 @@ def _resolve_python_shebang(python: str | None = None) -> str:
     """Return the shebang line to pin yadgar-bundled hooks at install time.
 
     Hooks that `import yadgar.paths` (stop-memory-checkpoint, session-end-capture,
-    post-tool-capture, prompt-recall) need a Python that has yadgar on its path.
+    post-tool-capture) need a Python that has yadgar on its path.
     `#!/usr/bin/env python3` resolves to whichever python3 is first on PATH,
     which on many systems (notably NixOS with a pipx-installed yadgar) is a
     system python that does NOT have yadgar importable.

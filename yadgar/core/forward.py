@@ -48,6 +48,34 @@ _SLOW_OP_TIMEOUTS_S: dict[str, float] = {
 }
 
 
+def _unreachable_backend_error(backend_base: str, what: str) -> RuntimeError:
+    """Build the actionable error for "the URL is set but nothing answers".
+
+    v5.182 bug train, Car 5 follow-on. Car 5 made ``yadgar/__main__.py``
+    ``setdefault`` ``YADGAR_EMBED_URL`` to the published host port, so the host
+    CLI works out of the box instead of dying with "not set" on every
+    forwarding subcommand. Correct — but it moved the failure: with the variable
+    always populated, an absent daemon stopped producing the actionable
+    "YADGAR_EMBED_URL is not set" message and started producing a raw
+    ``httpx.ConnectError: [Errno 111] Connection refused`` traceback.
+
+    ``test_cli_{drain,restore}_fails_loud_without_backend_url`` caught exactly
+    that, and the fix is NOT to relax them to accept a traceback: their contract
+    is "this CLI path fails LOUD and names the variable", which is still the
+    right contract — only the reachable failure mode changed. So the connect
+    failure now names the variable, the URL actually tried, and the override,
+    and those tests pass unmodified. Weakening a guard to match new code is the
+    defect task #0139 exists to prevent; this is the opposite move.
+    """
+    return RuntimeError(
+        f"cannot reach the yadgar backend at {backend_base!r} to {what}. "
+        "That address comes from YADGAR_EMBED_URL (defaulted to the published "
+        "host port when unset). Is the daemon running? Check "
+        "`systemctl --user status yadgar-backend` / `curl "
+        f"{backend_base}/health`, or set YADGAR_EMBED_URL to the right address."
+    )
+
+
 @observe(tier="boundary", metric="tools._forward._forward_admin")
 def _forward_admin(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
     """Forward a single admin (CRUD write) op to the backend /admin endpoint.
@@ -80,17 +108,28 @@ def _forward_admin(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
             "R3 Car 3a: CRUD writes are forward-only — core touches zero DB directly."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 5 item 4 (follow-on): route through the ONE sanctioned bearer-token
+    # resolver (env var, else secrets.env) rather than a bare os.environ.get —
+    # that pattern is exactly the "fourth hand-rolled copy" its own docstring
+    # forbids, and on a bare host CLI nothing exports the env var, so a bare
+    # lookup here silently sent every forwarded admin/viz/read_query/restore
+    # op unauthenticated (401 from the backend's fail-secure gate).
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     timeout_s = max(timeout_s, _SLOW_OP_TIMEOUTS_S.get(op, 0.0))
 
-    resp = httpx.post(
-        f"{backend_base}/admin",
-        json={"op": op, "payload": payload},
-        headers=headers,
-        timeout=timeout_s,
-    )
+    try:
+        resp = httpx.post(
+            f"{backend_base}/admin",
+            json={"op": op, "payload": payload},
+            headers=headers,
+            timeout=timeout_s,
+        )
+    except httpx.ConnectError as exc:
+        raise _unreachable_backend_error(backend_base, "forward an admin op") from exc
     resp.raise_for_status()
     data = resp.json()
     return data.get("result", {})
@@ -118,15 +157,26 @@ def _forward_viz(op: str, payload: dict, timeout_s: float = 60.0) -> dict:
             "T2 Car E3: graph data assembly is forward-only — core assembles zero graph data."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 5 item 4 (follow-on): route through the ONE sanctioned bearer-token
+    # resolver (env var, else secrets.env) rather than a bare os.environ.get —
+    # that pattern is exactly the "fourth hand-rolled copy" its own docstring
+    # forbids, and on a bare host CLI nothing exports the env var, so a bare
+    # lookup here silently sent every forwarded admin/viz/read_query/restore
+    # op unauthenticated (401 from the backend's fail-secure gate).
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-    resp = httpx.post(
-        f"{backend_base}/viz",
-        json={"op": op, "payload": payload},
-        headers=headers,
-        timeout=timeout_s,
-    )
+    try:
+        resp = httpx.post(
+            f"{backend_base}/viz",
+            json={"op": op, "payload": payload},
+            headers=headers,
+            timeout=timeout_s,
+        )
+    except httpx.ConnectError as exc:
+        raise _unreachable_backend_error(backend_base, "forward a viz op") from exc
     resp.raise_for_status()
     data = resp.json()
     return data.get("result", {})
@@ -166,19 +216,30 @@ def _forward_read_query(query: str, params: dict | None = None, timeout_ms: int 
             "core touches zero DB directly."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 5 item 4 (follow-on): route through the ONE sanctioned bearer-token
+    # resolver (env var, else secrets.env) rather than a bare os.environ.get —
+    # that pattern is exactly the "fourth hand-rolled copy" its own docstring
+    # forbids, and on a bare host CLI nothing exports the env var, so a bare
+    # lookup here silently sent every forwarded admin/viz/read_query/restore
+    # op unauthenticated (401 from the backend's fail-secure gate).
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     # httpx timeout = DB timeout + a forward margin so the backend's own timeout
     # surfaces as a 400 rather than a client-side read timeout.
     _client_timeout_s = (timeout_ms / 1000.0) + 5.0
 
-    resp = httpx.post(
-        f"{backend_base}/read_query",
-        json={"query": query, "params": params or {}, "timeout_ms": timeout_ms},
-        headers=headers,
-        timeout=_client_timeout_s,
-    )
+    try:
+        resp = httpx.post(
+            f"{backend_base}/read_query",
+            json={"query": query, "params": params or {}, "timeout_ms": timeout_ms},
+            headers=headers,
+            timeout=_client_timeout_s,
+        )
+    except httpx.ConnectError as exc:
+        raise _unreachable_backend_error(backend_base, "run a read query") from exc
     resp.raise_for_status()
     return resp.json()
 
@@ -225,15 +286,26 @@ def _forward_restore(
             "T2 Car B: restore is forward-only — the compute runs backend-side."
         )
 
-    token = os.environ.get("YADGAR_MCP_AUTH_TOKEN", "")
+    # Car 5 item 4 (follow-on): route through the ONE sanctioned bearer-token
+    # resolver (env var, else secrets.env) rather than a bare os.environ.get —
+    # that pattern is exactly the "fourth hand-rolled copy" its own docstring
+    # forbids, and on a bare host CLI nothing exports the env var, so a bare
+    # lookup here silently sent every forwarded admin/viz/read_query/restore
+    # op unauthenticated (401 from the backend's fail-secure gate).
+    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+
+    token = resolve_auth_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-    resp = httpx.post(
-        f"{backend_base}/restore",
-        json={"directory": directory, "project_id": project_id},
-        headers=headers,
-        timeout=timeout_s,
-    )
+    try:
+        resp = httpx.post(
+            f"{backend_base}/restore",
+            json={"directory": directory, "project_id": project_id},
+            headers=headers,
+            timeout=timeout_s,
+        )
+    except httpx.ConnectError as exc:
+        raise _unreachable_backend_error(backend_base, "restore context") from exc
     resp.raise_for_status()
     data = resp.json()
     return data.get("result", {})

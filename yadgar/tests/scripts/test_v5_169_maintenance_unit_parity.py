@@ -272,7 +272,9 @@ def test_generate_systemd_summary_lists_every_rendered_unit(tmp_path):
             "yadgar-vacuum.timer",
             ["OnCalendar=Sun *-*-* 04:00:00", "RandomizedDelaySec=30min", "Persistent=true"],
         ),
-        ("yadgar-vacuum-trigger.path", ["PathExists="]),
+        # Car 10: PathChanged=, not PathExists= (edge-trigger fix — see
+        # yadgar/core/daemon/maintenance_units.py::build_vacuum_trigger_path).
+        ("yadgar-vacuum-trigger.path", ["PathChanged="]),
         ("yadgar-vacuum-trigger.service", ["Type=oneshot"]),
         ("yadgar-nightly-cycle.service", ["Type=oneshot", "TimeoutStartSec=1h"]),
         ("yadgar-nightly-cycle.timer", ["OnCalendar=*-*-* 19:00:00 UTC", "Persistent=true"]),

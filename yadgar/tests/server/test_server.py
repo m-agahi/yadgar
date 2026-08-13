@@ -280,22 +280,35 @@ def test_resource_stats(flush_queue):
 
 
 def test_resource_hot(flush_queue):
+    """Car 3: ``memory://hot`` fails CLOSED — it has no identity to scope with.
+
+    This used to assert ``len(data) == 1`` over a bare list, and it only held
+    because the per-test data wipe left exactly one row in the whole database.
+    The resource read ``get_memories_by_heat(HOT_THRESHOLD)`` — with
+    ``HOT_THRESHOLD`` defaulting to ``0.0``, i.e. every memory in the DB, of
+    every project. An MCP resource takes no parameters and no session identity
+    reaches this boundary, so returning no rows is the only non-leaking answer.
+    """
     server.memorize("hot resource test", "/tmp", [], project=_TEST_PROJECT_ID)  # heat=1.0
     flush_queue()
     result = server.resource_hot()
     data = json.loads(result)
-    assert len(data) == 1
-    assert data[0]["content"] == "hot resource test"
+    assert data["memories"] == []
+    assert data["reason"] == "unresolved_project"
 
 
 def test_resource_stale():
+    """Car 3: ``memory://stale`` fails CLOSED — see ``test_resource_hot``.
+
+    Its predicate was ``is_stale = true`` and nothing else.
+    """
     r = memorize_sync("stale resource test", "/tmp", [], project=_TEST_PROJECT_ID)
     server._get_storage().update_memory_staleness(r["id"], True)
 
     result = server.resource_stale()
     data = json.loads(result)
-    assert len(data) == 1
-    assert data[0]["is_stale"] is True
+    assert data["memories"] == []
+    assert data["reason"] == "unresolved_project"
 
 
 # ── MCP server object ─────────────────────────────────────────────────
