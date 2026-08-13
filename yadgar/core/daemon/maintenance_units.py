@@ -166,6 +166,11 @@ TRIGGER_PATH_DOC = (
     "{state_dir} is deliberately the SAME token that appears on the left of that",
     "`-v` bind, so the cross-generator test can compare the projected trigger dir",
     "against this watched dir as an exact string. Keep it that way.",
+    "",
+    "PathChanged, not PathExists (Car 10): PathExists edge-triggers only on a",
+    "non-existent -> existent transition, so a second vacuum request while a",
+    "stale trigger file exists (unit not yet re-armed) never fires. PathChanged",
+    "(close-after-write / atomic rename) re-fires on every fresh write.",
 )
 
 TRIGGER_SERVICE_DOC = (
@@ -345,7 +350,7 @@ def build_vacuum_trigger_path(*, state_dir: str) -> UnitFile:
                 "Path",
                 (
                     *comments(TRIGGER_PATH_DOC, state_dir=state_dir),
-                    Directive("PathExists", f"{state_dir}/triggers/vacuum_requested"),
+                    Directive("PathChanged", f"{state_dir}/triggers/vacuum_requested"),
                 ),
             ),
             Section(

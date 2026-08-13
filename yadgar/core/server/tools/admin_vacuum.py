@@ -11,9 +11,13 @@ logger = logging.getLogger(__name__)
 
 @_tool(power=True)
 def vacuum_now(force: bool = False) -> dict:
-    """Trigger a SurrealKV vacuum. Daemon downtime ~2-5 min on a 500 MB DB.
+    """Trigger a SurrealKV vacuum. ~2-5 min on a 500 MB DB.
 
-    power=True: vacuum stops the daemon, any active MCP session loses its connection.
+    power=True: DB-backed MCP tools fast-fail with a "maintenance" error for
+    the duration (ADR-0188 / #62 write-gate) — but the core daemon itself
+    stays up and does NOT cycle, and an active MCP session does NOT drop or
+    need reconnecting. Do not use container-restart or a dropped session as
+    the signal that a vacuum ran; check the returned "started" field instead.
 
     Writes a trigger file to YADGAR_VACUUM_TRIGGER_PATH.  A host-side watcher
     unit (systemd .path on nix, launchd WatchPaths on macOS) picks this up and
