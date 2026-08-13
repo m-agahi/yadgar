@@ -39,9 +39,6 @@ from yadgar._shared.observability.tracing import shutdown_tracing
 from yadgar.core.install.auth_token import resolve_auth_token
 
 _PORT = os.environ.get("YADGAR_PORT", "8765")
-# Car 9: route through the ONE sanctioned bearer-token resolver (env var,
-# else secrets.env) rather than a bare os.environ.get.
-_AUTH_TOKEN = resolve_auth_token()
 
 # Only fire on these load_reason values — session_start and compact are the
 # meaningful cases where fresh context injection adds value. Other values
@@ -52,8 +49,14 @@ _FIRE_ON_REASONS = frozenset({"session_start", "compact"})
 
 @observe(tier="hot")
 def _auth_headers() -> dict:
-    if _AUTH_TOKEN:
-        return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
+    # Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    # else secrets.env) rather than a bare os.environ.get. Resolved HERE
+    # (call time), not as a module-level constant — each hook invocation is
+    # a fresh short-lived process, so computing this at import time would do
+    # the secrets.env file read unconditionally on every process start.
+    token = resolve_auth_token()
+    if token:
+        return {"Authorization": f"Bearer {token}"}
     return {}
 
 

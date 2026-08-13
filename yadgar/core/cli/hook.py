@@ -42,17 +42,22 @@ import urllib.request
 from yadgar.core.install.auth_token import resolve_auth_token
 
 _PORT = os.environ.get("YADGAR_PORT", "8765")
-# Car 9: route through the ONE sanctioned bearer-token resolver (env var,
-# else secrets.env) — auth_token.py's own docstring notes it is "Stdlib +
-# observability only" specifically so hook scripts like this one can import
-# it cheaply.
-_AUTH_TOKEN = resolve_auth_token()
 
 
 def _auth_headers() -> dict:
-    """Return Authorization header dict if token is set."""
-    if _AUTH_TOKEN:
-        return {"Authorization": f"Bearer {_AUTH_TOKEN}"}
+    """Return Authorization header dict if token is set.
+
+    Car 9: route through the ONE sanctioned bearer-token resolver (env var,
+    else secrets.env) — auth_token.py's own docstring notes it is "Stdlib +
+    observability only" specifically so hook scripts like this one can import
+    it cheaply. Resolved HERE (call time), not as a module-level constant:
+    each hook invocation is a fresh short-lived process, and computing this
+    at import time would do the secrets.env file read unconditionally on
+    every process start rather than only when a header is actually needed.
+    """
+    token = resolve_auth_token()
+    if token:
+        return {"Authorization": f"Bearer {token}"}
     return {}
 
 
