@@ -107,7 +107,6 @@
 # ── carve-out 1: host-side identity minting ─────────────────────────────────
 carve-out-1  yadgar/core/hooks/session-start-context.py    # the minting hook: turns the session's real cwd into a project_id
 carve-out-1  yadgar/core/hooks/post-tool-capture.py        # hook entry point; stamps the host path onto the action_log payload
-carve-out-1  yadgar/core/hooks/prompt-recall.py            # hook entry point; local FTS fallback over the host path
 
 # ── carve-out 3: genuine filesystem paths, permanent ────────────────────────
 carve-out-3  yadgar/core/install/**                        # install targets, config + interpreter paths (glob; see KNOWN GAP)

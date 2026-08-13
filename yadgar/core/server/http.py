@@ -905,21 +905,55 @@ async def hook_block_reflect(request: Request) -> JSONResponse:
     block_create / block_update / block_delete / block_replace / block_append fires.
 
     Query params:
-        directory: project directory (optional, defaults to cwd)
+        directory: project directory (optional).
+        project: owner/repo identity, when the hook script minted one (Car 8
+            — bug train Car 2 threads a client-side ``?project=`` through the
+            hook script; before this car the server read only ``directory``
+            and silently dropped ``project``, so that half of Car 2's fix was
+            inert — the request reached here but never used the value).
+
+    POLICY (Car 8, deliberately NOT ``hook_project_id``'s hard-raise): the
+    prompt-recall hook raises on a directory arriving without ``project``
+    because an unscoped recall runs FUZZY/semantic search, and widening it
+    could leak another project's memories into this project's prompt
+    (ADR-0227, the v5.65 leak). This handler's read
+    (``storage.list_blocks`` → ``_block_project_clause``) is the opposite
+    shape: an EXACT match against the stored ``project_id``/``directory``
+    columns, never a semantic search — a block can only surface here if its
+    own stored key literally equals the caller's, so there is no leak vector
+    for a raise to guard against. block-reflect is also PostToolUse, firing
+    on every block_* write in a session rather than once per prompt like
+    UserPromptSubmit — raising here would spam observability every time a
+    caller's hook script predates Car 2's mint, for no safety benefit.
+    Degrade gracefully instead: forward ``project`` when the caller supplied
+    one, otherwise keep the pre-Car-8 directory-only behavior unchanged.
+
+    Also removes the ``os.getcwd()`` default that used to backstop a missing
+    ``directory`` (v5.65 Fix D precedent, applied there to prompt-recall for
+    the same reason): the daemon runs in a container, so that default
+    resolves to the CONTAINER's cwd, never the caller's tree. Not currently
+    reachable — the deployed hook always sends ``directory`` — but a trap for
+    the next caller that omits it.
+
     Returns: {"text": "...markdown blocks section..."}
     """
     from yadgar._shared.blocks_render import render_blocks_section  # noqa: PLC0415
 
-    directory = request.query_params.get("directory", os.getcwd())
+    directory = request.query_params.get("directory") or None
+    project = request.query_params.get("project") or None
     storage = _st._storage
     if storage is None:
         return JSONResponse({"text": ""})
 
     try:
         blocks = await asyncio.to_thread(
-            storage.list_blocks, scope=None, directory=directory if directory else None
+            storage.list_blocks, scope=None, directory=directory, project_id=project
         )
-        text = render_blocks_section(blocks, directory)
+        # render_blocks_section's 2nd arg is presentation-only (C9a / ADR-0225
+        # renamed it project_id) — it labels the "Project blocks" header and
+        # selects/scopes nothing. Prefer the resolved identity; fall back to
+        # directory so the label is not blank when only the legacy arm fired.
+        text = render_blocks_section(blocks, project or directory or "")
         return JSONResponse({"text": text})
     except Exception as _e:
         logger.debug("block-reflect hook error: %s", _e)

@@ -175,10 +175,15 @@ _IMPORTED_ONLY = {
 # underscore logic modules imported by a hyphen dispatcher). They lost their sole
 # manifest string-literal when ``_copy_scope_scripts._files`` was deleted, so they
 # must be excluded from ``install_intended`` — they are dispatched, not installed.
+#
+# Car 8 (bug train): "prompt-recall.py" dropped — its standalone source file
+# was deleted outright (a second, unwired, project-unaware auto-recall
+# implementation; the wired path is core/cli/hook.py::hook_prompt_recall).
+# Its absence from `shipped` (below) already makes this a no-op for that
+# name; kept accurate rather than merely harmless.
 _RUNNER_DISPATCHED = {
     "post-tool-capture.py",
     "session-start-context.py",
-    "prompt-recall.py",
     "pre-compact-drain.sh",
     "post-compact-rehydrate.sh",
 }
@@ -223,3 +228,20 @@ def test_manifest_references_all_install_intended_scripts():
     referenced = _manifest_referenced_names()
     missing = {n for n in install_intended if n not in referenced}
     assert not missing, f"install-intended scripts not referenced by any manifest list: {missing}"
+
+
+def test_prompt_recall_standalone_script_is_removed():
+    """Car 8 (bug train): yadgar/core/hooks/prompt-recall.py was a SECOND,
+    unwired implementation of UserPromptSubmit auto-recall — its own raw FTS
+    query, its own HTTP forward that never sent ?project=. Nothing dispatched
+    to it (the wired path is _settings.py's `_runner_entry("prompt-recall")`
+    -> hook_runner.py -> core/cli/hook.py::hook_prompt_recall); it was pure
+    vestige. Two implementations, one wired, is exactly the drift that let a
+    scoping bug (Car 2/Car 8) exist and get fixed in only one of the two
+    places. Deleted rather than wired: wiring it would resurrect a second,
+    competing retrieval code path Car 0 had already consolidated away."""
+    assert not (_HOOKS_DIR / "prompt-recall.py").exists(), (
+        "prompt-recall.py must be deleted, not merely unwired — "
+        "see Car 8's decision in yadgar/core/server/http.py::hook_block_reflect's "
+        "neighboring history"
+    )
