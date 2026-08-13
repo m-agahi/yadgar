@@ -172,7 +172,9 @@ class TestDisagreementFiresLoudly:
             "to_recall_scope",
             lambda self, opt_in: __import__(
                 "yadgar._shared.storage.directory", fromlist=["RecallScope"]
-            ).RecallScope(project_id=self.project_id or None, opt_in_tags=opt_in),
+            ).RecallScope(
+                project_id=self.project_id or None, opt_in_tags=opt_in, unscoped=self.unscoped
+            ),
         )
         rows = [_row(114, "yadgar_adr-0114")]
         out = await ce.check_superseded_adr_exclusion(_FakeEngine(rows))

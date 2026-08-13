@@ -217,14 +217,24 @@ class TestTypeParamE2E:
             import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
         from yadgar._shared.runtime import state as _st
+        from yadgar.backend.retrieval import ensure_retrieval_engine
 
+        # C13 (e): compose the retriever explicitly instead of inheriting it
+        # from whichever earlier test in this module happened to run first in
+        # this xdist worker — see the identical fix in test_eval_routing_e2e.py.
+        # ``_st._retriever`` is a process-global composed LAZILY on the first
+        # backend recall, so this assertion was silently order-dependent.
+        ensure_retrieval_engine()
         assert _st._retriever is not None, "Retriever must be initialized for order parity test"
 
         # Legacy oracle: Retriever.recall() native memory ordering
+        # Car H1 (§1.3): scope to the same project the fanout call below uses —
+        # the seeded memories carry project_id=_TEST_PROJECT (see _insert_mem).
         legacy_results = _st._retriever.recall(
             f"order parity {unique}",
             max_results=20,
             min_heat=0.0,
+            project_id=_TEST_PROJECT,
         )
         legacy_mem_ids = [
             m.get("id") for m in legacy_results if m.get("id") in {mem_high, mem_mid, mem_low}
@@ -409,14 +419,24 @@ class TestTypeParamE2E:
             import yadgar.core.server.tools.recall as _rm  # type: ignore[no-redef]
 
         from yadgar._shared.runtime import state as _st
+        from yadgar.backend.retrieval import ensure_retrieval_engine
 
+        # C13 (e): compose the retriever explicitly instead of inheriting it
+        # from whichever earlier test in this module happened to run first in
+        # this xdist worker — see the identical fix in test_eval_routing_e2e.py.
+        # ``_st._retriever`` is a process-global composed LAZILY on the first
+        # backend recall, so this assertion was silently order-dependent.
+        ensure_retrieval_engine()
         assert _st._retriever is not None, "Retriever must be initialized for order parity test"
 
         # Oracle: native memory ordering from Retriever.recall() (WRRF+GTE, no CE double-rank).
+        # Car H1 (§1.3): scope to the same project the fanout call below uses —
+        # the seeded memories carry project_id=_TEST_PROJECT (see _insert_mem).
         legacy_results = _st._retriever.recall(
             f"type all order parity {unique}",
             max_results=20,
             min_heat=0.0,
+            project_id=_TEST_PROJECT,
         )
         seeded_ids = {mem_high, mem_mid, mem_low}
         legacy_mem_ids = [m.get("id") for m in legacy_results if m.get("id") in seeded_ids]
@@ -507,14 +527,24 @@ class TestTypeParamE2E:
         monkeypatch.setattr(storage, "update_memory_last_accessed", lambda mid, ts: None)
 
         from yadgar._shared.runtime import state as _st
+        from yadgar.backend.retrieval import ensure_retrieval_engine
 
+        # C13 (e): compose the retriever explicitly instead of inheriting it
+        # from whichever earlier test in this module happened to run first in
+        # this xdist worker — see the identical fix in test_eval_routing_e2e.py.
+        # ``_st._retriever`` is a process-global composed LAZILY on the first
+        # backend recall, so this assertion was silently order-dependent.
+        ensure_retrieval_engine()
         assert _st._retriever is not None, "Retriever must be initialized for order parity test"
 
         # Oracle: native memory ordering from Retriever.recall().
+        # Car H1 (§1.3): scope to the same project the fanout call below uses —
+        # the seeded memories carry project_id=_TEST_PROJECT (see _insert_mem).
         legacy_results = _st._retriever.recall(
             f"type all empty wiki {unique}",
             max_results=20,
             min_heat=0.0,
+            project_id=_TEST_PROJECT,
         )
         seeded_ids = {mem_high, mem_mid, mem_low}
         legacy_mem_ids = [m.get("id") for m in legacy_results if m.get("id") in seeded_ids]

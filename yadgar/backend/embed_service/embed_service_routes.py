@@ -210,7 +210,21 @@ async def recall_route(
         if _opted_into_superseded
         else await load_superseded_slugs(_get_sql_storage(), project_id=req.project_id)
     )
-    recall_scope = RecallScope(project_id=req.project_id, excluded_slugs=excluded_slugs)
+    # Car H1 (§1.3): ``req.unscoped`` carries the caller's DELIBERATE
+    # whole-corpus intent explicitly — it is not re-derived from a falsy
+    # ``project_id`` here. Re-deriving it would be the same shape of defect
+    # H1 deleted from the clause builder: a caller that forgot to resolve a
+    # project would look identical to one that knowingly wants the whole
+    # corpus. Only ``hook_project_id`` (core/server/http.py) sets the flag,
+    # and only from the small set of hook call sites that construct
+    # ``_HookRecallForwarder("")`` on purpose (BC-VZ2 viz search, the
+    # "instructions-loaded" hook). A falsy ``project_id`` WITHOUT the flag
+    # still raises at the clause builder, same as every other caller.
+    recall_scope = RecallScope(
+        project_id=req.project_id or None,
+        excluded_slugs=excluded_slugs,
+        unscoped=req.unscoped,
+    )
 
     # Run the RETRIEVAL + the response-feeding heat mutations in a thread
     # (CPU-bound + IO-bound mix; don't block the event loop). T3 Car 2: the

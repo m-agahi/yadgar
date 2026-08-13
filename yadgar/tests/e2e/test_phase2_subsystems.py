@@ -1303,7 +1303,9 @@ class TestBCCLS1_2_3_EpisodicToSemantic:
         )
 
         # BC-CLS3: promoted semantic memory derives directory from sources
-        semantic_rows = storage.get_memories_by_store_type("semantic", limit=50)
+        # Car H1 (§1.3): whole-DB read across the e2e fixture — declare it
+        # explicitly, same as production's _fetch_episodic_candidates.
+        semantic_rows = storage.get_memories_by_store_type("semantic", limit=50, unscoped=True)
         new_semantics = [r for r in semantic_rows if r.get("heat", 0) > 0]
         assert new_semantics, "BC-CLS3: at least one semantic row must be present after promotion"
 

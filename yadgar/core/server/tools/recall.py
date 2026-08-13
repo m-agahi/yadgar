@@ -308,6 +308,7 @@ def _forward_to_backend(  # noqa: PLR0913 — 11 args match full recall signatur
     timeout_s: float = 120.0,
     deadline_ms: int | None = None,
     project_id: str | None = None,
+    unscoped: bool = False,
 ) -> list[dict]:
     """Forward recall to the backend /recall endpoint.
 
@@ -338,6 +339,15 @@ def _forward_to_backend(  # noqa: PLR0913 — 11 args match full recall signatur
         Included in the payload ONLY when not None (wire-compatible with older
         backends whose RecallRequest is extra="forbid"). MCP recall path leaves
         it None.
+
+    unscoped: Car H1 (§1.3) — the caller's DELIBERATE whole-corpus read.
+        Included in the payload ONLY when True (same wire-compat pattern as
+        ``deadline_ms``). ONLY ``_forward_hook_recall`` (core/server/http.py)
+        sets this, and only when ``hook_project_id`` resolved to the explicit
+        "no project, no directory" case — never inferred from a falsy
+        ``project_id`` here, which would silently resurrect the exact failure
+        mode Car H1 closed (an unresolved caller looking identical to a
+        deliberate one).
 
     Raises:
         RuntimeError: if YADGAR_EMBED_URL is not configured.
@@ -371,6 +381,8 @@ def _forward_to_backend(  # noqa: PLR0913 — 11 args match full recall signatur
         payload["deadline_ms"] = deadline_ms
     if project_id is not None:
         payload["project_id"] = project_id
+    if unscoped:
+        payload["unscoped"] = unscoped
 
     resp = httpx.post(
         f"{backend_base}/recall",
