@@ -149,7 +149,9 @@ class TestAllFeaturesToggleable:
         )
         r = Retriever(storage, embeddings, graph, s)
         _make_memory(storage, embeddings, "test memory for toggle check")
-        results = r.recall("test", max_results=5)
+        results = r.recall(
+            "test", max_results=5, unscoped=True
+        )  # H1 §1.3: ranking test, not scoping
         assert isinstance(results, list)
 
 

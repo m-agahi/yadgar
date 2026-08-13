@@ -653,7 +653,14 @@ class TestRecallMultiSignal:
             )
 
         retriever = Retriever(storage, embeddings, kg, settings)
-        results = retriever.recall("Python web framework API", max_results=3, min_heat=0.1)
+        # unscoped=True (Car H1 §1.3): this asserts multi-signal FUSION RANKING,
+        # not scoping — the rows above are seeded with a directory_context and no
+        # project_id, so a project-scoped read would return nothing and every
+        # assertion below would pass vacuously. A falsy project_id now raises
+        # instead of silently meaning "whole corpus", so the intent is explicit.
+        results = retriever.recall(
+            "Python web framework API", max_results=3, min_heat=0.1, unscoped=True
+        )
 
         assert len(results) >= 1
         # Python/FastAPI memory should rank high

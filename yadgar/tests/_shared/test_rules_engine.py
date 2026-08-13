@@ -658,7 +658,9 @@ class TestIntegrationRecall:
         )
 
         # Recall should filter based on rules
-        results = retriever.recall("programming languages", max_results=10, min_heat=0.0)
+        results = retriever.recall(
+            "programming languages", max_results=10, min_heat=0.0, unscoped=True
+        )  # H1 §1.3: rules-filtering test, not scoping
         # Python memory should be filtered out (no "web" in content... wait it does)
         # Actually Python memory says "data science" not "web", so it should be filtered
         for r in results:
@@ -672,7 +674,9 @@ class TestIntegrationRecall:
 
         _insert_memory(storage, embeddings, "some test memory", tags=["test"])
 
-        results = retriever.recall("test memory", max_results=5, min_heat=0.0)
+        results = retriever.recall(
+            "test memory", max_results=5, min_heat=0.0, unscoped=True
+        )  # H1 §1.3: rules-engine-absent test, not scoping
         assert len(results) >= 1
 
 
