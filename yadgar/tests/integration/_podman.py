@@ -121,6 +121,16 @@ def select_container_runtime(*, env: dict[str, str] | None = None) -> str | None
 
 _SHARED_ROOT_CACHE: dict[str, Path] = {}
 
+# A NAME, not an inline tuple, on purpose. `except (A, B):` written inline is
+# rewritten by ruff format 0.16.x into the PEP 758 bare form `except A, B:`,
+# which this repo's own guard (test_v5_46_16_except_tuple_sweep.py) then fails
+# the build on. The usual pin is a trailing `# fmt: skip`, but that pin was
+# lost once during a pre-commit rewrite that `git add -A` then swept into a
+# commit containing a file that did not parse. Binding the tuple to a name
+# removes the hazard instead of suppressing it: there are no parentheses left
+# for a formatter to strip.
+_RUN_ERRORS = (OSError, subprocess.SubprocessError)
+
 
 def _mount_crosses(runtime: str, image: str, candidate: Path, env: dict[str, str]) -> bool:
     """Does a bind mount of ``candidate`` reach THIS process's view of it?
@@ -158,7 +168,7 @@ def _mount_crosses(runtime: str, image: str, candidate: Path, env: dict[str, str
             return False
         sentinel = probe_dir / "sentinel"
         return sentinel.is_file() and sentinel.read_text(encoding="utf-8") == token
-    except (OSError, subprocess.SubprocessError):  # fmt: skip
+    except _RUN_ERRORS:
         return False
     finally:
         remove_container_dir(runtime, probe_dir, image=image, env=env)
