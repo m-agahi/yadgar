@@ -327,14 +327,55 @@ jobs:
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
-      - name: Assert a container runtime is present (a skip here is a failure)
+      - name: Assert a WORKING container runtime is present (a skip here is a failure)
+        # `command -v` (the original check) only proves a binary is on PATH.
+        # On the GitHub mirror's runner that passed while the suite still
+        # skipped everything: `podman` is on PATH but cannot actually start
+        # anything there (car G5 — nested rootless podman fails "cannot
+        # re-exec process" inside that runner's own docker:dind sidecar
+        # container). Run a real throwaway container per candidate runtime
+        # instead of just checking the binary exists — exercises the exact
+        # capability the tests below need, on whichever runtime this mirror's
+        # runner actually has working.
         run: |
           set -euo pipefail
-          command -v podman >/dev/null 2>&1 || command -v docker >/dev/null 2>&1 || {
-            echo "no podman/docker on the runner host — the engine-#2 suite cannot run," >&2
-            echo "and a silent skip is what let a broken migration ship. Failing loudly." >&2
+          runtime=""
+          for candidate in podman docker; do
+            if command -v "$candidate" >/dev/null 2>&1 && \
+               "$candidate" run --rm docker.io/library/alpine:3 true >/dev/null 2>&1; then
+              runtime="$candidate"
+              break
+            fi
+          done
+          if [ -z "$runtime" ]; then
+            echo "no WORKING container runtime on the runner host (podman/docker may be" >&2
+            echo "on PATH but unable to actually start a container) — the engine-#2 suite" >&2
+            echo "cannot run, and a silent skip is what let a broken migration ship." >&2
+            echo "Failing loudly." >&2
             exit 1
-          }
+          fi
+          echo "using $runtime as the working container runtime"
+
+      - name: Install mariadb client (mariadb-dump / mariadb — needed by the dump/restore arms)
+        # Bare runner host, no image to inherit these from. Without this,
+        # test_mariadb_dump_arm.py / test_mariadb_restore_arm.py skip via
+        # their own `shutil.which("mariadb-dump")` / `shutil.which("mariadb")`
+        # guards even once a working container runtime is found (car G5).
+        # Package-manager-portable: this mirror's runner host is not
+        # guaranteed to be the same distro as the GitHub mirror's.
+        run: |
+          set -euo pipefail
+          SUDO=""
+          command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+          if command -v apt-get >/dev/null 2>&1; then
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y --no-install-recommends mariadb-client
+          elif command -v apk >/dev/null 2>&1; then
+            $SUDO apk add --no-cache mariadb-client
+          else
+            echo "no known package manager (apt-get/apk) to install mariadb-client" >&2
+            exit 1
+          fi
 
       - name: Install uv (bare host, no container to inherit it from)
         # An earlier version of the .github mirror's twin job did
@@ -355,6 +396,12 @@ jobs:
         run: uv sync --python 3.14 --extra sql --extra test
 
       - name: Run the engine-#2 integration suite
+        # `-rf` (the original flag) reports FAILURES only — a skip reason is
+        # never printed, so a run that skips everything leaves the artifact
+        # with nothing to diagnose from but "s" characters (car G5: the
+        # GitHub mirror's run showed 41 skipped in 2.31s, cause invisible
+        # from the artifact alone). `-ra` reports every non-passing outcome,
+        # including skip reasons.
         run: |
           set -o pipefail
           uv run --python 3.14 --extra sql --extra test python -m pytest \
@@ -364,7 +411,7 @@ jobs:
             yadgar/tests/integration/test_mariadb_restore_arm.py \
             -m integration \
             -n 0 \
-            -q -rf --tb=short \
+            -q -ra --tb=short \
             2>&1 | tee pytest-engine2.txt
 
       - name: Gate on tests having actually RUN
