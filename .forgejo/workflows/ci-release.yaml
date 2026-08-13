@@ -358,7 +358,17 @@ jobs:
           # that catches a missing __main__.py (the ADR-0084 safe_start
           # regression: `python -m yadgar.backend.safe_start` broke because the
           # package had no __main__.py, and no console-script test saw it).
-          /tmp/cleanvenv/bin/python -c "
+          #
+          # -P (PYTHONSAFEPATH, 3.11+): without it, `-c` prepends cwd ('') to
+          # sys.path, and cwd here IS the repo checkout (no working-directory:
+          # override on this job) — so every probe below would silently resolve
+          # against the CHECKED-OUT SOURCE TREE instead of the venv-installed
+          # wheel, passing even when the wheel is missing the module entirely.
+          # Verified empirically (2026-08-13): with cwd shadowing, deleting
+          # migrate.py from the installed venv still printed 'entry-point
+          # surface OK' because `yadgar/_shared/storage/sql/migrate.py` in the
+          # repo tree resolved instead. -P closes that for this step.
+          /tmp/cleanvenv/bin/python -P -c "
           import importlib, importlib.util
           for mod, fn in [
               ('yadgar.__main__', 'cli'),
@@ -366,7 +376,22 @@ jobs:
               ('yadgar.core.scripts.yadgar_setup', 'main'),
           ]:
               assert callable(getattr(importlib.import_module(mod), fn)), mod
-          for mod in ('yadgar.__main__', 'yadgar.backend.safe_start.__main__'):
+          # These are invoked as \`python -m <target>\` directly (entrypoint-backend.sh),
+          # never executed here (real execution needs a live surreal/MariaDB server).
+          # Shape-aware: yadgar.__main__ and safe_start.__main__ are genuine __main__.py
+          # submodules of a package, so find_spec on the dotted name IS the presence
+          # check. yadgar._shared.storage.sql.migrate is a PLAIN module (no
+          # migrate/__main__.py) invoked directly via -m -- find_spec on
+          # '...migrate.__main__' always raises ModuleNotFoundError regardless of
+          # whether migrate.py shipped (its parent has no __path__), so the real
+          # presence check is find_spec on the parent; the child probe is skipped
+          # once submodule_search_locations shows the parent isn't a package.
+          for mod in ('yadgar.__main__', 'yadgar.backend.safe_start.__main__', 'yadgar._shared.storage.sql.migrate.__main__'):
+              parent = mod.removesuffix('.__main__')
+              parent_spec = importlib.util.find_spec(parent)
+              assert parent_spec is not None, parent
+              if parent_spec.submodule_search_locations is None:
+                  continue
               assert importlib.util.find_spec(mod) is not None, mod
           print('entry-point surface OK')
           "
