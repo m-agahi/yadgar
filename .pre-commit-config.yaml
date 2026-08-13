@@ -408,6 +408,27 @@ repos:
         types: [python]
         exclude: "^benchmarks/"
 
+      - id: check-staged-parses
+        name: Staged Python files must parse
+        language: system
+        entry: python scripts/check_staged_parses.py
+        types: [python]
+        pass_filenames: true
+        # ORDER IS LOAD-BEARING: this must sit AFTER ruff/ruff-format. The
+        # incident it exists for (93f3ed95, reverted in 8f826592) was a
+        # FORMATTER rewrite that `git add -A` re-staged, so a parse check
+        # ordered before the formatter is structurally unable to see the file
+        # that actually gets committed.
+        #
+        # No `exclude:` — unlike the ruff hooks above, which skip benchmarks/.
+        # An unparseable file is a broken commit wherever it lives, and the
+        # 2026-08-12 sweep found benchmarks/ was exactly the tree that rotted
+        # while every yadgar/**-scoped guard stayed green.
+        #
+        # pass_filenames is explicit rather than defaulted: the script treats
+        # an empty argv as a hard error precisely so flipping this to false
+        # cannot silently turn the hook into a no-op.
+
       - id: type-ratchet
         name: Strict-typing ratchet (touched files may not gain type errors)
         language: system
