@@ -23,7 +23,7 @@ on:
   # verdict rested on `git diff master...HEAD` plus inference, not a real A/B.
   # Deliberately `schedule:`, not a trigger on every push to master: the
   # GitHub mirror's runner is a SINGLE self-hosted box (see the wave-staggering
-  # comments on test-core/test-backend below — three concurrent heavy legs
+  # comments on the `tests` matrix below — three concurrent heavy groups
   # already OOM it), and master here receives many merges a day, so a push
   # trigger would queue a ~60-90 min full suite behind every single one of
   # them, on top of concurrent PR runs and ci-release's image builds on
@@ -49,17 +49,25 @@ env:
   YADGAR_TEST_SKIP_RUNTIME_CHECK: "1"
 
 jobs:
-  # ── Subsystem test jobs (R3: CI regroup — subsystem split + least_duration) ──
-  # Four jobs replace the old 5-way matrix over yadgar/tests/ to give per-subsystem
-  # failure isolation and duration-aware splitting on the heaviest leg (core).
-  # All jobs share the same container image, cache, install, and marker flags as
-  # the old `test` job.  .test_durations is committed at repo root — pytest-split
-  # reads it for --splitting-algorithm least_duration.
-
-  test-fast:
-    runs-on: ubuntu-latest
-    # TODO: candidate for dropping ml extra after import-graph proof — scripts/,
-    # server/, hooks/ tests may not need heavy ML deps.
+  # ── Test groups (Car J1: module groups, not a fake dependency chain) ─────────
+  #
+  # Mirror of .github/workflows/ci-pr.yml's `tests` job. See that file's header
+  # knob block and this job's comments there for the full rationale; the short
+  # version is that the `needs:` chain between test jobs was a RESOURCE cap
+  # wearing a DEPENDENCY primitive's clothes, and the cap now lives on
+  # max-parallel where it belongs.
+  #
+  # THIS MIRROR IS WHERE THE CAP ACTUALLY BITES. The GitHub side has exactly one
+  # self-hosted runner, which takes one job at a time, so max-parallel is inert
+  # there until a second runner is registered. The Forgejo runner's config.yaml
+  # sets `capacity: 2` — two jobs genuinely run at once here, so this is the
+  # mirror on which the 2026-07-09 ceiling (ADR-0073/0079) is being held.
+  #
+  # Group packing is identical to the GitHub mirror by construction: five
+  # module-scoped groups plus a duration-sharded `core` (yadgar/tests/core/ is
+  # a flat 242-file directory with no subpackages to split on).
+  tests:
+    runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     env:
@@ -67,182 +75,42 @@ jobs:
       HF_HUB_DISABLE_XET: '1'
       HF_HOME: ${{ vars.HF_HOME }}
       YADGAR_OTLP_ENDPOINT: ''
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: /root/.cache/pip
-          key: pip-${{ hashFiles('pyproject.toml') }}
-          restore-keys: pip-
-
-      - name: Install dependencies
-        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
-        # --no-deps installs only the yadgar package itself; nothing re-resolves
-        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
-        # the image (fail-loud by design).
-        run: |
-          uv pip install --system --no-deps -e .
-
-      - name: Run tests (scripts, server, hooks, _meta, clients)
-        # -rs + tee: the skip-summary output feeds the wave-3 check-skip-inventory
-        # gate as an artifact — the gate parses this text instead of re-running
-        # the suite a 5th time. pipefail keeps pytest's exit code through the tee.
-        run: |
-          set -o pipefail
-          python -m pytest \
-            yadgar/tests/scripts/ \
-            yadgar/tests/server/ \
-            yadgar/tests/hooks/ \
-            yadgar/tests/_meta/ \
-            yadgar/tests/clients/ \
-            -q -rs --tb=short \
-            -n 4 --dist loadgroup \
-            --reruns 2 --reruns-delay 2 \
-            -m 'not integration and not e2e and not perf' \
-            2>&1 | tee pytest-rs-fast.txt
-
-      - name: Upload -rs output for skip gate
-        uses: https://data.forgejo.org/actions/upload-artifact@v3
-        with:
-          name: pytest-rs-fast
-          path: pytest-rs-fast.txt
-          retention-days: 1
-
-  test-shared:
-    runs-on: ubuntu-latest
-    container:
-      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
-    env:
-      HF_HUB_OFFLINE: '1'
-      HF_HUB_DISABLE_XET: '1'
-      HF_HOME: ${{ vars.HF_HOME }}
-      YADGAR_OTLP_ENDPOINT: ''
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: /root/.cache/pip
-          key: pip-${{ hashFiles('pyproject.toml') }}
-          restore-keys: pip-
-
-      - name: Install dependencies
-        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
-        # --no-deps installs only the yadgar package itself; nothing re-resolves
-        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
-        # the image (fail-loud by design).
-        run: |
-          uv pip install --system --no-deps -e .
-
-      - name: Run tests (_shared)
-        run: |
-          set -o pipefail
-          python -m pytest \
-            yadgar/tests/_shared/ \
-            -q -rs --tb=short \
-            -n 4 --dist loadgroup \
-            --reruns 2 --reruns-delay 2 \
-            -m 'not integration and not e2e and not perf' \
-            2>&1 | tee pytest-rs-shared.txt
-
-      - name: Upload -rs output for skip gate
-        uses: https://data.forgejo.org/actions/upload-artifact@v3
-        with:
-          name: pytest-rs-shared
-          path: pytest-rs-shared.txt
-          retention-days: 1
-
-  test-backend:
-    runs-on: ubuntu-latest
-    # Round-4 stagger: even at -n 4/leg, 3 concurrent heavy legs (12 surreal+model
-    # workers) still spiked host RAM — backend leg saw 8 setup ERRORS (httpx
-    # ConnectError, surreal child died mid-leg). Chain backend behind test-fast
-    # (the shortest leg) so peak wave-1 concurrency drops to 2 heavy legs
-    # (shared + backend-after-fast).
-    needs: [test-fast]  # scheduling throttle only (RAM waves, ADR-0073/0079)
-    if: ${{ always() }}  # run regardless of earlier-leg verdicts — full visibility per round (user 2026-07-11)
-    container:
-      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
-    env:
-      HF_HUB_OFFLINE: '1'
-      HF_HUB_DISABLE_XET: '1'
-      HF_HOME: ${{ vars.HF_HOME }}
-      YADGAR_OTLP_ENDPOINT: ''
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@v6
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: /root/.cache/pip
-          key: pip-${{ hashFiles('pyproject.toml') }}
-          restore-keys: pip-
-
-      - name: Install dependencies
-        # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
-        # --no-deps installs only the yadgar package itself; nothing re-resolves
-        # at run time, so CI cannot drift past the lock. Missing dep = rebuild
-        # the image (fail-loud by design).
-        run: |
-          uv pip install --system --no-deps -e .
-
-      - name: Run tests (backend)
-        run: |
-          set -o pipefail
-          python -m pytest \
-            yadgar/tests/backend/ \
-            -q -rs --tb=short \
-            -n 4 --dist loadgroup \
-            --reruns 2 --reruns-delay 2 \
-            -m 'not integration and not e2e and not perf' \
-            2>&1 | tee pytest-rs-backend.txt
-
-      - name: Upload -rs output for skip gate
-        uses: https://data.forgejo.org/actions/upload-artifact@v3
-        with:
-          name: pytest-rs-backend
-          path: pytest-rs-backend.txt
-          retention-days: 1
-
-  test-core:
-    runs-on: ubuntu-latest
-    # Wave-2 stagger: run AFTER the three lighter jobs (test-fast, test-shared,
-    # test-backend) finish so all six legs + viz don't race for host RAM at once.
-    # Host OOM observed 2026-07-09 (three rounds): (1) test-core group 3 (a surreal
-    # child killed 137 mid-leg) + viz Playwright Layer 2 (845 Killed);
-    # (2) wave-1 legs at -n auto — surreal-OOM cascade ("namespace 'yadgar' does
-    # not exist" + httpx ConnectError, mid-leg surreal death);
-    # (3) even at -n 4/leg, 3 concurrent heavy legs (12 surreal+model workers)
-    # still spiked — backend leg got 8 setup ERRORS (httpx ConnectError), so
-    # test-backend is now chained behind test-fast (see its needs: above);
-    # (4) wave 2 hit the SAME peak: 3 core matrix legs concurrent = 12 workers →
-    # 30 setup ERRORS (httpx ConnectError, surreal child death). The ceiling is
-    # per-WAVE: max 2 heavy legs / 8 workers concurrent — so the core matrix is
-    # reduced 3→2 splits (least_duration rebalances, ~equal to the shared leg).
-    # The runner host OOMs with concurrent legs at -n auto: each auto leg spawns
-    # workers = ALL runner cores (/proc/meminfo reports host RAM, not the cgroup
-    # limit), each worker carrying surreal + model RAM. Fix: 4 workers/leg cap on
-    # ALL test legs + wave staggering + ≤2 legs per wave. Group packing is
-    # duration-based (--splitting-algorithm least_duration) and memory-blind —
-    # the cap, the waves, and the per-wave leg count are the only levers.
-    needs: [test-fast, test-shared, test-backend]  # scheduling throttle only
-    if: ${{ always() }}
-    container:
-      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
-    env:
-      HF_HUB_OFFLINE: '1'
-      HF_HUB_DISABLE_XET: '1'
-      HF_HOME: ${{ vars.HF_HOME }}
-      YADGAR_OTLP_ENDPOINT: ''
-    # fail-fast: false — each chunk runs independently; one failure does NOT
-    # abort the others.  Aggregation happens in the `test-gate` job below.
     strategy:
       fail-fast: false
+      # LITERAL ON PURPOSE — DO NOT turn this into ${{ vars.CI_MAX_PARALLEL }}.
+      # The GitHub mirror drives this from a repo variable; Forgejo cannot.
+      # act_runner's vendored act parses this key with a bare
+      # `strconv.Atoi(s.MaxParallelString)` BEFORE any expression evaluation
+      # (forgejo/act pkg/model/workflow.go GetMaxParallel; upstream
+      # nektos/act#2619). An expression here does not fail loudly — Atoi errors,
+      # the error is logged, and the value falls back to act's default of 4.
+      # That is DOUBLE the ADR-0073 ceiling, on the one runner that actually
+      # runs jobs concurrently (this runner's config.yaml sets capacity: 2), so
+      # a silently-ignored expression here reproduces the 2026-07-09 OOM.
+      # Consequence, stated plainly: raising concurrency is a Settings change on
+      # GitHub but a PR on Forgejo. Keep this literal in step with the
+      # CI_MAX_PARALLEL default in .github/workflows/ci-pr.yml's knob block.
+      # test_ci_mirror_parity.py projects only job keys / needs / if — it does
+      # NOT compare `strategy`, so nothing else will catch this drifting.
+      max-parallel: 2
       matrix:
-        group: [1, 2]
+        include:
+          - group: repo-guards
+            paths: yadgar/tests/scripts/
+          - group: server-api
+            paths: yadgar/tests/server/
+          - group: client-surfaces
+            paths: yadgar/tests/hooks/ yadgar/tests/clients/ yadgar/tests/_meta/ yadgar/tests/restoration/
+          - group: shared-storage
+            paths: yadgar/tests/_shared/
+          - group: backend-services
+            paths: yadgar/tests/backend/
+          - group: core-1
+            paths: yadgar/tests/core/
+            split: --splits 2 --group 1 --splitting-algorithm least_duration
+          - group: core-2
+            paths: yadgar/tests/core/
+            split: --splits 2 --group 2 --splitting-algorithm least_duration
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -254,10 +122,6 @@ jobs:
           restore-keys: pip-
 
       - name: Install dependencies
-        # uv: required by test_v5_46_10_wheel_bundle (uv build --wheel subprocess)
-        # and pre-commit check-config-three-way-sync hook.
-        # pytest-split: parallel chunk partitioning via --splits/--group flags.
-        # .test_durations committed at repo root; least_duration reads it.
         # Deps are BAKED into yadgar-ci FROM uv.lock (lock parity — ADR-0089).
         # --no-deps installs only the yadgar package itself; nothing re-resolves
         # at run time, so CI cannot drift past the lock. Missing dep = rebuild
@@ -265,37 +129,58 @@ jobs:
         run: |
           uv pip install --system --no-deps -e .
 
-      # NOTE: Forgejo act_runner does NOT expand ${{ }} expressions in a step
-      # `name:` (only in `run:`/`if:`/`env:`). Literal name used here.
-      # -n 4: capped — CI runner OOMs at auto worker count because /proc/meminfo
-      # reports host RAM, not the cgroup limit; 4 chosen conservatively — tune upward later
-      - name: Run tests (core, pytest-split chunk, 2-way, least_duration)
+      - name: Assert this group selects tests (zero selection is a silent pass)
+        # Two independent signals — pytest's exit code (5 = no tests collected,
+        # 4 = path/usage error) AND the parsed summary count. See the GitHub
+        # mirror's comment on this step for the verified summary-line shapes.
         run: |
           set -o pipefail
-          python -m pytest yadgar/tests/core/ \
+          rc=0
+          python -m pytest ${{ matrix.paths }} ${{ matrix.split }} \
+            -m 'not integration and not e2e and not perf' \
+            -n 0 -q --collect-only > collect-${{ matrix.group }}.txt 2>&1 || rc=$?
+          collected=$(sed -n 's/^\([0-9]\{1,\}\)[/0-9]* tests\{0,1\} collected.*/\1/p' \
+            collect-${{ matrix.group }}.txt | tail -1)
+          if [ "$rc" -ne 0 ] || [ -z "$collected" ] || [ "$collected" -eq 0 ]; then
+            echo "group '${{ matrix.group }}' did not collect a usable test set" >&2
+            echo "  paths        : ${{ matrix.paths }}" >&2
+            echo "  split        : ${{ matrix.split }}" >&2
+            echo "  pytest exit  : $rc (5 = no tests collected, 4 = path/usage error)" >&2
+            echo "  parsed count : '${collected}'" >&2
+            echo "A group that collects nothing passes for the wrong reason." >&2
+            tail -30 collect-${{ matrix.group }}.txt >&2
+            exit 1
+          fi
+          echo "group '${{ matrix.group }}' selects ${collected} tests"
+
+      - name: Run tests
+        run: |
+          set -o pipefail
+          python -m pytest ${{ matrix.paths }} ${{ matrix.split }} \
             -q -rs --tb=short \
-            -n 4 --dist loadgroup \
+            -n ${{ vars.CI_PYTEST_WORKERS || '4' }} --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
             -m 'not integration and not e2e and not perf' \
-            --splits 2 --group ${{ matrix.group }} \
-            --splitting-algorithm least_duration \
-            2>&1 | tee pytest-rs-core-${{ matrix.group }}.txt
+            2>&1 | tee pytest-rs-${{ matrix.group }}.txt
 
       - name: Upload -rs output for skip gate
+        if: ${{ always() }}
         uses: https://data.forgejo.org/actions/upload-artifact@v3
         with:
-          name: pytest-rs-core-${{ matrix.group }}
-          path: pytest-rs-core-${{ matrix.group }}.txt
+          name: pytest-rs-${{ matrix.group }}
+          path: pytest-rs-${{ matrix.group }}.txt
           retention-days: 1
 
   test-perf:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
     # Serial perf-guard job: runs only @pytest.mark.perf tests without xdist
     # (-n 0 overrides addopts -n 4 while keeping the plugin loaded — avoids
     # "unrecognized arguments: -n" that -p no:xdist triggers against addopts).
-    # ~3 tests, lightweight; dedicated wave so timing is trustworthy.
-    needs: [test-fast, test-shared, test-backend, test-core]  # scheduling throttle only
-    if: ${{ always() }}
+    # ~3 tests, lightweight; dedicated job so timing is trustworthy.
+    #
+    # NO `needs:` (Car J1) — it used to chain behind the four test jobs with the
+    # comment "scheduling throttle only", i.e. an admitted non-dependency. The
+    # cap it faked now lives on the `tests` matrix's max-parallel.
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     env:
@@ -343,7 +228,7 @@ jobs:
   # looks green — the runtime is asserted up front, and the run must have
   # COLLECTED tests and reported zero skips.
   test-engine2-integration:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
@@ -488,56 +373,87 @@ jobs:
           retention-days: 1
 
   check-skip-inventory:
-    runs-on: ubuntu-latest
-    # Wave 3 — validates the four legs' pytest -rs skip summaries WITHOUT
-    # re-running any test.  The original Car 1 gate re-ran all four leg paths
-    # as a 5th full-suite run: doubled CI wall time, added another OOM-class
-    # load to the co-hosted runner (ADR-0079), and its pipe buffered so the
-    # job looked hung for 20+ minutes.  Now the legs tee their own -rs output
-    # to artifacts and this job just parses the text — runtime is seconds.
-    # No pip install: check_skip_inventory.py is stdlib-only.
-    needs: [test-fast, test-shared, test-backend, test-core]  # scheduling throttle only
+    runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
+    # Validates every test group's pytest -rs skip summary WITHOUT re-running
+    # any test.  The original Car 1 gate re-ran all the leg paths as an extra
+    # full-suite run: doubled CI wall time, added another OOM-class load to the
+    # co-hosted runner (ADR-0079), and its pipe buffered so the job looked hung
+    # for 20+ minutes.  Now the groups tee their own -rs output to artifacts and
+    # this job just parses the text — runtime is seconds.
+    # No pip install: check_skip_inventory.py and ci_group_manifest.py are both
+    # stdlib-only.
+    #
+    # This `needs:` IS a real dependency, unlike the ones Car J1 deleted: this
+    # job consumes the artifacts those groups produce.
+    needs: [tests]
     if: ${{ always() }}
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@v6
 
-      - name: Download leg -rs output (fast)
+      # ONE STEP PER MATRIX GROUP — deliberately enumerated, unlike the GitHub
+      # mirror's single `pattern: pytest-rs-*` download. Forgejo pins
+      # download-artifact@v3.1.0, and `pattern:` / `merge-multiple:` are v4
+      # inputs; v3 ignores unknown inputs, so a pattern here would download
+      # NOTHING and the gate would fail confusingly rather than work.
+      # A hand-enumerated list can go stale when a group is added — which is
+      # exactly why the gate below derives its expected count from
+      # scripts/ci_group_manifest.py instead of a literal: a group added to the
+      # matrix without a download step here fails the count check loudly.
+      - name: Download group -rs output (repo-guards)
         uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
         with:
-          name: pytest-rs-fast
+          name: pytest-rs-repo-guards
           path: rs-logs/
-      - name: Download leg -rs output (shared)
+      - name: Download group -rs output (server-api)
         uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
         with:
-          name: pytest-rs-shared
+          name: pytest-rs-server-api
           path: rs-logs/
-      - name: Download leg -rs output (backend)
+      - name: Download group -rs output (client-surfaces)
         uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
         with:
-          name: pytest-rs-backend
+          name: pytest-rs-client-surfaces
           path: rs-logs/
-      - name: Download leg -rs output (core-1)
+      - name: Download group -rs output (shared-storage)
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: pytest-rs-shared-storage
+          path: rs-logs/
+      - name: Download group -rs output (backend-services)
+        uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
+        with:
+          name: pytest-rs-backend-services
+          path: rs-logs/
+      - name: Download group -rs output (core-1)
         uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
         with:
           name: pytest-rs-core-1
           path: rs-logs/
-      - name: Download leg -rs output (core-2)
+      - name: Download group -rs output (core-2)
         uses: https://data.forgejo.org/actions/download-artifact@v3.1.0
         with:
           name: pytest-rs-core-2
           path: rs-logs/
 
-      - name: Gate skip inventory (parse leg artifacts — no test execution)
-        # All five leg outputs must be present (missing artifact = fail loudly,
-        # never a silently-narrower gate), then the concatenated text is piped
-        # through check_skip_inventory.py's stdin mode.
+      - name: Gate skip inventory (parse group artifacts — no test execution)
+        # EVERY group's output must be present — a missing artifact fails loudly
+        # rather than silently narrowing the gate to whatever did upload.
+        # The expected count is DERIVED from the matrix, never a literal: it was
+        # `-ne 5`, and a hardcoded number stops discriminating the moment a
+        # group is added.
         run: |
           set -o pipefail
-          count=$(ls rs-logs/pytest-rs-*.txt | wc -l)
-          if [ "$count" -ne 5 ]; then
-            echo "expected 5 leg -rs artifacts, found $count:" >&2
+          expected=$(python scripts/ci_group_manifest.py --count)
+          if [ -z "$expected" ] || [ "$expected" -lt 1 ]; then
+            echo "could not derive the expected group count from ci-pr.yml" >&2
+            exit 1
+          fi
+          count=$(ls rs-logs/pytest-rs-*.txt 2>/dev/null | wc -l)
+          if [ "$count" -ne "$expected" ]; then
+            echo "expected $expected group -rs artifacts (one per matrix group), found $count:" >&2
+            python scripts/ci_group_manifest.py --names >&2
             ls -la rs-logs/ >&2
             exit 1
           fi
@@ -547,7 +463,7 @@ jobs:
         run: python scripts/check_skip_inventory.py --validate-inventory
 
   invariant-checks:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
     container:
       image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
@@ -638,30 +554,23 @@ jobs:
         # silences every file at once from outside the repository.
         run: python scripts/check_test_weakening.py --ci --base origin/master
 
-  # Gateway: aggregates all four subsystem test jobs.
+  # Gateway: aggregates the test matrix plus the auxiliary gating jobs.
   # if: always() is required — without it this job is SKIPPED (not failed)
-  # when any subsystem job fails, which would leave the PR green incorrectly.
+  # when any gated job fails, which would leave the PR green incorrectly.
+  #
+  # `tests` is ONE entry for the whole matrix: a matrix job's `result` is the
+  # aggregate over its groups, so with `fail-fast: false` a single failing group
+  # still lands here as `failure` — the gate cannot go stale when a group is
+  # added or removed.
   test-gate:
-    runs-on: ubuntu-latest
-    needs: [test-fast, test-shared, test-backend, test-core, test-perf, test-engine2-integration, check-skip-inventory]
+    runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
+    needs: [tests, test-perf, test-engine2-integration, check-skip-inventory]
     if: ${{ always() }}
     steps:
-      - name: Assert all subsystem test jobs passed
+      - name: Assert all gated jobs passed
         run: |
-          if [ "${{ needs.test-fast.result }}" != "success" ]; then
-            echo "test-fast failed (result: ${{ needs.test-fast.result }})"
-            exit 1
-          fi
-          if [ "${{ needs.test-shared.result }}" != "success" ]; then
-            echo "test-shared failed (result: ${{ needs.test-shared.result }})"
-            exit 1
-          fi
-          if [ "${{ needs.test-backend.result }}" != "success" ]; then
-            echo "test-backend failed (result: ${{ needs.test-backend.result }})"
-            exit 1
-          fi
-          if [ "${{ needs.test-core.result }}" != "success" ]; then
-            echo "test-core failed (result: ${{ needs.test-core.result }})"
+          if [ "${{ needs.tests.result }}" != "success" ]; then
+            echo "tests matrix failed (result: ${{ needs.tests.result }})"
             exit 1
           fi
           if [ "${{ needs.test-perf.result }}" != "success" ]; then
@@ -676,10 +585,10 @@ jobs:
             echo "check-skip-inventory failed (result: ${{ needs.check-skip-inventory.result }})"
             exit 1
           fi
-          echo "All subsystem test jobs passed."
+          echo "All gated jobs passed."
 
   viz-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
     # Use yadgar-ci-viz which extends yadgar-ci with Playwright + Chromium pre-baked.
     # Saves ~75s vs inline apt-get install on every run (v5.46.9 CI speedup).
     container:
@@ -754,7 +663,7 @@ jobs:
     # skips an unlabeled PR). Referenced by the error string below since v?; the
     # label + this guard were wired 2026-07-14.
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
     container:
       image: python:3.14-slim
     steps:

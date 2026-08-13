@@ -354,12 +354,14 @@ test-ci:
 	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest yadgar/tests/ \
 	    -m "not integration and not e2e" -p no:randomly -n auto -q $(PYTEST_ARGS)'
 
-## ci-local: Reproduce CI's four subsystem test jobs (test-fast/test-shared/test-backend/test-core in
-## .github/workflows/ci-pr.yml) as FOUR SEPARATE pytest processes — mirrors CI's per-job PROCESS
-## boundary (each subsystem job is its own container) so peak per-process memory stays bounded to one
-## job's tests, not the union of all eight dirs. A single lumped invocation over all 8 dirs was measured
-## OOM-killed (MemoryMax=20G) 1h32m in even at TEST_TIMEOUT=18000 — CI itself never accumulates that much
-## in one process, because the four jobs are four processes (Car F10, PR #40 remediation).
+## ci-local: Reproduce CI's test groups (the `tests` matrix in .github/workflows/ci-pr.yml) as ONE
+## SEPARATE pytest process PER LEG — mirrors CI's per-job PROCESS boundary (each matrix group is its
+## own container) so peak per-process memory stays bounded to one group's tests, not the union of every
+## dir. A single lumped invocation over all the dirs was measured OOM-killed (MemoryMax=20G) 1h32m in
+## even at TEST_TIMEOUT=18000 — CI itself never accumulates that much in one process, because the
+## groups are separate processes (Car F10, PR #40 remediation).
+## Car J1: legs are derived from the matrix, sharded groups collapsed (core-1+core-2 -> one `core` leg).
+## Authoritative list: `python scripts/ci_group_manifest.py --legs`.
 ## PR #40 shipped on a green `make e2e`, a target that runs a DISJOINT directory+marker from CI
 ## (yadgar/tests/e2e/ -m e2e) — CI then found 49 failures. This is the target that would have caught
 ## them. It is NOT `test-ci` (broader, unfiltered directory set incl. e2e/integration/restoration
@@ -367,8 +369,8 @@ test-ci:
 ## INTEGRATION-STEP TARGET, NOT A CAR TARGET: ADR-0218 forbids a car ever running the full unit suite —
 ## a car's obligation stays targeted tests over changed symbols; run this at the PR/push seam instead.
 ## DIRS= override: `make ci-local DIRS=yadgar/tests/_shared` runs EXACTLY those dirs as ONE leg (the
-## mid-work subset use case) — bypasses the four-leg split entirely; it is not a way to run a subset of
-## the four-leg run. Full run (no DIRS) covers all 8 CI dirs across the four legs below.
+## mid-work subset use case) — bypasses the multi-leg split entirely; it is not a way to run a subset of
+## the full run. Full run (no DIRS) covers every CI-gated test dir across the legs below.
 ## PARALLEL= (Car G3): legs are separate processes with no data dependency between them, so up to
 ## CI_LOCAL_PARALLEL of them run CONCURRENTLY (default 2, `PARALLEL=N make ci-local` overrides, clamped
 ## to the number of legs actually running). Concurrency bounds WALL TIME (approaches the longest leg
@@ -379,19 +381,27 @@ test-ci:
 ## time. `PARALLEL=1` reproduces the exact old sequential behaviour. See scripts/ci-local-legs.sh's own
 ## header comment for the arithmetic and per-leg log/attribution details.
 ## TEST_TIMEOUT (scripts/test-capped.sh's own env var) applies PER LEG, not to the whole run: each leg
-## is its own test-capped.sh invocation, so e.g. `TEST_TIMEOUT=18000 make ci-local` gives EACH of the
-## four legs an 18000s budget, not the four-leg run as a whole.
+## is its own test-capped.sh invocation, so e.g. `TEST_TIMEOUT=18000 make ci-local` gives EACH leg an
+## 18000s budget, not the whole run.
 ## Aggregation: every leg runs to completion even if an earlier leg failed (one run gives the full
 ## picture, never a first-failure abort); scripts/ci-local-legs.sh prints a per-leg PASS/FAIL summary
 ## and the target exits non-zero iff ANY leg failed — never green because the last leg happened to pass.
 ## Anti-drift: scripts/check_ci_local_parity.py (pre-commit hook check-ci-local-parity) parses ci-pr.yml,
-## this Makefile, AND scripts/ci-local-legs.sh independently and fails if the dirs, the marker, OR the
-## LEG STRUCTURE (one leg per CI subsystem job, not one lump) ever disagree — the exact silent-drift
-## class that produced PR #40's gap, and that a dirs/marker-only comparison could not have caught here.
-CI_LOCAL_DIRS_fast    := yadgar/tests/scripts/ yadgar/tests/server/ yadgar/tests/hooks/ yadgar/tests/_meta/ yadgar/tests/clients/
-CI_LOCAL_DIRS_shared  := yadgar/tests/_shared/
-CI_LOCAL_DIRS_backend := yadgar/tests/backend/
-CI_LOCAL_DIRS_core    := yadgar/tests/core/
+## this Makefile, AND scripts/ci-local-legs.sh independently and fails if the SELECTION (verbatim pytest
+## path tokens per leg — not merely the directory union, which cannot tell two selections inside the same
+## directory apart), the marker, OR the LEG STRUCTURE (one leg per CI group, not one lump) ever disagree
+## — the exact silent-drift class that produced PR #40's gap.
+## Car J1: one leg per ci-pr.yml `tests` matrix GROUP, with sharded groups collapsed to one leg
+## (core-1 + core-2 both select yadgar/tests/core/ — running it twice locally is pure waste).
+## Leg names are the group names with `-` -> `_` because these are exported as environment
+## variables into scripts/ci-local-legs.sh and POSIX env names cannot contain hyphens.
+## Derive the authoritative list with: python scripts/ci_group_manifest.py --legs
+CI_LOCAL_DIRS_repo_guards      := yadgar/tests/scripts/
+CI_LOCAL_DIRS_server_api       := yadgar/tests/server/
+CI_LOCAL_DIRS_client_surfaces  := yadgar/tests/hooks/ yadgar/tests/clients/ yadgar/tests/_meta/ yadgar/tests/restoration/
+CI_LOCAL_DIRS_shared_storage   := yadgar/tests/_shared/
+CI_LOCAL_DIRS_backend_services := yadgar/tests/backend/
+CI_LOCAL_DIRS_core             := yadgar/tests/core/
 CI_LOCAL_MARKER := not integration and not e2e and not perf
 CI_LOCAL_PARALLEL := $(if $(filter command line,$(origin PARALLEL)),$(PARALLEL),2)
 ci-local:
@@ -402,9 +412,11 @@ ci-local:
 	  TEST_LOCK="$(TEST_LOCK)" \
 	  CI_LOCAL_PARALLEL="$(CI_LOCAL_PARALLEL)" \
 	  CI_LOCAL_DIRS_override="$(if $(filter command line,$(origin DIRS)),$(DIRS),)" \
-	  CI_LOCAL_DIRS_fast="$(CI_LOCAL_DIRS_fast)" \
-	  CI_LOCAL_DIRS_shared="$(CI_LOCAL_DIRS_shared)" \
-	  CI_LOCAL_DIRS_backend="$(CI_LOCAL_DIRS_backend)" \
+	  CI_LOCAL_DIRS_repo_guards="$(CI_LOCAL_DIRS_repo_guards)" \
+	  CI_LOCAL_DIRS_server_api="$(CI_LOCAL_DIRS_server_api)" \
+	  CI_LOCAL_DIRS_client_surfaces="$(CI_LOCAL_DIRS_client_surfaces)" \
+	  CI_LOCAL_DIRS_shared_storage="$(CI_LOCAL_DIRS_shared_storage)" \
+	  CI_LOCAL_DIRS_backend_services="$(CI_LOCAL_DIRS_backend_services)" \
 	  CI_LOCAL_DIRS_core="$(CI_LOCAL_DIRS_core)" \
 	  bash scripts/ci-local-legs.sh
 
