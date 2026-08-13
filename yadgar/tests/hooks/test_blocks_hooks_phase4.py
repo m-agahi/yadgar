@@ -183,6 +183,95 @@ class TestBlockReflectEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# C2. Car 8 — the server must actually USE ?project=, not just accept it
+# ---------------------------------------------------------------------------
+
+_SCOPED_PROJECT = "car8/scoped-project"
+_SCOPED_DIR = "/home/test/project_ph4_car8"
+
+
+class TestBlockReflectProjectScoping:
+    """Car 2's client mints ?project=; before Car 8 the server dropped it
+    (http.py read only `directory`, never `project`). These prove the fix:
+    a block whose `directory` column does NOT match the caller's `directory`
+    query param must still surface when `project` matches — i.e. the request
+    reaches storage.list_blocks's project_id arm, not just the legacy
+    directory arm.
+    """
+
+    def test_project_param_finds_block_directory_alone_would_miss(self) -> None:
+        from yadgar.core.server.tools.blocks import block_create
+
+        block_create(
+            name="car8_reflect",
+            content="found via project_id",
+            scope="project",
+            directory=_SCOPED_DIR,
+            project=_SCOPED_PROJECT,
+        )
+
+        client = _make_block_reflect_client()
+        # Deliberately send a directory that does NOT match the block's
+        # stored directory — only `project` can find it.
+        resp = client.get(
+            "/hooks/block-reflect",
+            params={"directory": "/some/unrelated/dir", "project": _SCOPED_PROJECT},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "car8_reflect" in data["text"] or "found via project_id" in data["text"], (
+            f"?project= was not forwarded to storage.list_blocks: {data['text']!r}"
+        )
+        # render_blocks_section's 2nd arg is presentation-only (labels the
+        # "Project blocks" header). Pin that Car 8 prefers the resolved
+        # project identity over the (here mismatched) directory for that
+        # label, rather than leaving it an untested side effect.
+        assert _SCOPED_PROJECT in data["text"], (
+            f"Project-blocks header did not use the resolved project identity: {data['text']!r}"
+        )
+
+    def test_missing_project_does_not_raise_or_500(self) -> None:
+        """POLICY: block-reflect never raises on a directory-without-project
+        request (unlike hook_project_id's hard-raise for fuzzy recall) — the
+        legacy directory-only arm is an exact match, not a leak vector."""
+        client = _make_block_reflect_client()
+        resp = client.get("/hooks/block-reflect", params={"directory": _PROJ_DIR})
+        assert resp.status_code == 200
+        assert isinstance(resp.json().get("text"), str)
+
+    def test_no_directory_or_project_does_not_use_container_cwd(self, monkeypatch) -> None:
+        """v5.65 Fix D precedent: a missing directory must never fall back to
+        os.getcwd() — the daemon's cwd is the CONTAINER's, not the caller's
+        tree. Guards the next caller whose hook script omits `directory`.
+
+        A non-raising spy (not a raising one): the unfixed handler evaluates
+        `os.getcwd()` as a bare default-argument expression outside any
+        try/except, so a raising spy escapes into Starlette/anyio's request
+        handling and takes the whole test worker down with it rather than
+        surfacing as a clean assertion failure.
+        """
+        import yadgar.core.server.http as http_mod
+
+        real_getcwd = http_mod.os.getcwd
+        calls: list[None] = []
+
+        def _spy():
+            calls.append(None)
+            return real_getcwd()
+
+        monkeypatch.setattr(http_mod.os, "getcwd", _spy)
+
+        client = _make_block_reflect_client()
+        resp = client.get("/hooks/block-reflect")
+        assert resp.status_code == 200
+        assert isinstance(resp.json().get("text"), str)
+        assert not calls, (
+            "hook_block_reflect called os.getcwd() — that resolves to the "
+            "CONTAINER's cwd, never the caller's tree (v5.65 Fix D)"
+        )
+
+
+# ---------------------------------------------------------------------------
 # D. hook_runner.py block-reflect handler
 # ---------------------------------------------------------------------------
 
