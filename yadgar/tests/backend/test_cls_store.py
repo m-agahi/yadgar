@@ -800,9 +800,11 @@ class TestClsPatternCandidateCap:
 
         # C9c (0047 §5): the spy mirrors the real signature, so it moved with it
         # when ``get_memories_by_store_type``'s ``directory`` became ``project_id``.
-        def spy(store_type, project_id=None, limit=None):
+        # Car H1 (§1.3): it moved again for ``unscoped`` — a spy that swallowed
+        # the new keyword would let the corpus-read opt-in go untested here.
+        def spy(store_type, project_id=None, limit=None, *, unscoped=False):
             called_with_limit.append(limit)
-            return original(store_type, project_id=project_id, limit=limit)
+            return original(store_type, project_id=project_id, limit=limit, unscoped=unscoped)
 
         with patch.object(storage, "get_memories_by_store_type", side_effect=spy):
             cls.find_recurring_patterns()

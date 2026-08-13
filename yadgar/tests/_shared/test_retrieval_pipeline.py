@@ -585,7 +585,7 @@ class TestPipelineMatchesMonolithicRecall:
     """Regression: pipeline output must match monolithic recall() for balanced profile."""
 
     def _run_monolithic(self, retriever, id_to_content, query):
-        results = retriever.recall(query, max_results=5, min_heat=0.01)
+        results = retriever.recall(query, max_results=5, min_heat=0.01, unscoped=True)
         return [id_to_content.get(m["id"], "?") for m in results], [
             m.get("_retrieval_score", 0.0) for m in results
         ]

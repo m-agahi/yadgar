@@ -13,7 +13,7 @@ from yadgar._shared.embeddings import EmbeddingEngine
 from yadgar._shared.knowledge_graph import KnowledgeGraph
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage import StorageEngine
-from yadgar._shared.storage.directory import build_recall_scope_clause
+from yadgar._shared.storage.directory import build_recall_scope_clause as _recall_clause
 from yadgar.backend.retrieval.entities import _extract_query_entities
 from yadgar.backend.retrieval.fusion import PROFILES, _FusionMixin
 from yadgar.backend.retrieval.graph_helpers import _GraphHelpersMixin
@@ -548,6 +548,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         profile: str | None = None,
         deadline: float | None = None,
         project_id: str | None = None,
+        unscoped: bool = False,
     ) -> list[dict]:
         """Combine retrieval signals via Weighted Reciprocal Rank Fusion (WRRF).
 
@@ -577,6 +578,8 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
                 the retired post-filter in new clothes — it agrees with the SQL
                 arm by construction (same two arms, same treatment of unstamped
                 rows) rather than carrying a wider sentinel set.
+            unscoped: Car H1 (§1.3) — the DELIBERATE whole-corpus read. A falsy
+                ``project_id`` without it raises at the clause builder.
         """
         # P11: set dynamic span attributes on the active retrieval.recall span.
         try:
@@ -623,7 +626,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
         w_temporal = 0.0
         # Car C7: ONE predicate, built once, pushed into both SQL signals.
         # ``page_types=False`` — the ``memory`` table has no ``page_type`` column.
-        _scope_sql, _scope_params = build_recall_scope_clause(project_id, page_types=False)
+        _scope_sql, _scope_params = _recall_clause(project_id, page_types=False, unscoped=unscoped)
         fts_params = FTSParams(
             query=query,
             enabled_signals=enabled_signals,

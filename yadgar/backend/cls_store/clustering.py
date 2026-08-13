@@ -52,13 +52,20 @@ class _ClusteringMixin:
 
     @observe(tier="stage", metric="consolidation.cls.fetch_episodic_candidates")
     def _fetch_episodic_candidates(self, project_id: str | None) -> list[dict]:
-        """Fetch episodic memories capped at CLS_PATTERN_MAX_CANDIDATES."""
+        """Fetch episodic memories capped at CLS_PATTERN_MAX_CANDIDATES.
+
+        Car H1 (§1.3): the no-project branch is a DELIBERATE whole-corpus read —
+        consolidation looks for patterns ACROSS projects — so it says so with
+        ``unscoped=True`` rather than relying on a falsy value to disable the
+        WHERE clause. That reliance is what made an accidental empty project
+        indistinguishable from this call.
+        """
         cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
         if project_id:
             return self._storage.get_memories_by_store_type(
                 "episodic", project_id=project_id, limit=cap
             )
-        return self._storage.get_memories_by_store_type("episodic", limit=cap)
+        return self._storage.get_memories_by_store_type("episodic", limit=cap, unscoped=True)
 
     @staticmethod
     def _mem_tags(mem: dict) -> list:
@@ -178,6 +185,9 @@ class _ClusteringMixin:
         memories to prevent O(N) full-table scans from blocking consolidation.
         A full vector-index path (HNSW/MTREE) is the eventual target but not
         implemented here to keep the change surgical.
+
+        Car H1 (§1.3): the no-project branch declares its whole-corpus intent
+        with ``unscoped=True`` — see ``_fetch_episodic_candidates``.
         """
         cap = self._settings.CLS_PATTERN_MAX_CANDIDATES
         if project_id:
@@ -185,7 +195,9 @@ class _ClusteringMixin:
                 store_type, project_id=project_id, limit=cap
             )
         else:
-            memories = self._storage.get_memories_by_store_type(store_type, limit=cap)
+            memories = self._storage.get_memories_by_store_type(
+                store_type, limit=cap, unscoped=True
+            )
 
         results = []
         for mem in memories:
