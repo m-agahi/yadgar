@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import yadgar._shared.runtime.state as _st
@@ -470,6 +471,52 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
         "status": "installed",
         "scope": scope,
         "result": result,
+    }
+
+
+# ── Backup operator tools ──────────────────────────────────────────────────
+
+
+@_tool(power=True)
+def backup_restore(snapshot_id: str, backend_url: str | None = None) -> dict:
+    """Restore a snapshot into the live SurrealDB at ``backend_url``.
+
+    Car J (2026-08-14 train): the ``restore_snapshot`` helper
+    (``yadgar.core.backup.backup:187``) was only callable from tests. This
+    tool exposes it as an MCP operator path so a daemon can be recovered
+    from inside a host that already has the snapshot file on disk.
+
+    The core helper handles BOTH snapshot kinds:
+      * ``.surql`` file (export mode) → bootstrap ``yadgar/main`` namespace,
+        POST ``/import``, then re-define the non-root yadgar users (SurrealDB
+        ``/import`` wipes ROOT-level user definitions).
+      * directory (copytree mode) → raises — a directory IS the store, point a
+        backend at it instead of importing.
+
+    snapshot_id: Path to the snapshot artifact (a ``.surql`` file from
+        ``create_snapshot(backend_url=...)``, or a directory in the quiesced
+        copytree case — which the helper will refuse).
+    backend_url: Live SurrealDB backend to import into. Defaults to
+        ``$YADGAR_DB_URL`` (the same default the ``yadgar snapshot restore``
+        CLI uses); falls back to ``http://127.0.0.1:8000``.
+    """
+    from yadgar.core.backup import restore_snapshot as _restore_snapshot
+
+    resolved_backend = backend_url or os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000")
+    snapshot_path = Path(snapshot_id)
+    if not snapshot_path.exists():
+        return {
+            "status": "error",
+            "reason": f"snapshot does not exist: {snapshot_path}",
+        }
+    try:
+        _restore_snapshot(snapshot_path=snapshot_path, backend_url=resolved_backend)
+    except RuntimeError as exc:
+        return {"status": "error", "reason": str(exc)}
+    return {
+        "status": "restored",
+        "snapshot": str(snapshot_path),
+        "backend_url": resolved_backend,
     }
 
 

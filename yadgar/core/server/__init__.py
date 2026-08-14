@@ -191,6 +191,7 @@ from yadgar.core.server.tools import (  # noqa: F401
     restore,
     anchor,
     install_hooks,
+    backup_restore,
     sync_instructions,
     seed_project,
     resource_stats,
