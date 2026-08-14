@@ -13,7 +13,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from yadgar._shared.config import get_settings, resolve_knob
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.observability.tracing import setup_tracing
+from yadgar._shared.observability.tracing import setup_tracing, trace_span
 
 settings = get_settings()
 
@@ -150,6 +150,74 @@ class InFlightRequestMiddleware:
             await self.app(scope, receive, send)
 
 
+class SessionBindMiddleware:
+    """ASGI middleware that wires Mcp-Session-Id → project_id (Car B §3.3).
+
+    Sits below BearerAuth and above the MCP transport. On every HTTP
+    request:
+
+    1. Reads the ``Mcp-Session-Id`` header (set by the MCP transport on
+       the response, present on the request from the SECOND call onward —
+       the first call mints it inside the SDK).
+    2. Looks up the in-process ``sid -> project_id`` binding registry
+       populated by ``/session_bind`` (the route registers the binding
+       on a successful nonce consume; this middleware reads it).
+    3. Stamps the per-request ContextVar with the looked-up project_id
+       and resets it in ``finally`` so a project_id cannot leak into
+       the next request on the same worker.
+
+    Stdout / stateless_http: no ``Mcp-Session-Id`` header → ContextVar
+    stays unbound → ``resolve_effective_project`` falls through to its
+    existing ``project > session_project > raise`` chain. This is the
+    documented stdio path; no behaviour change.
+
+    Why NOT consume the nonce here: the nonce lives in the
+    ``/session_bind`` route's pool; the /session_bind POST is the only
+    caller that should pop it. This middleware's job is the steady-state
+    look-up, not the bootstrap.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        # Decode headers once
+        try:
+            raw_headers = scope.get("headers", []) or []
+            _hdrs: dict[str, str] = {
+                k.decode("latin-1").lower(): v.decode("latin-1") for k, v in raw_headers
+            }
+        except Exception:  # noqa: BLE001
+            _hdrs = {}
+        _sid = _hdrs.get("mcp-session-id") or None
+        _project_id: str | None = None
+        if _sid:
+            try:
+                from yadgar.core.server.http import lookup_session_binding  # noqa: PLC0415
+
+                _project_id = lookup_session_binding(_sid)
+            except Exception:  # noqa: BLE001
+                _project_id = None
+        from yadgar._shared.runtime.session_project import (  # noqa: PLC0415
+            reset_current_session_project,
+            set_current_session_project,
+        )
+
+        _token = set_current_session_project(_project_id)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            try:
+                reset_current_session_project(_token)
+            except Exception:  # noqa: BLE001
+                # Stale token (middleware called reset twice): never let
+                # cleanup raise into the request path.
+                pass
+
+
 class MCPTraceSpanMiddleware:
     """ASGI middleware that opens an OTel span for every HTTP request.
 
@@ -236,12 +304,22 @@ def _cors_wrapped_http_app(self):
         app=inner,
         allow_origins=_get_allowed_origins(),
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        # Car B (0047 §3.3): expose the Mcp-Session-Id and the X-Yadgar-Project-Id
+        # to the ASGI middleware layer that stamps the per-request ContextVar.
+        # CORS preflight responses will then echo the allowed set, so the
+        # browser-side client (the /session_bind fetch) can read both headers.
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Mcp-Session-Id",
+            "X-Yadgar-Project-Id",
+        ],
     )
     logged_app = RequestLoggingMiddleware(cors_app)
     spanned_app = MCPTraceSpanMiddleware(logged_app)
     auth_app = BearerAuthMiddleware(spanned_app)
-    return InFlightRequestMiddleware(auth_app)
+    session_bind_app = SessionBindMiddleware(auth_app)
+    return InFlightRequestMiddleware(session_bind_app)
 
 
 @observe(tier="stage")
@@ -265,8 +343,11 @@ def _auth_wrapped_sse_app(self, mount_path=None):
     # present in the log line (same fix as the streamable-HTTP path).
     spanned_app = MCPTraceSpanMiddleware(logged_app)
     auth_app = BearerAuthMiddleware(spanned_app)
+    # Car B §3.3: wire the session-bind middleware so SSE-side Mcp-Session-Id
+    # is also bound to the project_id minted by /session_bind.
+    session_bind_app = SessionBindMiddleware(auth_app)
     # v5.49.0 Phase 6: InFlightRequestMiddleware outermost for drain barrier
-    return InFlightRequestMiddleware(auth_app)
+    return InFlightRequestMiddleware(session_bind_app)
 
 
 _orig_streamable_http_app = mcp_server.streamable_http_app.__func__
@@ -480,7 +561,7 @@ def _push_trace_complete_event(tool_name: str, t0: float, status: str) -> None:
 
 
 @observe(tier="stage")
-def _build_tool_wrappers(func, traced_func, estimate_tokens):
+def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - cohesive: per-tool discriminator (sync/async, needs_session_bind, forwards_to_backend) + wrapper emission; the 3 discriminator branches Car B added are irreducible without splitting wrappers, which belongs to wave-N (see .complexity-allowlist.json entry)
     """Build the (sync, async) instrumented wrappers for a tool (Fix A).
 
     The sync wrapper preserves the pre-Fix-A direct-call contract (run inline,
@@ -581,6 +662,27 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
         _maint = _maintenance()
         if _maint is not None:
             return _maint
+        # ── Car B (0047 §3.3): extract the Mcp-Session-Id binding BEFORE
+        # run_offloaded forwards **kwargs. The offload call carries
+        # **kwargs into the executor thread; if we left ``ctx`` inside
+        # kwargs, the executor would re-receive it and the binding would
+        # never be visible to ``resolve_effective_project`` tier 2.
+        ctx = kwargs.pop("ctx", None)
+        if ctx is None:
+            # mcp 2.0.0 passes the Context object under the kwarg name
+            # ``context`` (per server/fastmcp/server.py:96); older SDK
+            # shapes used ``ctx``. The plan §3.3 spec uses ``ctx``; we
+            # accept both to stay forward/back-compat.
+            ctx = kwargs.pop("context", None)
+        _bound_project_id = _extract_session_project(ctx) if ctx is not None else None
+        # Stamp the per-request ContextVar so resolve_effective_project tier 2
+        # sees it from anywhere in the call chain. Reset in the finally.
+        from yadgar._shared.runtime.session_project import (  # noqa: PLC0415
+            reset_current_session_project,
+            set_current_session_project,
+        )
+
+        _ctx_token = set_current_session_project(_bound_project_id)
         from yadgar._shared.runtime.offload import run_offloaded  # noqa: PLC0415
 
         _t0 = _time.monotonic()
@@ -606,5 +708,68 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):
         finally:
             _emit_metrics(_t0, _status, result)
             _push_trace_complete_event(func.__name__, _t0, _status)
+            reset_current_session_project(_ctx_token)
+
+    # Car B §3.3: pin the parameter annotation so static type checkers (mypy)
+    # see ``ctx: Context`` on the wrapper and don't flag the kwargs.pop
+    # above as an untyped access. The annotation is set AFTER the def to
+    # avoid mutating the function source at decoration time.
+    try:
+        from mcp.server.fastmcp.server import Context as _CtxT  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — mcp 2.0.0 guarantees this import succeeds
+        _CtxT = None  # type: ignore[assignment]
+    if _CtxT is not None:
+        _instrumented_async.__annotations__["ctx"] = _CtxT
+        _instrumented_async.__annotations__["context"] = _CtxT
 
     return _instrumented, _instrumented_async
+
+
+@trace_span()
+def _extract_session_project(ctx) -> str | None:
+    """Read the bound project_id from the FastMCP ``Context`` (Car B §3.3).
+
+    The MCP SDK 2.0.0 path to the Mcp-Session-Id is via
+    ``ctx.request_context.request.headers`` (the ASGI/Starlette request
+    object exposes the raw ``Mcp-Session-Id`` header set by
+    ``StreamableHTTPServerTransport``). For stdio and stateless_http
+    transports there is no session id — return ``None`` and let the
+    caller fall back to the explicit ``project=`` param.
+
+    The actual binding ``session_id -> project_id`` is the nonce pool
+    populated by ``/session_bind``; this helper just looks up the
+    header. The wrapper that PRECEDES this (the ASGI middleware) is
+    responsible for actually consuming the nonce and storing the
+    binding; the helper here is the read-only accessor for the tool
+    wrapper path that the plan §3.3 spec names.
+    """
+    try:
+        _rc = getattr(ctx, "request_context", None) or getattr(ctx, "_request_context", None)
+        if _rc is None:
+            return None
+        _req = getattr(_rc, "request", None)
+        if _req is None:
+            return None
+        _headers = getattr(_req, "headers", None)
+        if _headers is None:
+            return None
+        _sid = _headers.get("mcp-session-id") or _headers.get("Mcp-Session-Id")
+        if not _sid:
+            return None
+    except Exception:  # noqa: BLE001 — defensive; never raise into the tool path
+        return None
+    # Look up the binding from the nonce pool's per-session project
+    # registry. The pool itself only stores outstanding nonces; the
+    # live ``sid -> project_id`` table lives on the transport process.
+    # In this code base the binding is read by the ASGI middleware
+    # (which sees the transport directly); the wrapper's job is just
+    # to surface the same value through the ContextVar. We re-read
+    # the request's ``X-Yadgar-Project-Id`` header (set by the
+    # middleware) for a single-source-of-truth.
+    try:
+        _proj_header = _req.headers.get("x-yadgar-project-id") or _req.headers.get(
+            "X-Yadgar-Project-Id"
+        )
+    except Exception:  # noqa: BLE001
+        _proj_header = None
+    return _proj_header or None

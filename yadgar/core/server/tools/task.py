@@ -329,7 +329,6 @@ def task_write(
             project_id = resolve_effective_project(
                 project=project,
                 directory=None,  # task tools do not derive from directory
-                session_project=None,
                 tool="task",
             )
             # Re-validate the resolved override against the strict-typed
@@ -464,7 +463,6 @@ def task_list(
             project_id = resolve_effective_project(
                 project=project,
                 directory=None,  # task tools do not derive from directory
-                session_project=None,
                 tool="task",
             )
             project_id = _validate_project_id(project_id)
@@ -541,7 +539,6 @@ def task_get(
             project_id = resolve_effective_project(
                 project=project,
                 directory=None,  # task tools do not derive from directory
-                session_project=None,
                 tool="task",
             )
             project_id = _validate_project_id(project_id)

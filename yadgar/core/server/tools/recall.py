@@ -132,7 +132,6 @@ def _resolve_project_for_recall(
         effective_project_id = resolve_effective_project(
             project=project,
             directory=directory,
-            session_project=None,
             tool="recall",
         )
     except InvalidProjectOverrideError as exc:

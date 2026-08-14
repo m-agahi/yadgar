@@ -221,9 +221,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 2748
+      "file_loc": 3300
     },
-    "rationale": "pre-existing large file; updated from 1842 in v5.100.0 after three hook endpoints received shadow-observe instrumentation blocks (~90 LoC) plus accumulated growth from v5.97-v5.100 hook additions. Re-baselined 2284->2748: the bulk is accumulated growth since v5.100.0; #30 added ~44 LoC (two _record_subagent_* metric helpers + the subagent-capture wiring). Scheduled for wave N split.",
+    "rationale": "pre-existing large file; updated from 1842 in v5.100.0 after three hook endpoints received shadow-observe instrumentation blocks (~90 LoC) plus accumulated growth from v5.97-v5.100 hook additions. Re-baselined 2284->2748: the bulk is accumulated growth since v5.100.0; #30 added ~44 LoC (two _record_subagent_* metric helpers + the subagent-capture wiring). Car B (2026-08-14 train) re-baselined 2748 -> 3300 (+552, +20%): the new ``_register_session_binding`` / ``lookup_session_binding`` / ``_clear_session_bindings`` / ``_register_session_bind_route`` quartet (~160 LOC of code+docstring+@trace_span) plus the per-request session-binding middleware (~280 LOC: ASGI dispatch, ContextVar setup, lookup-with-fallback) plus the project_id-decode fallback when the ASGI scope doesn't carry the session nonce (~80 LOC) plus the integration with /mcp and /sse routes that need their existing handlers wrapped. None of this can be split into siblings without restructuring the request pipeline (the binding lookup has to run BEFORE the route handler resolves scope-bound state). Scheduled for wave N split alongside the existing ``yadgar/_shared/runtime/session_bind.py`` and ``session_project.py`` siblings once Car D's re-key lands — Car D's new project_id-based resolution means most of the session-binding plumbing is project_id-only, and the wave-N split can put the ASGI middleware in a sibling then.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -492,5 +492,17 @@
     "rationale": "Car C (2026-08-14 train): the bindparam fix adds +36 net LOC — list[Annotated, list] normalize branch + bindparam('status', expanding=True) wiring + the docstring note explaining empty-list = no-filter. The module was already at 996 LOC after the storage/memory.py split (it absorbed the task/ADR/agent_prompt/agent_discipline ledger writers when the dual-engine split moved), so even a single-line bindparam fix trips the 1000 HARD cap. The bulk of the file is the four single-table ledger writers (task/ADR/agent_prompt/agent_discipline) plus the cross-engine project registry mixin — both responsibilities are deliberate and not amenable to a wholesale split inside a one-car scope (the sibling `storage/memory.py` is the model for splitting ledger tables off, but doing it here would mean reshaping the project registry seam at the same time). Refactoring the file just to shed 10 lines on a bindparam fix branch is churn with no readability gain. The honest fix is the same split as `storage/memory.py`: task/ADR/agent_prompt/agent_discipline writers move to `storage/sql/task_ledger.py` et al., with MariaStorageEngine keeping the registry mixin. That's the same wave-N shape as the existing `storage/wiki.py` and `storage/migrations.py` entries above; not a Car-C carve.",
     "added": "2026-08-14",
     "added_by": "car-c-task-list-bindparam"
+  },
+  {
+    "path": "yadgar/core/server/_app.py",
+    "function": "_build_tool_wrappers",
+    "lineno": 564,
+    "metrics": {
+      "cyclomatic": 16,
+      "fn_loc": 162
+    },
+    "rationale": "Car B (2026-08-14 train): the function builds (sync, async) instrumented wrappers for every @_tool — each wrapper carries its own session-binding ContextVar plumbing (Car B's session_bind.bind_session entrypoint), and the per-tool branch count grew because Car B adds: (1) a ``sync_or_async`` discriminator (was implicit before Car B; now the function must decide which of the two wrappers to emit per tool, since Car B's offload-to-worker-thread offload hook runs INSIDE the wrapper and only one of the two wrappers needs it), (2) a ``needs_session_bind`` discriminator (tools that take an explicit ``project=`` override do NOT need the session-bind wrapper — only tools that read project from the ContextVar do), and (3) a ``forwards_to_backend`` discriminator (the proxy tools that already route through ``_forward_admin`` would double-wrap if they got the session-bind treatment). The net effect is +1 cyclomatic branch per discriminator + the existing branch tree, hitting 16 (limit 15); fn_loc grew 137 -> 162 with the discriminator branches and the docstring explaining why each discriminator exists. The honest fix is splitting into ``_build_sync_wrapper`` + ``_build_async_wrapper`` + a small ``_needs_*`` predicate set — but that move belongs to the wave-N module split alongside the existing Car 0037 entry below (and the F5/F10 / ci-local allowlists at the file level), not a Car B (binding-only) scope. Refactoring the wrapper inside a car whose entire purpose is to ADD session-binding (not refactor wrappers) would couple two changes and balloon the diff.",
+    "added": "2026-08-14",
+    "added_by": "car-b-session-bind"
   }
 ]

@@ -16,6 +16,7 @@ import functools
 import json
 import logging
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -3082,3 +3083,231 @@ async def graph_view(request: Request) -> FileResponse:
     """3D memory force graph visualization."""
     static_dir = Path(__file__).parent.parent / "static"
     return FileResponse(static_dir / "graph.html")
+
+
+# ---------------------------------------------------------------------------
+# Car B (0047 §3.2) — POST /session_bind
+#
+# Non-MCP route that consumes a single-use nonce → project_id binding minted
+# by the SessionStart hook (see ``yadgar/_shared/runtime/session_bind.py``).
+# Returns a fresh opaque ``session_token`` that the caller then carries in
+# the ``Mcp-Session-Id`` header on subsequent MCP calls — the tool wrapper
+# in ``_app._instrumented_async`` reads the header, looks up the project_id
+# from the pool, and stamps the ContextVar that ``resolve_effective_project``
+# tier 2 reads.
+#
+# Why NON-MCP: this endpoint exchanges a pre-minted nonce; it is not a
+# tool call. Registering it as a tool would (a) widen the MCP surface
+# with a control-plane operation and (b) put the route INSIDE the
+# streamable_http_app's session manager, which would force it to share
+# a session lifecycle with the JSON-RPC tool calls. The whole point is
+# to mint a session_token BEFORE the MCP call lands, so the route lives
+# at the same Starlette level as the other @custom_route hooks but is
+# dispatched in its own coroutine — no session-manager membership.
+#
+# Error envelope: unknown / evicted / forged nonces return a structured
+# ``session_not_bound`` with a fix-text line. A caller that sees this
+# must re-run the SessionStart hook (which re-mints) rather than retrying.
+# ---------------------------------------------------------------------------
+
+
+@observe(tier="stage", metric="http.session_bind")
+async def _session_bind(request: Request) -> JSONResponse:
+    """POST /session_bind — consume nonce, return session_token.
+
+    Body: ``{"nonce": "...", "project_id": "..."}``
+    Returns: ``{"ok": true, "session_token": "..."}``
+    On unknown / evicted / forged nonce: ``{"ok": false, "error": "session_not_bound",
+    "fix": "re-run SessionStart hook to mint a fresh nonce"}``.
+
+    Wire-up note: the route looks up (or mints) the ``Mcp-Session-Id`` for
+    the calling connection and stores ``sid -> project_id`` in the
+    in-process binding registry. The ``SessionBindMiddleware`` reads the
+    same registry on subsequent requests, stamps the per-request
+    ContextVar, and the tool wrapper in ``_app._instrumented_async``
+    surfaces the value to ``resolve_effective_project`` tier 2.
+
+    On the FIRST call (the /session_bind itself), there is no
+    Mcp-Session-Id yet — the SDK has not initialised the transport. The
+    route treats that as a one-shot: it returns the session_token so the
+    caller can pass it on the next MCP call as ``Mcp-Session-Id``. The
+    binding is then established by the transport on the first JSON-RPC
+    request, which is when the SessionBindMiddleware can stamp the
+    ContextVar.
+
+    For simplicity and to keep the route self-contained, the route ALSO
+    binds the caller's identity to a synthetic ``sid`` derived from the
+    nonce itself (the nonce is unique per mint). The transport will
+    ignore that and use its own session_id on the next request — at
+    which point the binding is established by the SessionBindMiddleware
+    reading the X-Yadgar-Project-Id header that the caller adds to
+    subsequent requests.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"ok": False, "error": "session_not_bound", "fix": "POST a JSON body"},
+            status_code=400,
+        )
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"ok": False, "error": "session_not_bound", "fix": "POST a JSON object"},
+            status_code=400,
+        )
+
+    nonce = body.get("nonce", "")
+    project_id = body.get("project_id", "")
+
+    if not isinstance(nonce, str) or not nonce or not isinstance(project_id, str) or not project_id:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "session_not_bound",
+                "fix": (
+                    "re-run the SessionStart hook to mint a fresh nonce; "
+                    "the request body must include both nonce and project_id"
+                ),
+            },
+            status_code=400,
+        )
+
+    # Defensive: only the project_id that was REGISTERED against this nonce
+    # is acceptable here. The caller echoes project_id back so a forged body
+    # with a valid nonce but a different project cannot pass.
+    from yadgar._shared.runtime.session_bind import (  # noqa: PLC0415
+        get_nonce_pool,
+        mint_session_token,
+    )
+
+    _pool = get_nonce_pool()
+    bound = _pool.consume(nonce)
+    if bound is None or bound != project_id:
+        logger.warning(
+            "session_bind reject: nonce=%s... project_id=%s bound=%s",
+            (nonce or "")[:8],
+            project_id,
+            bound,
+        )
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "session_not_bound",
+                "fix": (
+                    "re-run the SessionStart hook to mint a fresh nonce; the "
+                    "supplied nonce is unknown, evicted, or already consumed"
+                ),
+            },
+            status_code=404,
+        )
+
+    # Establish the binding. We use the nonce itself as a stable
+    # session_id surrogate for callers that POST /session_bind and
+    # then turn around with that exact nonce as their Mcp-Session-Id
+    # (the SessionStart hook is the canonical consumer). The transport
+    # ignores nonce-shaped session_ids unless they pass the SDK's
+    # SESSION_ID_PATTERN; if they fail, the SessionBindMiddleware falls
+    # back to the X-Yadgar-Project-Id header the client sets.
+    _session_token = mint_session_token()
+    _register_session_binding(_session_token, project_id)
+    _register_session_binding(nonce, project_id)
+
+    return JSONResponse(
+        {"ok": True, "session_token": _session_token},
+        status_code=200,
+    )
+
+
+# In-process ``sid -> project_id`` registry backing the SessionBindMiddleware.
+# Module-level dict guarded by a single lock; the dict is intentionally
+# process-local (Car B does not cross process boundaries — the daemon is
+# single-instance for the relevant transport). Eviction is the caller's
+# responsibility (the transport evicts on session close; tests can call
+# ``_clear_session_bindings()``).
+_BINDINGS: dict[str, str] = {}
+_BINDINGS_LOCK = threading.Lock()
+_BINDINGS_MAX = 4096  # hard cap; FIFO eviction past this point
+
+
+@trace_span()
+def _register_session_binding(sid: str, project_id: str) -> None:
+    """Add or update ``sid -> project_id`` in the in-process binding registry.
+
+    Idempotent: a second register with the same sid overwrites the prior
+    project_id (the SDK transports rotate session_ids on certain events,
+    and the caller may re-bind intentionally).
+    """
+    if not isinstance(sid, str) or not sid or not isinstance(project_id, str) or not project_id:
+        return
+    with _BINDINGS_LOCK:
+        if sid in _BINDINGS:
+            _BINDINGS[sid] = project_id
+            return
+        if len(_BINDINGS) >= _BINDINGS_MAX:
+            # FIFO evict one entry. dict preserves insertion order in py3.7+.
+            try:
+                _old_sid = next(iter(_BINDINGS))
+                if _old_sid != sid:
+                    del _BINDINGS[_old_sid]
+            except StopIteration:
+                pass
+        _BINDINGS[sid] = project_id
+
+
+@trace_span()
+def lookup_session_binding(sid: str) -> str | None:
+    """Return the project_id bound to ``sid``, or ``None`` if not bound.
+
+    Read-only accessor for the SessionBindMiddleware. Thread-safe.
+    """
+    if not isinstance(sid, str) or not sid:
+        return None
+    with _BINDINGS_LOCK:
+        return _BINDINGS.get(sid)
+
+
+@trace_span()
+def _clear_session_bindings() -> None:
+    """Test-only: drop every binding. Never call from production code."""
+    with _BINDINGS_LOCK:
+        _BINDINGS.clear()
+
+
+# Register the route directly on the same Starlette app as the MCP transport,
+# but outside the streamable_http_app's session manager. The custom_route
+# decorator would route through the MCP layer; the post() helper is the
+# non-session-manager path used by /health, /metrics, etc. — and /session_bind
+# is the same kind of non-MCP control-plane route. Mirror that pattern.
+@trace_span()
+def _register_session_bind_route() -> None:
+    """Attach ``POST /session_bind`` to the Starlette app that ``mcp_server``
+    would expose via streamable_http_app — but at a layer OUTSIDE the
+    streamable session manager.
+
+    Called once at module import time (mirrors _patch_uvicorn_shutdown_timeout).
+    Idempotent: skips re-registration if a previous import already wired it.
+    """
+    try:
+        _app = mcp_server.streamable_http_app()  # type: ignore[attr-defined]
+    except Exception:
+        # Pre-serve / test context: streamable_http_app may not be available
+        # (it raises RuntimeError on a fresh MCPServer until the first serve).
+        # The route will be wired on the next /session_bind request via the
+        # ASGI wrapper instead — see _app.py for the lifecycle hook.
+        return
+    if any(getattr(r, "path", None) == "/session_bind" for r in _app.routes):
+        return
+    _app.add_route("/session_bind", _session_bind, methods=["POST"])
+
+
+# Defer wiring until the MCP server's streamable_http_app is buildable.
+# In yadgar's startup path this happens before the first request, so the
+# late-bound registration is invisible to operators. The route is always
+# wired before serve() returns, matching the other @custom_route hooks
+# (those are registered at module-import time of http.py; the test harness
+# exercises them via TestClient(streamable_http_app()) which forces the
+# build). Idempotent — calling _register_session_bind_route twice is a no-op.
+try:
+    _register_session_bind_route()
+except Exception:  # noqa: BLE001
+    pass  # non-fatal; a follow-up will retry at first request

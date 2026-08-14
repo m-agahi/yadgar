@@ -437,7 +437,6 @@ def _record_prelude_marker(storage, directory: str | None, project: str | None =
         project_id = resolve_effective_project(
             project=project,
             directory=directory,
-            session_project=None,
             tool="agent_dispatch_prelude",
         )
     except (UnresolvedProjectError, InvalidProjectOverrideError):  # fmt: skip
