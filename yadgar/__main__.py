@@ -104,6 +104,7 @@ def cli():
         install_mcp,
         install_subagents,
         pending_findings,
+        project,
         restore,
         rules,
         seed,
@@ -135,6 +136,7 @@ def cli():
     install_mcp.register(subparsers)
     install_subagents.register(subparsers)
     update.register(subparsers)
+    project.register(subparsers)
 
     args = parser.parse_args()
 
