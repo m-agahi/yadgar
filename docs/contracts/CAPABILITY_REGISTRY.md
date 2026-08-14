@@ -1927,6 +1927,17 @@ config knobs.
 - **wiring:** `bootstrap_project(directory, content)` is `@_tool(power=True)` in `project.py`; it calls `_resolve_project_root()`, `_get_storage().upsert_project_init()`, then `_seed_default_blocks()` to create default `current_task` and `gotchas` blocks. `seed_project(directory, dry_run)` is `@_tool(power=True)` in `misc.py`; it delegates to `yadgar.seed.seed_project()` which scans the project directory for config files, docs, and source structure and creates `_seed`-tagged memories. Re-running is idempotent — old seed memories are replaced.
 - **explanation:** Two complementary project bootstrapping tools. `bootstrap_project` is lightweight: it takes a caller-supplied concise markdown string (capped at `PROJECT_INIT_CAP_CHARS` chars, default 2000) and stores it as the `_project_init` memory for the directory, also seeding default memory blocks. `seed_project` is heavyweight: it auto-scans the project directory tree to discover config files, documentation, CI configs, and key source files, synthesising foundational `_seed`-tagged memories without any manual input.
 
+### CAP-WIKI-013a — Project-registry seed tool (CLI + MCP)
+- **status:** LIVE
+- **category:** ops
+- **settings:** —
+- **tools:** `project_seed`
+- **migrations:** —
+- **bc:** —
+- **refs:** `yadgar/core/server/tools/misc.py::project_seed`, `yadgar/core/cli/project.py::parse_map`, `yadgar/core/cli/project.py::classify_row`, `yadgar/core/cli/project.py::infer_kind`, `yadgar/core/cli/project.py::seed_row`, `yadgar/core/cli/project.py::cmd_project_seed`, `yadgar/core/cli/project.py::register`, `yadgar/backend/admin_exec/ledger.py::create_project_row`, `yadgar/backend/admin_exec/__init__.py::_ADMIN_OPS["create_project_row"]`
+- **wiring:** Two surfaces for the same operation, both routed through `yadgar.core.cli.project` helpers (`parse_map`, `classify_row`, `infer_kind`, `seed_row`). (1) CLI: `yadgar project seed [--map <path>]` — registered in `yadgar/__main__.py` via `project.register(subparsers)`; handler is `cmd_project_seed`. (2) MCP: `@_tool(power=True) project_seed(map_path=...)` in `misc.py`. Both call `_forward_admin("create_project_row", ...)` per row over the backend `/admin` route (the seam at `backend/admin_exec/__init__.py:152`); per-row outcomes are `created` / `skipped` (duplicate-key idempotent) / `failed`. Rows whose TSV column 2 is `DROP` or `REVIEW` are skipped — those are operator decisions, not registry rows. Idempotent: a second run on the same map is a no-op for already-present keys.
+- **explanation:** Car A (2026-08-14 identity train, §2) closes the gap where `backend.admin_exec.ledger.create_project_row` existed and was registered but had no CLI / MCP path. The registry is the FK target for every `task` / `adr` / `agent_prompt` ledger row — with zero rows, engine-#2 refuses every write via the `_ensure_project_exists_sync` guard (ADR-0078). This tool is the SEED that lets the guard ever succeed; the guard itself is NOT relaxed by this tool. The TSV first column is named `source_directory` — a host-side origin hint captured at mint time, NOT a scoping key (ADR-0225). `infer_kind` classifies by `project_id` shape alone (`/` → git, `local/` → local, prose → local). The MCP surface takes a single `map_path` keyword; the previous v1 draft's `directory` parameter was dropped to satisfy the ADR-0225 residue sweep without an allowlist entry.
+
 ### CAP-WIKI-014 — Sync instructions tool
 - **status:** LIVE
 - **category:** ops
