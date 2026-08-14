@@ -299,8 +299,9 @@ def _backend_exec_start(spec: UnitSpec, ready: Readiness) -> str:
         f"--security-opt label=disable --user root \\\n"
         f"    --network {spec.network} \\\n"
         f"{ready.sdnotify}"
+        # 90s grace covers cold model load (measured 20-40s); inside TimeoutStartSec=180 below.
         f'    --health-cmd "curl -f http://localhost:8001/health || exit 1" \\\n'
-        f"    --health-start-period=60s \\\n"
+        f"    --health-start-period=90s \\\n"
         f"    -p 127.0.0.1:{spec.backend_surreal_port}:8000 \\\n"
         f"    -p 127.0.0.1:{spec.backend_embed_port}:8001 \\\n"
         f"    -v {spec.backend_data_mount}:/data \\\n"

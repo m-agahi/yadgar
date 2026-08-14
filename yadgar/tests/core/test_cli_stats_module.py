@@ -188,3 +188,75 @@ def test_cmd_stats_project_in_header(capsys):
 
     captured = capsys.readouterr()
     assert "/my/project" in captured.out
+
+
+# ── Split-container install guard (Car K, 2026-08-14 train) ──────────────────
+
+
+def test_is_split_container_install_true_for_remote_db_url(monkeypatch):
+    """Car K: when YADGAR_DB_URL points at a non-loopback host (the
+    container-internal hostname `yadgar-backend`), the CLI must detect the
+    split-container install and refuse the embedded path."""
+    from yadgar.core.cli.stats import _is_split_container_install
+
+    monkeypatch.setenv("YADGAR_DB_URL", "http://yadgar-backend:8000")
+    assert _is_split_container_install() is True
+
+
+def test_is_split_container_install_false_for_loopback_db_url(monkeypatch):
+    """Loopback DB URL (the default) means a co-located install — the
+    embedded SurrealKV path is fine, no split-container detection."""
+    from yadgar.core.cli.stats import _is_split_container_install
+
+    monkeypatch.setenv("YADGAR_DB_URL", "http://127.0.0.1:8000")
+    assert _is_split_container_install() is False
+
+
+def test_is_split_container_install_false_when_unset(monkeypatch):
+    """No YADGAR_DB_URL set = use default (loopback) = local install,
+    not split-container. _is_split_container_install must be False so
+    the existing flow runs."""
+    from yadgar.core.cli.stats import _is_split_container_install
+
+    monkeypatch.delenv("YADGAR_DB_URL", raising=False)
+    assert _is_split_container_install() is False
+
+
+def test_cmd_stats_split_container_exits_with_actionable_message(monkeypatch, capsys):
+    """End-to-end: with YADGAR_DB_URL pointing at a container hostname,
+    cmd_stats must exit 1 WITHOUT attempting the embedded SurrealKV
+    open (which would surface a raw driver error) and WITHOUT touching
+    the HTTP path (which has no /api/stats yet). The stderr must name
+    the actual fix."""
+    from yadgar.core.cli.stats import cmd_stats
+
+    monkeypatch.setenv("YADGAR_DB_URL", "http://yadgar-backend:8000")
+
+    # SurrealKV open is the failure mode the guard prevents — if the
+    # guard fails to fire, this raises a MagicMock AttributeError,
+    # which is a different (and worse) failure than the SystemExit
+    # we assert here.
+    class _ShouldNotOpen:
+        def __init__(self, *a, **k):
+            raise AssertionError(
+                "split-container guard failed: cmd_stats reached the "
+                "embedded SurrealKV path despite YADGAR_DB_URL pointing "
+                "at a container hostname"
+            )
+
+    fake_module = MagicMock()
+    fake_module.Surreal = _ShouldNotOpen
+    monkeypatch.setattr(
+        "urllib.request.urlopen", MagicMock(side_effect=AssertionError("HTTP must not be tried"))
+    )
+
+    with patch.dict(sys.modules, {"surrealdb": fake_module}):
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_stats(_make_args())
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "split-container" in captured.err or "split container" in captured.err
+    # Must point at the actual fix (podman exec / curl /api/stats).
+    assert "podman exec yadgar-backend yadgar stats" in captured.err
+    assert "/api/stats" in captured.err

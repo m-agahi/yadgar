@@ -30,6 +30,7 @@ _EXPORTS: Final = {
     "YamlConfigSource": "yadgar._shared.config.config",
     "_KNOB_PARSE_ERRORS": "yadgar._shared.config.config",
     "_paths": "yadgar._shared.config.config",
+    "_is_db_url_local": "yadgar._shared.config.db_url",
     "field_validator": "yadgar._shared.config.config",
     "get_settings": "yadgar._shared.config.config",
     "lru_cache": "yadgar._shared.config.config",

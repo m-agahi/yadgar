@@ -390,3 +390,22 @@ def test_no_snapshot_carries_the_stamp():
             assert "yadgar-unit-schema" not in _snapshot(runtime, unit), (
                 f"{runtime}/{unit}: the schema stamp leaked into the parity fixture"
             )
+
+
+def test_backend_unit_health_start_period_is_within_measured_window():
+    """Car K: --health-start-period must give the backend enough grace for
+    cold model load (measured 20-40s on a fresh install) without
+    approaching the unit's TimeoutStartSec=180. Pin a floor of 45s and
+    a ceiling of 180s — below 45s and a slow first start crashes the
+    healthcheck; above 180s and the period itself outlives the start
+    budget, turning a slow start into a Restart=on-failure crashloop."""
+    for runtime in RUNTIMES:
+        text = _rendered(runtime)["yadgar-backend.service"]
+        match = re.search(r"--health-start-period=(\d+)s", text)
+        assert match, f"{runtime}/yadgar-backend.service: --health-start-period=Ns missing"
+        seconds = int(match.group(1))
+        assert 45 <= seconds <= 180, (
+            f"{runtime}/yadgar-backend.service: --health-start-period={seconds}s "
+            f"is outside the 45s-180s window (measured cold-start 20-40s, "
+            f"TimeoutStartSec=180 budget)."
+        )
