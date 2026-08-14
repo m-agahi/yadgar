@@ -109,6 +109,7 @@ def cli():
         rules,
         seed,
         setup,
+        snapshot,
         stats,
         update,
         vacuum,
@@ -126,6 +127,7 @@ def cli():
     vacuum.register(subparsers)
     seed.register(subparsers)
     config.register(subparsers)
+    snapshot.register(subparsers)
     rules.register(subparsers)
     code_graph.register(subparsers)
     viz.register(subparsers)
