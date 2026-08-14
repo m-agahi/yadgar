@@ -115,11 +115,32 @@ def resolve_effective_project(
             )
         return project
 
-    # ── 2. SessionStart context ────────────────────────────────────────────
+    # ── 2. Per-request ContextVar (Car B §3.4) ─────────────────────────────
+    # The tool wrapper in ``yadgar/core/server/_app.py:_instrumented_async``
+    # reads the Mcp-Session-Id off the inbound request, looks up the
+    # binding registered by /session_bind, and stamps this ContextVar.
+    # Stdio / stateless_http callers have no Mcp-Session-Id; the
+    # ContextVar stays unbound and we fall through to tier 3.
+    from yadgar._shared.runtime.session_project import (  # noqa: PLC0415
+        get_current_session_project,
+    )
+
+    _ctx_session_project = get_current_session_project()
+    if _ctx_session_project:
+        return _ctx_session_project
+
+    # ── 3. SessionStart legacy parameter (fallback when ContextVar unbound) ──
+    # Plan §3.4: "If unbound, fall back to explicit ``project=``" — re-read
+    # as: if the ContextVar did not resolve the identity, do NOT add a new
+    # tier; honour the legacy ``session_project`` keyword as a fallback
+    # (the SessionStart hook still passes it through, and tests assert
+    # it as the tier-3 path). Honouring the explicit ``project=`` was
+    # already done in tier 1; the one line that flips the fallback is
+    # the ``return session_project`` below.
     if session_project is not None and session_project:
         return session_project
 
-    # ── 3. Nothing named an identity — FAIL LOUD (C5 / ADR-0227) ───────────
+    # ── 4. Nothing named an identity — FAIL LOUD (C5 / ADR-0227) ───────────
     #
     # What used to be here: a ``derive_project_id(cwd=directory)`` tier and a
     # ``return GLOBAL_FALLBACK``. Both are deleted. A directory is not an
