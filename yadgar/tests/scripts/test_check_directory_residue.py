@@ -91,16 +91,58 @@ def resolve_for_project(directory: str) -> str:
 # ---------------------------------------------------------------------------
 # Direction 1 — planted residue must fail, and the message must name it
 # ---------------------------------------------------------------------------
+# Car I (2026-08-14): the bucket is now ``<path>::<function>`` so a single
+# violation in one function flags THAT function and leaves the rest of the
+# file alone. The planted source below carries two functions in one file —
+# one with `directory` and one without — so the granularity tests can assert
+# on both shapes in the same fixture.
+_PLANTED_TWO_FUNCTIONS = '''\
+"""A module with two functions; only one reintroduces directory scoping."""
+
+
+def resolve_for_project(directory: str) -> str:
+    """The exact regression ADR-0225 forbids."""
+    return directory
+
+
+def innocent_helper(x: int) -> int:
+    """No scoping residue here — must NOT be flagged on its own."""
+    return x + 1
+'''
+
+
 class TestDirectionOnePlantedResidue:
     def test_planted_residue_with_empty_allowlist_fails(self, tmp_path: Path) -> None:
         root, allow = _mini_repo(tmp_path, _PLANTED_RESIDUE, "# no entries\n")
         errors = _check(root, allow)
         residue = [e for e in errors if e.startswith("RESIDUE:")]
         assert len(residue) == 1, f"expected exactly one RESIDUE error, got {errors}"
+        # Car I: the message header is now ``<path>::<function>`` so the
+        # violation names the function, not just the file. The two are
+        # both load-bearing: the path for the file-level allowlist match,
+        # the function name for the planted-subject assertion.
+        assert "yadgar/core/planted.py::resolve_for_project" in residue[0]
         assert "yadgar/core/planted.py" in residue[0]
         assert "resolve_for_project(directory)" in residue[0], (
             "the violation must name the planted symbol, not just report that "
             f"something failed: {residue[0]}"
+        )
+
+    def test_two_functions_one_file_one_bucket_per_function(self, tmp_path: Path) -> None:
+        """Car I — granularity is per FUNCTION, not per file.
+
+        A file with two functions, one carrying residue and one not, must
+        produce ONE bucket (``<path>::resolve_for_project``) and leave
+        ``<path>::innocent_helper`` silent. Pre-Car-I the bucket was the
+        file path and any allowlist entry had to cover the whole file —
+        this test pins the ratchet's tighter shape.
+        """
+        root, allow = _mini_repo(tmp_path, _PLANTED_TWO_FUNCTIONS, "# no entries\n")
+        residue, _ = C.find_residue(root, scan_roots=("yadgar/core",))
+        planted_buckets = sorted(k for k in residue if k.startswith("yadgar/core/planted.py::"))
+        assert planted_buckets == ["yadgar/core/planted.py::resolve_for_project"], (
+            "the bucket must be keyed on the FUNCTION, not the file; the "
+            f"innocent function must not appear here: {planted_buckets}"
         )
 
     def test_an_allowlist_entry_clears_the_planted_residue(self, tmp_path: Path) -> None:
@@ -470,6 +512,241 @@ class TestSiblingAllowlistsAreClosedIntoThisRun:
 
 def _c9a_rel() -> str:
     return "yadgar/tests/_shared/test_c9a_directory_residue_shared.py"
+
+
+# ---------------------------------------------------------------------------
+# Absence-of-project check (Car I, 2026-08-14 train)
+# ---------------------------------------------------------------------------
+# Each test plants a ``yadgar/core/server/tools/*.py`` file with a different
+# shape and asserts on the ``find_absence_of_project`` result. The four cases
+# the task spec calls out are all covered; the fifth (a non-tool function
+# taking ``directory`` without ``project``) is the same shape as the first
+# but with a plain ``def`` — verifying the AST walk keys on ``@_tool``
+# decoration, not on the parameter list.
+def _mini_tools_root(tmp_path: Path, source: str, name: str = "planted_tool.py") -> Path:
+    """Write a single tool module under ``yadgar/core/server/tools/``."""
+    tools_dir = tmp_path / "yadgar" / "core" / "server" / "tools"
+    tools_dir.mkdir(parents=True)
+    (tools_dir / name).write_text(source, encoding="utf-8")
+    return tmp_path
+
+
+_PLANTED_TOOL_WITH_BOTH = '''\
+"""Tool with both ``directory`` and ``project`` — the C3 / Car M shape."""
+
+from yadgar.core.server._app import _tool
+
+
+@_tool()
+def resolve_with_both(directory: str | None, project: str | None = None) -> str:
+    """The green shape: identity-keyed + project override."""
+    return project or directory or ""
+'''
+
+
+_PLANTED_TOOL_WITHOUT_PROJECT = '''\
+"""Tool with ``directory`` only — the regression Car I ratchets."""
+
+from yadgar.core.server._app import _tool
+
+
+@_tool()
+def stale_residue(directory: str | None) -> str:
+    """The exact failure mode: directory-only, no project override."""
+    return directory or ""
+'''
+
+
+_PLANTED_TOOL_NEITHER = '''\
+"""Tool with no scoping params — not a residue risk."""
+
+from yadgar.core.server._app import _tool
+
+
+@_tool()
+def unscoped_query(query: str) -> str:
+    """Takes neither ``directory`` nor ``project`` — passes."""
+    return query
+'''
+
+
+_PLANTED_NON_TOOL_WITH_DIRECTORY = '''\
+"""A plain helper that takes ``directory`` — not in scope, no @_tool."""
+
+# Intentionally no ``from yadgar.core.server._app import _tool``.
+
+
+def helper(directory: str | None) -> str:
+    """Out of scope: not @_tool-decorated, so the check ignores it."""
+    return directory or ""
+'''
+
+
+_PLANTED_TOOL_BARE_DECORATOR = '''\
+"""Bare ``@_tool`` (no parens) — the rare form, must still be caught."""
+
+from yadgar.core.server._app import _tool
+
+
+@_tool
+def bare_form(directory: str | None) -> str:
+    """Bare decorator is still a tool registration."""
+    return directory or ""
+'''
+
+
+_PLANTED_TOOL_KWARG_ONLY_PROJECT = '''\
+"""Tool with keyword-only ``project`` — passes (the set check sees both)."""
+
+from yadgar.core.server._app import _tool
+
+
+@_tool()
+def kwarg_only(directory: str | None, *, project: str | None = None) -> str:
+    """The kwarg-only form still satisfies the param-name check."""
+    return project or directory or ""
+'''
+
+
+class TestAbsenceOfProjectCheck:
+    """Car I (2026-08-14): @_tool functions must take ``project`` when they take ``directory``."""
+
+    def test_tool_with_both_directory_and_project_passes(self, tmp_path: Path) -> None:
+        """Green: a tool that has both params is fine."""
+        root = _mini_tools_root(tmp_path, _PLANTED_TOOL_WITH_BOTH)
+        errors, checked = C.find_absence_of_project(root)
+        assert errors == [], (
+            f"a tool with both `directory` and `project` must NOT be flagged: {errors}"
+        )
+        assert checked == 1
+
+    def test_tool_with_only_directory_fails_and_names_the_function(self, tmp_path: Path) -> None:
+        """The exact regression Car I ratchets: hard failure naming the function."""
+        root = _mini_tools_root(tmp_path, _PLANTED_TOOL_WITHOUT_PROJECT)
+        errors, checked = C.find_absence_of_project(root)
+        assert len(errors) == 1, f"expected exactly one NO PROJECT error, got {errors}"
+        assert errors[0].startswith("NO PROJECT: "), errors[0]
+        # The message MUST name the offending function — a test that passes
+        # on any violation for any reason is the same vacuous-pass shape C8
+        # produced four times on this train.
+        assert "planted_tool.py::stale_residue" in errors[0], errors[0]
+        assert checked == 1
+
+    def test_tool_with_neither_param_passes(self, tmp_path: Path) -> None:
+        """Out of scope: no scoping position means no residue risk."""
+        root = _mini_tools_root(tmp_path, _PLANTED_TOOL_NEITHER)
+        errors, checked = C.find_absence_of_project(root)
+        assert errors == [], (
+            f"a tool with neither `directory` nor `project` is not a residue risk: {errors}"
+        )
+        assert checked == 1
+
+    def test_non_tool_function_with_only_directory_passes(self, tmp_path: Path) -> None:
+        """Out of scope: not registered as an MCP tool."""
+        root = _mini_tools_root(tmp_path, _PLANTED_NON_TOOL_WITH_DIRECTORY)
+        errors, checked = C.find_absence_of_project(root)
+        assert errors == [], (
+            "a non-tool function is not in scope for this check — only @_tool "
+            f"decorated functions are inspected: {errors}"
+        )
+        assert checked == 0, (
+            "the count of inspected tools must be 0 for a file with no @_tool "
+            "decorations, otherwise the AST walk is matching on the wrong thing"
+        )
+
+    def test_bare_at_tool_decorator_is_still_in_scope(self, tmp_path: Path) -> None:
+        """``@_tool`` (no parens) is a valid tool registration and must fire."""
+        root = _mini_tools_root(tmp_path, _PLANTED_TOOL_BARE_DECORATOR)
+        errors, checked = C.find_absence_of_project(root)
+        assert len(errors) == 1, errors
+        assert "planted_tool.py::bare_form" in errors[0]
+        assert checked == 1
+
+    def test_keyword_only_project_satisfies_the_check(self, tmp_path: Path) -> None:
+        """``*, project=None`` is still the parameter set containing ``project``."""
+        root = _mini_tools_root(tmp_path, _PLANTED_TOOL_KWARG_ONLY_PROJECT)
+        errors, checked = C.find_absence_of_project(root)
+        assert errors == [], errors
+        assert checked == 1
+
+    def test_the_check_walks_a_real_tools_root(self) -> None:
+        """Green on arrival: every @_tool function in the real tree carries both.
+
+        This is the load-bearing assertion. If a future edit drops ``project``
+        from any tool's signature, this test catches it. The reverse — adding
+        ``project`` to a tool that has ``directory`` — would also be a real
+        change worth a test, but that's an additive move and won't regress
+        this guard; the load-bearing failure is the subtractive one.
+        """
+        errors, checked = C.find_absence_of_project(REPO_ROOT)
+        assert errors == [], (
+            "every @_tool-decorated function in the real tree must take "
+            "`project` when it takes `directory`. Violations:\n  " + "\n  ".join(errors)
+        )
+        assert checked >= C.MIN_TOOLS_CHECKED, (
+            f"only {checked} @_tool functions inspected (floor "
+            f"{C.MIN_TOOLS_CHECKED}) — the AST walk is not reaching the "
+            "real tree, so this arm would be silently green"
+        )
+
+    def test_a_renamed_tool_decorator_blinds_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MUTATION — the floor pins a renamed decorator.
+
+        If ``_tool`` is renamed to ``_register``, the AST walk finds zero
+        decorated functions and the arm goes green forever. The
+        ``MIN_TOOLS_CHECKED`` floor is what catches this — a renamed
+        decorator drops ``checked`` below the floor, ``check()`` reports
+        VACUOUS, and the next reader cannot mistake "vacuous" for "clean".
+        """
+        # Build a mini root with three @_tool functions, then rename the
+        # decorator to a string the matcher doesn't recognise.
+        src = """\
+from yadgar.core.server._app import _tool
+
+
+@_tool()
+def a(directory, project):
+    pass
+
+
+@_tool()
+def b(directory, project):
+    pass
+
+
+@_tool()
+def c(directory, project):
+    pass
+"""
+        root = _mini_tools_root(tmp_path, src)
+        # Pre-condition: 3 tools detected under the real name.
+        _, checked = C.find_absence_of_project(root)
+        assert checked == 3
+        # Stub the allowlist so ``check()`` doesn't error out on the first
+        # line — the absence-of-project arm is what we're testing here, not
+        # the residue arm.
+        scripts = root / "scripts"
+        scripts.mkdir()
+        allow = scripts / "directory_residue_allowlist.txt"
+        allow.write_text("# empty allowlist for the renamed-decorator mutation\n", encoding="utf-8")
+        # Now blind the matcher by renaming the constant and re-running
+        # through ``check()`` with floors ON.
+        monkeypatch.setattr(C, "_is_tool_decorated", lambda _node: False)
+        errors = C.check(
+            root,
+            allow,
+            scan_roots=(),
+            check_floors=True,
+            check_sibling_lints=False,
+        )
+        # The VACUOUS floor fires; the absence-of-project arm produces no
+        # NO PROJECT errors because the matcher is blind.
+        assert any(e.startswith("VACUOUS") and "inspected" in e for e in errors), (
+            "a blinded `_is_tool_decorated` produced no VACUOUS floor — "
+            "the arm would be silently green: " + repr(errors)
+        )
 
 
 # ---------------------------------------------------------------------------
