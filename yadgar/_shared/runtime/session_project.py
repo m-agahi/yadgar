@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
-from yadgar._shared.observability.trace import trace_span
+from yadgar._shared.observability.tracing import trace_span
 
 #: Per-request project_id, populated by the ASGI middleware from
 #: ``StreamableHTTPServerTransport.mcp_session_id`` → nonce-pool → project_id,

@@ -2324,6 +2324,7 @@ def bootstrap_project(directory: str, content: str, *, project: str | None = Non
     _effective_project_id = resolve_effective_project(
         project=project,
         directory=directory,
+        session_project=None,
         tool="bootstrap_project",
     )
     # v5.10.2: secret gate — scan content before any state mutation
@@ -2397,6 +2398,7 @@ def update_active_work(directory: str, content: str, *, project: str | None = No
     _effective_project_id = resolve_effective_project(
         project=project,
         directory=directory,
+        session_project=None,
         tool="update_active_work",
     )
     # v5.10.2: secret gate — scan content before any state mutation

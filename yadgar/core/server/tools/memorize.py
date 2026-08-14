@@ -173,6 +173,7 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
         effective_project_id = resolve_effective_project(
             project=project,
             directory=ctx.context,
+            session_project=None,
             tool="memorize",
         )
     except UnresolvedProjectError as exc:

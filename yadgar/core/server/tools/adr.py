@@ -182,6 +182,7 @@ def _resolve_adr_add_context(directory: str, project: str | None) -> dict | tupl
         project_id = resolve_effective_project(
             project=project,
             directory=resolved,
+            session_project=None,
             tool="adr_add",
         )
     except UnresolvedProjectError as exc:
@@ -559,6 +560,7 @@ def adr_get(directory: str, adr_id: str, *, project: str | None = None) -> dict:
         project_id = resolve_effective_project(
             project=project,
             directory=resolved,
+            session_project=None,
             tool="adr_get",
         )
     except UnresolvedProjectError as exc:
@@ -749,6 +751,7 @@ def adr_list(
         project_id = resolve_effective_project(
             project=project,
             directory=resolved,
+            session_project=None,
             tool="adr_list",
         )
     except UnresolvedProjectError as exc:

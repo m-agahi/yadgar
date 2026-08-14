@@ -168,6 +168,7 @@ def agent_prompt_save(
         _project_id = resolve_effective_project(
             project=project,
             directory=_effective_dir,
+            session_project=None,
             tool="agent_prompt_save",
         )
     except UnresolvedProjectError as exc:
@@ -569,6 +570,7 @@ def discipline_save(
         _project_id = resolve_effective_project(
             project=project,
             directory=None,
+            session_project=None,
             tool="discipline_save",
         )
     except UnresolvedProjectError as exc:

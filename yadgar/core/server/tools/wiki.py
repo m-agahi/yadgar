@@ -513,6 +513,7 @@ def wiki_add(
         _effective_project_id = resolve_effective_project(
             project=project,
             directory=_effective_dir,
+            session_project=None,
             tool="wiki_add",
         )
     except UnresolvedProjectError as exc:
@@ -672,6 +673,7 @@ def _resolve_wiki_query_project(*, project: str | None, directory: str | None) -
         return resolve_effective_project(
             project=project,
             directory=directory,
+            session_project=None,
             tool="wiki_query",
         )
     except InvalidProjectOverrideError as exc:
@@ -691,6 +693,7 @@ def _resolve_wiki_read_project(*, project: str | None, directory: str | None) ->
         return resolve_effective_project(
             project=project,
             directory=directory,
+            session_project=None,
             tool="wiki_read",
         )
     except InvalidProjectOverrideError as exc:

@@ -230,6 +230,7 @@ def restore(directory: str = "", *, project: str | None = None) -> dict:
         _effective_project_id = resolve_effective_project(
             project=project,
             directory=directory,
+            session_project=None,
             tool="restore",
         )
     except UnresolvedProjectError as exc:
@@ -370,6 +371,7 @@ def anchor(  # noqa: PLR0913 — MCP tool signature; ``project`` is keyword-only
         _effective_project_id = resolve_effective_project(
             project=project,
             directory=context,
+            session_project=None,
             tool="anchor",
         )
     except UnresolvedProjectError as exc:
@@ -647,6 +649,7 @@ def _resource_project_or_none(resource: str) -> str | None:
         return resolve_effective_project(
             project=None,
             directory=None,
+            session_project=None,
             tool=resource,
         )
     except (UnresolvedProjectError, InvalidProjectOverrideError) as exc:
@@ -760,6 +763,7 @@ def seed_project(directory: str, dry_run: bool = False, *, project: str | None =
     _effective_project_id = resolve_effective_project(
         project=project,
         directory=resolved,
+        session_project=None,
         tool="seed_project",
     )
     # T2 Car E1: the store phase forwards to the backend seed_store /admin op —
