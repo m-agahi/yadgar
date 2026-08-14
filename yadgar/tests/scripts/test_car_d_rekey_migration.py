@@ -6,13 +6,11 @@ Three tests, mirroring the task's contract:
                         (which is what ``rekey_corpus`` uses too) and
                         asserts the column-2-is-authoritative contract.
 
-  TestDryRunNoWrites  — the dry-run path. Inject a fake storage that
-                        counts every ``_q`` call; assert exactly one
-                        read per table, zero writes, the map TSV
-                        contains the expected rows, and a second
-                        ``run()`` call with ``apply=True`` on an
-                        unseeded registry still does not write to the
-                        corpus.
+  TestDryRunNoWrites  — the dry-run path. Inject a fixture ``counts``
+                        dict so the discovery seam is bypassed; assert
+                        ``_forward_admin`` is NOT called on a dry run
+                        with counts injected, and the map TSV contains
+                        the expected rows.
 
   TestGroupedReport   — the bucketed report. Sentinel + prose + git
                         + local directories all in one fixture; assert
@@ -21,8 +19,9 @@ Three tests, mirroring the task's contract:
                         and the map TSV is grouped (drop / review /
                         seed) in the operator's expected order.
 
-The test seams are the same ones project_backfill.py exposes:
-``_get_storage`` and ``_forward_admin`` (via Car A's ``seed_row``).
+The test seams are ``counts=`` (the discover_directories fixture) and
+``yadgar.core.forward._forward_admin`` (patched at source so the
+migration's thin indirection does not need to be re-patched).
 """
 
 from __future__ import annotations
@@ -86,78 +85,48 @@ class TestParseMap:
 # ── dry-run contract: zero writes ──────────────────────────────────────────
 
 
-class _FakeStorage:
-    """In-memory stand-in for the composed SurrealDB engine.
-
-    Records every ``_q`` call. The Car D migration calls ``_q`` ONLY
-    for reads (DISTINCT directory_context); a write call would be a
-    regression and the test asserts none happened.
-    """
-
-    def __init__(self, rows: dict[str, list[dict]]) -> None:
-        self._rows = rows
-        self.calls: list[tuple[str, dict | None]] = []
-
-    def _q(self, surql: str, params: dict | None = None) -> list[dict]:
-        self.calls.append((surql, params))
-        for table, rows in self._rows.items():
-            if f"FROM {table}" in surql:
-                return list(rows)
-        return []
-
-
 class TestDryRunNoWrites:
-    """Dry-run contract — discover, write the map, no storage writes.
+    """Dry-run contract — discover via counts fixture, write the map.
 
     The dry-run path is the operator's review tool: it MUST be readable
     end-to-end on a production corpus with no side effects beyond the
     map TSV itself. Asserted by:
-      * counting ``_q`` calls (exactly one per table, no UPDATE/DELETE)
+      * passing a fixture counts dict (no network round-trip)
       * inspecting the produced map file (rows match the corpus)
-      * running ``apply=False`` (default) and confirming the
-        ``_forward_admin`` seam is never touched
+      * patching ``_forward_admin`` at the source module and asserting
+        it is NOT called on a dry-run (apply=False)
     """
 
     @pytest.fixture
     def fixture(self, tmp_path: Path) -> dict:
-        rows = {
-            "memory": [
-                {"directory_context": "/home/max/git/yadgar"},
-                {"directory_context": "/home/max/git/yadgar"},
-                {"directory_context": "global"},
-            ],
-            "wiki_page": [
-                {"directory_context": "/home/max/git/yadgar"},
-            ],
+        counts = {
+            "/home/max/git/yadgar": {"memory_rows": 2, "wiki_rows": 1},
+            "global": {"memory_rows": 1, "wiki_rows": 0},
         }
-        return {"rows": rows, "map": tmp_path / "map.tsv"}
+        return {"counts": counts, "map": tmp_path / "map.tsv"}
 
-    def test_dry_run_does_not_write_to_storage(self, fixture: dict) -> None:
-        from yadgar.backend.migrations import rekey_corpus
+    def test_dry_run_does_not_call_forward_admin(self, fixture: dict) -> None:
+        """The fixture ``counts`` arg bypasses the discovery seam — so a
+        dry run with counts injected MUST NOT call ``_forward_admin``
+        at all (no discovery, no apply). Patched at the source module
+        because ``rekey_corpus._forward_admin`` does a lazy import."""
+        from yadgar.core.migrations import rekey_corpus
 
-        storage = _FakeStorage(fixture["rows"])
-        result = rekey_corpus.run(
-            storage=storage,
-            map_path=fixture["map"],
-            apply=False,
-        )
+        with patch("yadgar.core.forward._forward_admin") as fwd:
+            result = rekey_corpus.run(
+                counts=fixture["counts"],
+                map_path=fixture["map"],
+                apply=False,
+            )
 
         assert result["ok"] is True
-        # Exactly two reads — one per table, no UPDATE / DELETE / INSERT.
-        assert len(storage.calls) == 2
-        for surql, _params in storage.calls:
-            upper = surql.upper()
-            assert "SELECT" in upper, f"dry-run must only SELECT, got: {surql!r}"
-            assert "UPDATE" not in upper
-            assert "DELETE" not in upper
-            assert "INSERT" not in upper
+        fwd.assert_not_called()
 
     def test_dry_run_writes_map_file(self, fixture: dict) -> None:
-        from yadgar.backend.migrations import rekey_corpus
+        from yadgar.core.migrations import rekey_corpus
 
-        storage = _FakeStorage(fixture["rows"])
         rekey_corpus.run(
-            storage=storage,
+            counts=fixture["counts"],
             map_path=fixture["map"],
             apply=False,
         )
@@ -170,21 +139,6 @@ class TestDryRunNoWrites:
         assert len(sentinel_rows) == 1  # the 'global' sentinel in the fixture
         # Real paths keep their derivation.
         assert "/home/max/git/yadgar" in contents
-
-    def test_dry_run_does_not_touch_forward_admin(self, fixture: dict) -> None:
-        """The apply path goes through ``_forward_admin``; dry-run must
-        not, even by accident. Patched at the source module because
-        ``seed_row`` does a lazy import."""
-        from yadgar.backend.migrations import rekey_corpus
-
-        storage = _FakeStorage(fixture["rows"])
-        with patch("yadgar.core.forward._forward_admin") as fwd:
-            rekey_corpus.run(
-                storage=storage,
-                map_path=fixture["map"],
-                apply=False,
-            )
-            fwd.assert_not_called()
 
 
 # ── grouped report ──────────────────────────────────────────────────────────
@@ -201,33 +155,26 @@ class TestGroupedReport:
 
     @pytest.fixture
     def fixture(self, tmp_path: Path) -> dict:
-        rows = {
-            "memory": [
-                # git remote — derives owner/repo
-                {"directory_context": "/home/max/git/yadgar"},
-                {"directory_context": "/home/max/git/yadgar"},
-                # local path with no git — local/<basename>
-                {"directory_context": "/home/max/notes"},
-                # second path with the same basename — collision
-                {"directory_context": "/home/alice/notes"},
-                # sentinel — DROP
-                {"directory_context": "global"},
-                {"directory_context": "system"},
-                # free-text prose — REVIEW
-                {"directory_context": "db_inspect"},
-            ],
-            "wiki_page": [
-                {"directory_context": "/home/max/git/yadgar"},
-            ],
+        counts = {
+            # git remote — derives owner/repo
+            "/home/max/git/yadgar": {"memory_rows": 2, "wiki_rows": 1},
+            # local path with no git — local/<basename>
+            "/home/max/notes": {"memory_rows": 1, "wiki_rows": 0},
+            # second path with the same basename — collision
+            "/home/alice/notes": {"memory_rows": 1, "wiki_rows": 0},
+            # sentinel — DROP
+            "global": {"memory_rows": 1, "wiki_rows": 0},
+            "system": {"memory_rows": 1, "wiki_rows": 0},
+            # free-text prose — REVIEW
+            "db_inspect": {"memory_rows": 1, "wiki_rows": 0},
         }
-        return {"rows": rows, "map": tmp_path / "map.tsv"}
+        return {"counts": counts, "map": tmp_path / "map.tsv"}
 
     def test_buckets_sentinel_prose_git_local(self, fixture: dict) -> None:
-        from yadgar.backend.migrations import rekey_corpus
+        from yadgar.core.migrations import rekey_corpus
 
-        storage = _FakeStorage(fixture["rows"])
         result = rekey_corpus.run(
-            storage=storage,
+            counts=fixture["counts"],
             map_path=fixture["map"],
             apply=False,
         )
@@ -262,11 +209,10 @@ class TestGroupedReport:
         assert by_dir["/home/alice/notes"]["derived_project_id"] == "local/notes"
 
     def test_basenames_collide_detected(self, fixture: dict) -> None:
-        from yadgar.backend.migrations import rekey_corpus
+        from yadgar.core.migrations import rekey_corpus
 
-        storage = _FakeStorage(fixture["rows"])
         result = rekey_corpus.run(
-            storage=storage,
+            counts=fixture["counts"],
             map_path=fixture["map"],
             apply=False,
         )
@@ -284,11 +230,10 @@ class TestGroupedReport:
         """Operator reviews the map TSV: sentinels first (DROP), then
         prose (REVIEW), then real paths. The grouping is the report
         the dry-run printed, frozen in a file."""
-        from yadgar.backend.migrations import rekey_corpus
+        from yadgar.core.migrations import rekey_corpus
 
-        storage = _FakeStorage(fixture["rows"])
         rekey_corpus.run(
-            storage=storage,
+            counts=fixture["counts"],
             map_path=fixture["map"],
             apply=False,
         )

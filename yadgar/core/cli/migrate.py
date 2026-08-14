@@ -1,12 +1,13 @@
 """``yadgar migrate ...`` subcommand — operator-invoked migrations.
 
 Car D (2026-08-14 train, §3). Wires the corpus re-key migration from
-``yadgar.backend.migrations.rekey_corpus`` into the top-level CLI
+``yadgar.core.migrations.rekey_corpus`` into the top-level CLI
 parser as ``yadgar migrate rekey [--map PATH] [--apply] [--force]``.
 
 The subcommand is fail-soft on a missing backend (the migration is a
-dry run that needs only the storage engine, and engine #2 absence
-surfaces as ``storage_unavailable`` rather than an exception).
+dry run that uses the corpus-discovery admin op via ``_forward_admin``,
+and a missing daemon surfaces as ``no_directories`` rather than an
+exception).
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ def cmd_migrate_rekey(args: argparse.Namespace) -> int:
     test fixtures can point at a tmp dir without monkey-patching
     argparse).
     """
-    from yadgar.backend.migrations import rekey_corpus
+    from yadgar.core.migrations import rekey_corpus
 
     map_path = Path(args.map) if args.map else rekey_corpus.DEFAULT_MAP_PATH
 
