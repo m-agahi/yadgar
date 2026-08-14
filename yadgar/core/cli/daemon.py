@@ -176,10 +176,25 @@ def _handle_configure_mcp(args, daemon, dev: bool) -> None:
 
 def _handle_install_service(daemon, dev: bool) -> None:
     result = daemon.install_systemd_service(dev=dev)
+    # Car F (task #61) — operator-facing message: backend FIRST, then core,
+    # unconditionally. The Start string is the dependency-ordered shell
+    # command (backend && core) so a half-applied install can never come
+    # up with the core running and the backend missing. The deploy window
+    # is the measured gap (task #61) between the two ``start`` calls
+    # completing on a fresh install — during which the version handshake
+    # (``/health``'s ``versions_compatible`` field) is the only thing
+    # keeping an old core from talking to a new backend.
     print(f"Backend: {result['backend_service']}  Core: {result['core_service']}")
     print(f"  Enable:  {result['enable']}")
     print(f"  Start:   {result['start']}")
     print(f"  Status:  {result['status']}")
+    _window = result.get("deploy_window_seconds")
+    if _window:
+        print(
+            f"  Note: there is a measured ~{_window} s window between the backend"
+            f" start and the core handshake completing; do not restart the"
+            f" core manually during that window."
+        )
 
 
 def _handle_render_units(args) -> None:

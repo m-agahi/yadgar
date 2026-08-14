@@ -1,7 +1,7 @@
 {
   "_comment": "Allowlist for scripts/check_health_endpoint_semantics.py (Car 0091). Governance mirrors .route-literal-allowlist.json: rationale >= 40 chars, and a STALE entry (a site that no longer probes bare /health) hard-fails. DO NOT add a site here just to silence the guard: only readiness that is GENUINELY required (a db/embed payload field is read, a DB write is gated, or the target service exposes no /health/live liveness variant at all) belongs here. A site whose caller only needs 'is the process up' is a bug — switch it to /health/live instead of allowlisting it.",
-  "yadgar/backend/embed_service/embed_service.py:785": {
-    "rationale": "The embed service's OWN /health handler probing its SurrealDB dependency to decide its own readiness. SurrealDB exposes no /health/live variant; this IS the readiness check being implemented, not a caller of one."
+  "yadgar/backend/embed_service/embed_service.py:790": {
+    "rationale": "The embed service's OWN /health handler probing its SurrealDB dependency to decide its own readiness. SurrealDB exposes no /health/live variant; this IS the readiness check being implemented, not a caller of one. (The Car F version-handshake field on this same /health response is consumed by the core's _handshake_block — both surface on the same readiness payload because SurrealDB readiness is the relevant signal here.)"
   },
   "yadgar/core/bootstrap/backend_ready.py:90": {
     "rationale": "Car 0027c's core startup gate probes the BACKEND embed service, which exposes no /health/live liveness variant at all — ADR-0019's liveness split is scoped to the core daemon only. Readiness is also what is genuinely required here: the very next thing the core does is StorageEngine.__init__ -> _init_schema(), which issues DDL over HTTP, so the gate must know db_ok and engine_loaded, not merely that a process bound a port."
@@ -41,5 +41,8 @@
   },
   "yadgar/core/server/http.py:613": {
     "rationale": "This is core's own /health readiness handler (_probe_dependency) probing a dependency (db or embed) to build the readiness payload. It IS the readiness implementation, not a caller needing liveness."
+  },
+  "yadgar/core/server/http.py:731": {
+    "rationale": "Car F (task #61) version-handshake helper _handshake_block reads the `version` and `versions_compatible` fields from the backend's /health response to surface a deploy-window warning to the operator. /health/live does not carry those fields — readiness is the only probe that returns the version payload. The handshake must NOT silently downgrade to liveness when liveness says 'process up' but readiness would say 'wire incompatible'."
   }
 }

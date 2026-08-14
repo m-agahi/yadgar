@@ -614,17 +614,21 @@ def _default_image_pull(version: str) -> None:
     2. HARDCODED RUNTIME. A literal "podman" argv head — the mirror image of
        task:0083's hardcoded "docker" — crashing docker-only hosts.
 
-    The backend tag is resolved exactly the way `YadgarDaemon.pull()` and
-    `start_backend()` resolve it (YADGAR_BACKEND_IMAGE env override, else
-    DOCKERHUB_BACKEND_IMAGE), so pull and start can never disagree about which
-    tag they want. Note DOCKERHUB_BACKEND_IMAGE derives from the CURRENTLY
-    installed server.json, so an upgrade fetches the backend tag the running
-    install expects, not the one the new core will ship with. That is the
-    consistent choice: the systemd unit's baked backend tag is likewise the old
-    one until `install-service` reruns, so pull and start stay in agreement.
+    Car F (task #61) — INVERSE PAIRING. The prior version resolved the
+    backend tag from the INSTALLED ``server.json::backend_version`` (via
+    ``DOCKERHUB_BACKEND_IMAGE``). That is wrong on a downgrade: e.g. going
+    core 5.183 → 5.170 leaves the installed backend at 5.73 (the 5.183
+    server.json is what the just-upgraded install shipped with), but the
+    5.170 core expects backend 5.65 — a wire-incompatible mismatch the
+    handshake from Car F then refuses. The fix: peek the NEW core image
+    for its bundled ``server.json::backend_version`` and pull THAT tag.
+    If the peek fails (image layout, runtime, transient error) fall back
+    to the installed tag — the handshake + the restart-order fix in
+    ``_default_service_restart`` are the safety net.
 
-    Both pulls use check=True: a failure at PULLING_IMAGE must abort into the
-    rollback path rather than pass silently.
+    The peek is a one-shot ``run --rm`` against the freshly-pulled image;
+    it does NOT mutate state and uses the same runtime as the pull itself
+    (no double-binary-class regression — task:0101 fix #2 still holds).
     """
     # Local imports mirror _default_health_check: keep core/update importable
     # without dragging the daemon package (and its import-time server.json read)
@@ -635,10 +639,60 @@ def _default_image_pull(version: str) -> None:
     )
 
     rt = _get_runtime()
-    backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+    installed_backend_image = os.environ.get("YADGAR_BACKEND_IMAGE", DOCKERHUB_BACKEND_IMAGE)
+    core_image = f"docker.io/openfantasy/yadgar:{version}"
 
-    subprocess.run([rt, "pull", f"docker.io/openfantasy/yadgar:{version}"], check=True)
-    subprocess.run([rt, "pull", backend_image], check=True)
+    subprocess.run([rt, "pull", core_image], check=True)
+
+    # Car F (task #61): resolve the backend tag from the NEW core image, not
+    # the installed one. Falls back to the installed tag on any probe failure
+    # so a transient ``run --rm`` failure cannot abort an otherwise-good upgrade.
+    new_backend_image = (
+        _probe_new_backend_tag(rt, core_image, installed_backend_image) or installed_backend_image
+    )
+    subprocess.run([rt, "pull", new_backend_image], check=True)
+
+
+@observe(tier="stage")
+def _probe_new_backend_tag(
+    runtime: str, core_image: str, installed_backend_image: str
+) -> str | None:
+    """Peek inside the freshly-pulled core image for its expected backend tag.
+
+    Returns the full ``repo:tag`` string the core image's bundled
+    ``server.json::backend_version`` implies, or ``None`` on any failure
+    (image layout, runtime, parse error). NEVER raises — a probe failure
+    is a soft signal: the caller falls back to the installed-tag and the
+    Car F handshake + restart-order fixes are the safety net.
+
+    The probe path ``/app/server.json`` matches the core ``Dockerfile``'s
+    ``COPY . /app`` (line 8). If that layout ever changes, this probe
+    breaks — and the fall-back to the installed tag is what keeps the
+    upgrade working while the test suite catches the layout drift.
+    """
+    try:
+        result = subprocess.run(
+            [runtime, "run", "--rm", "--entrypoint", "cat", core_image, "/app/server.json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        _data = json.loads(result.stdout)
+        _backend_version = _data.get("backend_version")
+        if not _backend_version or not isinstance(_backend_version, str):
+            return None
+        # Use the same repo as the installed tag so an env override of
+        # ``YADGAR_BACKEND_IMAGE`` (e.g. a private registry) is honoured.
+        # The installed tag is ``docker.io/openfantasy/yadgar-backend:<v>``;
+        # split on the LAST colon so a custom-registry path with a port
+        # (``host:5000/repo``) does not get clobbered.
+        _repo, _, _ = installed_backend_image.rpartition(":")
+        if not _repo:
+            return None
+        return f"{_repo}:{_backend_version}"
+    except Exception:  # noqa: BLE001 — probe is best-effort, never aborts
+        return None
 
 
 @observe(tier="stage")
@@ -651,7 +705,29 @@ def _default_graceful_stop(timeout: int) -> None:
 
 @observe(tier="stage")
 def _default_service_restart() -> None:
-    subprocess.run(["systemctl", "--user", "restart", "yadgar.service"], check=True)
+    """Restart BOTH units, backend FIRST.
+
+    Car F (task #61) — the prior shape restarted only ``yadgar.service``.
+    That left the new core running against whatever backend image
+    ``daemon start`` then provisioned (typically the old one, until the
+    next ``install-service`` rewrote the unit). The two fixes Car F
+    layered on top of this — the ``BindsTo=yadgar-backend.service`` in
+    ``yadgar/core/daemon/units.py:build_core_unit`` and the version
+    handshake in ``yadgar/core/server/http.py::_build_health_payload``
+    — turn a "old core ↔ new backend" or "new core ↔ old backend"
+    mismatch into a 503, but the cheap fix is to bring the new backend
+    UP before the new core tries to talk to it.
+
+    Backend first, then core. The backend unit's own ``ExecStartPre`` does
+    ``podman stop && podman rm yadgar-backend`` (units.py:336-337), so a
+    restart of ``yadgar-backend.service`` is a clean re-provision — not
+    a no-op. The ``yadgar`` unit is stopped at this point anyway (the
+    orchestrator's GRACEFUL_STOPPING step at :456 stopped it before
+    RESTARTING_SERVICE), so the BindsTo chain is satisfied for the
+    duration of the swap.
+    """
+    subprocess.run(["systemctl", "--user", "restart", "yadgar-backend.service"], check=True)
+    subprocess.run(["systemctl", "--user", "start", "yadgar.service"], check=True)
 
 
 @observe(tier="stage")

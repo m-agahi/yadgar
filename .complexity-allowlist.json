@@ -481,5 +481,16 @@
     "rationale": "Car F9 (0047 PR#40): the 9th parameter is `project_id`, the caller-supplied identity the session-end sentinel check needs. C10 (f) made `memorize` stamp `directory_context` from the resolved project_id, so the sentinel reader must be keyed on the project rather than the path; this helper sits between `project_brief` (which validates the override) and `_check_session_end_sentinel` (which consumes it), so the value has to travel through the signature. Deriving it here instead is exactly what ADR-0227 deletes. The obvious refactor — bundle the args into one dict, as the sibling `_project_brief_catalog_full` already does — is deliberately NOT taken in this car: C7 re-keys every remaining path-keyed query in `project_brief` onto project_id and will revisit this signature wholesale, and reshaping it twice would churn the same call site and its test callers for no interim gain. Every argument is a distinct signal input passed by keyword from the single call site; none is a flag controlling branches.",
     "added": "2026-08-12",
     "added_by": "car-f9-session-end-capture"
+  },
+  {
+    "path": "yadgar/backend/embed_service/embed_service.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1005
+    },
+    "rationale": "Car F (task #61): this file sat at 1000 (the HARD cap) before this change, so ANY net addition trips the gate. The additions are +5 net: two new fields on the /health payload (``version`` and ``versions_compatible`` — the Car F version handshake), one lazy import inside the health handler so the import lives beside the function that uses it. The I13 docstring at line 9 already pins this module as an ACCEPTED single-file case (relocated to embed_service_handshake.py for the helpers themselves; only the dict field remains here). The honest fix is the embed_service module split the I13 docstring references; that restructure belongs to the parked T2 layer-boundary train, not Car F. Shedding 5 lines by removing the version_handshake or the lazy import would mean either inlining the bound check into the dict literal (loses the sibling-module boundary the I13 cap rationale demanded) or moving the import to module top (which is what was tried first and which ruff rejected on the function-grouping lint). The 5-line cost is the cheapest expression of the deploy-ordering fix that satisfies both the 1000 HARD cap gate AND the I13 single-file rationale.",
+    "added": "2026-08-14",
+    "added_by": "car-f-deploy-ordering"
   }
 ]

@@ -138,10 +138,21 @@ def install_systemd_service(profile: ContainerProfile, dev: bool = False) -> dic
     backend_path = service_dir / backend_service_name
     core_path = service_dir / core_service_name
 
+    # Car F (task #61) — operator-facing message: backend first, then core,
+    # UNCONDITIONALLY (not "whichever version is newer" — the backend is
+    # always the dependency). The ~101 s window is the measured gap between
+    # the two ``start`` calls completing on a fresh install; the BindsTo
+    # added to ``yadgar.service`` (units.py:build_core_unit) means the core
+    # is auto-killed if the backend fails to come up, so this command is
+    # safe to run from a stale state. The window warning is in
+    # ``yadgar/core/cli/daemon.py::_handle_install_service`` so the
+    # install-flow CLI surfaces it on stdout; this dict is the data the
+    # handler renders.
     return {
         "backend_service": str(backend_path),
         "core_service": str(core_path),
         "enable": f"systemctl --user enable {backend_service_name} {core_service_name}",
         "start": f"systemctl --user start {backend_service_name} && systemctl --user start {core_service_name}",
         "status": f"systemctl --user status {backend_service_name} {core_service_name}",
+        "deploy_window_seconds": 101,
     }
