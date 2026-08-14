@@ -173,11 +173,31 @@ class TestGroupedReport:
     def test_buckets_sentinel_prose_git_local(self, fixture: dict) -> None:
         from yadgar.core.migrations import rekey_corpus
 
-        result = rekey_corpus.run(
-            counts=fixture["counts"],
-            map_path=fixture["map"],
-            apply=False,
-        )
+        # Patch the filesystem-probing helpers so the bucketed-report
+        # contract is tested on a deterministic mapping, not on whatever
+        # path happens to exist on the host running the test. CI does not
+        # have /home/max/git/yadgar, /home/max/notes, or /home/alice/notes
+        # on its filesystem — the live probes would all fall through to
+        # ``local/<basename>`` and the ``git`` assertion would fail.
+        # The fixture supplies the answers; the test verifies the bucket
+        # arithmetic on top of them.
+        def fake_walk(directory: str) -> str | None:
+            return None  # no .yadgar/project-id for any fixture path
+
+        def fake_origin(directory: str) -> str:
+            if directory == "/home/max/git/yadgar":
+                return "https://github.com/m-agahi/yadgar.git"
+            return ""  # the two notes paths are not git checkouts
+
+        with (
+            patch("yadgar.core.identity._walk_project_id_file", side_effect=fake_walk),
+            patch("yadgar.core.identity._origin_remote", side_effect=fake_origin),
+        ):
+            result = rekey_corpus.run(
+                counts=fixture["counts"],
+                map_path=fixture["map"],
+                apply=False,
+            )
 
         report = result["report"]
         assert report["discovered"] == 6  # 6 distinct directory_contexts
