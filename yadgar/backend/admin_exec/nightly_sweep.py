@@ -509,7 +509,7 @@ async def _count_candidates(
         project_ids, _ = _dedupe_projects(all_tasks)
 
     for project_id in project_ids:
-        tasks = await sql.list_task_rows(project_id=project_id, status=_STATUS_COMPLETED)
+        tasks = await sql.list_task_rows(project_id=project_id, status=[_STATUS_COMPLETED])
         for t in tasks:
             ts = _task_retired_at(t)
             if ts is not None and ts < cutoff:
