@@ -198,3 +198,4 @@ tool-surface  yadgar/core/server/tools/task.py             # forwards directory=
 tool-surface  benchmarks/run_eval.py                       # drives recall() over the tool surface that still accepts directory
 tool-surface  benchmarks/run_longmemeval.py                # drives recall() over the tool surface that still accepts directory
 tool-surface  benchmarks/run_perf_loadtest.py              # recall load test driving the same still-accepting tool surface as the two eval harnesses
+carve-out-2  yadgar/core/migrations/rekey_corpus.py      # Car D (2026-08-14): the migration script that reads directory_context off the corpus and stamps project_id; dies with the column in the next PR's drop migration

@@ -155,6 +155,10 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # it returns a manifest and writes nothing until the operator re-runs with
     # dry_run=False AND acknowledges the unmapped bucket and the deletes.
     "project_id_backfill": project_backfill.project_id_backfill,
+    # Car D: host-side migration's dry-run seed — returns DISTINCT
+    # ``directory_context`` counts so the core CLI can build the map
+    # without importing a storage handle (layer-boundary contract).
+    "rekey_discover_directories": project_backfill.rekey_discover_directories,
     "list_task_rows": ledger.list_task_rows,
     "get_task_row": ledger.get_task_row,
     "list_task_rows_all_projects": ledger.list_task_rows_all_projects,

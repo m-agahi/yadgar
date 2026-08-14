@@ -499,4 +499,42 @@ def _refusal(manifest: dict, payload: dict) -> str | None:
     return None
 
 
-__all__ = ["MEMIFY_CONTENT_MARKER", "MEMIFY_TAGS", "project_id_backfill"]
+__all__ = [
+    "MEMIFY_CONTENT_MARKER",
+    "MEMIFY_TAGS",
+    "project_id_backfill",
+    "rekey_discover_directories",
+]
+
+
+@observe(tier="stage", metric="backend.admin.rekey.discover")
+def rekey_discover_directories(payload: dict) -> dict:
+    """Car D — count DISTINCT ``directory_context`` values in the corpus.
+
+    Reads ``directory_context`` from ``memory`` + ``wiki_page`` (lightweight
+    projection, no full rows) and returns the aggregate as
+    ``{directory_context: {memory_rows: int, wiki_rows: int}}`` so the
+    host-side migration can derive ``owner/repo`` for each path and
+    write the operator-reviewable map.
+
+    Car D's host-side dry-run goes through this op via ``_forward_admin``
+    rather than importing a storage handle (the migration is core-side;
+    layer-boundary import-linter forbids it).
+    """
+    storage = _get_storage()
+    if storage is None:
+        return {"ok": False, "reason": "storage_unavailable"}
+
+    counts: dict[str, dict[str, int]] = {}
+    for table in _TABLES:
+        rows = storage._q(  # noqa: SLF001 — established migration idiom
+            f"SELECT directory_context FROM {table}"  # noqa: S608
+        )
+        for row in rows or ():
+            dc = row.get("directory_context")
+            if dc is None:
+                continue
+            bucket = counts.setdefault(str(dc), {"memory_rows": 0, "wiki_rows": 0})
+            bucket["memory_rows" if table == "memory" else "wiki_rows"] += 1
+
+    return {"ok": True, "counts": counts}

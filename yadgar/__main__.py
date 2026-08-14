@@ -103,6 +103,7 @@ def cli():
         install_hooks,
         install_mcp,
         install_subagents,
+        migrate,
         pending_findings,
         project,
         restore,
@@ -139,6 +140,7 @@ def cli():
     install_subagents.register(subparsers)
     update.register(subparsers)
     project.register(subparsers)
+    migrate.register(subparsers)
 
     args = parser.parse_args()
 
