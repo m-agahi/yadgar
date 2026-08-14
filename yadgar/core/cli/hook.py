@@ -336,7 +336,15 @@ def hook_prompt_recall() -> None:
     except Exception:  # noqa: BLE001 — never brick the prompt over identity
         pass
 
-    result = _http_get("/hooks/prompt-recall", params, timeout=0.5)
+    # 2026-08-14 Car G (task #63): bumped from 0.5 s after measured server
+    # latency 0.60–0.88 s. The old 0.5 s deadline aborted the request
+    # mid-recall, so the hook silently dropped the injection — operators saw
+    # an empty prompt and assumed a backend bug.
+    #
+    # TODO(next car): wire a ``prompt_recall.timeout_seconds`` config knob in
+    # _shared/config/config_registry.py and read it here via resolve_knob.
+    # Today this is a hardcoded call-site value to keep the fix surgical.
+    result = _http_get("/hooks/prompt-recall", params, timeout=2.0)
     if result:
         text = result.get("text", "")
         if text:

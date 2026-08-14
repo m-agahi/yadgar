@@ -145,3 +145,4 @@ docs/_build/
 /site
 *.mo
 *.pot
+.yadgar/

@@ -1548,7 +1548,20 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
             return JSONResponse({"text": "", "skipped": "session_context_recent"})
         # Throttle: max 1 recall per 2 minutes per directory
         if now - _st._last_prompt_recall.get(throttle_key, 0) < 120:
-            return JSONResponse({"text": "", "skipped": "rate_limited"})
+            # 2026-08-14 Car G (task #63): include ``retry_after_seconds`` so the
+            # client can distinguish a throttle hit from a real empty recall
+            # (today both return ``{"text":""}`` and the operator can't tell
+            # the difference during testing). Also log a WARN — silent throttle
+            # hits make recall regressions look like backend bugs.
+            retry_after = max(0, int(120 - (now - _st._last_prompt_recall.get(throttle_key, 0))))
+            logger.warning(
+                "prompt-recall throttled for directory=%s retry_after=%ds",
+                throttle_key or "<empty>",
+                retry_after,
+            )
+            return JSONResponse(
+                {"text": "", "skipped": "rate_limited", "retry_after_seconds": retry_after}
+            )
 
         try:
             # v5.113.0 (#166) forwarded this hook; ADR-0078 now forwards ALL THREE

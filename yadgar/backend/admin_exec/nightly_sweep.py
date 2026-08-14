@@ -423,7 +423,7 @@ async def _sweep_project_tasks(
     ``span=False`` per ADR-0074 — see ``_sweep_tasks_and_adrs`` for why the
     previous ``exempt=`` rationale was false.
     """
-    rows = await sql.list_task_rows(project_id=project_id, status=_STATUS_COMPLETED)
+    rows = await sql.list_task_rows(project_id=project_id, status=[_STATUS_COMPLETED])
     archived = 0
     skipped = 0
     for row in rows:

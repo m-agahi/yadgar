@@ -85,6 +85,30 @@ def test_cmd_hook_prompt_recall_flows_stdin(capsys):
     assert "42" in capsys.readouterr().out
 
 
+def test_cmd_hook_prompt_recall_deadline_at_least_1s(capsys):
+    """Car G (task #63): the prompt-recall hook deadline must clear the
+    measured server latency (0.60–0.88 s) with margin. The exact value may
+    be bumped in a later car (config knob TODO), so pin the LOWER bound
+    rather than the literal — a future bump to 3.0 s must not break this.
+    """
+    args = _parse(["hook", "prompt-recall"])
+    payload = json.dumps({"prompt": "anything", "cwd": "/proj"})
+    with (
+        patch.object(hook, "_http_get", return_value={"text": "ok"}) as mock_get,
+        patch("sys.stdin", io.StringIO(payload)),
+        pytest.raises(SystemExit),
+    ):
+        args.func(args)
+    timeout = mock_get.call_args.kwargs.get("timeout")
+    if timeout is None:
+        timeout = mock_get.call_args.args[2] if len(mock_get.call_args.args) >= 3 else None
+    assert timeout is not None, "prompt-recall call site must pass a timeout kwarg"
+    assert timeout >= 1.0, (
+        f"prompt-recall deadline too tight: {timeout}s — measured server "
+        f"latency 0.60–0.88 s. Car G (task #63) requires >=1.0s."
+    )
+
+
 def test_dispatch_unknown_returns_1():
     assert hook.dispatch("nope") == 1
 

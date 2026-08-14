@@ -341,24 +341,35 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         self,
         *,
         project_id: str,
-        status: str | None = None,
+        status: list[str] | None = None,
     ) -> list[dict]:
         """Project-scoped ``task`` read, optionally filtered by status.
 
         Always filters on ``project_id`` — never returns rows from other
         projects. Returns dicts keyed on ``id`` (AUTO_INCREMENT PK).
+
+        ``status`` is a list of allowed statuses (D37 default
+        ``["pending", "in_progress"]`` at the MCP tool layer). Empty list is
+        treated as "no filter" — same semantics as ``None`` — to mirror the
+        ``include_closed``-controls-default contract on the call site.
         """
-        from sqlalchemy import text  # noqa: PLC0415
+        from sqlalchemy import bindparam, text  # noqa: PLC0415
 
         params: dict[str, Any] = {"project_id": project_id}
         where_extra = ""
-        if status is not None:
-            where_extra = " AND status = :status"
-            params["status"] = status
+        if status:
+            # Car C: ``status`` is a list — use SQLAlchemy's expanding bindparam
+            # so ``:status`` becomes ``IN (:status_1, :status_2, ...)`` at
+            # execution. Single-element lists work the same as ``status = :status``
+            # after expansion. Empty list already short-circuited above.
+            where_extra = " AND status IN (:status)"
+            params["status"] = list(status)
         sql = text(
             f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
             "FROM task WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC"
         )
+        if status:
+            sql = sql.bindparams(bindparam("status", expanding=True))
         async with self._engine.connect() as conn:
             result = await conn.execute(sql, params)
             return [dict(row._mapping) for row in result]
@@ -367,25 +378,30 @@ class MariaStorageEngine(_ProjectRegistryMixin):
     async def list_task_rows_all_projects(
         self,
         *,
-        status: str | None = None,
+        status: list[str] | None = None,
     ) -> list[dict]:
         """Cross-project ``task`` read — used by ops / dashboards, not users.
 
         The ``task_list`` tool per project goes through ``list_task_rows``
         (which scopes by ``project_id``); this method is the cross-project
         variant for ops surfaces that legitimately span projects.
+
+        ``status`` is a list of allowed statuses (Car C — see
+        ``list_task_rows``). Empty list = no filter.
         """
-        from sqlalchemy import text  # noqa: PLC0415
+        from sqlalchemy import bindparam, text  # noqa: PLC0415
 
         params: dict[str, Any] = {}
         where_extra = ""
-        if status is not None:
-            where_extra = " WHERE status = :status"
-            params["status"] = status
+        if status:
+            where_extra = " WHERE status IN (:status)"
+            params["status"] = list(status)
         sql = text(
             f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
             "FROM task" + where_extra + " ORDER BY id ASC"
         )
+        if status:
+            sql = sql.bindparams(bindparam("status", expanding=True))
         async with self._engine.connect() as conn:
             result = await conn.execute(sql, params)
             return [dict(row._mapping) for row in result]

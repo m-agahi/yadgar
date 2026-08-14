@@ -431,3 +431,67 @@ class TestForwardHookRecallDeadline:
 
         expected_ms = int(get_settings().HOOK_RECALL_TIMEOUT_S * 1000)
         assert captured.get("deadline_ms") == expected_ms, captured
+
+
+# ---------------------------------------------------------------------------
+# Car G (task #63): throttle response shape must include retry_after_seconds
+# ---------------------------------------------------------------------------
+
+
+class TestPromptRecallThrottleShape:
+    """Car G (task #63): the 120 s throttle on /hooks/prompt-recall used to
+    return ``{"text": "", "skipped": "rate_limited"}`` — indistinguishable
+    from a real empty recall, so operators investigating "why is no
+    injection happening" wasted time chasing a backend bug that was actually
+    a throttle hit. The response must now carry ``retry_after_seconds`` and
+    the handler must log a WARN.
+    """
+
+    def test_throttle_response_includes_retry_after_seconds(self):
+        """When the prompt-recall throttle fires, the response body must
+        include ``retry_after_seconds`` so a client (or operator reading
+        curl output) can tell a throttle hit from a real empty recall.
+        """
+        import yadgar._shared.runtime.state as _st
+        import yadgar.core.server.http as _http
+
+        # Pre-stamp the throttle key with a recent timestamp so the 120 s
+        # check at http.py fires on the very next call.
+        throttle_key = "/proj/throttle-shape"
+        now = __import__("time").monotonic()
+        with (
+            patch.object(_st, "_last_session_context", {}),
+            patch.object(_st, "_last_prompt_recall", {throttle_key: now}),
+        ):
+            req = _make_mock_request(
+                {"query": "anything", "directory": throttle_key, "project": "owner/repo"}
+            )
+
+            async def _run():
+                # _recall_with_timeout is unreachable when the throttle fires;
+                # patch it so any regression that lets the call through is
+                # caught as a loud failure.
+                with patch(
+                    "yadgar.core.server.http._recall_with_timeout",
+                    side_effect=AssertionError("throttle did not fire — handler hit recall"),
+                ):
+                    return await _http.hook_prompt_recall(req)
+
+            resp = asyncio.run(_run())
+
+        body = json.loads(resp.body)
+        assert body.get("text") == "", body
+        assert body.get("skipped") == "rate_limited", body
+        # The new key — exactly what was missing before Car G.
+        assert "retry_after_seconds" in body, (
+            "prompt-recall throttle response must include retry_after_seconds "
+            "(Car G task #63) so operators can tell a throttle hit from a "
+            "real empty recall. Got: " + repr(body)
+        )
+        # retry_after_seconds is a non-negative int bounded by the 120 s window
+        # (just-stamped: value should be very close to 120).
+        retry = body["retry_after_seconds"]
+        assert isinstance(retry, int), (
+            f"retry_after_seconds must be int, got {type(retry).__name__}"
+        )
+        assert 0 <= retry <= 120, f"retry_after_seconds out of range: {retry}"
