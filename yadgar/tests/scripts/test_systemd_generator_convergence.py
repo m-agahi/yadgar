@@ -146,6 +146,16 @@ INTENTIONAL_DELTAS: dict[str, list[Delta]] = {
             "Exec lines; the Description does not need to guess at it.",
         ),
         Delta(
+            r"^BindsTo=yadgar-backend\.service$",
+            "Car F (task #61): adds a hard kill of the core when the backend dies. The "
+            "prior shape was Wants= only (a soft dependency), which let the core keep "
+            "running against a dead backend — the silent-misbehaviour half of the "
+            "~101 s deploy window the Car F handshake exists to detect. The Wants= "
+            "directive below still provides the soft pull-in at start; BindsTo is the "
+            "tighten-up on stop, not a duplicate. Pinning here so a future removal "
+            "trips this convergence test before the deploy window reopens.",
+        ),
+        Delta(
             r"^# (generate_systemd\.sh either STRIPS|The renderer emits each runtime-conditional)",
             "The column-0 marker mechanism ADR-0185 introduced is retired by ADR-0190 — the "
             "runtime conditional becomes a Python branch. The sentence describing sed markers "

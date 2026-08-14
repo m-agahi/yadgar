@@ -1,6 +1,7 @@
 [Unit]
 Description=Yadgar Memory Engine / MCP Server
 After=network.target yadgar-backend.service
+BindsTo=yadgar-backend.service
 # Wants=, NOT Requires= (task:0111 / ADR-0188). Requires= propagates STOP: a
 # `systemctl --user stop yadgar-backend` — which every vacuum does to quiesce
 # the surrealkv store — would take the core down with it and drop every

@@ -776,6 +776,11 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
 @observe(tier="boundary", metric="backend.health")
 async def health(response: Response):
     """200 only when DB + model + MariaDB all up. Car B (§15.4) adds MariaDB probe (ADR-0200)."""
+    from yadgar.backend.embed_service.embed_service_handshake import (  # noqa: PLC0415
+        backend_handshake_block,
+        backend_health_version,
+    )
+
     db_url = os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000")
     engine_loaded = _engine is not None and not _engine._unavailable and _engine._model is not None
 
@@ -797,6 +802,7 @@ async def health(response: Response):
 
     payload = {
         "status": "ok" if (db_ok and engine_loaded and ledger_ok) else "degraded",
+        "version": backend_health_version(),
         "db": db_ok,
         "model": engine_loaded,
         # backend 5.30.1: drainer state is informational (alerting via the
@@ -804,6 +810,7 @@ async def health(response: Response):
         # queue-mount misconfig cannot restart-loop the embed/rerank service.
         "drainer": _queue_drainer is not None and _queue_drainer.is_alive(),
         "ledger": ledger_ok,
+        "versions_compatible": backend_handshake_block(),
     }
     if not db_ok or not engine_loaded or not ledger_ok:
         response.status_code = 503

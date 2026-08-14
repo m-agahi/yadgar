@@ -462,6 +462,17 @@ def build_core_unit(spec: UnitSpec) -> UnitFile:
                 (
                     Directive("Description", "Yadgar Memory Engine / MCP Server"),
                     Directive("After", f"network.target {backend}"),
+                    # Car F (task #61) — BindsTo= kills the core if the backend
+                    # dies. ``Wants=`` was the prior relation (lines below) and
+                    # was a soft dependency: the core kept running on a dead
+                    # backend, which is the silent-misbehaviour half of the
+                    # ~101 s deploy window. BindsTo adds the hard kill, so the
+                    # core cannot out-live its peer; the restart order fix
+                    # in core/update/orchestrator.py:653 then restarts backend
+                    # FIRST on upgrade, and BindsTo stops the core cleanly so
+                    # the new backend can come up without a wire-incompatible
+                    # client hammering it.
+                    Directive("BindsTo", backend),
                     *comments(CORE_WANTS_DOC),
                     Directive("Wants", backend),
                     *(comments(CORE_STATE_DOC, state_dir=spec.state_dir) if trigger else ()),

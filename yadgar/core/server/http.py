@@ -672,6 +672,13 @@ async def _build_health_payload() -> dict:
         "transport": _st._active_transport,
         "uptime_seconds": _uptime_seconds(),
         "active_sessions": session_count,
+        # Car F (task #61) — version handshake. The peer here is the backend,
+        # probed at the embed URL (same shape as the db probe, but the embed
+        # service is the one that exposes ``version`` in its /health payload).
+        # Absence of a version field on the peer is reported as "unverifiable"
+        # rather than "incompatible" — the check is permissive on read and
+        # strict on write (the orchestrator writes the boundary).
+        "versions_compatible": _handshake_block(embed_url),
     }
     if db_ok is not None:
         payload["db"] = db_ok
@@ -697,6 +704,38 @@ async def _build_health_payload() -> dict:
     else:
         _readiness_consecutive_failures = 0
     return payload
+
+
+@observe(tier="stage")
+def _handshake_block(peer_url: str | None) -> dict:
+    """Build the ``versions_compatible`` block Car F (task #61) added.
+
+    Probes the peer's ``/health`` for its declared version, then asks
+    :mod:`yadgar._shared.version_compat` whether the (self, peer) pair
+    is within the supported window. The probe is best-effort — a peer
+    we cannot reach (or one that does not advertise a version) is
+    reported as ``unverifiable`` rather than ``incompatible``, so a
+    transient probe failure does not 503 the readiness handler.
+    """
+    import httpx as _httpx  # noqa: PLC0415
+
+    from yadgar import BACKEND_VERSION  # noqa: PLC0415
+    from yadgar._shared.version_compat import handshake_status  # noqa: PLC0415
+
+    if not peer_url:
+        # No peer configured (single-process dev mode) — unverifiable, not
+        # incompatible. Mirrors the daemon's own "fresh install" self-check.
+        return handshake_status(BACKEND_VERSION, "unknown", side="core")
+
+    try:
+        with _httpx.Client(timeout=1.5) as _c:
+            _r = _c.get(f"{peer_url}/health")
+        if _r.status_code != 200:
+            return handshake_status(BACKEND_VERSION, "unknown", side="core")
+        _peer_version = _r.json().get("version") or "unknown"
+    except Exception:
+        return handshake_status(BACKEND_VERSION, "unknown", side="core")
+    return handshake_status(BACKEND_VERSION, _peer_version, side="core")
 
 
 @observe(tier="stage")

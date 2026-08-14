@@ -504,5 +504,16 @@
     "rationale": "Car B (2026-08-14 train): the function builds (sync, async) instrumented wrappers for every @_tool — each wrapper carries its own session-binding ContextVar plumbing (Car B's session_bind.bind_session entrypoint), and the per-tool branch count grew because Car B adds: (1) a ``sync_or_async`` discriminator (was implicit before Car B; now the function must decide which of the two wrappers to emit per tool, since Car B's offload-to-worker-thread offload hook runs INSIDE the wrapper and only one of the two wrappers needs it), (2) a ``needs_session_bind`` discriminator (tools that take an explicit ``project=`` override do NOT need the session-bind wrapper — only tools that read project from the ContextVar do), and (3) a ``forwards_to_backend`` discriminator (the proxy tools that already route through ``_forward_admin`` would double-wrap if they got the session-bind treatment). The net effect is +1 cyclomatic branch per discriminator + the existing branch tree, hitting 16 (limit 15); fn_loc grew 137 -> 162 with the discriminator branches and the docstring explaining why each discriminator exists. The honest fix is splitting into ``_build_sync_wrapper`` + ``_build_async_wrapper`` + a small ``_needs_*`` predicate set — but that move belongs to the wave-N module split alongside the existing Car 0037 entry below (and the F5/F10 / ci-local allowlists at the file level), not a Car B (binding-only) scope. Refactoring the wrapper inside a car whose entire purpose is to ADD session-binding (not refactor wrappers) would couple two changes and balloon the diff.",
     "added": "2026-08-14",
     "added_by": "car-b-session-bind"
+  },
+  {
+    "path": "yadgar/backend/embed_service/embed_service.py",
+    "function": "<file>",
+    "lineno": 1,
+    "metrics": {
+      "file_loc": 1005
+    },
+    "rationale": "Car F (task #61): this file sat at 1000 (the HARD cap) before this change, so ANY net addition trips the gate. The additions are +5 net: two new fields on the /health payload (``version`` and ``versions_compatible`` — the Car F version handshake), one lazy import inside the health handler so the import lives beside the function that uses it. The I13 docstring at line 9 already pins this module as an ACCEPTED single-file case (relocated to embed_service_handshake.py for the helpers themselves; only the dict field remains here). The honest fix is the embed_service module split the I13 docstring references; that restructure belongs to the parked T2 layer-boundary train, not Car F. Shedding 5 lines by removing the version_handshake or the lazy import would mean either inlining the bound check into the dict literal (loses the sibling-module boundary the I13 cap rationale demanded) or moving the import to module top (which is what was tried first and which ruff rejected on the function-grouping lint). The 5-line cost is the cheapest expression of the deploy-ordering fix that satisfies both the 1000 HARD cap gate AND the I13 single-file rationale.",
+    "added": "2026-08-14",
+    "added_by": "car-f-deploy-ordering"
   }
 ]
