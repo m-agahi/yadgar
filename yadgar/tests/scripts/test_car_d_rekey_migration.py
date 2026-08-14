@@ -133,10 +133,12 @@ class TestDryRunNoWrites:
 
         assert fixture["map"].exists()
         contents = fixture["map"].read_text()
-        # Sentinels pre-classified to DROP in column 2.
         data_rows = [line for line in contents.splitlines() if line and not line.startswith("#")]
-        sentinel_rows = [line for line in data_rows if line.split("\t")[1] == "DROP"]
-        assert len(sentinel_rows) == 1  # the 'global' sentinel in the fixture
+        by_source = {line.split("\t")[0]: line.split("\t")[1] for line in data_rows}
+        # The 'global' sentinel SPLITS: D4's producer cohort drops, the
+        # remainder carries Decision G's owner. It is NOT one DROP row.
+        assert by_source["global::memify"] == "DROP"
+        assert by_source["global::rest"] == "local/aws-work"
         # Real paths keep their derivation.
         assert "/home/max/git/yadgar" in contents
 
@@ -162,7 +164,8 @@ class TestGroupedReport:
             "/home/max/notes": {"memory_rows": 1, "wiki_rows": 0},
             # second path with the same basename — collision
             "/home/alice/notes": {"memory_rows": 1, "wiki_rows": 0},
-            # sentinel — DROP
+            # sentinel — 'global' SPLITS (D4 memify drops, Decision G keeps
+            # the remainder); 'system' is a whole-class DROP (D3).
             "global": {"memory_rows": 1, "wiki_rows": 0},
             "system": {"memory_rows": 1, "wiki_rows": 0},
             # free-text prose — REVIEW
@@ -201,21 +204,28 @@ class TestGroupedReport:
 
         report = result["report"]
         assert report["discovered"] == 6  # 6 distinct directory_contexts
+        # 'global' emits two cohort rows, so rows > distinct directories.
+        assert report["rows_emitted"] == 7
+        # This fixture injects no ``cohorts``, so the DESTRUCTIVE cohort's
+        # size is unknown. That must be visible: a memify row reading 0 rows
+        # would otherwise be read as "nothing dies".
+        assert report["cohort_counts_available"] is False
 
-        # Drop bucket — the two sentinels.
-        drop_dirs = {r["directory_context"] for r in report["drop_rows"]}
-        assert drop_dirs == {"global", "system"}
+        # Drop bucket — 'system' whole-class (D3) + 'global's memify cohort (D4).
+        drop_cohorts = {(r["directory_context"], r["cohort"]) for r in report["drop_rows"]}
+        assert drop_cohorts == {("system", ""), ("global", "memify")}
 
         # Review bucket — the prose row.
         review_dirs = {r["directory_context"] for r in report["review_rows"]}
         assert review_dirs == {"db_inspect"}
 
-        # Seed bucket — the three real paths.
+        # Seed bucket — the three real paths PLUS Decision G's 'global' remainder.
         seed_dirs = {r["directory_context"] for r in report["seed_rows"]}
         assert seed_dirs == {
             "/home/max/git/yadgar",
             "/home/max/notes",
             "/home/alice/notes",
+            "global",
         }
 
         # Git vs local — owner/repo for the git repo, local/<basename>
@@ -260,10 +270,286 @@ class TestGroupedReport:
 
         contents = fixture["map"].read_text()
         lines = [line for line in contents.splitlines() if line and not line.startswith("#")]
-        # Two DROP rows (sentinels), one REVIEW (prose), three seed rows.
+        # Two DROP rows ('system' + 'global::memify'), one REVIEW (prose),
+        # four seed rows (three real paths + 'global::rest').
         assert sum(1 for ln in lines if ln.split("\t")[1] == "DROP") == 2
         assert sum(1 for ln in lines if ln.split("\t")[1] == "REVIEW") == 1
-        assert sum(1 for ln in lines if ln.split("\t")[1] not in ("DROP", "REVIEW")) == 3
+        assert sum(1 for ln in lines if ln.split("\t")[1] not in ("DROP", "REVIEW")) == 4
+
+
+# ── Decision G / D4: the `global` cohort split ──────────────────────────────
+
+
+class TestGlobalCohortSplit:
+    """``global`` is TWO cohorts with TWO decisions — not one DROP.
+
+    The plan (``docs/plans/archive/0047-pr40-remediation-2026-08-10.md``):
+
+      * **D4** (:858) — DELETE only the ``_memify_derive`` sub-cohort, scoped
+        by PRODUCER SIGNATURE (tags ``derived`` + ``auto-generated`` AND
+        content matching *"are frequently modified together"*), never by
+        ``directory_context`` alone.
+      * **Decision G** (:207-209) — the REMAINDER gets
+        ``project_id = local/aws-work`` PLUS the ``global`` tag. Owner and
+        reach are separate axes (§1.4), hence BOTH.
+
+    The backend already implements both correctly
+    (``project_backfill._is_memify_global`` is the D4 four-way signature;
+    ``_plan_updates`` sets ``add_global_tag`` when the key is the sentinel).
+    What was missing is the CORE side handing the backend a mapping that
+    contains ``global`` at all — ``_map_target`` classified the whole
+    sentinel to ``DROP`` and ``apply_map`` skips ``DROP`` rows, so the
+    ``global`` key never reached ``project_id_backfill``.
+    """
+
+    @pytest.fixture
+    def fixture(self, tmp_path: Path) -> dict:
+        return {
+            "counts": {
+                "global": {"memory_rows": 350, "wiki_rows": 83},
+                "system": {"memory_rows": 604, "wiki_rows": 0},
+            },
+            # Measured live 2026-08-14 (the plan recorded 238 on 2026-08-10 —
+            # counts drift, which is exactly why this is injected rather than
+            # hardcoded in the module).
+            "cohorts": {"memify_global": {"memory_rows": 237, "wiki_rows": 0}},
+            "map": tmp_path / "map.tsv",
+        }
+
+    def _run(self, fixture: dict):
+        from yadgar.core.migrations import rekey_corpus
+
+        return rekey_corpus.run(
+            counts=fixture["counts"],
+            cohorts=fixture["cohorts"],
+            map_path=fixture["map"],
+            apply=False,
+        )
+
+    # ── THE seam: what apply_map forwards to the backend ────────────────────
+
+    def test_apply_forwards_global_to_local_aws_work(self, fixture: dict) -> None:
+        """Decision G, asserted where it bites.
+
+        A test that only greps the TSV would go green on a ``write_map``-only
+        fix while ``apply_map`` still skipped the row: the DROP-skip branch is
+        in ``apply_map``, not in the generator. So this asserts on the
+        ``mapping`` dict actually handed to ``project_id_backfill``."""
+        from yadgar.core.migrations import rekey_corpus
+
+        self._run(fixture)
+
+        with patch("yadgar.core.forward._forward_admin", return_value={"ok": True}) as fwd:
+            rekey_corpus.apply_map(fixture["map"], confirm=True)
+
+        backfill_calls = [c for c in fwd.call_args_list if c.args[0] == "project_id_backfill"]
+        assert len(backfill_calls) == 1
+        mapping = backfill_calls[0].args[1]["mapping"]
+        # The literal sentinel is the backend's key — the ``::cohort`` suffix
+        # is a map-file encoding and must never reach the backend.
+        assert mapping["global"] == "local/aws-work"
+        assert not any("::" in key for key in mapping)
+
+    def test_registry_is_seeded_with_local_aws_work(self, fixture: dict) -> None:
+        """Decision G's target is a real registered project (ADR-0223 is
+        fail-loud on unknown targets), so the apply must seed it."""
+        from yadgar.core.migrations import rekey_corpus
+
+        self._run(fixture)
+
+        with patch("yadgar.core.forward._forward_admin", return_value={"ok": True}) as fwd:
+            rekey_corpus.apply_map(fixture["map"], confirm=True)
+
+        seeded = {c.args[1]["key"] for c in fwd.call_args_list if c.args[0] == "create_project_row"}
+        assert seeded == {"local/aws-work"}
+
+    def test_memify_cohort_never_enters_the_mapping(self, fixture: dict) -> None:
+        """D4's cohort is a DELETE, driven by the backend's producer-signature
+        predicate. It must contribute no mapping entry of its own."""
+        from yadgar.core.migrations import rekey_corpus
+
+        self._run(fixture)
+
+        with patch("yadgar.core.forward._forward_admin", return_value={"ok": True}) as fwd:
+            rekey_corpus.apply_map(fixture["map"], confirm=True)
+
+        backfill = next(c for c in fwd.call_args_list if c.args[0] == "project_id_backfill")
+        assert "system" not in backfill.args[1]["mapping"]
+        assert len(backfill.args[1]["mapping"]) == 1
+
+    # ── the map file the operator reviews ───────────────────────────────────
+
+    def test_map_splits_global_into_two_cohort_rows(self, fixture: dict) -> None:
+        """The destructive D4 decision gets its OWN reviewable line.
+
+        One ``global -> local/aws-work`` row plus a note would also work (the
+        backend predicate is authoritative either way); two rows is chosen so
+        an operator reading the map sees that a subset dies."""
+        self._run(fixture)
+
+        rows = {
+            line.split("\t")[0]: line.split("\t")[1]
+            for line in fixture["map"].read_text().splitlines()
+            if line and not line.startswith("#")
+        }
+        assert rows["global::memify"] == "DROP"
+        assert rows["global::rest"] == "local/aws-work"
+        # The undifferentiated sentinel row is GONE — re-emitting it is the
+        # regression that would silently overwrite the user's decision.
+        assert "global" not in rows
+
+    def test_system_is_still_dropped(self, fixture: dict) -> None:
+        """D3, verbatim: "d3. delete". Guard against the fix over-reaching."""
+        self._run(fixture)
+
+        rows = {
+            line.split("\t")[0]: line.split("\t")[1]
+            for line in fixture["map"].read_text().splitlines()
+            if line and not line.startswith("#")
+        }
+        assert rows["system"] == "DROP"
+
+    def test_cohort_counts_come_from_the_backend(self, fixture: dict) -> None:
+        """237 is measured, never hardcoded: the memify count arrives from the
+        discovery op and the remainder is arithmetic over it."""
+        result = self._run(fixture)
+
+        by_dir = {
+            (r["directory_context"], r["cohort"]): r
+            for r in result["report"]["drop_rows"] + result["report"]["seed_rows"]
+        }
+        memify = by_dir[("global", "memify")]
+        rest = by_dir[("global", "rest")]
+        assert memify["memory_rows"] == 237
+        assert memify["wiki_rows"] == 0  # the D4 signature is memory-only
+        assert rest["memory_rows"] == 350 - 237
+        assert rest["wiki_rows"] == 83
+
+    def test_report_buckets_memify_drop_and_rest_seed(self, fixture: dict) -> None:
+        """The two cohorts land in DIFFERENT buckets — that IS the split."""
+        result = self._run(fixture)
+
+        drop = {(r["directory_context"], r["cohort"]) for r in result["report"]["drop_rows"]}
+        seed = {(r["directory_context"], r["cohort"]) for r in result["report"]["seed_rows"]}
+        assert ("global", "memify") in drop
+        assert ("system", "") in drop
+        assert ("global", "rest") in seed
+
+    def test_discovered_counts_distinct_directories_not_emitted_rows(self, fixture: dict) -> None:
+        """``discovered`` keeps meaning "distinct directory_context values";
+        the cohort split is reported separately as ``rows_emitted``."""
+        result = self._run(fixture)
+
+        assert result["report"]["discovered"] == 2  # 'global' + 'system'
+        assert result["report"]["rows_emitted"] == 3  # global x2 + system
+
+    # ── column 2 stays authoritative for the delete cohorts ─────────────────
+
+    def test_retargeting_a_delete_cohort_refuses_to_apply(self, fixture: dict) -> None:
+        """The footgun this split creates, closed.
+
+        The D4/D3 deletes are driven by BACKEND predicates, so an operator who
+        retargets ``global::memify`` to a project_id would see the rows deleted
+        anyway — a column that reads authoritative but is not. So ``apply_map``
+        withholds ``confirm_deletes`` and refuses, rather than proceeding with
+        a map whose delete rows it cannot honour."""
+        from yadgar.core.migrations import rekey_corpus
+
+        self._run(fixture)
+        text = (
+            fixture["map"]
+            .read_text()
+            .replace("global::memify\tDROP", "global::memify\tlocal/keepme")
+        )
+        fixture["map"].write_text(text)
+
+        with patch("yadgar.core.forward._forward_admin", return_value={"ok": True}) as fwd:
+            result = rekey_corpus.apply_map(fixture["map"], confirm=True)
+
+        assert result["ok"] is False
+        assert result["reason"] == "delete_cohort_retargeted"
+        assert "global::memify" in result["retargeted"]
+        fwd.assert_not_called()  # refuses BEFORE any registry write
+
+    def test_confirm_deletes_is_derived_from_the_map(self, fixture: dict) -> None:
+        """A DROP-marked delete cohort in the reviewed map IS the operator's
+        confirmation — it is not hardcoded True at the call site."""
+        from yadgar.core.migrations import rekey_corpus
+
+        self._run(fixture)
+
+        with patch("yadgar.core.forward._forward_admin", return_value={"ok": True}) as fwd:
+            rekey_corpus.apply_map(fixture["map"], confirm=True)
+
+        backfill = next(c for c in fwd.call_args_list if c.args[0] == "project_id_backfill")
+        assert backfill.args[1]["confirm_deletes"] is True
+
+    def test_run_apply_propagates_the_refusal_to_the_top_level_ok(self, fixture: dict) -> None:
+        """The refusal must reach the CLI's exit code.
+
+        ``cmd_migrate_rekey`` returns 0/1 off ``result["ok"]``. A refusal
+        nested under ``result["apply"]["ok"]`` and nothing else means
+        ``yadgar migrate rekey --apply`` prints "ok": false and exits 0 —
+        a gate nothing scripting this command can detect."""
+        from yadgar.core.migrations import rekey_corpus
+
+        self._run(fixture)
+        fixture["map"].write_text(
+            fixture["map"]
+            .read_text()
+            .replace("global::memify\tDROP", "global::memify\tlocal/keepme")
+        )
+
+        with patch("yadgar.core.forward._forward_admin", return_value={"ok": True}):
+            result = rekey_corpus.run(
+                counts=fixture["counts"],
+                cohorts=fixture["cohorts"],
+                map_path=fixture["map"],
+                apply=True,
+            )
+
+        assert result["ok"] is False
+        assert result["reason"] == "delete_cohort_retargeted"
+        assert result["apply"]["reason"] == "delete_cohort_retargeted"
+
+    def test_unknown_cohort_suffix_is_not_split(self, tmp_path: Path) -> None:
+        """``::`` is only a cohort separator for the cohorts we define.
+
+        ``apply_map`` reads a possibly hand-edited file, and REVIEW rows exist
+        so an operator CAN retarget them — including the free-text-prose
+        values the plan counts 18 of. Splitting on any ``::`` would silently
+        truncate such a key and stamp nothing. (Measured 2026-08-14: zero live
+        rows contain ``::`` — this keeps it that way by construction.)"""
+        from yadgar.core.migrations import rekey_corpus
+
+        map_path = tmp_path / "map.tsv"
+        map_path.write_text("weird::value\tlocal/weird\t3\t0\thand-retargeted\n")
+
+        with patch("yadgar.core.forward._forward_admin", return_value={"ok": True}) as fwd:
+            rekey_corpus.apply_map(map_path, confirm=True)
+
+        backfill = next(c for c in fwd.call_args_list if c.args[0] == "project_id_backfill")
+        assert backfill.args[1]["mapping"] == {"weird::value": "local/weird"}
+
+    def test_tag_suffix_in_column_two_is_tolerated(self, fixture: dict) -> None:
+        """Tolerant read, strict write: the generator emits a clean registry
+        key, but a hand-edited map annotating the reach axis inline still
+        resolves to the same project_id rather than seeding a bogus one."""
+        from yadgar.core.migrations import rekey_corpus
+
+        self._run(fixture)
+        text = (
+            fixture["map"]
+            .read_text()
+            .replace("global::rest\tlocal/aws-work", "global::rest\tlocal/aws-work +TAG:global")
+        )
+        fixture["map"].write_text(text)
+
+        with patch("yadgar.core.forward._forward_admin", return_value={"ok": True}) as fwd:
+            rekey_corpus.apply_map(fixture["map"], confirm=True)
+
+        backfill = next(c for c in fwd.call_args_list if c.args[0] == "project_id_backfill")
+        assert backfill.args[1]["mapping"]["global"] == "local/aws-work"
 
 
 # ── CLI wiring ──────────────────────────────────────────────────────────────

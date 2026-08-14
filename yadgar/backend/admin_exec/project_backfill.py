@@ -520,6 +520,20 @@ def rekey_discover_directories(payload: dict) -> dict:
     Car D's host-side dry-run goes through this op via ``_forward_admin``
     rather than importing a storage handle (the migration is core-side;
     layer-boundary import-linter forbids it).
+
+    ALSO returns ``cohorts`` — the SUB-counts the host cannot compute.
+    ``directory_context = 'global'`` is not one decision but two (§1.5 G and
+    D4): the ``_memify_derive`` producer's rows are DELETED, the remainder
+    gets ``local/aws-work`` plus the ``global`` reach tag. The discriminator
+    is a CONTENT+TAGS predicate, so a host holding only per-directory counts
+    cannot split it — the count has to come from here, and it has to come
+    from ``_is_memify_global`` itself rather than a second copy of the
+    four-way signature that would drift from it.
+
+    The extra read is scoped to ``directory_context = 'global'`` (~350 rows
+    live) rather than widening the projection above: ``_scan``'s docstring
+    exists because pulling ``content`` across ``wiki_page`` drags 2,343 full
+    page bodies.
     """
     storage = _get_storage()
     if storage is None:
@@ -537,4 +551,19 @@ def rekey_discover_directories(payload: dict) -> dict:
             bucket = counts.setdefault(str(dc), {"memory_rows": 0, "wiki_rows": 0})
             bucket["memory_rows" if table == "memory" else "wiki_rows"] += 1
 
-    return {"ok": True, "counts": counts}
+    global_rows = storage._q(  # noqa: SLF001
+        "SELECT id, directory_context, tags, content FROM memory WHERE directory_context = $dc",
+        {"dc": GLOBAL_SENTINEL},
+    )
+    memify_rows = sum(1 for row in global_rows or () if _is_memify_global(row))
+
+    return {
+        "ok": True,
+        "counts": counts,
+        "cohorts": {
+            # wiki_rows is 0 by construction, not by measurement: D4's
+            # signature keys on ``content``+``tags``, and _memify_derive
+            # writes to ``memory`` only.
+            "memify_global": {"memory_rows": memify_rows, "wiki_rows": 0},
+        },
+    }
