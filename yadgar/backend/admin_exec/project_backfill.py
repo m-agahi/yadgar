@@ -66,6 +66,7 @@ would describe a larger set than the one that survives.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -343,6 +344,63 @@ async def _unknown_registry_targets(mapping: dict[str, str]) -> tuple[list[str],
 
 
 @observe(tier="stage")
+def _add_global_tag(storage: Any, entry: dict) -> None:
+    """Give every row leaving the ``global`` sentinel the reach tag.
+
+    Two statements, because ``tags`` has two shapes in this corpus. The
+    array rows take a set-based ``array::union`` (union rather than append:
+    re-running must not duplicate the tag). The rows whose ``tags`` is a
+    JSON *string* — a legacy shape nine modules already defend against when
+    reading, and which ``curation/ingestion.py`` was still producing — are
+    repaired one at a time: parsed, unioned, and written back as a real
+    array.
+
+    Repairing rather than skipping is the point. Owner and reach are
+    separate axes (§1.4): a row that loses the ``global`` tag is narrowed to
+    a single project, so dropping the awkward rows would silently reverse
+    the very decision the sentinel split exists to honour. A row whose tags
+    cannot be parsed keeps its own tags and still gains the reach tag.
+
+    Takes the manifest *entry* rather than an unpacked key so this helper
+    introduces no new `directory`-family parameter in a scoping position
+    (ADR-0225 residue lint) — the legacy column is read exactly the way
+    ``_apply`` already reads it, and dies with the column in the drop
+    migration.
+    """
+    table = entry["table"]
+    dc = entry["directory_context"]
+    storage._q(  # noqa: SLF001
+        f"UPDATE {table} SET tags = array::union(tags, ['{GLOBAL_TAG}']) "  # noqa: S608
+        "WHERE directory_context = $dc AND type::is::array(tags)",
+        {"dc": dc},
+    )
+
+    stragglers = (
+        storage._q(  # noqa: SLF001
+            f"SELECT id, tags FROM {table} "  # noqa: S608
+            "WHERE directory_context = $dc AND !type::is::array(tags)",
+            {"dc": dc},
+        )
+        or []
+    )
+    for row in stragglers:
+        raw = row.get("tags")
+        existing: list = []
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except (ValueError, TypeError):  # fmt: skip
+                # Not JSON — a bare tag string is still one tag, not a loss.
+                parsed = [raw]
+            existing = parsed if isinstance(parsed, list) else [parsed]
+        repaired = [*existing, GLOBAL_TAG] if GLOBAL_TAG not in existing else list(existing)
+        storage._q(  # noqa: SLF001
+            f"UPDATE type::record('{table}', $id) SET tags = $tags",  # noqa: S608
+            {"id": storage._extract_id(row["id"]), "tags": repaired},  # noqa: SLF001
+        )
+
+
+@observe(tier="stage")
 def _apply(storage: Any, manifest: dict) -> None:
     """Execute the manifest. DELETES FIRST — see the module docstring.
 
@@ -360,14 +418,18 @@ def _apply(storage: Any, manifest: dict) -> None:
 
     for entry in manifest["updates"]:
         table = entry["table"]
-        set_clause = "project_id = $pid"
-        if entry["add_global_tag"]:
-            # Union rather than append: re-running must not duplicate the tag.
-            set_clause += f", tags = array::union(tags, ['{GLOBAL_TAG}'])"
+        # The stamp is its OWN statement, deliberately. It was previously
+        # fused with the tag union below, so a single row whose `tags` is a
+        # JSON string rather than an array made SurrealDB reject the whole
+        # UPDATE — and every row sharing that directory_context then got
+        # NEITHER its project_id NOR the tag. An always-safe write must not
+        # be coupled to a data-dependent one.
         storage._q(  # noqa: SLF001
-            f"UPDATE {table} SET {set_clause} WHERE directory_context = $dc",  # noqa: S608
+            f"UPDATE {table} SET project_id = $pid WHERE directory_context = $dc",  # noqa: S608
             {"pid": entry["project_id"], "dc": entry["directory_context"]},
         )
+        if entry["add_global_tag"]:
+            _add_global_tag(storage, entry)
 
     for entry in manifest["quarantine"]:
         # legacy_directory ONLY — no project_id. These rows have no derivable

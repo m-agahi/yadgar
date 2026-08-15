@@ -112,7 +112,13 @@ def merge_memory(
     storage.update_memory_fields(
         existing_id,
         content=merged_content,
-        tags=json.dumps(merged_tags),
+        # A LIST, not json.dumps. This function is the only producer of
+        # string-shaped `tags` left in the repo, and it read them back three
+        # lines above (the isinstance check) while writing them here — so it
+        # both created the shape and proved it knew about it. Nine modules
+        # carry the same defensive read, and the C6 backfill's
+        # `array::union(tags, ...)` rejected the whole UPDATE on one such row.
+        tags=merged_tags,
         heat=1.0,
         last_accessed=storage._now_iso(),
     )

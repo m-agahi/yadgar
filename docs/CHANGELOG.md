@@ -7,7 +7,7 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
-**fix: the corpus re-key migration could not complete, and said so with exit 0.** Core `5.183.0` → `5.183.1`; backend unchanged (`5.74.0`).
+**fix: the corpus re-key migration could not complete, and said so with exit 0.** Core `5.183.0` → `5.183.1`; backend `5.74.0` → `5.75.0`.
 
 **Found by running the shipped build, not by a test.** `yadgar migrate rekey --apply` on a sandbox VM (core `5.183.0`, backend `5.74.0`, a 130-directory corpus) aborted with `registry_seed_failed` on `local/argo-workflows` — one of the same-basename collisions the dry-run report **itself lists** under `basenames_collide`. Two paths deriving one `local/<basename>` key is a normal, reported condition, and the `skipped` bucket exists for exactly it.
 
@@ -18,6 +18,12 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 **The failure exited 0.** `cli()` called `args.func(args)` and discarded the result, so `migrate rekey` printed `FAILED (registry_seed_failed)` on stderr and still exited 0 — what a CI step or operator script reads as success. This affected **every** subcommand, not just this one. Handlers returning `None` (most of them) still exit 0, `yadgar hook` is unaffected (it calls `sys.exit()` itself), and only a real non-zero `int` is honoured — a returned object is not a status.
 
 **The fixtures encoded the bug.** `test_car_a_project_seed.py` mocked the duplicate envelope as `"DuplicateProjectError: <key>"`, a shape the backend does not produce, which is how a classifier that never matched anything shipped green. Those fixtures now build the envelope from `str(DuplicateProjectError(...))`, so the assertion is tied to the exception rather than to a guess about it.
+
+**Then the backfill itself failed, on a data shape the repo already knew about.** With the seed stage unblocked, `--apply` reached `project_id_backfill` for the first time and SurrealDB rejected it: `Incorrect arguments for function array::union(). Argument 1 was the wrong type. Expected 'array' but found '["performance", "surreal-v3", …]'`. Some `memory.tags` values are stored as a JSON **string**, a legacy shape that **nine** modules already defend against when reading (`prune_passes`, `heat_decay`, `cold_retention`, `clustering`, `narrative`, `predictive_coding`, `astrocyte_pool`, `duckdb_exporter`, `ingestion`) — and which `curation/ingestion.py` was still **producing** at line 115 via `tags=json.dumps(merged_tags)`, three lines after reading the same column back with an `isinstance(..., str)` guard. It both created the shape and demonstrated it knew about it. That write is now a list.
+
+**The defect was the coupling, not the type error.** One UPDATE carried both `project_id = $pid` and the tag union, so a single string-tagged row rejected the whole statement and every row in that `directory_context` got **neither** the tag **nor** its project_id. The stamp is now its own statement — an always-safe write is no longer coupled to a data-dependent one — and the union is gated on `type::is::array(tags)`. String-tagged rows are then **repaired** rather than skipped: parsed, unioned, written back as a real array. Skipping them would have silently narrowed those rows to a single project, reversing the very decision the `global` sentinel split exists to honour (owner and reach are separate axes, §1.4). A row whose tags will not parse keeps its own tags and still gains the reach tag.
+
+**`_apply` still has no transaction**, and runs deletes before updates — so a mid-apply failure leaves a half-migrated corpus, as this one did on the sandbox VM (841 rows deleted, an unknown subset of 140 updates committed). Re-running is safe because updates are set-based and idempotent and deletes are id-based, but that property is incidental rather than asserted; making it explicit is not in this change.
 
 **fix: v5.182 bug train — six corpus-wide reads, three hooks that answered 200 with nothing, and the allowlists that hid them (9 cars).** Core `5.181.56` → `5.182.0`; backend `5.72.37` → `5.73.0`.
 
