@@ -29,10 +29,22 @@ Every yadgar MCP call in this run passes `project="PROJECT_ID"`.
 task_list(project_id=PROJECT_ID, project=PROJECT_ID, include_closed=True, limit=500)
 ```
 
-**STOP if this returns any rows.** A non-empty ledger means this project was already
-backfilled. Re-running would duplicate every row — nothing in the schema prevents it
-(`UNIQUE(project_id, body_slug)` does not bind while `body_slug` is NULL, and it is NULL
-until Step 7).
+Rows may legitimately be present — a session writes tasks straight to the ledger between
+backfills. Task ids carry no meaning (unlike ADR ids, see the ADR procedure), so
+pre-existing rows are not a blocker on their own. What you are checking for is a
+**previous backfill**.
+
+**STOP if the ledger already holds rows that correspond to the page's `## task:` sections**
+— match on title, not count. That means this project was backfilled before, and re-running
+would duplicate every row: nothing in the schema prevents it (`UNIQUE(project_id, body_slug)`
+does not bind while `body_slug` is NULL, and it is NULL until Step 7).
+
+Otherwise record the existing rows and carry on. In Step 6, skip any page section whose
+subject already matches one of them, and say so in the report.
+
+If this call fails with `Illegal parameter data types varchar and row` — a known defect in
+the open-only status filter — **STOP**. Do not work around it with `include_closed=True`
+and proceed; a precondition you cannot read is not a precondition you have checked.
 
 Then confirm the page exists:
 
@@ -58,7 +70,13 @@ If `TaskList` is empty, skip.
 
 ## Step 2 — write the backup file
 
-Path: `docs/prompts/backups/{SLUG_PREFIX}-task-list-{YYYY-MM-DD}.md`
+Path: `~/yadgar-private-backups/{SLUG_PREFIX}-task-list-{YYYY-MM-DD}.md`
+
+**Outside the repo, never inside it.** A task list is personal working data — internal
+hostnames, infrastructure paths, unreleased plans — and this repo is PUBLIC. `docs/prompts/backups/`
+is gitignored precisely so a future run cannot put it back. Do not commit the backup,
+do not move it into the tree "temporarily", do not paste its contents into a commit
+message or a PR body.
 
 Contents: the page's `content` field **verbatim**, byte for byte, with a provenance
 comment prepended:
@@ -86,15 +104,22 @@ Must equal the number of `## task:` sections in the page content you read in Ste
 Find pages that link `[[PAGE_SLUG]]`. Record the list in your report. Deletion in
 Step 12 leaves these dangling; the user has accepted that, but they must know which.
 
-## Step 5 — commit the backup (GATE)
+## Step 5 — prove the backup is durable (GATE)
+
+The backup lives outside the repo and is therefore **not version-controlled**. That is a
+deliberate privacy trade, and it costs you the safety net a commit would have given, so
+verify it by hand:
 
 ```bash
-git add docs/prompts/backups/<file>
-git commit -m "docs(backfill): back up {PROJECT_ID} task list before ledger backfill"
+ls -l  ~/yadgar-private-backups/<file>
+grep -c '^## task:'  ~/yadgar-private-backups/<file>
 ```
 
-**STOP if the commit fails.** A file on disk is not a backup — the commit is what makes
-Step 12 safe. Do not use `--no-verify`.
+**STOP unless the file exists, is non-empty, and its section count matches Step 3.**
+
+Because there is no commit to fall back on, the ordering in this procedure is what keeps
+you safe: the page is not deleted until Step 12, long after the rows are written and
+verified. Never reorder deletion earlier to "save a step".
 
 ## Step 6 — pass 1: create the rows
 
@@ -140,9 +165,18 @@ body page. No plan path → omit the field.
 
 ## Step 7 — pass 2: body pages
 
-A task gets a body page if it has **any** of: a `description`, a `context` beyond the
-plan path already captured, or a stripped title prefix. Otherwise `body_slug` stays NULL
-and there is no page — do not manufacture one.
+A task gets a body page if it has **either**: a `description`, or a `context` beyond the
+plan path already captured. Otherwise `body_slug` stays NULL and there is no page — do
+not manufacture one.
+
+**A title prefix is not on its own a reason to make a page.** A task whose only extra
+content is its prefix keeps the prefix in the title and gets no body page. (Reading the
+prefix as a trigger makes Steps 6 and 7 circular — strip the prefix only if a body page
+exists, qualify for a body page because a prefix was stripped — and it would manufacture
+a page whose entire content is one word.)
+
+A page is written for its own sake; the prefix just rides along in `## Tags` when one
+happens to exist.
 
 **A `completed` task never gets a body page.** Its detail is in the backup file and in
 git; writing one now costs tokens on every future read for a row that readers skip by
@@ -170,6 +204,12 @@ Backfilled {DATE} from wiki page `{PAGE_SLUG}` section `## task:{oldid}`.
 ```
 
 Omit any section that would be empty.
+
+**Expect the wiki similarity gate to fire once or twice on a backfill this size.** A task
+body that restates the decision an ADR already records scores high against it — measured
+0.838 against an ADR page on the 2026-08-15 run. They are distinct by construction: the
+ADR is the decision, the task body is the work item. Pass `force=True` for that page and
+name it in your report. Do not pass `force=True` pre-emptively on every page.
 
 ## Step 8 — pass 3: dependencies
 
@@ -202,11 +242,20 @@ Report it; do not guess.
 task_list(project_id=PROJECT_ID, project=PROJECT_ID, include_closed=True, limit=500)
 ```
 
-Row count must equal the section count from Step 3. **STOP on mismatch** — the page is
-still intact at this point, which is the whole reason deletion comes last.
+The count that must match is **rows you created**, not total rows:
+
+```
+total rows  −  the pre-existing rows recorded in Step 0  ==  section count from Step 3
+```
+
+**STOP on mismatch** — the page is still intact at this point, which is the whole reason
+deletion comes last. Do not compare raw row count against section count: Step 0 permits
+pre-existing rows, so a raw comparison fires a false hard-stop *after* every irreversible
+write has already happened.
 
 Append the old→new id map to the backup file as a final `## Backfill id map` section
-(`0047 → 12` per line), and commit. Without it, nothing can ever be traced back.
+(`0047 → 12` per line). Without it, nothing can ever be traced back. Same rule as Step 2 —
+it goes in the file under `~/yadgar-private-backups/`, never into the repo.
 
 ## Step 10 — the `## Meta` block
 

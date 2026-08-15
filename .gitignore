@@ -146,3 +146,7 @@ docs/_build/
 *.mo
 *.pot
 .yadgar/
+
+# Task-list / ADR backups are personal working data — never commit them.
+# The backfill procedures write them OUTSIDE the repo (~/yadgar-private-backups/).
+docs/prompts/backups/
