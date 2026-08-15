@@ -105,6 +105,7 @@ def cli():
 
     # Register all subcommands in original order
     from yadgar.core.cli import (  # noqa: E402
+        backfill,
         capture,
         code_graph,
         config,
@@ -132,6 +133,7 @@ def cli():
     )
 
     drain.register(subparsers)
+    backfill.register(subparsers)
     hook.register(subparsers)
     pending_findings.register(subparsers)
     export.register(subparsers)

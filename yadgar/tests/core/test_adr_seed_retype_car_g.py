@@ -697,3 +697,100 @@ class TestVerificationGateExactEquality:
 
         # NOT OK — index_rows < pages_seen (seeded something missing in index)
         assert _exact_equality_gate(index_rows=10, pages_seen=11, page_type_adr_rows=11) is False
+
+
+# ── Fix 1 (task-adr-backfill-prompts): slug regex accepts BOTH separators ──
+
+
+class TestPerAdrSlugRegexBothSeparators:
+    """``_is_per_adr_page_slug`` / ``_parse_adr_id_from_slug`` must match BOTH
+    the legacy hyphen slug (``yadgar-adr-NNNN``) AND the canonical underscore
+    slug (``{project_id}_adr-NNNN``, D32 ③ — ``/`` in project_id -> ``_``).
+
+    Pre-fix, both helpers used ``r"-adr-\\d{4}$"`` — a bare hyphen before
+    ``adr-``. After the operator runs ``reslug`` (Fix 2's ``--reslug-adr-pages
+    --apply``), every page is canonical, so the candidate filter matched ZERO
+    pages and ``seed_adr_rows`` silently inserted nothing while still
+    returning a normal-looking success dict.
+    """
+
+    def test_is_per_adr_page_slug_accepts_legacy_hyphen(self):
+        from yadgar.backend.admin_exec.adr_seed import _is_per_adr_page_slug
+
+        assert _is_per_adr_page_slug("yadgar-adr-0001") is True
+
+    def test_is_per_adr_page_slug_accepts_canonical_underscore(self):
+        """The bug: a canonical post-reslug slug must ALSO be recognized."""
+        from yadgar.backend.admin_exec.adr_seed import _is_per_adr_page_slug
+
+        assert _is_per_adr_page_slug("m-agahi_yadgar_adr-0001") is True
+        assert _is_per_adr_page_slug("local_myproj_adr-0042") is True
+
+    def test_is_per_adr_page_slug_excludes_legacy_log_and_index(self):
+        from yadgar.backend.admin_exec.adr_seed import _is_per_adr_page_slug
+
+        assert _is_per_adr_page_slug("yadgar-adr-log") is False
+        assert _is_per_adr_page_slug("yadgar-adr-index") is False
+
+    def test_is_per_adr_page_slug_excludes_canonical_log_and_index(self):
+        """Canonical forms use ``_adr-log`` / ``_adr-index`` — must ALSO be excluded."""
+        from yadgar.backend.admin_exec.adr_seed import _is_per_adr_page_slug
+
+        assert _is_per_adr_page_slug("m-agahi_yadgar_adr-log") is False
+        assert _is_per_adr_page_slug("m-agahi_yadgar_adr-index") is False
+
+    def test_is_per_adr_page_slug_rejects_empty_and_unrelated(self):
+        from yadgar.backend.admin_exec.adr_seed import _is_per_adr_page_slug
+
+        assert _is_per_adr_page_slug("") is False
+        assert _is_per_adr_page_slug("unrelated-page") is False
+
+    def test_parse_adr_id_from_slug_identical_across_both_forms(self):
+        """The number parsed must be identical whether the slug is legacy
+        hyphen-separated or canonical underscore-separated."""
+        from yadgar.backend.admin_exec.adr_seed import _parse_adr_id_from_slug
+
+        assert _parse_adr_id_from_slug("yadgar-adr-0042") == 42
+        assert _parse_adr_id_from_slug("m-agahi_yadgar_adr-0042") == 42
+        assert _parse_adr_id_from_slug("local_myproj_adr-0042") == 42
+
+    def test_parse_adr_id_from_slug_none_on_unparsable(self):
+        from yadgar.backend.admin_exec.adr_seed import _parse_adr_id_from_slug
+
+        assert _parse_adr_id_from_slug("yadgar-adr-BOGUS") is None
+        assert _parse_adr_id_from_slug("m-agahi_yadgar_adr-log") is None
+
+    async def test_seed_adr_rows_collects_canonical_slug_pages(self) -> None:
+        """End-to-end regression: after a reslug, every page is canonical —
+        ``seed_adr_rows`` must still find and insert them, not report a
+        false-positive empty success."""
+        from yadgar.backend.admin_exec.adr_seed import seed_adr_rows
+
+        pages = [
+            {"slug": "m-agahi_yadgar_adr-0001", "content": "# ADR-0001: a\nbody"},
+            {"slug": "m-agahi_yadgar_adr-0002", "content": "# ADR-0002: b\nbody"},
+        ]
+        storage = _OrderFakeStorage(pages)
+
+        inserted_order: list[str] = []
+
+        def _row_inserter(payload: dict) -> dict:
+            inserted_order.append(payload["body_slug"])
+            return {"id": len(inserted_order)}
+
+        result = await seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/home/max/git/yadgar",
+            storage=storage,
+            row_inserter=_row_inserter,
+            slug_linker=lambda adr_id, slug: None,
+        )
+
+        assert result["pages_seen"] == 2, (
+            f"canonical-slug pages must be counted post-reslug, got "
+            f"pages_seen={result['pages_seen']}"
+        )
+        assert inserted_order == [
+            "m-agahi_yadgar_adr-0001",
+            "m-agahi_yadgar_adr-0002",
+        ]

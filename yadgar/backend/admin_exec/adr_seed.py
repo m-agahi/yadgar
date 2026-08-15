@@ -152,19 +152,27 @@ def _is_per_adr_page_slug(slug: str) -> bool:
 
     The seed enumerates ``yadgar-adr-NNNN`` (legacy Car 2 slug, still
     authoritative for the 194 pages Car L's reslug hasn't yet rewritten) AND
-    ``{project_id}_adr-NNNN`` (the canonical post-reslug slug — D32 ③).
+    ``{project_id}_adr-NNNN`` (the canonical post-reslug slug — D32 ③, ``/``
+    in ``project_id`` -> ``_``). The separator immediately before ``adr-``
+    is therefore EITHER ``-`` (legacy) OR ``_`` (canonical) — task-adr-
+    backfill-prompts fix 1: a hyphen-only regex matched zero canonical pages,
+    so a corpus that had already been re-slugged would seed nothing while
+    still returning a normal-looking success dict.
 
-    Excludes the ``<project>-adr-log`` monolith (deleted in migration 002)
-    and the ``<project>-adr-index`` (replaced by ``list_adr_rows`` post-Car-G;
+    Excludes the ``<project>-adr-log`` / ``{project_id}_adr-log`` monolith
+    (deleted in migration 002) and the ``<project>-adr-index`` /
+    ``{project_id}_adr-index`` (replaced by ``list_adr_rows`` post-Car-G;
     retained for one cycle per D35d, ``superseded-by-ledger`` tagged).
     """
     import re as _re
 
     if not slug:
         return False
-    if slug.endswith("-adr-log") or slug.endswith("-adr-index"):
+    if slug.endswith("-adr-log") or slug.endswith("_adr-log"):
         return False
-    return bool(_re.search(r"-adr-\d{4}$", slug))
+    if slug.endswith("-adr-index") or slug.endswith("_adr-index"):
+        return False
+    return bool(_re.search(r"[-_]adr-\d{4}$", slug))
 
 
 @observe(tier="stage", metric="backend.admin.adr_seed._collect_candidate_pages")
@@ -204,10 +212,15 @@ def _exact_equality_gate(
 
 @observe(tier="stage", metric="backend.admin.adr_seed._parse_adr_id_from_slug")
 def _parse_adr_id_from_slug(slug: str) -> int | None:
-    """Extract the ADR-NNNN number from a per-ADR page slug, or None."""
+    """Extract the ADR-NNNN number from a per-ADR page slug, or None.
+
+    Matches BOTH the legacy hyphen separator (``yadgar-adr-0042``) and the
+    canonical underscore separator (``m-agahi_yadgar_adr-0042`` — D32 ③).
+    Same fix as ``_is_per_adr_page_slug`` — see its docstring.
+    """
     import re as _re
 
-    m = _re.search(r"-adr-(\d{4})$", slug or "")
+    m = _re.search(r"[-_]adr-(\d{4})$", slug or "")
     if not m:
         return None
     return int(m.group(1))
