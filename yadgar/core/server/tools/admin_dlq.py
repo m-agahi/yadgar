@@ -93,7 +93,15 @@ def dlq_inspect(filter: str | None = None) -> list[dict]:  # noqa: A002 — shad
         except OSError:
             file_size = None
         entry = {
+            # BOTH keys, deliberately. ``dlq_requeue``/``dlq_dismiss`` take
+            # ``filename=`` and this docstring has always promised
+            # ``filename``, but the entry only ever carried ``file`` — so a
+            # caller following the documented contract read ``None`` off every
+            # row and concluded the DLQ could not be cleared at all (2026-08-15,
+            # against a 1,104-entry backlog). ``file`` is kept because existing
+            # readers use it; the pair is cheap next to that failure mode.
             "file": fname,
+            "filename": fname,
             "op_type": meta.get("op_type", "unknown"),
             "attempts": meta.get("attempts"),
             "classification": meta.get("classification"),

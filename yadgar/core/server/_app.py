@@ -201,6 +201,15 @@ class SessionBindMiddleware:
                 _project_id = lookup_session_binding(_sid)
             except Exception:  # noqa: BLE001
                 _project_id = None
+        if not _project_id:
+            # Static per-client header — the path that actually works here.
+            # The daemon runs stateless_http (see _startup.py), so there is no
+            # Mcp-Session-Id and the nonce binding above can never resolve.
+            # ``.claude.json``'s mcpServers entry supports static headers, so a
+            # client installed for one project carries its identity on every
+            # request: no sticky session state for an instance to forget to
+            # switch back, and nothing the model can rewrite mid-session.
+            _project_id = (_hdrs.get("x-yadgar-project-id") or "").strip() or None
         from yadgar._shared.runtime.session_project import (  # noqa: PLC0415
             reset_current_session_project,
             set_current_session_project,
@@ -570,7 +579,16 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
     YADGAR_OFFLOAD_TOOLS, default OFF → inline). Both share _emit_metrics.
     """
     import functools  # noqa: PLC0415
+    import inspect as _inspect_sig  # noqa: PLC0415
     import time as _time  # noqa: PLC0415
+
+    # Whether this tool declares its OWN ``context`` parameter. Computed once
+    # at decoration time so the per-call path stays a boolean test. See the
+    # pop-site in ``_instrumented_async`` for why it matters.
+    try:
+        _declares_context = "context" in _inspect_sig.signature(func).parameters
+    except (TypeError, ValueError):  # fmt: skip  # pragma: no cover — builtins/C funcs
+        _declares_context = False
 
     _maint_logger = logging.getLogger(__name__)
 
@@ -668,11 +686,20 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
         # kwargs, the executor would re-receive it and the binding would
         # never be visible to ``resolve_effective_project`` tier 2.
         ctx = kwargs.pop("ctx", None)
-        if ctx is None:
+        if ctx is None and not _declares_context:
             # mcp 2.0.0 passes the Context object under the kwarg name
             # ``context`` (per server/fastmcp/server.py:96); older SDK
             # shapes used ``ctx``. The plan §3.3 spec uses ``ctx``; we
             # accept both to stay forward/back-compat.
+            #
+            # ...but ONLY when the tool does not declare its own ``context``
+            # parameter. Three do — ``adr_add`` (the ADR background),
+            # ``anchor`` (the anchor's context) and ``memorize`` (the
+            # staleness-detection path) — and an unconditional pop ate the
+            # caller's value: the two REQUIRED ones raised
+            # ``missing 1 required positional argument: 'context'`` and the
+            # optional one dropped the value with no signal at all. The
+            # wrapped signature is the authority on who owns the name.
             ctx = kwargs.pop("context", None)
         _bound_project_id = _extract_session_project(ctx) if ctx is not None else None
         # Stamp the per-request ContextVar so resolve_effective_project tier 2
@@ -753,9 +780,16 @@ def _extract_session_project(ctx) -> str | None:
         _headers = getattr(_req, "headers", None)
         if _headers is None:
             return None
-        _sid = _headers.get("mcp-session-id") or _headers.get("Mcp-Session-Id")
-        if not _sid:
-            return None
+        # NO early-out on a missing Mcp-Session-Id. The daemon runs
+        # ``stateless_http=True`` for streamable-http (_startup.py — chosen so
+        # daemon restarts are transparent to the client), and stateless mode
+        # issues no session id at all; verified live 2026-08-15, an
+        # ``initialize`` against the running daemon returns no such header.
+        # Bailing here meant the ``X-Yadgar-Project-Id`` read below was
+        # unreachable in the ONLY transport the daemon actually runs, so tier 2
+        # never resolved and every write without an explicit ``project=``
+        # raised ``unresolved_project``. A session id is the wrong
+        # precondition for a value that travels in its own header.
     except Exception:  # noqa: BLE001 — defensive; never raise into the tool path
         return None
     # Look up the binding from the nonce pool's per-session project

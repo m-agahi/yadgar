@@ -1074,15 +1074,18 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
             to_flush = list(batch)
             _st._action_batch[session_id] = []
 
-        combined_tools = ",".join(a["tool_name"] for a in to_flush)
-        combined_summary = " | ".join(a["summary"] for a in to_flush if a["summary"])
-        directory = to_flush[-1]["directory"]
-        # C4: the batch is one row, so it needs ONE identity. Take it only when
-        # every action in the batch agrees; a batch that spans two projects (or
-        # names none) is written unattributed and skipped downstream, never
-        # collapsed onto whichever action happened to be last.
-        _batch_projects = {a.get("project_id") for a in to_flush if a.get("project_id")}
-        batch_project_id = _batch_projects.pop() if len(_batch_projects) == 1 else ""
+        # C4 originally collapsed the whole batch onto ONE identity, taken only
+        # when every action agreed — so a batch spanning two projects was
+        # enqueued with ``project_id=""``. C5 then made that a permanent
+        # drainer rejection, which is where the 1,094-entry DLQ backlog came
+        # from. The batch holds the identities; split on them instead.
+        _groups = _split_batch_by_project(to_flush)
+        if not _groups:
+            logger.debug(
+                "auto-capture: dropped %d unattributed action(s) — no project_id to route them to",
+                len(to_flush),
+            )
+            return JSONResponse({"status": "dropped", "reason": "no_project_id"})
         from datetime import UTC
 
         ts = datetime.now(UTC).isoformat()
@@ -1092,23 +1095,37 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         # disk IO, so it stays off the event loop via asyncio.to_thread.
         from yadgar.core.lifecycle import _get_file_queue  # noqa: PLC0415
 
-        await asyncio.to_thread(
-            _get_file_queue().enqueue,
-            "action_log",
-            {
-                "tool_name": f"batch[{combined_tools}]",
-                "summary": combined_summary[:500],
-                "directory": directory,
-                "session_id": session_id,
-                "project_id": batch_project_id,
-                "timestamp": ts,
-            },
-        )
+        _fq = _get_file_queue()
+        for _pid, _actions in _groups:
+            _tools = ",".join(a["tool_name"] for a in _actions)
+            _summary = " | ".join(a["summary"] for a in _actions if a.get("summary"))
+            await asyncio.to_thread(
+                _fq.enqueue,
+                "action_log",
+                {
+                    "tool_name": f"batch[{_tools}]",
+                    "summary": _summary[:500],
+                    # Per group, not per batch: the last action of the WHOLE
+                    # batch may belong to a different project entirely.
+                    "directory": _actions[-1]["directory"],
+                    "session_id": session_id,
+                    "project_id": _pid,
+                    "timestamp": ts,
+                },
+            )
 
         if _st._consolidation is not None:
             _st._consolidation.record_activity()
 
-        return JSONResponse({"status": "captured", "batch_size": 5})
+        _dropped = len(to_flush) - sum(len(a) for _, a in _groups)
+        return JSONResponse(
+            {
+                "status": "captured",
+                "batch_size": len(to_flush),
+                "rows": len(_groups),
+                "dropped_unattributed": _dropped,
+            }
+        )
     except Exception as _exc:
         _caught_exc = _exc
         raise
@@ -3125,6 +3142,34 @@ async def graph_view(request: Request) -> FileResponse:
 
 
 # ---------------------------------------------------------------------------
+@observe(tier="hot", span=False, metric="http.auto_capture.split_batch")
+def _split_batch_by_project(actions: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Group a flushed action batch by ``project_id``, dropping unattributed rows.
+
+    One flushed batch used to become ONE action_log row, and the identity was
+    taken only when every action in it agreed — a batch spanning two repos got
+    ``project_id=""`` and was enqueued anyway. Since C5 widened the drainer's
+    ``missing_project_id`` gate to every op_type, such a row is a PERMANENT
+    failure: 1,094 of them reached the live DLQ at roughly 600/day.
+
+    The batch already carries the identities, so splitting preserves them
+    instead of discarding them. Actions with no identity are DROPPED rather
+    than emitted: the drainer would reject them anyway, and a dropped
+    telemetry row costs nothing while a DLQ entry costs a human clearing it.
+
+    Order is preserved — both the group order (first appearance) and the
+    actions within each group — so the flushed summaries still read
+    chronologically.
+    """
+    grouped: dict[str, list[dict]] = {}
+    for action in actions:
+        pid = (action.get("project_id") or "").strip()
+        if not pid:
+            continue
+        grouped.setdefault(pid, []).append(action)
+    return list(grouped.items())
+
+
 # Car B (0047 §3.2) — POST /session_bind
 #
 # Non-MCP route that consumes a single-use nonce → project_id binding minted

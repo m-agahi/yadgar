@@ -70,6 +70,18 @@ def _emit_project_id(cwd):
         return None
     if notice:
         print(notice)
+    # Publish cwd -> project_id so a client using ONE global ``mcpServers``
+    # entry can still resolve identity: such sessions are indistinguishable on
+    # the wire, so the daemon looks the caller's ``directory`` up in this
+    # table. Only this host-side process can mint truthfully (ADR-0227), so
+    # only it can write the table. Best-effort — never brick SessionStart.
+    if project_id:
+        try:
+            from yadgar._shared.runtime.session_map import register_session_project
+
+            register_session_project(cwd, project_id)
+        except Exception:  # noqa: BLE001
+            pass
     return project_id
 
 
