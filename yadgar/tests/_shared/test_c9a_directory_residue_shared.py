@@ -176,7 +176,29 @@ _C9C_COUPLED_PASSTHROUGH = (
 
 #: ``<path relative to yadgar/_shared>::<function name>`` → reason.
 #: Every entry is a deliberate exclusion; none is "not got to yet".
+_SESSION_MAP = (
+    "hook-authored directory -> project_id table: `directory` is the lookup key, "
+    "not a derivation — the global-config identity tier (see module docstring)"
+)
+
 _ALLOWLIST: dict[str, str] = {
+    # ── the directory -> project_id translation table itself ────────────────
+    # `directory` is the LOOKUP KEY here, which is the module's whole reason to
+    # exist. Nothing in it derives: the SessionStart hook mints host-side (the
+    # only place the working tree exists, ADR-0227) and registers the pair; the
+    # daemon only asks "has the hook told me about this exact path?". An
+    # unregistered directory returns None and the caller fails loud exactly as
+    # it did before this tier existed — no key is manufactured from a path, no
+    # parent walk, no basename fallback.
+    #
+    # Needed because a client with ONE global `mcpServers` entry makes every MCP
+    # request identical on the wire, and the daemon runs `stateless_http=True`
+    # (core/server/_startup.py) so there is no Mcp-Session-Id either. `directory`
+    # is then the only per-call signal that varies. Per-project `mcpServers`
+    # users take the X-Yadgar-Project-Id header path and never reach this module.
+    # Dies when the wire carries a real per-session identity.
+    "runtime/session_map.py::lookup_project_for_directory": _SESSION_MAP,
+    "runtime/session_map.py::register_session_project": _SESSION_MAP,
     # ── carve-out 3 — real filesystem paths ──────────────────────────────────
     "file_queue/queue.py::_find_terminal": _CARVE_3,
     # ``transcript_parse.py::_list_worktrees`` WAS here as carve-out 3. C10 took
