@@ -256,6 +256,99 @@ class TestReslugApply:
         assert "m-agahi_yadgar_adr-0003" in stamped
 
 
+class TestReslugCollisionGuard:
+    """A page whose TARGET slug already exists (occupied by a DIFFERENT page)
+    must be skipped, not written — no unique-index violation, no partial
+    run that dies mid-way. ``yadgar-adr-0001`` -> ``m-agahi_yadgar_adr-0001``
+    is exactly this: the target already exists as its own (already-reslugged)
+    page in the live corpus.
+    """
+
+    def _pages_with_collision(self) -> list[dict]:
+        return [
+            # This page is the OLD-format page that WOULD reslug to
+            # "m-agahi_yadgar_adr-0001" — but that slug is already taken
+            # by a different page (id=99, the occupant).
+            {
+                "id": 1,
+                "slug": "yadgar-adr-0001",
+                "content": "old body",
+                "directory_context": "/home/max/git/yadgar",
+            },
+            {
+                "id": 99,
+                "slug": "m-agahi_yadgar_adr-0001",
+                "content": "occupant body",
+                "directory_context": "/home/max/git/yadgar",
+            },
+            # A page with no collision — must still be rewritten normally.
+            {
+                "id": 2,
+                "slug": "yadgar-adr-0002",
+                "content": "body 2",
+                "directory_context": "/home/max/git/yadgar",
+            },
+        ]
+
+    def test_dry_run_reports_collision_without_writing(self) -> None:
+        storage = _FakeStorage(pages=self._pages_with_collision(), crossrefs=[])
+        manifest = reslug_adr_pages(
+            {
+                "project_id": "m-agahi/yadgar",
+                "dry_run": True,
+            },
+            storage=storage,
+        )
+        collisions = manifest.get("collisions")
+        assert collisions, "dry_run manifest must report the collision the apply would skip"
+        assert any(
+            c["old"] == "yadgar-adr-0001" and c["new"] == "m-agahi_yadgar_adr-0001"
+            for c in collisions
+        )
+        # A dry run performs no writes regardless of collisions.
+        assert storage.updates == []
+
+    def test_apply_skips_colliding_page_and_continues(self) -> None:
+        storage = _FakeStorage(pages=self._pages_with_collision(), crossrefs=[])
+        with patch("yadgar.backend.admin_exec.reslug._sync_set_adr_body_slug") as mock_set:
+            result = reslug_adr_pages(
+                {
+                    "project_id": "m-agahi/yadgar",
+                    "dry_run": False,
+                    "adr_id_by_slug": {
+                        "yadgar-adr-0001": 1,
+                        "yadgar-adr-0002": 2,
+                    },
+                },
+                storage=storage,
+            )
+
+        # The colliding page (id=1) must NOT have been rewritten.
+        colliding_page = next(p for p in storage.pages if p["id"] == 1)
+        assert colliding_page["slug"] == "yadgar-adr-0001", (
+            "colliding page must be skipped, not overwritten"
+        )
+        # The occupant (id=99) must be untouched.
+        occupant = next(p for p in storage.pages if p["id"] == 99)
+        assert occupant["slug"] == "m-agahi_yadgar_adr-0001"
+        assert occupant["content"] == "occupant body"
+
+        # The non-colliding page (id=2) must still be rewritten normally —
+        # one collision must not abort the whole run.
+        rewritten = next(p for p in storage.pages if p["id"] == 2)
+        assert rewritten["slug"] == "m-agahi_yadgar_adr-0002"
+
+        # Reported in the result so the operator sees it.
+        collisions = result.get("collisions")
+        assert collisions, "apply result must report the skipped collision"
+        collision = next(c for c in collisions if c["old"] == "yadgar-adr-0001")
+        assert collision["new"] == "m-agahi_yadgar_adr-0001"
+        assert collision["occupant_id"] == 99
+
+        # Only the non-colliding page's body_slug was stamped.
+        assert mock_set.call_count == 1
+
+
 class TestReslugIdempotency:
     """A second run skips every page already in the new format."""
 

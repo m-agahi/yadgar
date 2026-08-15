@@ -93,8 +93,6 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "staleness_flag_memory": staleness.staleness_flag_memory,
     # seed store phase (T2 Car E1 — census verdict #9)
     "seed_store": seed.seed_store,
-    # 0047 spine train Car E — task-list page seed (plan §3.3, D35a-D35c)
-    "seed_task_from_pages": seed.seed_task_from_pages,
     # wiki-edit + agent_prompt writes (R3 Car 3c / R5 group 3)
     "wiki_delete": wiki.wiki_delete,
     "wiki_autolink": wiki.wiki_autolink,
@@ -353,7 +351,6 @@ def _payload_storage_op(fn):
 _ADMIN_OPS_KWARG_SHAPED: tuple[str, ...] = (
     "retype_page_type",
     "seed_adr_rows",
-    "seed_task_from_pages",
 )
 _ADMIN_OPS_PAYLOAD_STORAGE_SHAPED: tuple[str, ...] = ("reslug",)
 

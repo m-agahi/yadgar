@@ -6,6 +6,9 @@ injected ``storage``, so that call raised ``TypeError`` **every time**:
 
     reslug, retype_page_type, seed_adr_rows, seed_task_from_pages
 
+(``seed_task_from_pages`` was later deleted outright — not idempotent, see
+``docs/CHANGELOG.md`` — so only the three surviving ops are pinned below.)
+
 They had never executed through ``/admin``. ``retype_page_type`` is D23's "sole
 sanctioned writer" for the ADR supersede lifecycle transition, so that
 transition had never run through this route either.
@@ -27,9 +30,9 @@ import pytest
 
 from yadgar.backend import admin_exec
 
-#: The four ops C10 adapted. Named so a regression that drops an adapter is
-#: reported against the specific op rather than as an opaque count.
-_ADAPTED_OPS = ("reslug", "retype_page_type", "seed_adr_rows", "seed_task_from_pages")
+#: The ops C10 adapted that still exist. Named so a regression that drops an
+#: adapter is reported against the specific op rather than as an opaque count.
+_ADAPTED_OPS = ("reslug", "retype_page_type", "seed_adr_rows")
 
 
 def test_every_registered_op_binds_to_the_dispatch_call_shape() -> None:

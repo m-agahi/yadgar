@@ -152,19 +152,27 @@ def _is_per_adr_page_slug(slug: str) -> bool:
 
     The seed enumerates ``yadgar-adr-NNNN`` (legacy Car 2 slug, still
     authoritative for the 194 pages Car L's reslug hasn't yet rewritten) AND
-    ``{project_id}_adr-NNNN`` (the canonical post-reslug slug — D32 ③).
+    ``{project_id}_adr-NNNN`` (the canonical post-reslug slug — D32 ③, ``/``
+    in ``project_id`` -> ``_``). The separator immediately before ``adr-``
+    is therefore EITHER ``-`` (legacy) OR ``_`` (canonical) — task-adr-
+    backfill-prompts fix 1: a hyphen-only regex matched zero canonical pages,
+    so a corpus that had already been re-slugged would seed nothing while
+    still returning a normal-looking success dict.
 
-    Excludes the ``<project>-adr-log`` monolith (deleted in migration 002)
-    and the ``<project>-adr-index`` (replaced by ``list_adr_rows`` post-Car-G;
+    Excludes the ``<project>-adr-log`` / ``{project_id}_adr-log`` monolith
+    (deleted in migration 002) and the ``<project>-adr-index`` /
+    ``{project_id}_adr-index`` (replaced by ``list_adr_rows`` post-Car-G;
     retained for one cycle per D35d, ``superseded-by-ledger`` tagged).
     """
     import re as _re
 
     if not slug:
         return False
-    if slug.endswith("-adr-log") or slug.endswith("-adr-index"):
+    if slug.endswith("-adr-log") or slug.endswith("_adr-log"):
         return False
-    return bool(_re.search(r"-adr-\d{4}$", slug))
+    if slug.endswith("-adr-index") or slug.endswith("_adr-index"):
+        return False
+    return bool(_re.search(r"[-_]adr-\d{4}$", slug))
 
 
 @observe(tier="stage", metric="backend.admin.adr_seed._collect_candidate_pages")
@@ -204,13 +212,33 @@ def _exact_equality_gate(
 
 @observe(tier="stage", metric="backend.admin.adr_seed._parse_adr_id_from_slug")
 def _parse_adr_id_from_slug(slug: str) -> int | None:
-    """Extract the ADR-NNNN number from a per-ADR page slug, or None."""
+    """Extract the ADR-NNNN number from a per-ADR page slug, or None.
+
+    Matches BOTH the legacy hyphen separator (``yadgar-adr-0042``) and the
+    canonical underscore separator (``m-agahi_yadgar_adr-0042`` — D32 ③).
+    Same fix as ``_is_per_adr_page_slug`` — see its docstring.
+    """
     import re as _re
 
-    m = _re.search(r"-adr-(\d{4})$", slug or "")
+    m = _re.search(r"[-_]adr-(\d{4})$", slug or "")
     if not m:
         return None
     return int(m.group(1))
+
+
+@observe(tier="stage", metric="backend.admin.adr_seed._adr_page_sort_key")
+def _adr_page_sort_key(page: dict[str, Any]) -> tuple[int, int]:
+    """Ascending-ADR-number sort key for the candidate page list.
+
+    Unparsable slugs sort LAST (first tuple element flips 0 -> 1) rather
+    than raising — a bare ``_parse_adr_id_from_slug`` result of ``None``
+    would blow up a numeric comparison against an ``int`` if used directly
+    as the sort key.
+    """
+    adr_id = _parse_adr_id_from_slug(page.get("slug") or "")
+    if adr_id is None:
+        return (1, 0)
+    return (0, adr_id)
 
 
 @observe(tier="stage", metric="backend.admin.adr_seed._extract_title_and_status")
@@ -313,18 +341,40 @@ async def seed_adr_rows(  # noqa: C901 - cohesive: orchestrator stitches idempot
     # a project-name surrogate: two checkouts of different repos with the same
     # directory name produced the same prefix.
     #
-    # BOTH prefixes are enumerated for one cycle. The live corpus is still on
-    # the legacy ``yadgar-adr-`` shape, so dropping it here would make the seed
-    # silently find zero pages on exactly the corpus it exists to lift.
+    # BOTH prefixes are enumerated EVERY run, and the results are UNIONED
+    # (de-duplicated by slug). The live corpus is still on the legacy
+    # ``yadgar-adr-`` shape, so a canonical-only scan (or a break-on-first-
+    # nonempty loop that stops the moment the canonical prefix matches the
+    # single already-reslugged page) would silently find just that one page
+    # and never touch the 200+ legacy-format pages this seed exists to lift.
+    seen_slugs: set[str] = set()
+    pages: list[dict[str, Any]] = []
     for _prefix in _adr_slug_prefixes(project_id, directory):
-        pages = _collect_candidate_pages(
+        prefix_pages = _collect_candidate_pages(
             project_slug_prefix=_prefix,
             list_pages=lambda prefix, _dir, limit: storage.list_wiki_pages(
                 slug_prefix=prefix, limit=limit
             ),
         )
-        if pages:
-            break
+        for _page in prefix_pages:
+            _slug = _page.get("slug") or ""
+            if _slug in seen_slugs:
+                continue
+            seen_slugs.add(_slug)
+            pages.append(_page)
+
+    # Ascending ADR-number insertion order (task decision, backfill run):
+    # insertion order determines which AUTO_INCREMENT ledger id a page lands
+    # on, so pages must be inserted 0002, 0003, ... in numeric order for the
+    # "historical ADR-0001 skipped, 0002-0230 land on ids 2-230" numbering
+    # scheme to hold. Pages whose slug does not parse (flagged below with
+    # reason "unparsable slug suffix", never inserted) sort LAST — they
+    # can't be assigned a numeric position, and since they are flagged and
+    # skipped before ever reaching the insert call, their exact placement in
+    # this list has no effect on ledger ids; sorting them last just keeps
+    # the enumeration order deterministic and out of the way of the
+    # numerically-meaningful pages.
+    pages = sorted(pages, key=_adr_page_sort_key)
 
     pages_seen = len(pages)
     rows_inserted = 0

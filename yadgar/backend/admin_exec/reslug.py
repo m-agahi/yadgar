@@ -231,6 +231,45 @@ def _sync_set_adr_body_slug(adr_id: int, body_slug: str) -> None:
         )
 
 
+@observe(tier="hot", span=False)
+def _detect_slug_collisions(storage, rewrites: list[dict]) -> tuple[list[dict], set]:
+    """Return ``(collisions, skip_ids)`` for a rewrite manifest.
+
+    A rewrite collides when its target (``new``) slug is already occupied
+    by a DIFFERENT page (``id`` mismatch) — e.g. ``yadgar-adr-0001`` ->
+    ``m-agahi_yadgar_adr-0001`` when that canonical slug already exists as
+    its own row. Without this check the apply pass would hit a unique-index
+    violation partway through, having already rewritten some pages with no
+    transaction and no rollback. Extracted out of :func:`reslug_adr_pages`
+    to keep that function under the repo's complexity caps (I13/I30).
+
+    Returns:
+        ``collisions`` — one dict per colliding rewrite (``old``, ``new``,
+        ``id``, ``occupant_id``), for the manifest.
+        ``skip_ids`` — the set of rewrite ``id`` values to skip in the
+        write pass.
+    """
+    collisions: list[dict] = []
+    skip_ids: set = set()
+    for w in rewrites:
+        existing = storage._q(
+            "SELECT id, content FROM wiki_page WHERE slug = $slug",
+            {"slug": w["new"]},
+        )
+        occupant = next((e for e in existing if e.get("id") != w["id"]), None)
+        if occupant is not None:
+            collisions.append(
+                {
+                    "old": w["old"],
+                    "new": w["new"],
+                    "id": w["id"],
+                    "occupant_id": occupant.get("id"),
+                }
+            )
+            skip_ids.add(w["id"])
+    return collisions, skip_ids
+
+
 @observe(tier="boundary", metric="admin.reslug_adr_pages")
 def reslug_adr_pages(payload: dict, *, storage) -> dict:
     """Re-slug every ADR wiki page from ``yadgar-adr-NNNN`` to ``{project_id}_adr-NNNN``.
@@ -286,20 +325,34 @@ def reslug_adr_pages(payload: dict, *, storage) -> dict:
         new = NEW_SLUG_TEMPLATE.format(project_id=project_id, n=n)
         rewrites.append({"id": r["id"], "old": old, "new": new})
 
+    # 2b. Collision guard (see ``_detect_slug_collisions``): reported in
+    # BOTH dry-run and apply mode so an operator sees the collision before
+    # applying anything; colliding rewrites are excluded from the pages
+    # actually written, but stay in ``rewrites`` so the manifest still
+    # shows what WOULD have happened.
+    collisions, skip_ids = _detect_slug_collisions(storage, rewrites)
+
     if dry_run:
-        # No writes. The manifest is the entire return.
-        return {"rewrites": rewrites, "dry_run": True}
+        # No writes. The manifest is the entire return — collisions are
+        # reported so the operator sees what the apply pass would skip.
+        return {"rewrites": rewrites, "dry_run": True, "collisions": collisions}
 
     # 3. Apply: rewrite each page (slug + inline body links), then update
-    # crossrefs, then stamp the SQL body_slug.
+    # crossrefs, then stamp the SQL body_slug. Colliding pages are skipped
+    # entirely — the occupant is never overwritten and one collision does
+    # not abort the rest of the run.
     # Build a single old→new map for inline body replacement. Inline links
     # MUST rewrite ANY old-format slug pointed to, not just the current
     # page's own old slug — page 1's body may link to page 2 via
     # ``[[yadgar-adr-0002]]`` and that link has to be updated when page 2
-    # is re-slugged.
-    old_to_new: dict[str, str] = {w["old"]: w["new"] for w in rewrites}
+    # is re-slugged. Colliding pages are excluded from this map too — their
+    # slug is never actually rewritten, so pointing an inline link at the
+    # "new" slug would dangle.
+    old_to_new: dict[str, str] = {w["old"]: w["new"] for w in rewrites if w["id"] not in skip_ids}
 
     for w in rewrites:
+        if w["id"] in skip_ids:
+            continue
         old = w["old"]
         new = w["new"]
         # Re-fetch the current content so we operate on the latest copy
@@ -340,11 +393,14 @@ def reslug_adr_pages(payload: dict, *, storage) -> dict:
     # passes hit every crossref that references ANY rewritten slug, in
     # either direction. The crossref table does not enforce a foreign
     # key against wiki_page, so a stale ``to_slug`` would silently
-    # dangle — hence the bidirectional rewrite.
+    # dangle — hence the bidirectional rewrite. Colliding pages are
+    # skipped — their slug was never actually rewritten.
     for w in rewrites:
+        if w["id"] in skip_ids:
+            continue
         old = w["old"]
         new = w["new"]
         storage.update_wiki_crossref_from(old, new)
         storage.update_wiki_crossref_to(old, new)
 
-    return {"rewrites": rewrites, "dry_run": False}
+    return {"rewrites": rewrites, "dry_run": False, "collisions": collisions}

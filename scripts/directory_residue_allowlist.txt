@@ -142,6 +142,7 @@ wire-contract  yadgar/backend/write_exec/_memorize_phases/_phase_post_write.py  
 wire-contract  yadgar/backend/queue_drainer/__init__.py    # queue payload key — caller_context, read back by the drainer
 wire-contract  yadgar/backend/admin_exec/wiki.py           # core-owned admin payload key over the HTTP admin boundary
 wire-contract  yadgar/backend/admin_exec/seed.py           # core-owned admin payload key; directory and project_id coexist by design
+wire-contract  yadgar/core/cli/backfill.py                 # CLI-side mirror of seed_adr_rows's own `directory` kwarg (§25 legacy-prefix derivation), forwarded verbatim over the HTTP /admin boundary via _forward_admin
 
 # ── legacy-key: a real scope key, blocked by Amendment 3's two conditions ────
 legacy-key  yadgar/_shared/storage/blocks.py               # memory_block: C11 declared project_id, the directory arm keeps pre-C11 rows reachable

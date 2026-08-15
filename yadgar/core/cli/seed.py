@@ -172,68 +172,6 @@ def _seed_anchors(anchors: list[dict], db_path: str | None, dry_run: bool) -> di
     return results
 
 
-def _seed_task_from_pages(directory: str, project_id: str, dry_run: bool) -> dict:
-    """Seed the ``task`` table from existing ``{project}-task-list`` wiki pages.
-
-    Car E (0047 spine train, plan §3.3).  Idempotent: a second call returns
-    ``seeded=0`` for any pages already migrated.  The op POSTs to
-    ``/hooks/seed-task-from-pages`` on the daemon, which forwards to the
-    backend admin op ``seed_task_from_pages``.
-
-    Returns the backend op's result dict (seeded/skipped/candidates/pages).
-    """
-    if not _daemon_health_ok():
-        print("  WARN: Daemon not running. Skipping task seed.", file=sys.stderr)
-        print("  To seed manually, start the daemon then run:", file=sys.stderr)
-        print("    systemctl --user start yadgar.target", file=sys.stderr)
-        print("    yadgar seed --seed-task-from-pages <directory>", file=sys.stderr)
-        return {
-            "seeded": 0,
-            "skipped": 0,
-            "candidates": 0,
-            "dry_run": dry_run,
-            "reason": "daemon_unreachable",
-        }
-
-    token = _read_auth_token()
-    url = f"{_DAEMON_BASE}/hooks/seed-task-from-pages"
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    payload = json.dumps(
-        {
-            "directory": directory,
-            "project_id": project_id,
-            "dry_run": dry_run,
-        }
-    ).encode()
-    try:
-        req = urllib.request.Request(url, data=payload, headers=headers)
-        with contextlib.closing(urllib.request.urlopen(req, timeout=30.0)) as resp:  # noqa: S310
-            resp_data = json.loads(resp.read().decode())
-        return resp_data
-    except urllib.error.HTTPError as e:
-        e.close()
-        print(f"  WARN: seed_task_from_pages failed: HTTP {e.code}", file=sys.stderr)
-        return {
-            "seeded": 0,
-            "skipped": 0,
-            "candidates": 0,
-            "dry_run": dry_run,
-            "reason": "request_failed",
-        }
-    except Exception as e:
-        print(f"  WARN: seed_task_from_pages failed: {e}", file=sys.stderr)
-        return {
-            "seeded": 0,
-            "skipped": 0,
-            "candidates": 0,
-            "dry_run": dry_run,
-            "reason": "request_failed",
-        }
-
-
 def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
     """Seed the 15 built-in starter agent-prompts via daemon REST endpoint.
 
@@ -307,53 +245,8 @@ def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
     return results
 
 
-def _handle_seed_task_from_pages(args) -> int:
-    """Handle the --seed-task-from-pages CLI branch (Car E — 0047 spine train).
-
-    Mirrors the `_seed_agent_prompts` + `_seed_anchors` extraction pattern.
-    Validates args, calls the daemon REST endpoint, formats the report,
-    and returns 0 on success. sys.exits with code 1 on missing args.
-    """
-    directory = str(Path(args.directory).resolve()) if args.directory else ""
-    project_id = getattr(args, "project_id", "") or ""
-    if not directory or not project_id:
-        print(
-            "ERROR: --seed-task-from-pages requires --directory and --project-id",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    print(
-        f"Seeding task ledger from pages: {directory} (project_id={project_id})",
-        file=sys.stderr,
-    )
-    result = _seed_task_from_pages(
-        directory=directory,
-        project_id=project_id,
-        dry_run=args.dry_run,
-    )
-    if args.dry_run:
-        print(
-            f"\n[DRY RUN] Would seed {result.get('candidates', 0)} task rows for {project_id}",
-            file=sys.stderr,
-        )
-    elif result.get("reason") == "daemon_unreachable":
-        pass  # instructional message already printed
-    else:
-        print(
-            f"\nSeeded {result.get('seeded', 0)} task rows for {project_id} "
-            f"({result.get('skipped', 0)} skipped, {result.get('candidates', 0)} candidates)",
-            file=sys.stderr,
-        )
-    print(json.dumps(result))
-    return 0
-
-
 def cmd_seed(args):
     """Bootstrap memory for an existing project by scanning its structure."""
-    # Handle --seed-task-from-pages mode (Car E — 0047 spine train)
-    if getattr(args, "seed_task_from_pages", False):
-        return _handle_seed_task_from_pages(args)
-
     # Handle --agent-prompts mode
     if getattr(args, "agent_prompts", False):
         result = _seed_agent_prompts(db_path=getattr(args, "db_path", None), dry_run=args.dry_run)
@@ -457,19 +350,6 @@ def register(subparsers):
         action="store_true",
         default=False,
         help="Seed the 4 built-in starter agent-prompts into the library (v5.85 S8)",
-    )
-    p.add_argument(
-        "--seed-task-from-pages",
-        action="store_true",
-        default=False,
-        help="Seed the task ledger from existing {project}-task-list wiki pages "
-        "(0047 spine train Car E — D35a idempotent)",
-    )
-    p.add_argument(
-        "--project-id",
-        type=str,
-        default=None,
-        help="Project identifier used with --seed-task-from-pages (ADR-0202)",
     )
     p.add_argument("--db-path", type=str, default=None, help="Database path")
     p.add_argument(

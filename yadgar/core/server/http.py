@@ -1818,65 +1818,6 @@ async def hook_seed_agent_prompts(request: Request) -> JSONResponse:
         _hook_observe("seed_agent_prompts", _t0, _caught_exc)
 
 
-@mcp_server.custom_route("/hooks/seed-task-from-pages", methods=["POST"])
-@trace_span()
-async def hook_seed_task_from_pages(request: Request) -> JSONResponse:
-    """Seed the task ledger from existing {project}-task-list wiki pages.
-
-    Car E (0047 spine train, plan §3.3). Called by `yadgar seed
-    --seed-task-from-pages` CLI after daemon start. Forwards to the backend
-    admin op `seed_task_from_pages` via `_forward_admin`, which reads
-    page_type='task_list' wiki pages, parses ## task:<id> sections, and
-    inserts rows into the task ledger. Idempotent (D35a).
-
-    Body (JSON):
-        {
-            "directory": "/abs/path/to/project",
-            "project_id": "<project key>",
-            "dry_run": false
-        }
-
-    Response:
-        {"status": "ok", "result": {"seeded": N, "skipped": M, "candidates": K,
-                                    "dry_run": bool, "pages": {...}}}
-        {"status": "error", "message": "..."}   — on validation failure (400)
-    """
-    _t0 = time.perf_counter()
-    _caught_exc: BaseException | None = None
-    try:
-        try:
-            body = await request.json()
-        except Exception:
-            _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
-            _hook_observe_response("seed_task_from_pages", _resp.status_code)
-            return _resp
-
-        directory = sanitize_log_field(str(body.get("directory", "")), max_len=1000)
-        project_id = sanitize_log_field(str(body.get("project_id", "")), max_len=200)
-        dry_run = bool(body.get("dry_run", False))
-        if not directory or not project_id:
-            _resp = JSONResponse(
-                {"status": "error", "message": "directory and project_id are required"},
-                status_code=400,
-            )
-            _hook_observe_response("seed_task_from_pages", _resp.status_code)
-            return _resp
-
-        from yadgar.core.forward import _forward_admin  # noqa: PLC0415
-
-        result = await asyncio.to_thread(
-            _forward_admin,
-            "seed_task_from_pages",
-            {"directory": directory, "project_id": project_id, "dry_run": dry_run},
-        )
-        return JSONResponse({"status": "ok", "result": result})
-    except Exception as _exc:
-        _caught_exc = _exc
-        raise
-    finally:
-        _hook_observe("seed_task_from_pages", _t0, _caught_exc)
-
-
 @mcp_server.custom_route("/hooks/file-changed", methods=["POST"])
 @trace_span()
 async def hook_file_changed(request: Request) -> JSONResponse:
