@@ -158,3 +158,66 @@ class TestCmdCaptureEnqueues:
         assert "StorageEngine" not in src, (
             "cmd_capture must enqueue via the file-queue seam, not write the DB directly"
         )
+
+
+class TestMixedProjectBatchIsSplitNotCollapsed:
+    """A flushed action batch spanning two projects must not become one ``""``.
+
+    ``/hooks/auto-capture`` accumulates 5 actions per session then flushes them
+    as ONE action_log row. It took the project only when every action agreed
+    (``_batch_projects.pop() if len(...) == 1 else ""``) and enqueued the row
+    regardless — so a batch spanning two repos, or one containing a single
+    unattributed action, was written with ``project_id=""``.
+
+    C5 then widened the drainer's ``missing_project_id`` gate to every op_type,
+    which classifies that row a PERMANENT failure. Result measured on the live
+    corpus 2026-08-15: 1,094 action_log entries in the DLQ, ~600/day, growing.
+    The batch already HOLDS the identities — collapsing them to ``""`` throws
+    away information the row needs to survive.
+    """
+
+    def test_two_projects_yield_two_groups(self):
+        from yadgar.core.server.http import _split_batch_by_project
+
+        actions = [
+            {"tool_name": "Edit", "summary": "a", "project_id": "m-agahi/yadgar"},
+            {"tool_name": "Write", "summary": "b", "project_id": "quinyx/flux"},
+            {"tool_name": "Edit", "summary": "c", "project_id": "m-agahi/yadgar"},
+        ]
+        groups = dict(_split_batch_by_project(actions))
+        assert set(groups) == {"m-agahi/yadgar", "quinyx/flux"}
+        assert [a["summary"] for a in groups["m-agahi/yadgar"]] == ["a", "c"]
+        assert [a["summary"] for a in groups["quinyx/flux"]] == ["b"]
+
+    def test_single_project_batch_stays_one_group(self):
+        from yadgar.core.server.http import _split_batch_by_project
+
+        actions = [
+            {"tool_name": "Edit", "summary": "a", "project_id": "m-agahi/yadgar"},
+            {"tool_name": "Edit", "summary": "b", "project_id": "m-agahi/yadgar"},
+        ]
+        groups = dict(_split_batch_by_project(actions))
+        assert list(groups) == ["m-agahi/yadgar"]
+        assert len(groups["m-agahi/yadgar"]) == 2
+
+    def test_unattributed_actions_are_dropped_not_emitted(self):
+        """A row with no identity cannot be written — the drainer rejects it.
+
+        Dropping at the source is strictly better than enqueuing a job whose
+        only possible outcome is a DLQ entry a human must then clear.
+        """
+        from yadgar.core.server.http import _split_batch_by_project
+
+        actions = [
+            {"tool_name": "Edit", "summary": "a", "project_id": "m-agahi/yadgar"},
+            {"tool_name": "Edit", "summary": "orphan", "project_id": ""},
+            {"tool_name": "Edit", "summary": "orphan2"},
+        ]
+        groups = dict(_split_batch_by_project(actions))
+        assert list(groups) == ["m-agahi/yadgar"]
+        assert "" not in groups and None not in groups
+
+    def test_wholly_unattributed_batch_yields_nothing(self):
+        from yadgar.core.server.http import _split_batch_by_project
+
+        assert list(_split_batch_by_project([{"tool_name": "Edit", "project_id": ""}])) == []

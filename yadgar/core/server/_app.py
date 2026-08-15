@@ -570,7 +570,16 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
     YADGAR_OFFLOAD_TOOLS, default OFF → inline). Both share _emit_metrics.
     """
     import functools  # noqa: PLC0415
+    import inspect as _inspect_sig  # noqa: PLC0415
     import time as _time  # noqa: PLC0415
+
+    # Whether this tool declares its OWN ``context`` parameter. Computed once
+    # at decoration time so the per-call path stays a boolean test. See the
+    # pop-site in ``_instrumented_async`` for why it matters.
+    try:
+        _declares_context = "context" in _inspect_sig.signature(func).parameters
+    except (TypeError, ValueError):  # fmt: skip  # pragma: no cover — builtins/C funcs
+        _declares_context = False
 
     _maint_logger = logging.getLogger(__name__)
 
@@ -668,11 +677,20 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
         # kwargs, the executor would re-receive it and the binding would
         # never be visible to ``resolve_effective_project`` tier 2.
         ctx = kwargs.pop("ctx", None)
-        if ctx is None:
+        if ctx is None and not _declares_context:
             # mcp 2.0.0 passes the Context object under the kwarg name
             # ``context`` (per server/fastmcp/server.py:96); older SDK
             # shapes used ``ctx``. The plan §3.3 spec uses ``ctx``; we
             # accept both to stay forward/back-compat.
+            #
+            # ...but ONLY when the tool does not declare its own ``context``
+            # parameter. Three do — ``adr_add`` (the ADR background),
+            # ``anchor`` (the anchor's context) and ``memorize`` (the
+            # staleness-detection path) — and an unconditional pop ate the
+            # caller's value: the two REQUIRED ones raised
+            # ``missing 1 required positional argument: 'context'`` and the
+            # optional one dropped the value with no signal at all. The
+            # wrapped signature is the authority on who owns the name.
             ctx = kwargs.pop("context", None)
         _bound_project_id = _extract_session_project(ctx) if ctx is not None else None
         # Stamp the per-request ContextVar so resolve_effective_project tier 2

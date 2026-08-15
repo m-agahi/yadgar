@@ -7,6 +7,14 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+**fix: the tool wrapper ate every `context` argument, and mixed-project batches went straight to the DLQ.** Core `5.183.1` → `5.183.2`; backend unchanged (`5.75.0`).
+
+**`adr_add` and `anchor` have been dead since Car B shipped, and `memorize` was silently losing data.** `_build_tool_wrappers._instrumented_async` looks for the FastMCP `Context` object under both `ctx` and `context` (SDK shapes differ) and popped the latter **unconditionally** — but `context` is also a real business parameter on three registered tools. The caller's value was removed from `kwargs` before the body ran: `adr_add(context=…)` and `anchor(context=…)` (both REQUIRED) raised `missing 1 required positional argument: 'context'`, and `memorize(context=…)` (optional) **dropped the staleness-detection path with no error at all**. Reproduced live against core `5.183.1`. The pop is now gated on the wrapped function's own signature — a tool that declares `context` owns the name — computed once at decoration time.
+
+**1,094 action_log rows were manufactured for the dead-letter queue.** `/hooks/auto-capture` batches 5 actions then flushes them as ONE row, and took the identity only when every action agreed: `_batch_projects.pop() if len(_batch_projects) == 1 else ""`. A batch spanning two repos got `project_id=""` and was enqueued regardless. C5 had since widened the drainer's `missing_project_id` gate to every op_type, which classifies that a PERMANENT failure — so every mixed-project batch became a DLQ entry. Measured on the live corpus 2026-08-15: 1,094 `action_log` + 7 `checkpoint` entries, ~600/day, against one entry/day before the gate widened. The batch already holds the identities, so it is now **split per project** (one row each, order preserved) and genuinely unattributed actions are **dropped at the source** rather than enqueued as a job whose only possible outcome is a DLQ entry someone must clear by hand.
+
+**`dlq_inspect` promised a key it did not emit.** Entries carried `file`; the docstring said "Each entry has a filename you can pass to `dlq_requeue()`" and both sibling tools take `filename=`. A caller following the documented contract read `None` off every row and concluded the backlog could not be cleared at all. Entries now carry both keys.
+
 **fix: the corpus re-key migration could not complete, and said so with exit 0.** Core `5.183.0` → `5.183.1`; backend `5.74.0` → `5.75.0`.
 
 **Found by running the shipped build, not by a test.** `yadgar migrate rekey --apply` on a sandbox VM (core `5.183.0`, backend `5.74.0`, a 130-directory corpus) aborted with `registry_seed_failed` on `local/argo-workflows` — one of the same-basename collisions the dry-run report **itself lists** under `basenames_collide`. Two paths deriving one `local/<basename>` key is a normal, reported condition, and the `skipped` bucket exists for exactly it.

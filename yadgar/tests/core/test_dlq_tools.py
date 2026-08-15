@@ -120,3 +120,42 @@ class TestBuildDlqAlertText:
         assert "memorize" in text
         assert "DLQ Alert" in text
         assert "dlq_requeue" in text  # actionable hint
+
+
+class TestInspectNamesTheKeyItsSiblingsTake:
+    """``dlq_inspect`` must emit the key ``dlq_dismiss``/``dlq_requeue`` accept.
+
+    Found 2026-08-15 while trying to clear a 1,104-entry backlog: the entries
+    carry ``file``, but the docstring says "Each entry has a filename you can
+    pass to dlq_requeue()" and both sibling tools take ``filename=``. Reading
+    the documented key off a real result yields ``None`` for every row, which
+    reads as "the DLQ is unmanageable" rather than "look under a different
+    key" — the backlog cannot be scripted away without knowing the source.
+    """
+
+    def test_entry_exposes_filename(self):
+        from yadgar.core.server.tools.admin_dlq import dlq_inspect
+
+        fname, _ = _seed_dlq_entry("0007_namekey.json")
+        entry = next(e for e in dlq_inspect() if e.get("file") == fname)
+        assert entry.get("filename") == fname, (
+            "dlq_inspect promises `filename` and its siblings take `filename=`, "
+            "but the entry does not carry that key"
+        )
+
+    def test_filename_round_trips_into_dismiss(self):
+        """The documented key must actually work as the sibling's argument."""
+        from yadgar.core.server.tools.admin_dlq import dlq_dismiss, dlq_inspect
+
+        _seed_dlq_entry("0008_roundtrip.json")
+        entry = next(e for e in dlq_inspect() if e.get("op_type") == "memorize")
+        result = dlq_dismiss(entry["filename"])
+        assert result.get("dismissed") or result.get("ok"), result
+
+    def test_legacy_file_key_is_kept(self):
+        """``file`` stays — anything already reading it must not break."""
+        from yadgar.core.server.tools.admin_dlq import dlq_inspect
+
+        fname, _ = _seed_dlq_entry("0009_legacy.json")
+        entry = next(e for e in dlq_inspect() if e.get("file") == fname)
+        assert entry["file"] == entry["filename"]

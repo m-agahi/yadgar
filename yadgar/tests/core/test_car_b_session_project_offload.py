@@ -184,3 +184,64 @@ class TestTier2SurvivesOffload:
         first, second = asyncio.run(_two_calls())
         assert first == "m-agahi/yadgar"
         assert second is None
+
+
+# ── the `context` kwarg collision ───────────────────────────────────────────
+
+
+class TestBusinessContextParamIsNotEatenAsTheSdkContext:
+    """A tool parameter literally named ``context`` must reach the tool body.
+
+    ``_instrumented_async`` looks for the FastMCP Context object under BOTH
+    ``ctx`` and ``context`` (SDK shapes differ). But ``context`` is also a
+    real business parameter on three registered tools, and the pop is
+    unconditional — so the caller's value is removed from kwargs and the body
+    is invoked without it:
+
+      * ``adr_add(context=...)``  — REQUIRED  -> TypeError, ADR writes dead
+      * ``anchor(context=...)``   — REQUIRED  -> TypeError, anchoring dead
+      * ``memorize(context=...)`` — optional  -> SILENTLY dropped, no error
+
+    Reproduced live 2026-08-15 against core 5.183.1:
+    ``adr_add() missing 1 required positional argument: 'context'`` with
+    ``context`` plainly supplied. The optional case is the dangerous one — it
+    loses the staleness-detection path with no signal at all.
+
+    The fix keys on the WRAPPED FUNCTION'S OWN SIGNATURE: a tool that declares
+    ``context`` owns that name, so the wrapper must never claim it.
+    """
+
+    @staticmethod
+    def _wrap(func):
+        from yadgar.core.server._app import _build_tool_wrappers
+
+        return _build_tool_wrappers(func, func, lambda _r: 1)[1]  # async wrapper
+
+    def test_required_context_reaches_the_body(self):
+        def tool_with_context(directory: str, context: str) -> dict:
+            return {"directory": directory, "context": context}
+
+        wrapper = self._wrap(tool_with_context)
+        out = asyncio.run(wrapper(directory="/d", context="the ADR background"))
+        assert out == {"directory": "/d", "context": "the ADR background"}
+
+    def test_optional_context_is_not_silently_dropped(self):
+        def tool_with_optional_context(content: str, context: str | None = None) -> dict:
+            return {"content": content, "context": context}
+
+        wrapper = self._wrap(tool_with_optional_context)
+        out = asyncio.run(wrapper(content="x", context="/home/max/file.py"))
+        assert out["context"] == "/home/max/file.py", (
+            "the caller's context was swallowed by the SDK-Context lookup"
+        )
+
+    def test_sdk_context_is_still_consumed_for_tools_without_the_param(self):
+        """Tools that do NOT declare ``context`` keep the old behaviour."""
+
+        def tool_without_context(directory: str) -> dict:
+            return {"directory": directory}
+
+        wrapper = self._wrap(tool_without_context)
+        # A stray `context` kwarg must not reach a body that cannot accept it.
+        out = asyncio.run(wrapper(directory="/d", context=_Ctx("owner/repo")))
+        assert out == {"directory": "/d"}
