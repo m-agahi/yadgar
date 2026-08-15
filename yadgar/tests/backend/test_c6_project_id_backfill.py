@@ -657,3 +657,142 @@ async def test_wiki_scan_does_not_pull_page_bodies(fakes):
     ]
     assert wiki_selects, "no wiki_page SELECT was issued"
     assert all("content" not in q for q in wiki_selects), wiki_selects
+
+
+# ── string-tagged rows must not sink the whole apply ────────────────────────
+
+
+class _TagShapeStorage:
+    """Records statements; answers the cohort SELECT with *rows*."""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
+        self.statements: list[tuple[str, dict | None]] = []
+
+    def _q(self, query: str, params: dict | None = None) -> list[dict]:
+        self.statements.append((query, params))
+        if query.strip().upper().startswith("SELECT"):
+            return [dict(r) for r in self.rows]
+        return []
+
+    def _extract_id(self, raw: Any) -> int:
+        return int(str(raw).split(":")[-1])
+
+    def tag_writes(self) -> dict[int, list]:
+        """``{row id: tags written}`` for every tag UPDATE issued."""
+        return {
+            p["id"]: p["tags"] for q, p in self.statements if p and "tags" in p and "SET tags" in q
+        }
+
+
+class TestGlobalTagSurvivesNonArrayTags:
+    """The reach tag must reach rows whose ``tags`` is a JSON string.
+
+    Found on the sandbox VM 2026-08-15, twice. First the apply died with
+
+        SurrealDB error: Incorrect arguments for function array::union().
+        Argument 1 was the wrong type. Expected `array` but found
+        `'["performance", "surreal-v3", "migration", "startup", "bugfix"]'`
+
+    because one UPDATE carried both ``project_id = $pid`` and a set-based
+    ``array::union`` — so a single string-tagged row rejected the whole
+    statement and every row in that ``directory_context`` got NEITHER the
+    tag NOR its project_id. Splitting the statement fixed the coupling; the
+    union itself still could not tag those rows.
+
+    So the tag step is a read-modify-write in Python. Both shapes are
+    normalised, which REPAIRS the string rows on the way past — dropping
+    them would silently narrow those rows to a single project, reversing
+    the decision the ``global`` sentinel split exists to honour (owner and
+    reach are separate axes, §1.4).
+    """
+
+    def _manifest(self, add_global_tag: bool = True) -> dict:
+        return {
+            "deletes": [],
+            "quarantine": [],
+            "updates": [
+                {
+                    "table": "memory",
+                    "directory_context": "global" if add_global_tag else _YADGAR,
+                    "project_id": "local/aws-work",
+                    "rows": 3,
+                    "add_global_tag": add_global_tag,
+                }
+            ],
+        }
+
+    def test_project_id_stamp_is_not_coupled_to_the_tag_write(self) -> None:
+        """The stamp must be its own statement — it can never fail on tags."""
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([])
+        _apply(storage, self._manifest())
+
+        stamps = [q for q, _ in storage.statements if "project_id = $pid" in q and "tags" not in q]
+        assert stamps, "project_id stamp is still coupled to the tag write"
+
+    def test_string_tagged_row_is_repaired_to_an_array_and_keeps_its_tags(self) -> None:
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:42", "tags": '["performance", "surreal-v3"]'}])
+        _apply(storage, self._manifest())
+
+        written = storage.tag_writes()
+        assert 42 in written, "string-tagged row never got the reach tag"
+        assert isinstance(written[42], list)
+        assert written[42] == ["performance", "surreal-v3", "global"]
+
+    def test_array_tagged_row_is_tagged_normally(self) -> None:
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:7", "tags": ["a", "b"]}])
+        _apply(storage, self._manifest())
+
+        assert storage.tag_writes()[7] == ["a", "b", "global"]
+
+    def test_already_tagged_row_is_left_alone(self) -> None:
+        """Idempotence: re-running must not duplicate the tag or rewrite rows."""
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:9", "tags": ["x", "global"]}])
+        _apply(storage, self._manifest())
+
+        assert storage.tag_writes() == {}
+
+    def test_unparseable_tags_are_preserved_not_dropped(self) -> None:
+        """A value that is not JSON is still one tag — losing it is data loss."""
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:5", "tags": "not-json-at-all"}])
+        _apply(storage, self._manifest())
+
+        assert storage.tag_writes()[5] == ["not-json-at-all", "global"]
+
+    def test_no_tag_work_when_the_cohort_is_not_global(self) -> None:
+        """Ordinary directories stay one set-based UPDATE — no per-row cost."""
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:1", "tags": '["x"]'}])
+        _apply(storage, self._manifest(add_global_tag=False))
+
+        assert storage.tag_writes() == {}
+        assert not [q for q, _ in storage.statements if q.strip().upper().startswith("SELECT")]
+
+    def test_uses_only_surql_the_repo_already_proves(self) -> None:
+        """No `type::is::*` and no `!` negation.
+
+        The first attempt at this fix gated a set-based union on
+        `type::is::array(tags)`, which SurrealDB v3.1.5 answered with 400
+        Bad Request — a function this repo uses nowhere else. The shapes
+        below (`SELECT ... WHERE col = $p`, `UPDATE type::record(...)`) are
+        the ones every other storage module already issues.
+        """
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:3", "tags": ["q"]}])
+        _apply(storage, self._manifest())
+
+        joined = " ".join(q for q, _ in storage.statements)
+        assert "type::is" not in joined
+        assert "array::union" not in joined

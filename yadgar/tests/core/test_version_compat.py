@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from yadgar._shared.version_compat import (
+    _BOUNDS,
     backend_compatible,
     core_compatible,
     handshake_status,
@@ -21,7 +22,7 @@ from yadgar._shared.version_compat import (
 
 
 def test_versions_compatible_in_range_passes() -> None:
-    # Sidecar says core 5.170..5.183, backend 5.65..5.74. Both in range.
+    # Both well inside the sidecar's supported window.
     assert versions_compatible("5.182.0", "5.73.0") is True
     assert core_compatible("5.182.0") is True
     assert backend_compatible("5.73.0") is True
@@ -45,7 +46,11 @@ def test_handshake_status_shape() -> None:
     assert block["self_version"] == "5.182.0"
     assert block["peer_version"] == "5.73.0"
     assert block["compatible"] is True
-    assert block["bounds"]["core"]["max"] == "5.183.0"
+    # Read the bound from the sidecar rather than pinning a literal: this
+    # test is about the SHAPE of the block, and a hardcoded version turns
+    # every legitimate compat-window bump into a spurious CI failure (it
+    # did, on the 5.183.0 -> 5.183.1 bump).
+    assert block["bounds"] == _BOUNDS
 
 
 def test_unverifiable_peer_passes() -> None:
