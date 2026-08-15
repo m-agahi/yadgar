@@ -344,22 +344,49 @@ async def _unknown_registry_targets(mapping: dict[str, str]) -> tuple[list[str],
 
 
 @observe(tier="stage")
+def _normalise_tags(raw: Any) -> list:
+    """Coerce a ``tags`` column value to a real list.
+
+    ``tags`` has two shapes in this corpus: a proper array, and a JSON
+    *string* — a legacy shape nine modules already defend against when
+    reading (``prune_passes``, ``heat_decay``, ``cold_retention``,
+    ``clustering``, ``narrative``, ``predictive_coding``,
+    ``astrocyte_pool``, ``duckdb_exporter``, ``ingestion``). A value that
+    will not parse is preserved as a single tag rather than dropped: the
+    caller is about to write the result back, so discarding here is data
+    loss, not tolerance.
+    """
+    if isinstance(raw, list):
+        return list(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):  # fmt: skip
+            return [raw]
+        return list(parsed) if isinstance(parsed, list) else [parsed]
+    return []
+
+
+@observe(tier="stage")
 def _add_global_tag(storage: Any, entry: dict) -> None:
     """Give every row leaving the ``global`` sentinel the reach tag.
 
-    Two statements, because ``tags`` has two shapes in this corpus. The
-    array rows take a set-based ``array::union`` (union rather than append:
-    re-running must not duplicate the tag). The rows whose ``tags`` is a
-    JSON *string* — a legacy shape nine modules already defend against when
-    reading, and which ``curation/ingestion.py`` was still producing — are
-    repaired one at a time: parsed, unioned, and written back as a real
-    array.
+    Read-modify-write in Python, one row at a time, rather than a set-based
+    ``array::union``. The set-based form cannot express this: the union
+    rejects the whole statement the moment one row's ``tags`` is a string,
+    and gating it on a SurrealQL type predicate would leave exactly those
+    rows untagged. Both shapes are normalised here instead, so a
+    string-tagged row is REPAIRED to an array on its way past.
 
     Repairing rather than skipping is the point. Owner and reach are
-    separate axes (§1.4): a row that loses the ``global`` tag is narrowed to
-    a single project, so dropping the awkward rows would silently reverse
-    the very decision the sentinel split exists to honour. A row whose tags
-    cannot be parsed keeps its own tags and still gains the reach tag.
+    separate axes (§1.4): a row that loses the ``global`` tag is narrowed
+    to a single project, so dropping the awkward rows would silently
+    reverse the very decision the sentinel split exists to honour.
+
+    Idempotent by construction — the tag is added only when absent, so
+    re-running stamps the same value rather than duplicating it. Only the
+    ``global`` cohort pays this per-row cost; every other directory is a
+    single set-based UPDATE in ``_apply``.
 
     Takes the manifest *entry* rather than an unpacked key so this helper
     introduces no new `directory`-family parameter in a scoping position
@@ -368,35 +395,20 @@ def _add_global_tag(storage: Any, entry: dict) -> None:
     migration.
     """
     table = entry["table"]
-    dc = entry["directory_context"]
-    storage._q(  # noqa: SLF001
-        f"UPDATE {table} SET tags = array::union(tags, ['{GLOBAL_TAG}']) "  # noqa: S608
-        "WHERE directory_context = $dc AND type::is::array(tags)",
-        {"dc": dc},
-    )
-
-    stragglers = (
+    rows = (
         storage._q(  # noqa: SLF001
-            f"SELECT id, tags FROM {table} "  # noqa: S608
-            "WHERE directory_context = $dc AND !type::is::array(tags)",
-            {"dc": dc},
+            f"SELECT id, tags FROM {table} WHERE directory_context = $dc",  # noqa: S608
+            {"dc": entry["directory_context"]},
         )
         or []
     )
-    for row in stragglers:
-        raw = row.get("tags")
-        existing: list = []
-        if isinstance(raw, str) and raw.strip():
-            try:
-                parsed = json.loads(raw)
-            except (ValueError, TypeError):  # fmt: skip
-                # Not JSON — a bare tag string is still one tag, not a loss.
-                parsed = [raw]
-            existing = parsed if isinstance(parsed, list) else [parsed]
-        repaired = [*existing, GLOBAL_TAG] if GLOBAL_TAG not in existing else list(existing)
+    for row in rows:
+        tags = _normalise_tags(row.get("tags"))
+        if GLOBAL_TAG in tags:
+            continue
         storage._q(  # noqa: SLF001
             f"UPDATE type::record('{table}', $id) SET tags = $tags",  # noqa: S608
-            {"id": storage._extract_id(row["id"]), "tags": repaired},  # noqa: SLF001
+            {"id": storage._extract_id(row["id"]), "tags": [*tags, GLOBAL_TAG]},  # noqa: SLF001
         )
 
 

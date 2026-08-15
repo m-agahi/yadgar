@@ -663,111 +663,136 @@ async def test_wiki_scan_does_not_pull_page_bodies(fakes):
 
 
 class _TagShapeStorage:
-    """Records statements; answers the non-array tag probe with *rows*."""
+    """Records statements; answers the cohort SELECT with *rows*."""
 
-    def __init__(self, nonarray_rows: list[dict]) -> None:
-        self.nonarray_rows = nonarray_rows
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
         self.statements: list[tuple[str, dict | None]] = []
 
     def _q(self, query: str, params: dict | None = None) -> list[dict]:
         self.statements.append((query, params))
         if query.strip().upper().startswith("SELECT"):
-            return [dict(r) for r in self.nonarray_rows]
+            return [dict(r) for r in self.rows]
         return []
 
     def _extract_id(self, raw: Any) -> int:
         return int(str(raw).split(":")[-1])
 
+    def tag_writes(self) -> dict[int, list]:
+        """``{row id: tags written}`` for every tag UPDATE issued."""
+        return {
+            p["id"]: p["tags"] for q, p in self.statements if p and "tags" in p and "SET tags" in q
+        }
+
 
 class TestGlobalTagSurvivesNonArrayTags:
-    """`array::union(tags, ...)` must not be coupled to the project_id stamp.
+    """The reach tag must reach rows whose ``tags`` is a JSON string.
 
-    Found on the sandbox VM 2026-08-15, immediately after the registry-seed
-    fix let the backfill run for the first time: the apply died with
+    Found on the sandbox VM 2026-08-15, twice. First the apply died with
 
         SurrealDB error: Incorrect arguments for function array::union().
         Argument 1 was the wrong type. Expected `array` but found
         `'["performance", "surreal-v3", "migration", "startup", "bugfix"]'`
 
-    Some ``memory.tags`` values are stored as a JSON *string* rather than an
-    array — a legacy shape that nine modules in this repo already defend
-    against when READING (``prune_passes``, ``heat_decay``, ``cold_retention``,
-    ``clustering``, ``narrative``, ``predictive_coding``, ``astrocyte_pool``,
-    ``duckdb_exporter``, ``ingestion``), and which ``curation/ingestion.py``
-    was still PRODUCING via ``tags=json.dumps(merged_tags)``.
+    because one UPDATE carried both ``project_id = $pid`` and a set-based
+    ``array::union`` — so a single string-tagged row rejected the whole
+    statement and every row in that ``directory_context`` got NEITHER the
+    tag NOR its project_id. Splitting the statement fixed the coupling; the
+    union itself still could not tag those rows.
 
-    One UPDATE carried both ``project_id = $pid`` and the tag union, so a
-    single string-tagged row made SurrealDB reject the whole statement — and
-    every row in that ``directory_context`` got NEITHER the tag NOR its
-    project_id. Since `_apply` has no transaction and runs deletes first, the
-    corpus was left half-migrated.
+    So the tag step is a read-modify-write in Python. Both shapes are
+    normalised, which REPAIRS the string rows on the way past — dropping
+    them would silently narrow those rows to a single project, reversing
+    the decision the ``global`` sentinel split exists to honour (owner and
+    reach are separate axes, §1.4).
     """
 
-    def _manifest(self) -> dict:
+    def _manifest(self, add_global_tag: bool = True) -> dict:
         return {
             "deletes": [],
             "quarantine": [],
             "updates": [
                 {
                     "table": "memory",
-                    "directory_context": "global",
+                    "directory_context": "global" if add_global_tag else _YADGAR,
                     "project_id": "local/aws-work",
-                    "rows": 2,
-                    "add_global_tag": True,
+                    "rows": 3,
+                    "add_global_tag": add_global_tag,
                 }
             ],
         }
 
-    def test_project_id_stamp_is_not_coupled_to_the_tag_union(self) -> None:
+    def test_project_id_stamp_is_not_coupled_to_the_tag_write(self) -> None:
         """The stamp must be its own statement — it can never fail on tags."""
         from yadgar.backend.admin_exec.project_backfill import _apply
 
         storage = _TagShapeStorage([])
         _apply(storage, self._manifest())
 
-        stamps = [
-            q for q, _ in storage.statements if "project_id = $pid" in q and "array::union" not in q
-        ]
-        assert stamps, "project_id stamp is still coupled to array::union"
+        stamps = [q for q, _ in storage.statements if "project_id = $pid" in q and "tags" not in q]
+        assert stamps, "project_id stamp is still coupled to the tag write"
 
-    def test_tag_union_is_gated_on_the_tags_column_being_an_array(self) -> None:
-        from yadgar.backend.admin_exec.project_backfill import _apply
-
-        storage = _TagShapeStorage([])
-        _apply(storage, self._manifest())
-
-        unions = [q for q, _ in storage.statements if "array::union" in q]
-        assert unions, "no tag union issued for the global cohort"
-        assert all("type::is::array(tags)" in q for q in unions), (
-            "union is not gated on tags being an array — a single string-tagged "
-            "row will reject the statement again"
-        )
-
-    def test_string_tagged_rows_are_repaired_and_keep_their_reach(self) -> None:
-        """A string-tagged row must end up an ARRAY carrying its original tags
-        plus ``global`` — dropping it would silently narrow the row's reach,
-        which is the regression the sentinel split exists to prevent."""
+    def test_string_tagged_row_is_repaired_to_an_array_and_keeps_its_tags(self) -> None:
         from yadgar.backend.admin_exec.project_backfill import _apply
 
         storage = _TagShapeStorage([{"id": "memory:42", "tags": '["performance", "surreal-v3"]'}])
         _apply(storage, self._manifest())
 
-        repairs = [(q, p) for q, p in storage.statements if p and isinstance(p.get("tags"), list)]
-        assert repairs, "string-tagged row was never repaired"
-        _, params = repairs[0]
-        assert set(params["tags"]) == {"performance", "surreal-v3", "global"}
+        written = storage.tag_writes()
+        assert 42 in written, "string-tagged row never got the reach tag"
+        assert isinstance(written[42], list)
+        assert written[42] == ["performance", "surreal-v3", "global"]
 
-    def test_no_repair_probe_when_the_cohort_is_not_global(self) -> None:
-        """Ordinary directories must not pay for the global-cohort repair."""
+    def test_array_tagged_row_is_tagged_normally(self) -> None:
         from yadgar.backend.admin_exec.project_backfill import _apply
 
-        manifest = self._manifest()
-        manifest["updates"][0]["add_global_tag"] = False
-        manifest["updates"][0]["directory_context"] = "/home/max/git/yadgar"
-        manifest["updates"][0]["project_id"] = "m-agahi/yadgar"
+        storage = _TagShapeStorage([{"id": "memory:7", "tags": ["a", "b"]}])
+        _apply(storage, self._manifest())
+
+        assert storage.tag_writes()[7] == ["a", "b", "global"]
+
+    def test_already_tagged_row_is_left_alone(self) -> None:
+        """Idempotence: re-running must not duplicate the tag or rewrite rows."""
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:9", "tags": ["x", "global"]}])
+        _apply(storage, self._manifest())
+
+        assert storage.tag_writes() == {}
+
+    def test_unparseable_tags_are_preserved_not_dropped(self) -> None:
+        """A value that is not JSON is still one tag — losing it is data loss."""
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:5", "tags": "not-json-at-all"}])
+        _apply(storage, self._manifest())
+
+        assert storage.tag_writes()[5] == ["not-json-at-all", "global"]
+
+    def test_no_tag_work_when_the_cohort_is_not_global(self) -> None:
+        """Ordinary directories stay one set-based UPDATE — no per-row cost."""
+        from yadgar.backend.admin_exec.project_backfill import _apply
 
         storage = _TagShapeStorage([{"id": "memory:1", "tags": '["x"]'}])
-        _apply(storage, manifest)
+        _apply(storage, self._manifest(add_global_tag=False))
 
-        assert not [q for q, _ in storage.statements if "array::union" in q]
+        assert storage.tag_writes() == {}
         assert not [q for q, _ in storage.statements if q.strip().upper().startswith("SELECT")]
+
+    def test_uses_only_surql_the_repo_already_proves(self) -> None:
+        """No `type::is::*` and no `!` negation.
+
+        The first attempt at this fix gated a set-based union on
+        `type::is::array(tags)`, which SurrealDB v3.1.5 answered with 400
+        Bad Request — a function this repo uses nowhere else. The shapes
+        below (`SELECT ... WHERE col = $p`, `UPDATE type::record(...)`) are
+        the ones every other storage module already issues.
+        """
+        from yadgar.backend.admin_exec.project_backfill import _apply
+
+        storage = _TagShapeStorage([{"id": "memory:3", "tags": ["q"]}])
+        _apply(storage, self._manifest())
+
+        joined = " ".join(q for q, _ in storage.statements)
+        assert "type::is" not in joined
+        assert "array::union" not in joined
