@@ -201,6 +201,15 @@ class SessionBindMiddleware:
                 _project_id = lookup_session_binding(_sid)
             except Exception:  # noqa: BLE001
                 _project_id = None
+        if not _project_id:
+            # Static per-client header — the path that actually works here.
+            # The daemon runs stateless_http (see _startup.py), so there is no
+            # Mcp-Session-Id and the nonce binding above can never resolve.
+            # ``.claude.json``'s mcpServers entry supports static headers, so a
+            # client installed for one project carries its identity on every
+            # request: no sticky session state for an instance to forget to
+            # switch back, and nothing the model can rewrite mid-session.
+            _project_id = (_hdrs.get("x-yadgar-project-id") or "").strip() or None
         from yadgar._shared.runtime.session_project import (  # noqa: PLC0415
             reset_current_session_project,
             set_current_session_project,
@@ -771,9 +780,16 @@ def _extract_session_project(ctx) -> str | None:
         _headers = getattr(_req, "headers", None)
         if _headers is None:
             return None
-        _sid = _headers.get("mcp-session-id") or _headers.get("Mcp-Session-Id")
-        if not _sid:
-            return None
+        # NO early-out on a missing Mcp-Session-Id. The daemon runs
+        # ``stateless_http=True`` for streamable-http (_startup.py — chosen so
+        # daemon restarts are transparent to the client), and stateless mode
+        # issues no session id at all; verified live 2026-08-15, an
+        # ``initialize`` against the running daemon returns no such header.
+        # Bailing here meant the ``X-Yadgar-Project-Id`` read below was
+        # unreachable in the ONLY transport the daemon actually runs, so tier 2
+        # never resolved and every write without an explicit ``project=``
+        # raised ``unresolved_project``. A session id is the wrong
+        # precondition for a value that travels in its own header.
     except Exception:  # noqa: BLE001 — defensive; never raise into the tool path
         return None
     # Look up the binding from the nonce pool's per-session project

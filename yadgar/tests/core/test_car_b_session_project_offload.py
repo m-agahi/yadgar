@@ -245,3 +245,92 @@ class TestBusinessContextParamIsNotEatenAsTheSdkContext:
         # A stray `context` kwarg must not reach a body that cannot accept it.
         out = asyncio.run(wrapper(directory="/d", context=_Ctx("owner/repo")))
         assert out == {"directory": "/d"}
+
+
+class _HeaderOnlyCtx:
+    """A Context whose request carries the project header but NO session id.
+
+    This is what the daemon actually sees: ``_startup.py`` sets
+    ``stateless_http=True`` for the streamable-http transport (deliberately —
+    it makes daemon restarts transparent), and stateless mode issues no
+    ``Mcp-Session-Id`` at all. Verified live 2026-08-15: an ``initialize``
+    against the running daemon returns no such header.
+    """
+
+    def __init__(self, project_id: str) -> None:
+        self.request_context = _RequestContext(
+            _Request(_Headers({"x-yadgar-project-id": project_id}))
+        )
+
+
+class TestProjectHeaderWorksWithoutASessionId:
+    """Tier 2 must resolve from the project header in STATELESS mode.
+
+    ``_extract_session_project`` reads ``X-Yadgar-Project-Id`` — but only
+    after an early ``return None`` when ``mcp-session-id`` is absent. The
+    daemon runs stateless, so that header is never present, so the reader
+    bails before it ever looks at the project header. Net effect: tier 2 is
+    dead in the only transport mode the daemon actually runs, and every
+    wiki/ADR write without an explicit ``project=`` raises
+    ``unresolved_project``.
+
+    A session id is the wrong precondition for a value carried in its own
+    header — a static per-client header (``.claude.json`` mcpServers supports
+    them) survives statelessness and daemon restarts alike.
+    """
+
+    def test_header_resolves_without_a_session_id(self):
+        from yadgar.core.server._app import _extract_session_project
+
+        assert _extract_session_project(_HeaderOnlyCtx("m-agahi/yadgar")) == "m-agahi/yadgar"
+
+    def test_session_id_path_still_works(self):
+        """The stateful path must keep working where a session id exists."""
+        from yadgar.core.server._app import _extract_session_project
+
+        assert _extract_session_project(_Ctx("quinyx/flux")) == "quinyx/flux"
+
+    def test_no_headers_at_all_is_still_none(self):
+        from yadgar.core.server._app import _extract_session_project
+
+        class _Bare:
+            request_context = _RequestContext(_Request(_Headers({})))
+
+        assert _extract_session_project(_Bare()) is None
+
+
+class TestMiddlewareHonoursTheProjectHeader:
+    """The ASGI middleware is the path that sees EVERY request.
+
+    The tool wrapper only gets a FastMCP ``Context`` when the SDK chooses to
+    inject one; the middleware reads the raw ASGI scope unconditionally. In
+    stateless mode the nonce lookup can never resolve, so the middleware must
+    fall back to the static ``X-Yadgar-Project-Id`` header or tier 2 stays
+    dead no matter what the wrapper does.
+    """
+
+    @staticmethod
+    def _run(headers: dict[str, str]) -> str | None:
+        from yadgar._shared.runtime.session_project import get_current_session_project
+        from yadgar.core.server._app import SessionBindMiddleware
+
+        seen: dict[str, str | None] = {}
+
+        async def _app(scope, receive, send):
+            seen["project"] = get_current_session_project()
+
+        scope = {
+            "type": "http",
+            "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+        }
+        asyncio.run(SessionBindMiddleware(_app)(scope, None, None))
+        return seen["project"]
+
+    def test_header_becomes_the_contextvar(self):
+        assert self._run({"x-yadgar-project-id": "m-agahi/yadgar"}) == "m-agahi/yadgar"
+
+    def test_absent_header_leaves_it_unbound(self):
+        assert self._run({}) is None
+
+    def test_blank_header_is_not_an_identity(self):
+        assert self._run({"x-yadgar-project-id": "   "}) is None
