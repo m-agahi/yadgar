@@ -7,6 +7,18 @@ All notable changes to Yadgar are documented here. Format follows [Keep a Change
 
 ## [Unreleased]
 
+**fix: the corpus re-key migration could not complete, and said so with exit 0.** Core `5.183.0` → `5.183.1`; backend unchanged (`5.74.0`).
+
+**Found by running the shipped build, not by a test.** `yadgar migrate rekey --apply` on a sandbox VM (core `5.183.0`, backend `5.74.0`, a 130-directory corpus) aborted with `registry_seed_failed` on `local/argo-workflows` — one of the same-basename collisions the dry-run report **itself lists** under `basenames_collide`. Two paths deriving one `local/<basename>` key is a normal, reported condition, and the `skipped` bucket exists for exactly it.
+
+**The classifier could never have matched.** `_classify_registry_result` tested the error text for `"DuplicateProject"` / `"duplicate"`, but `create_project_row` returns `{"ok": False, "error": str(exc)}` (`ledger.py`) and `DuplicateProjectError`'s message is `project already registered: '<key>'` — **the class name appears nowhere in it**. Every already-registered key was therefore a hard failure. `yadgar/core/cli/project.py` carried the same test, under a comment asserting that "the canonical class name surfaces in the message"; both now share one predicate, `is_duplicate_project_error`, which matches the live message and keeps the class-name patterns for cross-version back-compat. `UnknownProjectError` shares no fragment with either and stays a failure.
+
+**The second consequence is worse than the first: the migration was unresumable.** The seed loop returns on the first failure, after having created rows. The retry then collides on those rows and fails on its *first* directory — reproduced on the VM, where run 2 aborted at `local/max` with `created: 0`. A partially-applied migration could not be driven forward or re-run, only restored from a snapshot.
+
+**The failure exited 0.** `cli()` called `args.func(args)` and discarded the result, so `migrate rekey` printed `FAILED (registry_seed_failed)` on stderr and still exited 0 — what a CI step or operator script reads as success. This affected **every** subcommand, not just this one. Handlers returning `None` (most of them) still exit 0, `yadgar hook` is unaffected (it calls `sys.exit()` itself), and only a real non-zero `int` is honoured — a returned object is not a status.
+
+**The fixtures encoded the bug.** `test_car_a_project_seed.py` mocked the duplicate envelope as `"DuplicateProjectError: <key>"`, a shape the backend does not produce, which is how a classifier that never matched anything shipped green. Those fixtures now build the envelope from `str(DuplicateProjectError(...))`, so the assertion is tied to the exception rather than to a guess about it.
+
 **fix: v5.182 bug train — six corpus-wide reads, three hooks that answered 200 with nothing, and the allowlists that hid them (9 cars).** Core `5.181.56` → `5.182.0`; backend `5.72.37` → `5.73.0`.
 
 **Every defect in this train shares one shape: a success signal that was not earned.** A recall that returned HTTP 200 with an empty body. A write that returned `{"ok": true}` and persisted nothing. A vacuum button that flashed a checkmark for a skipped run. A residue guard that reported OK while three live bugs sat inside its carve-outs. They were found by using the product — a fresh-install QA pass on a wiped VM, then a failed attempt to migrate the task list — not by a test going red, because in each case the test, the guard, or the HTTP status agreed that nothing was wrong.

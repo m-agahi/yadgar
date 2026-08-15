@@ -149,6 +149,32 @@ def infer_kind(project_id: str) -> str:
     return "local"
 
 
+def is_duplicate_project_error(err: str) -> bool:
+    """True when *err* is ``create_project_row`` reporting an existing key.
+
+    The backend does NOT name the exception class: ``create_project_row``
+    returns ``{"ok": False, "error": str(exc)}`` (ledger.py), and
+    ``DuplicateProjectError``'s message is
+    ``project already registered: '<key>'`` — no class name anywhere in it.
+    Matching only on ``"DuplicateProject"``/``"duplicate"`` therefore never
+    fired against a live backend, and every already-registered key came
+    back as a hard failure. Observed on the sandbox VM 2026-08-15
+    (core 5.183.0 / backend 5.74.0): ``yadgar migrate rekey --apply``
+    aborted with ``registry_seed_failed`` on the first same-basename
+    collision, and — because the rows it had already created then
+    collided on every retry — could not be resumed at all.
+
+    The class-name patterns are kept for cross-version back-compat: a
+    backend that does surface the class name stays supported.
+
+    Only DUPLICATES are benign here. ``UnknownProjectError``
+    (``unknown project_id: ...``) shares no fragment with these patterns
+    and stays a failure, which is the behaviour the seed loop needs.
+    """
+    low = err.lower()
+    return "duplicateproject" in low or "duplicate" in low or "already registered" in low
+
+
 def seed_row(row: dict, *, auth_token: str) -> str:
     """Call ``create_project_row`` for one row over the backend /admin route.
 
@@ -192,11 +218,7 @@ def seed_row(row: dict, *, auth_token: str) -> str:
     if result.get("ok") is True:
         return "created"
     err = str(result.get("error", ""))
-    # Backend labels duplicate-key errors with the same error string
-    # the storage layer raises; the canonical class name surfaces in
-    # the message. Match on a fragment to keep this robust to minor
-    # wording changes upstream.
-    if "DuplicateProject" in err or "duplicate" in err.lower():
+    if is_duplicate_project_error(err):
         return "skipped"
     print(f"  FAIL: {row['project_id']}: {err}", file=sys.stderr)
     return "failed"

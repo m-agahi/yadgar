@@ -56,6 +56,20 @@ def _default_host_embed_url() -> None:
     _os.environ.setdefault("YADGAR_EMBED_URL", "http://127.0.0.1:8001")
 
 
+def _handler_exit_code(rc: object) -> int:
+    """Reduce a subcommand handler's return value to a process exit code.
+
+    Only a real non-zero ``int`` is a status. Handlers return ``None``
+    (most of them), and anything else — a test double, a stray object —
+    is not a status: exiting on it would turn "returned something" into
+    "failed". ``bool`` is an ``int`` subclass and is excluded for the
+    same reason.
+    """
+    if isinstance(rc, bool) or not isinstance(rc, int):
+        return 0
+    return rc
+
+
 def cli():
     parser = argparse.ArgumentParser(description="Yadgar memory engine MCP server")
     subparsers = parser.add_subparsers(dest="command")
@@ -195,7 +209,14 @@ def cli():
         _default_host_embed_url()
 
         try:
-            args.func(args)
+            # The handler's return value IS its exit code — discarding it
+            # made every subcommand exit 0. `yadgar migrate rekey --apply`
+            # printed "FAILED (registry_seed_failed)" on stderr and still
+            # exited 0 on the sandbox VM 2026-08-15, which is exactly the
+            # shape a CI step or operator script reads as success.
+            # Handlers that return None (most of them) keep exiting 0, and
+            # `yadgar hook` is unaffected — it calls sys.exit() itself.
+            _rc = args.func(args)
         finally:
             # Car 0031 — the SDK no longer registers its own unbounded atexit
             # shutdown (setup_tracing passes shutdown_on_exit=False), so any
@@ -207,6 +228,13 @@ def cli():
             from yadgar._shared.observability.tracing import shutdown_tracing
 
             shutdown_tracing()
+
+        # After the trace flush, never inside the `finally` (exiting there
+        # would swallow an in-flight exception). Exiting only on a
+        # non-zero status keeps the success path falling off the end of
+        # cli(), which is what the existing dispatch tests assert.
+        if _handler_exit_code(_rc):
+            sys.exit(_rc)
 
 
 if __name__ == "__main__":

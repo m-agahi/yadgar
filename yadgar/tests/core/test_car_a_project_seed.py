@@ -22,6 +22,14 @@ from unittest.mock import patch
 
 import pytest
 
+# The duplicate envelope is built from the REAL exception, never a
+# hardcoded string: these fixtures previously asserted
+# ``"DuplicateProjectError: <key>"``, a shape the backend does not
+# produce (it returns ``str(exc)``, which carries no class name). That
+# mismatch kept the suite green while the live seed path classified every
+# duplicate as a hard failure — found on the sandbox VM 2026-08-15.
+from yadgar._shared.storage.sql.errors import DuplicateProjectError
+
 # ── parse_map / classify_row / seed_row / read_auth_token (CLI helpers) ──────
 
 
@@ -153,7 +161,7 @@ class TestSeedRow:
 
         with patch(
             "yadgar.core.forward._forward_admin",
-            return_value={"ok": False, "error": "DuplicateProjectError: m-agahi/yadgar"},
+            return_value={"ok": False, "error": str(DuplicateProjectError("m-agahi/yadgar"))},
         ):
             out = seed_row(self._row(), auth_token="x")
         assert out == "skipped"
@@ -245,9 +253,9 @@ class TestCmdProjectSeed:
         assert rc == 0
 
         # Second run: both rows are already registered → backend says dup.
-        dup = {"ok": False, "error": "DuplicateProjectError: m-agahi/yadgar"}
+        dup = {"ok": False, "error": str(DuplicateProjectError("m-agahi/yadgar"))}
         with self._patched_backend(
-            [dup, {"ok": False, "error": "DuplicateProjectError: local/max"}]
+            [dup, {"ok": False, "error": str(DuplicateProjectError("local/max"))}]
         ):
             rc = cmd_project_seed(args)
         assert rc == 0
@@ -350,7 +358,7 @@ class TestProjectSeedMcpTool:
             "yadgar.core.forward._forward_admin",
             side_effect=[
                 {"ok": True, "row": {"key": "owner/x"}},
-                {"ok": False, "error": "DuplicateProjectError: owner/x"},
+                {"ok": False, "error": str(DuplicateProjectError("owner/x"))},
             ],
         ):
             first = project_seed(map_path=str(f))

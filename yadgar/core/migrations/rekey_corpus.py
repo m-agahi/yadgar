@@ -745,11 +745,20 @@ def _confirms_deletes(parsed: Iterable[dict]) -> bool:
 
 @observe(tier="stage", span=False, metric="core.migrations.rekey.classify_registry_result")
 def _classify_registry_result(result: dict) -> str:
-    """Reduce ``create_project_row``'s envelope to ``created/skipped/failed``."""
+    """Reduce ``create_project_row``'s envelope to ``created/skipped/failed``.
+
+    An already-registered key is ``skipped``, not ``failed``: two paths
+    with the same basename derive one ``local/<basename>`` key, which the
+    report already lists under ``basenames_collide`` as a known condition.
+    The duplicate predicate is shared with ``yadgar project seed`` so the
+    two seed paths cannot drift apart again — see
+    ``is_duplicate_project_error`` for the live envelope this must match.
+    """
+    from yadgar.core.cli.project import is_duplicate_project_error  # noqa: PLC0415
+
     if result.get("ok") is True:
         return "created"
-    err = str(result.get("error", ""))
-    if "DuplicateProject" in err or "duplicate" in err.lower():
+    if is_duplicate_project_error(str(result.get("error", ""))):
         return "skipped"
     return "failed"
 

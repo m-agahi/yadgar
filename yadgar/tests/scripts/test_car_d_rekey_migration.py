@@ -596,3 +596,111 @@ class TestMigrateRekeyCli:
         assert rc == 2
         captured = capsys.readouterr()
         assert "--apply" in captured.err
+
+
+# ── duplicate-key classification (live-envelope regression) ─────────────────
+
+
+class TestDuplicateRegistryRowIsSkipped:
+    """The registry seed must treat an ALREADY-REGISTERED key as ``skipped``.
+
+    Found on the sandbox VM 2026-08-15 running the shipped 5.183.0 wheel
+    against backend 5.74.0: ``--apply`` aborted with
+    ``registry_seed_failed`` on ``local/argo-workflows`` — one of the
+    same-basename collisions the dry-run report itself lists under
+    ``basenames_collide``. Two paths deriving one key is a NORMAL,
+    reported condition, and the ``skipped`` bucket exists for it.
+
+    The classifier matched ``"DuplicateProject"`` / ``"duplicate"``, but
+    ``create_project_row`` returns ``{"ok": False, "error": str(exc)}``
+    (ledger.py) and ``DuplicateProjectError``'s message carries no class
+    name — so the match could never fire and every duplicate became a
+    hard abort. The second consequence is worse than the first: after a
+    partial run the already-created rows make EVERY retry fail on its
+    first row, so the migration is unresumable.
+
+    These tests build the envelope from the real exception rather than a
+    hardcoded string — the fixtures that hardcoded the class name are
+    what let this ship.
+    """
+
+    def test_real_duplicate_message_classifies_as_skipped(self) -> None:
+        from yadgar._shared.storage.sql.errors import DuplicateProjectError
+        from yadgar.core.migrations.rekey_corpus import _classify_registry_result
+
+        envelope = {"ok": False, "error": str(DuplicateProjectError("local/argo-workflows"))}
+        assert _classify_registry_result(envelope) == "skipped"
+
+    def test_unknown_project_message_still_classifies_as_failed(self) -> None:
+        """Guard against over-matching — only duplicates are benign."""
+        from yadgar._shared.storage.sql.errors import UnknownProjectError
+        from yadgar.core.migrations.rekey_corpus import _classify_registry_result
+
+        envelope = {"ok": False, "error": str(UnknownProjectError("local/nope"))}
+        assert _classify_registry_result(envelope) == "failed"
+
+    def test_legacy_class_name_envelope_still_skipped(self) -> None:
+        """Back-compat: a backend that DOES name the class stays supported."""
+        from yadgar.core.migrations.rekey_corpus import _classify_registry_result
+
+        envelope = {"ok": False, "error": "DuplicateProjectError: local/x"}
+        assert _classify_registry_result(envelope) == "skipped"
+
+    def test_project_seed_cli_classifier_agrees(self) -> None:
+        """``yadgar project seed`` carries the same match — same live bug."""
+        from yadgar._shared.storage.sql.errors import DuplicateProjectError
+
+        dup = {"ok": False, "error": str(DuplicateProjectError("local/argo-workflows"))}
+        with patch("yadgar.core.forward._forward_admin", return_value=dup):
+            from yadgar.core.cli.project import seed_row
+
+            outcome = seed_row(
+                {"project_id": "local/argo-workflows", "note": ""},
+                auth_token="t",
+            )
+        assert outcome == "skipped"
+
+    def test_apply_continues_past_a_duplicate_and_reaches_backfill(self, tmp_path: Path) -> None:
+        """End-to-end seam test: a duplicate mid-loop must NOT abort the run.
+
+        Two map rows deriving the same key (the collision shape observed
+        on the VM). The second ``create_project_row`` returns the real
+        duplicate envelope; the run must still reach
+        ``project_id_backfill`` with BOTH directories in the mapping.
+        """
+        from yadgar._shared.storage.sql.errors import DuplicateProjectError
+        from yadgar.core.migrations import rekey_corpus
+
+        map_path = tmp_path / "map.tsv"
+        map_path.write_text(
+            "# project-id map\n"
+            "/home/max/quinyx/argo-workflows\tlocal/argo-workflows\t3\t0\t\n"
+            "/home/max/quinyx/infrastructure-services/argo-workflows\t"
+            "local/argo-workflows\t2\t0\t\n"
+        )
+
+        calls: list[tuple[str, dict]] = []
+
+        def fake_forward(op: str, payload: dict, *, timeout_s: float = 30.0) -> dict:
+            calls.append((op, payload))
+            if op == "create_project_row":
+                if len([c for c in calls if c[0] == "create_project_row"]) == 1:
+                    return {"ok": True, "row": {"key": payload["key"]}}
+                return {
+                    "ok": False,
+                    "error": str(DuplicateProjectError(payload["key"])),
+                }
+            return {"ok": True, "updated": 5, "quarantined": 0}
+
+        with patch.object(rekey_corpus, "_forward_admin", side_effect=fake_forward):
+            result = rekey_corpus.apply_map(map_path, confirm=True)
+
+        assert result.get("ok") is not False, result
+        ops = [op for op, _ in calls]
+        assert "project_id_backfill" in ops, "duplicate aborted the run before backfill"
+
+        backfill_payload = next(p for op, p in calls if op == "project_id_backfill")
+        assert backfill_payload["mapping"] == {
+            "/home/max/quinyx/argo-workflows": "local/argo-workflows",
+            "/home/max/quinyx/infrastructure-services/argo-workflows": "local/argo-workflows",
+        }
