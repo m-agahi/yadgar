@@ -628,6 +628,14 @@ reverse-sync.
 | L | memory + wiki `directory_context`→`project_id` backfill + quarantine + 194-page ADR re-slug (one-shot offline) — §16.11 | A0 |
 | M | cross-project `project=` param on recall/memorize/wiki/adr/task tools, validated against the registry — §16.11 | A0, D, F |
 
+**Amendment (2026-08-15):** Car E's seed half (`seed_task_from_pages`, backfilling the `task`
+ledger from `{project}-task-list` pages) shipped, then was **deleted entirely** — it was not
+actually idempotent (dedup relied on `UNIQUE(project_id, body_slug)` with `body_slug=NULL`, and
+MySQL permits unlimited `NULL`s in a unique index, so a re-run duplicated every row) and it
+silently dropped most of a task's fields. It is replaced by a human-run procedure,
+`docs/prompts/backfill-task-list-to-ledger.md`. Car E's SessionStart/stop-hook rewire half is
+unaffected and stands as shipped. See `docs/CHANGELOG.md` [Unreleased] for the full account.
+
 D/E ∥ F/G ∥ I after B. **C gates D and F.** J depends only on A and can land early.
 
 **Ordering constraint from D33(a):** `runtime_config` is the **first revision** in Car A's Alembic chain; the ledger tables follow it via ordinary `down_revision` edges. Both live in the same chain (D34), so this is a single-engine ordering constraint, not a cross-system handshake.
