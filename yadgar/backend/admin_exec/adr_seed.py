@@ -213,6 +213,21 @@ def _parse_adr_id_from_slug(slug: str) -> int | None:
     return int(m.group(1))
 
 
+@observe(tier="stage", metric="backend.admin.adr_seed._adr_page_sort_key")
+def _adr_page_sort_key(page: dict[str, Any]) -> tuple[int, int]:
+    """Ascending-ADR-number sort key for the candidate page list.
+
+    Unparsable slugs sort LAST (first tuple element flips 0 -> 1) rather
+    than raising — a bare ``_parse_adr_id_from_slug`` result of ``None``
+    would blow up a numeric comparison against an ``int`` if used directly
+    as the sort key.
+    """
+    adr_id = _parse_adr_id_from_slug(page.get("slug") or "")
+    if adr_id is None:
+        return (1, 0)
+    return (0, adr_id)
+
+
 @observe(tier="stage", metric="backend.admin.adr_seed._extract_title_and_status")
 def _extract_title_and_status(body: str) -> tuple[str, str, str]:
     """Parse a per-ADR page body for (title, status, date).
@@ -313,18 +328,40 @@ async def seed_adr_rows(  # noqa: C901 - cohesive: orchestrator stitches idempot
     # a project-name surrogate: two checkouts of different repos with the same
     # directory name produced the same prefix.
     #
-    # BOTH prefixes are enumerated for one cycle. The live corpus is still on
-    # the legacy ``yadgar-adr-`` shape, so dropping it here would make the seed
-    # silently find zero pages on exactly the corpus it exists to lift.
+    # BOTH prefixes are enumerated EVERY run, and the results are UNIONED
+    # (de-duplicated by slug). The live corpus is still on the legacy
+    # ``yadgar-adr-`` shape, so a canonical-only scan (or a break-on-first-
+    # nonempty loop that stops the moment the canonical prefix matches the
+    # single already-reslugged page) would silently find just that one page
+    # and never touch the 200+ legacy-format pages this seed exists to lift.
+    seen_slugs: set[str] = set()
+    pages: list[dict[str, Any]] = []
     for _prefix in _adr_slug_prefixes(project_id, directory):
-        pages = _collect_candidate_pages(
+        prefix_pages = _collect_candidate_pages(
             project_slug_prefix=_prefix,
             list_pages=lambda prefix, _dir, limit: storage.list_wiki_pages(
                 slug_prefix=prefix, limit=limit
             ),
         )
-        if pages:
-            break
+        for _page in prefix_pages:
+            _slug = _page.get("slug") or ""
+            if _slug in seen_slugs:
+                continue
+            seen_slugs.add(_slug)
+            pages.append(_page)
+
+    # Ascending ADR-number insertion order (task decision, backfill run):
+    # insertion order determines which AUTO_INCREMENT ledger id a page lands
+    # on, so pages must be inserted 0002, 0003, ... in numeric order for the
+    # "historical ADR-0001 skipped, 0002-0230 land on ids 2-230" numbering
+    # scheme to hold. Pages whose slug does not parse (flagged below with
+    # reason "unparsable slug suffix", never inserted) sort LAST — they
+    # can't be assigned a numeric position, and since they are flagged and
+    # skipped before ever reaching the insert call, their exact placement in
+    # this list has no effect on ledger ids; sorting them last just keeps
+    # the enumeration order deterministic and out of the way of the
+    # numerically-meaningful pages.
+    pages = sorted(pages, key=_adr_page_sort_key)
 
     pages_seen = len(pages)
     rows_inserted = 0

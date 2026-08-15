@@ -216,6 +216,193 @@ class TestSeedAdrRowsIdempotent:
         assert any(p["slug"] == "yadgar-adr-0124" for p in collected)
 
 
+# ── ascending-ADR-number insertion order (fix 1) ────────────────────────────
+
+
+class _OrderFakeStorage:
+    """Minimal storage double: only ``list_wiki_pages`` is exercised.
+
+    ``list_adr_rows``/``get_wiki_page_by_slug*`` are absent on purpose — the
+    D35c gate helpers swallow the resulting ``AttributeError`` internally and
+    report 0, which is fine for a test that only cares about insertion order.
+    """
+
+    def __init__(self, pages: list[dict]) -> None:
+        self._pages = pages
+
+    def list_wiki_pages(self, slug_prefix: str, limit: int = 10000) -> list[dict]:
+        return [dict(p) for p in self._pages if (p.get("slug") or "").startswith(slug_prefix)]
+
+
+class TestSeedAdrRowsAscendingOrder:
+    """seed_adr_rows must insert candidate pages in ascending ADR-number
+    order — insertion order determines which ledger AUTO_INCREMENT id a page
+    lands on, and the whole "historical ADR-0001 skipped, 0002-0230 land on
+    ids 2-230" numbering scheme depends on ascending insertion.
+    """
+
+    async def test_inserts_in_ascending_adr_number_order_regardless_of_page_order(self) -> None:
+        from yadgar.backend.admin_exec.adr_seed import seed_adr_rows
+
+        # Deliberately out-of-order + not alphabetically-sorted-equivalent
+        # (0010 sorts before 0002 lexicographically if slugs were compared
+        # as strings without the numeric parse — this fixture would catch
+        # that regression too).
+        pages = [
+            {"slug": "yadgar-adr-0010", "content": "# ADR-0010: j\nbody"},
+            {"slug": "yadgar-adr-0002", "content": "# ADR-0002: b\nbody"},
+            {"slug": "yadgar-adr-0003", "content": "# ADR-0003: c\nbody"},
+            {"slug": "yadgar-adr-0001", "content": "# ADR-0001: a\nbody"},
+        ]
+        storage = _OrderFakeStorage(pages)
+
+        inserted_order: list[str] = []
+
+        def _row_inserter(payload: dict) -> dict:
+            inserted_order.append(payload["body_slug"])
+            # id doesn't need to reflect a real AUTO_INCREMENT here — the
+            # assertion is purely about call ORDER.
+            return {"id": len(inserted_order)}
+
+        def _slug_linker(adr_id: int, slug: str) -> None:
+            return None
+
+        await seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/home/max/git/yadgar",
+            storage=storage,
+            row_inserter=_row_inserter,
+            slug_linker=_slug_linker,
+        )
+
+        assert inserted_order == [
+            "yadgar-adr-0001",
+            "yadgar-adr-0002",
+            "yadgar-adr-0003",
+            "yadgar-adr-0010",
+        ], f"expected ascending ADR-number insertion order, got {inserted_order}"
+
+    def test_sort_key_handles_unparsable_slug_without_crashing(self) -> None:
+        """Defensive contract on the sort key itself: an unparsable-suffix
+        page must sort LAST, never raise. Today's candidate-collection
+        filter (``_is_per_adr_page_slug``) already excludes such pages
+        before this key is ever applied by ``seed_adr_rows`` — this test
+        pins the sort key's own contract independent of that upstream
+        filter, so a future relaxation of the filter can't reintroduce a
+        ``TypeError: '<' not supported between instances of 'NoneType' and
+        'int'`` mid-sort."""
+        from yadgar.backend.admin_exec.adr_seed import _adr_page_sort_key
+
+        pages = [
+            {"slug": "yadgar-adr-0002"},
+            {"slug": "yadgar-adr-BOGUS"},
+            {"slug": "yadgar-adr-0001"},
+        ]
+        ordered = sorted(pages, key=_adr_page_sort_key)
+        assert [p["slug"] for p in ordered] == [
+            "yadgar-adr-0001",
+            "yadgar-adr-0002",
+            "yadgar-adr-BOGUS",
+        ], "unparsable slug must sort LAST, not raise or sort first"
+
+
+# ── prefix union (fix 2) ─────────────────────────────────────────────────────
+
+
+class TestSeedAdrRowsPrefixUnion:
+    """The canonical + legacy slug prefixes must BOTH be scanned and unioned.
+
+    A ``break``-on-first-nonempty loop (the pre-fix behaviour) finds the one
+    already-reslugged canonical-format page, breaks, and never scans the 200+
+    legacy-format pages living under the OTHER prefix — the seed would report
+    success having inserted just one row.
+    """
+
+    async def test_pages_seen_unions_both_prefixes(self) -> None:
+        """Isolates the loop's union/break behaviour from
+        ``_is_per_adr_page_slug``'s own slug-shape recognition (a separate,
+        pre-existing concern) by patching ``_adr_slug_prefixes`` to hand
+        back two arbitrary hyphen-format prefixes, first one 1-page,
+        second one 3-pages — exactly the shape that breaks a
+        break-on-first-nonempty loop after only the first prefix.
+        """
+        from yadgar.backend.admin_exec import adr_seed
+        from yadgar.backend.admin_exec.adr_seed import seed_adr_rows
+
+        pages = [
+            {"slug": "prefix-a-adr-0001", "content": "# ADR-0001: a\nbody"},
+            {"slug": "prefix-b-adr-0002", "content": "# ADR-0002: b\nbody"},
+            {"slug": "prefix-b-adr-0003", "content": "# ADR-0003: c\nbody"},
+            {"slug": "prefix-b-adr-0004", "content": "# ADR-0004: d\nbody"},
+        ]
+        storage = _OrderFakeStorage(pages)
+
+        inserted_order: list[str] = []
+
+        def _row_inserter(payload: dict) -> dict:
+            inserted_order.append(payload["body_slug"])
+            return {"id": len(inserted_order)}
+
+        with patch.object(
+            adr_seed,
+            "_adr_slug_prefixes",
+            return_value=["prefix-a-adr-", "prefix-b-adr-"],
+        ):
+            result = await seed_adr_rows(
+                project_id="m-agahi/yadgar",
+                directory="/home/max/git/yadgar",
+                storage=storage,
+                row_inserter=_row_inserter,
+                slug_linker=lambda adr_id, slug: None,
+            )
+
+        assert result["pages_seen"] == 4, (
+            f"expected both prefixes unioned (4 pages), got pages_seen="
+            f"{result['pages_seen']} — break-on-first-nonempty would report 1"
+        )
+        assert set(inserted_order) == {
+            "prefix-a-adr-0001",
+            "prefix-b-adr-0002",
+            "prefix-b-adr-0003",
+            "prefix-b-adr-0004",
+        }
+
+    async def test_page_matching_both_prefixes_is_not_double_counted(self) -> None:
+        """A page whose slug happens to satisfy BOTH prefix scans (e.g. a
+        storage layer that returns overlapping results) must be seeded once,
+        not twice — the union must de-duplicate by slug."""
+        from yadgar.backend.admin_exec.adr_seed import seed_adr_rows
+
+        class _OverlappingStorage:
+            """Simulates the pathological case named in the task: the same
+            page comes back from EVERY prefix query, regardless of prefix
+            text — the union logic must still de-dup by slug."""
+
+            def list_wiki_pages(self, slug_prefix: str, limit: int = 10000) -> list[dict]:
+                return [{"slug": "yadgar-adr-0001", "content": "# ADR-0001: a\nbody"}]
+
+        storage = _OverlappingStorage()
+        inserted_order: list[str] = []
+
+        def _row_inserter(payload: dict) -> dict:
+            inserted_order.append(payload["body_slug"])
+            return {"id": len(inserted_order)}
+
+        result = await seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/home/max/git/yadgar",
+            storage=storage,
+            row_inserter=_row_inserter,
+            slug_linker=lambda adr_id, slug: None,
+        )
+
+        assert result["pages_seen"] == 1, (
+            f"same page returned by both prefix scans must be de-duplicated "
+            f"by slug, got pages_seen={result['pages_seen']}"
+        )
+        assert inserted_order == ["yadgar-adr-0001"]
+
+
 # ── §4.5: _build_adr_log + _get_adr_log_updated_at ──────────────────────────
 
 
