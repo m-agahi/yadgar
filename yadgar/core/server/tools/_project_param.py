@@ -140,6 +140,26 @@ def resolve_effective_project(
     if session_project is not None and session_project:
         return session_project
 
+    # ── 3b. Hook-authored directory map (the global-config tier) ───────────
+    # With ONE global ``mcpServers`` entry — the common setup — every request
+    # is identical on the wire, and the daemon runs ``stateless_http=True`` so
+    # there is no Mcp-Session-Id either. The only per-call signal that varies
+    # is ``directory``.
+    #
+    # This is a LOOKUP, not a derivation, and the difference is the whole of
+    # ADR-0227: the SessionStart hook mints host-side (where the working tree
+    # exists) and registers the pair; this asks only "has the hook told me
+    # about this exact directory?". An unregistered directory returns None and
+    # falls through to the raise below — no key is ever manufactured from a
+    # path, which is the failure mode the ADR deletes.
+    from yadgar._shared.runtime.session_map import (  # noqa: PLC0415
+        lookup_project_for_directory,
+    )
+
+    _mapped = lookup_project_for_directory(directory)
+    if _mapped:
+        return _mapped
+
     # ── 4. Nothing named an identity — FAIL LOUD (C5 / ADR-0227) ───────────
     #
     # What used to be here: a ``derive_project_id(cwd=directory)`` tier and a

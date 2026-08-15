@@ -190,7 +190,34 @@ def _emit_project_id(cwd: str) -> str | None:
         return None
     if notice:
         print(notice)
+    _register_directory_identity(cwd, project_id)
     return project_id
+
+
+def _register_directory_identity(cwd: str, project_id: str | None) -> None:
+    """Publish ``cwd -> project_id`` for the daemon's global-config tier.
+
+    This host-side process is the ONLY one that can mint (the daemon has no git
+    and no project mount, ADR-0227), so it is also the only one that can put a
+    truthful pair in the table. Writing it here is what lets a client using a
+    single global ``mcpServers`` entry resolve identity at all: the daemon
+    cannot tell two such sessions apart on the wire, so it looks the caller's
+    ``directory`` up in what this wrote.
+
+    Best-effort by design — a read-only or full data dir must degrade to "no
+    identity registered" (the caller then gets the normal loud unresolved
+    error), never break SessionStart.
+    """
+    if not project_id:
+        return
+    try:
+        from yadgar._shared.runtime.session_map import (  # noqa: PLC0415
+            register_session_project,
+        )
+
+        register_session_project(cwd, project_id)
+    except Exception:  # noqa: BLE001 — never brick the hook over telemetry
+        return
 
 
 def hook_session_start_context() -> None:
