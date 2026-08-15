@@ -103,11 +103,14 @@ def cli():
         install_hooks,
         install_mcp,
         install_subagents,
+        migrate,
         pending_findings,
+        project,
         restore,
         rules,
         seed,
         setup,
+        snapshot,
         stats,
         update,
         vacuum,
@@ -125,6 +128,7 @@ def cli():
     vacuum.register(subparsers)
     seed.register(subparsers)
     config.register(subparsers)
+    snapshot.register(subparsers)
     rules.register(subparsers)
     code_graph.register(subparsers)
     viz.register(subparsers)
@@ -135,6 +139,8 @@ def cli():
     install_mcp.register(subparsers)
     install_subagents.register(subparsers)
     update.register(subparsers)
+    project.register(subparsers)
+    migrate.register(subparsers)
 
     args = parser.parse_args()
 

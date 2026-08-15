@@ -8,7 +8,10 @@
 # - git worktree prune --expire 1.day
 # - For each local branch != current default branch:
 #     skip if matches PROTECTED patterns below
-#     classify via `git cherry <default> <branch>` — zero "+" lines = effectively merged
+#     classify via `git diff --quiet <default>..<branch> -- . ':!*.md'`
+#       (tree-based; squash merges defeat `git cherry`, see Car H train 2026-08-14)
+#     if worktree attached to branch: unlock + worktree remove --force FIRST,
+#       then delete the branch
 #     delete merged local branches via `git branch -D`
 # - For each remote-tracking branch (refs/remotes/origin/*) that no longer
 #   exists upstream: `git fetch --prune` cleans automatically (one-shot).
@@ -65,23 +68,43 @@ while IFS= read -r branch; do
   [[ -z "$branch" ]] && continue
   [[ "$branch" == "$DEFAULT_BRANCH" ]] && continue
   # Skip current HEAD.
-  [[ "$branch" == "$(git symbolic-ref --short HEAD 2>/dev/null || true)" ]] && { ((skipped++)); continue; }
+  [[ "$branch" == "$(git symbolic-ref --short HEAD 2>/dev/null || true)" ]] && { : $((skipped++)); continue; }
   # Skip preserved patterns.
   # shellcheck disable=SC2053
   if [[ $branch == $PRESERVE_GLOB ]]; then
     log "preserved (matches glob): $branch"
-    ((skipped++))
+    : $((skipped++))
     continue
   fi
-  # Effectively-merged check via cherry.
-  diff_count="$(git cherry "$DEFAULT_BRANCH" "$branch" 2>/dev/null | grep -c '^+' || true)"
-  if [[ "$diff_count" -eq 0 ]]; then
+  # Effectively-merged check via tree diff (squash merges defeat `git cherry`).
+  # "merged" = branch's source-tree content already matches default. We exclude
+  # *.md because plan/notes commits land on master via squash without a code
+  # delta; counting those as "unmerged" would strand car-trains.
+  diff_exit=0
+  git diff --quiet "$DEFAULT_BRANCH..$branch" -- . ':!*.md' 2>/dev/null || diff_exit=$?
+  # Exit 0 = no source diff (= effectively merged). Exit 1 = has source diff.
+  # Exit 2 = error (pathspec with new file vs HEAD, etc.) — treat as unmerged.
+  if [[ "$diff_exit" -eq 0 ]]; then
+    # Branch may still be referenced by a worktree — unlock + remove the worktree
+    # BEFORE deleting the branch (post-Car-H rule, worktree-aware sweep).
+    wt_paths="$(git worktree list --porcelain | awk -v b="$branch" '
+      /^worktree / { path=$2 }
+      /^branch /   { if ($2 == "refs/heads/"b) print path }
+    ')"
+    if [[ -n "$wt_paths" ]]; then
+      while IFS= read -r wt_path; do
+        [[ -z "$wt_path" ]] && continue
+        log "worktree unlock+remove: $wt_path (for branch $branch)"
+        run "git worktree unlock '$wt_path'"
+        run "git worktree remove --force '$wt_path'"
+      done <<< "$wt_paths"
+    fi
     log "merged → delete: $branch"
     run "git branch -D '$branch'"
-    ((deleted++))
+    : $((deleted++))
   else
-    log "unmerged ($diff_count commit-equiv ahead of $DEFAULT_BRANCH): $branch"
-    ((unmerged++))
+    log "unmerged (source-tree ahead of $DEFAULT_BRANCH): $branch"
+    : $((unmerged++))
   fi
 done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
 

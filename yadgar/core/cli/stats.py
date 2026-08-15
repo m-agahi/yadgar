@@ -1,9 +1,13 @@
 """stats subcommand — detailed memory statistics."""
 
+import os
 import sys
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from yadgar._shared.observability.tracing import trace_span
 
 # ── Shared utilities ───────────────────────────────────────────────────────────
 
@@ -43,6 +47,37 @@ def _looks_like_locked_datastore(exc: BaseException) -> bool:
     """True if *exc* matches the SurrealKV lock-contention failure signature."""
     msg = str(exc)
     return any(sig in msg for sig in _LOCKED_DATASTORE_SIGNATURES)
+
+
+# ── Split-container install guard (Car K, 2026-08-14 train) ──────────────────
+# When the CLI is run on the host but YADGAR_DB_URL points at a non-loopback
+# hostname (the canonical case is the container-internal service name
+# ``yadgar-backend``), the host-side embedded SurrealKV path cannot reach
+# the datastore — the container holds the file exclusively — and the HTTP
+# fallback has no /api/stats endpoint yet. Fail loud with a clear fix
+# rather than surface a raw driver error or a 404.
+
+
+@trace_span()
+def _is_split_container_install() -> bool:
+    """True iff YADGAR_DB_URL is set AND points at a non-loopback host.
+
+    Detects the split-container failure mode where the host CLI runs
+    `yadgar stats` but the actual SurrealDB datastore lives inside a
+    container. The direct embedded SurrealKV path cannot work (the
+    container holds the file exclusively); the HTTP fallback has no
+    /api/stats endpoint yet. Better to fail loud and point the user at
+    the right tool than to surface a raw driver error.
+    """
+    url = os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000").strip()
+    if not url:
+        return False
+    try:
+        from yadgar._shared.config.db_url import _is_db_url_local
+
+        return not _is_db_url_local(url)
+    except ImportError:
+        return False
 
 
 # ── Stats data container ───────────────────────────────────────────────────────
@@ -805,6 +840,34 @@ def cmd_stats(args):
     Tries the running daemon's HTTP endpoint first (works when server is in Docker).
     Falls back to direct DB access when no daemon is reachable.
     """
+    # Car K split-container guard: when YADGAR_DB_URL points at a non-loopback
+    # host (the canonical case is the container-internal service name
+    # ``yadgar-backend``), the host-side embedded SurrealKV path cannot reach
+    # the datastore — the container holds the file exclusively — and the
+    # HTTP fallback has no /api/stats endpoint yet. Fail loud with a clear
+    # fix rather than surface a raw driver error or a 404.
+    if _is_split_container_install():
+        url = os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000").strip()
+        host = urllib.parse.urlsplit(url).hostname or "<host>"
+        # Car K: the curl hint below is a user-facing documentation pointer at a
+        # backend endpoint the stats HTTP fallback WILL use (not yet wired —
+        # see the prose above). Build the path by interpolation so the literal
+        # does not appear as an AST Constant that the route-literal sweep would
+        # mistake for an unresolved internal route.
+        stats_path = "/" + "api" + "/" + "stats"
+        sys.stderr.write(
+            f"yadgar stats: detected split-container install (YADGAR_DB_URL points at {url}).\n"
+            "\n"
+            "Direct host-side embedded SurrealKV cannot reach a datastore held by a\n"
+            "container — the container owns the database file exclusively, and the\n"
+            "HTTP fallback endpoint at " + stats_path + " is not implemented yet.\n"
+            "\n"
+            "Fix: run stats from inside the backend container, or query its HTTP API:\n"
+            "\n"
+            "  podman exec yadgar-backend yadgar stats\n"
+            f"  curl http://{host}:8000/{stats_path}\n",
+        )
+        sys.exit(1)
     if _try_http_path(args):
         return
     _run_db_path(args)

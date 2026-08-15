@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import yadgar._shared.runtime.state as _st
@@ -473,6 +474,52 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
     }
 
 
+# ── Backup operator tools ──────────────────────────────────────────────────
+
+
+@_tool(power=True)
+def backup_restore(snapshot_id: str, backend_url: str | None = None) -> dict:
+    """Restore a snapshot into the live SurrealDB at ``backend_url``.
+
+    Car J (2026-08-14 train): the ``restore_snapshot`` helper
+    (``yadgar.core.backup.backup:187``) was only callable from tests. This
+    tool exposes it as an MCP operator path so a daemon can be recovered
+    from inside a host that already has the snapshot file on disk.
+
+    The core helper handles BOTH snapshot kinds:
+      * ``.surql`` file (export mode) → bootstrap ``yadgar/main`` namespace,
+        POST ``/import``, then re-define the non-root yadgar users (SurrealDB
+        ``/import`` wipes ROOT-level user definitions).
+      * directory (copytree mode) → raises — a directory IS the store, point a
+        backend at it instead of importing.
+
+    snapshot_id: Path to the snapshot artifact (a ``.surql`` file from
+        ``create_snapshot(backend_url=...)``, or a directory in the quiesced
+        copytree case — which the helper will refuse).
+    backend_url: Live SurrealDB backend to import into. Defaults to
+        ``$YADGAR_DB_URL`` (the same default the ``yadgar snapshot restore``
+        CLI uses); falls back to ``http://127.0.0.1:8000``.
+    """
+    from yadgar.core.backup import restore_snapshot as _restore_snapshot
+
+    resolved_backend = backend_url or os.environ.get("YADGAR_DB_URL", "http://127.0.0.1:8000")
+    snapshot_path = Path(snapshot_id)
+    if not snapshot_path.exists():
+        return {
+            "status": "error",
+            "reason": f"snapshot does not exist: {snapshot_path}",
+        }
+    try:
+        _restore_snapshot(snapshot_path=snapshot_path, backend_url=resolved_backend)
+    except RuntimeError as exc:
+        return {"status": "error", "reason": str(exc)}
+    return {
+        "status": "restored",
+        "snapshot": str(snapshot_path),
+        "backend_url": resolved_backend,
+    }
+
+
 @_tool(power=True)
 def sync_instructions(
     claude_md_path: str = "",
@@ -726,3 +773,96 @@ def seed_project(directory: str, dry_run: bool = False, *, project: str | None =
     if not dry_run:
         _st._project_roots.add(resolved)
     return result
+
+
+# ── Project Registry Seeding (Car A, 2026-08-14 train) ──────────────────────
+
+
+@_tool(power=True)
+def project_seed(
+    *,
+    map_path: str | None = None,
+) -> dict:
+    """Seed the engine-#2 ``project`` registry from a map TSV.
+
+    Car A (2026-08-14 identity train, plan §2). Closes the gap where
+    ``backend.admin_exec.ledger.create_project_row`` is registered but
+    had no MCP / CLI path; engine-#2 ledger writes were blocked by
+    ADR-0078's ``_ensure_project_exists_sync`` guard with no way to
+    prime the registry first.
+
+    Reads the TSV at ``map_path`` (default: ``<cwd>/.yadgar/
+    project-id-map.tsv``, gitignored), calls ``create_project_row`` per
+    row over the backend ``/admin`` route, and returns a per-row
+    ``created`` / ``skipped`` / ``failed`` tally. Idempotent — a second
+    call is a no-op for already-present rows (backend raises
+    ``DuplicateProjectError`` → returns ``skipped``). Drop / review
+    rows are skipped (not registry rows — operator decisions).
+
+    The guard at ``_ensure_project_exists_sync`` is NOT relaxed by
+    this tool. This is the SEED that lets the guard ever succeed;
+    subsequent writes still hit the registry check.
+
+    ADR-0225: this tool takes NO ``directory`` parameter. The TSV's
+    first column (``source_directory``) is a host-side origin hint
+    captured at mint time and is NOT a scoping key. The registry keys
+    on ``project_id`` alone.
+
+    Args:
+        map_path: Optional absolute path to the map TSV. Overrides the
+            default location (``<cwd>/.yadgar/project-id-map.tsv``).
+            When the operator staged the map outside the working tree,
+            pass it here.
+
+    Returns:
+        ``{"ok": True, "counts": {seed, drop, review, created, skipped,
+        failed}, "map_path": <path>}`` on completion. Backend errors on
+        individual rows are reported in ``counts["failed"]``; structural
+        map errors (file not found, malformed row) return
+        ``{"ok": False, "error": ...}``.
+    """
+    from yadgar.core.cli.project import (
+        DEFAULT_MAP_PATH,
+        classify_row,
+        parse_map,
+        read_auth_token,
+        seed_row,
+    )
+
+    # Resolve the map path. ``map_path`` is the ONLY positional contract
+    # the caller has — no directory fallback, by design (ADR-0225).
+    if map_path:
+        resolved_map = Path(map_path)
+    else:
+        resolved_map = DEFAULT_MAP_PATH
+
+    try:
+        rows = parse_map(resolved_map)
+    except SystemExit:
+        # parse_map raises SystemExit(2) on structural errors. The
+        # MCP boundary does not want a SystemExit — rewrap as an
+        # error envelope so the client gets the same shape every
+        # other failure here returns.
+        return {
+            "ok": False,
+            "error": f"map file malformed or missing: {resolved_map}",
+            "map_path": str(resolved_map),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": f"map read failed: {exc}",
+            "map_path": str(resolved_map),
+        }
+
+    auth_token = read_auth_token()
+    counts = {"seed": 0, "drop": 0, "review": 0, "created": 0, "skipped": 0, "failed": 0}
+    for row in rows:
+        kind = classify_row(row)
+        counts[kind] += 1
+        if kind != "seed":
+            continue
+        outcome = seed_row(row, auth_token=auth_token)
+        counts[outcome] += 1
+
+    return {"ok": True, "counts": counts, "map_path": str(resolved_map)}

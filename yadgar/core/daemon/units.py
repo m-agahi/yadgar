@@ -299,8 +299,9 @@ def _backend_exec_start(spec: UnitSpec, ready: Readiness) -> str:
         f"--security-opt label=disable --user root \\\n"
         f"    --network {spec.network} \\\n"
         f"{ready.sdnotify}"
+        # 90s grace covers cold model load (measured 20-40s); inside TimeoutStartSec=180 below.
         f'    --health-cmd "curl -f http://localhost:8001/health || exit 1" \\\n'
-        f"    --health-start-period=60s \\\n"
+        f"    --health-start-period=90s \\\n"
         f"    -p 127.0.0.1:{spec.backend_surreal_port}:8000 \\\n"
         f"    -p 127.0.0.1:{spec.backend_embed_port}:8001 \\\n"
         f"    -v {spec.backend_data_mount}:/data \\\n"
@@ -462,6 +463,17 @@ def build_core_unit(spec: UnitSpec) -> UnitFile:
                 (
                     Directive("Description", "Yadgar Memory Engine / MCP Server"),
                     Directive("After", f"network.target {backend}"),
+                    # Car F (task #61) — BindsTo= kills the core if the backend
+                    # dies. ``Wants=`` was the prior relation (lines below) and
+                    # was a soft dependency: the core kept running on a dead
+                    # backend, which is the silent-misbehaviour half of the
+                    # ~101 s deploy window. BindsTo adds the hard kill, so the
+                    # core cannot out-live its peer; the restart order fix
+                    # in core/update/orchestrator.py:653 then restarts backend
+                    # FIRST on upgrade, and BindsTo stops the core cleanly so
+                    # the new backend can come up without a wire-incompatible
+                    # client hammering it.
+                    Directive("BindsTo", backend),
                     *comments(CORE_WANTS_DOC),
                     Directive("Wants", backend),
                     *(comments(CORE_STATE_DOC, state_dir=spec.state_dir) if trigger else ()),

@@ -170,6 +170,27 @@ Usage:
 Exit codes:
   0  no residue outside the allowlist, and no stale allowlist entry
   1  one or more violations
+
+GRANULARITY (Car I, 2026-08-14 train) — the ratchet reports per FUNCTION
+---------------------------------------------------------------------
+Pre-Car-I this sweep reported at the file level: one violation in one function
+flipped the WHOLE file red, so a sweep that emptied a function's signature
+still looked red until the next allowlist audit cleared the bucket. Car I
+moves the bucket key to ``<path>::<function>`` (the same shape C9a already
+uses), so a single violation in one function flags THAT function and leaves
+the rest of the file alone. Module-level (no enclosing function) residue
+buckets under the sentinel ``<path>::(module)`` — the same hit shape, just
+without a function name. The old per-file sums are preserved: the floors and
+the ``+N more`` collapse still work because the dict is keyed the same way
+the older dict was.
+
+A second check rides on the same walk: ABSENCE-OF-PROJECT on every @_tool
+function in ``yadgar/core/server/tools/*.py``. A tool that takes ``directory``
+without ``project`` would silently fall through to directory-keyed storage
+when project_id scoping should be the only key (the failure mode the train
+already produced twice — C5/C9a). The check fires on the FUNCTION NAME so
+the message reads ``<path>::<function> takes `directory` without `project```,
+which is what an agent needs to fix the signature.
 """
 
 from __future__ import annotations
@@ -288,6 +309,7 @@ MIN_REASON_CHARS = 40
 MIN_FILES_SCANNED = 400  # measured 506
 MIN_RESIDUE_HITS = 300  # measured 408 across 80 files
 MIN_SIBLING_ENTRIES = 60  # measured 80 (C9a _ALLOWLIST 48 + C9a _SWEPT 9 + C9b ALLOWLIST 23)
+MIN_TOOLS_CHECKED = 70  # measured 87 @_tool-decorated functions (Car I 2026-08-14)
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +365,13 @@ def _key_hits(node: ast.Subscript | ast.Dict) -> list[tuple[int, str, str]]:
 
 
 def scan_source(source: str) -> list[tuple[int, str, str]]:
-    """Return ``(lineno, kind, detail)`` for every scoping-position residue hit."""
+    """Return ``(lineno, kind, detail)`` for every scoping-position residue hit.
+
+    Detail strings include the enclosing ``function(...)`` so the per-function
+    grouping below has the name to bucket on; the matcher itself is the same
+    four-AST-position sweep the C15 docstring describes. Granularity moves to
+    ``<path>::<function>`` at the ``find_residue`` layer.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -361,6 +389,33 @@ def scan_source(source: str) -> list[tuple[int, str, str]]:
             if isinstance(node.target, ast.Name) and node.target.id in RESIDUE_TOKENS:
                 out.append((node.lineno, "field", node.target.id))
     return sorted(out)
+
+
+#: Bucket key for residue that lives at module level (no enclosing FunctionDef).
+#: Same dict shape, just without a function name — keeps the per-function
+#: aggregation below total over the file the same way it did pre-Car-I.
+_MODULE_LEVEL_KEY = "(module)"
+
+
+def _enclosing_function(tree: ast.AST, lineno: int) -> str:
+    """Name of the innermost ``FunctionDef`` enclosing *lineno*, or ``(module)``.
+
+    Linear walk over the AST, tracking the innermost enclosing function by
+    largest ``lineno``. The result is used to bucket residue at
+    ``<path>::<function>`` granularity — the same shape C9a already uses for
+    its sibling lint.
+    """
+    best: str | None = None
+    best_lineno: int = -1
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not (node.lineno <= lineno <= (node.end_lineno or node.lineno)):
+            continue
+        if node.lineno > best_lineno:
+            best = node.name
+            best_lineno = node.lineno
+    return best or _MODULE_LEVEL_KEY
 
 
 def iter_sources(repo_root: Path, scan_roots: tuple[str, ...] = SCAN_ROOTS):
@@ -436,17 +491,44 @@ def find_unparseable(repo_root: Path, scan_roots: tuple[str, ...] = SCAN_ROOTS) 
 
 
 def find_residue(repo_root: Path, scan_roots: tuple[str, ...] = SCAN_ROOTS):
-    """Return ``(residue, files_scanned)`` — ``{relpath: [(lineno, kind, detail)]}``."""
+    """Return ``(residue, files_scanned)``.
+
+    ``residue`` is keyed at ``<relpath>::<function>`` granularity (Car I, 2026-08-14
+    train): the ratchet now reports per FUNCTION, not per file, so a single
+    violation in one function flags THAT function and leaves the rest of the
+    file alone. Module-level (no enclosing function) residue buckets under
+    the sentinel ``<relpath>::(module)`` — same dict shape, just without a
+    function name. The total hits the floors measure are preserved by
+    summing ``len(v)`` across the dict, identical to the pre-Car-I sum over
+    the file-level dict.
+
+    Two function-bearing hits in the same file produce two distinct keys; a
+    Direction-1 violation therefore names the function (the planted subject
+    the test class asserts on), not just the file path. Direction-2 still
+    matches against the allowlist by path: a ``yadgar/core/foo.py`` allowlist
+    entry now resolves to every ``yadgar/core/foo.py::*`` bucket that has
+    residue, so the entry keeps sweeping whatever it used to.
+    """
     residue: dict[str, list[tuple[int, str, str]]] = {}
     scanned = 0
     for path, rel in iter_sources(repo_root, scan_roots):
         scanned += 1
         try:
-            hits = scan_source(path.read_text(encoding="utf-8"))
+            source = path.read_text(encoding="utf-8")
         except OSError:  # pragma: no cover - defensive
             continue
-        if hits:
-            residue[rel] = hits
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue  # find_unparseable reports it separately
+        hits = scan_source(source)
+        if not hits:
+            continue
+        grouped: dict[str, list[tuple[int, str, str]]] = {}
+        for lineno, kind, detail in hits:
+            fn = _enclosing_function(tree, lineno)
+            grouped.setdefault(f"{rel}::{fn}", []).append((lineno, kind, detail))
+        residue.update(grouped)
     return residue, scanned
 
 
@@ -603,6 +685,110 @@ def check_siblings(repo_root: Path) -> tuple[list[str], int]:
 
 
 # ---------------------------------------------------------------------------
+# Absence-of-project check (Car I, 2026-08-14 train)
+# ---------------------------------------------------------------------------
+#: The directory that owns the MCP tool surface. Car I ratchets that every
+#: ``@_tool``-decorated function there takes BOTH ``directory`` AND ``project``;
+#: a tool that takes only ``directory`` would silently fall through to
+#: directory-keyed storage when project_id scoping should be the only key
+#: (the failure mode C5 and C9a produced twice already). Tools that take
+#: neither ``directory`` nor ``project`` are out of scope: they have no
+#: scoping position at all and pose no residue risk.
+TOOLS_ROOT: str = "yadgar/core/server/tools"
+
+
+def _tool_param_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Every parameter name on *node*, including ``*args``/``**kwargs``.
+
+    The check is on the IDENTIFIER that callers see, so positional-or-keyword,
+    keyword-only, positional-only, vararg and kwarg all count — a tool whose
+    scoping key arrives as ``**kwargs`` is still subject to the same rule,
+    and silently allowing it would let a future change reintroduce the
+    residue shape through a back door.
+    """
+    a = node.args
+    every: list[str] = []
+    every.extend(x.arg for x in a.posonlyargs)
+    every.extend(x.arg for x in a.args)
+    every.extend(x.arg for x in a.kwonlyargs)
+    if a.vararg is not None:
+        every.append(a.vararg.arg)
+    if a.kwarg is not None:
+        every.append(a.kwarg.arg)
+    return set(every)
+
+
+def _is_tool_decorated(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """``True`` iff ``node`` is decorated with ``@_tool(...)`` or ``@_tool``.
+
+    ``ast.Name`` (no call) is the bare ``@_tool`` form — rare but allowed by
+    the ``yadgar.core.server._app:_tool`` factory, so it must not blind the
+    check. Anything else (e.g. ``@observe``, ``@functools.wraps``) is not a
+    tool registration and is left alone.
+    """
+    for d in node.decorator_list:
+        if isinstance(d, ast.Name) and d.id == "_tool":
+            return True
+        if isinstance(d, ast.Call):
+            f = d.func
+            if isinstance(f, ast.Name) and f.id == "_tool":
+                return True
+    return False
+
+
+def find_absence_of_project(repo_root: Path) -> tuple[list[str], int]:
+    """Every @_tool-decorated function whose params carry ``directory`` without ``project``.
+
+    Returns ``(errors, tools_checked)``. An empty error list is the green
+    state; ``tools_checked`` is the number of @_tool functions actually
+    inspected (the floor uses it as the anti-vacuity measurement, mirroring
+    ``MIN_FILES_SCANNED`` for the residue arm — a renamed ``_tool`` would
+    otherwise drop the count to zero and silently green this check).
+
+    The check is NAME-EXACT on the parameter, not a substring — ``directory``
+    matches but ``project_directory`` does not (the latter is the
+    ``project_id`` alias on install/host-side minting, not an MCP tool
+    param; matching it would misfire on every CLI command). Same rule as
+    the residue arm.
+    """
+    errors: list[str] = []
+    tools_root = repo_root / TOOLS_ROOT
+    if not tools_root.is_dir():
+        return errors, 0
+    checked = 0
+    for path in sorted(tools_root.glob("*.py")):
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:  # pragma: no cover - defensive
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            # The residue arm already reports unparseable files. Mirroring
+            # that arm means this check never blocks a sweep on a syntax
+            # error — ``find_unparseable`` is the canonical reporter.
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _is_tool_decorated(node):
+                continue
+            checked += 1
+            params = _tool_param_names(node)
+            if "directory" in params and "project" not in params:
+                errors.append(
+                    f"NO PROJECT: {rel}::{node.name} is @_tool-decorated and takes "
+                    f"`directory` without `project` — add a `project: str | None = None` "
+                    "parameter (Car M §16.6 / Car I 2026-08-14) and resolve through "
+                    "`resolve_effective_project` so the tool cannot silently fall "
+                    "through to directory-keyed storage when project_id scoping "
+                    "should be the only key."
+                )
+    return errors, checked
+
+
+# ---------------------------------------------------------------------------
 # The two directions
 # ---------------------------------------------------------------------------
 def check(
@@ -625,6 +811,17 @@ def check(
     errors += find_unparseable(repo_root, scan_roots)
     residue, scanned = find_residue(repo_root, scan_roots)
 
+    # ── absence-of-project check (Car I, 2026-08-14 train) ──────────────────
+    no_project_errors, tools_checked = find_absence_of_project(repo_root)
+    errors += no_project_errors
+    if check_floors and tools_checked < MIN_TOOLS_CHECKED:
+        errors.append(
+            f"VACUOUS: only {tools_checked} @_tool functions inspected under "
+            f"{TOOLS_ROOT}/ (floor {MIN_TOOLS_CHECKED}). The absence-of-project "
+            "arm would be silently green — a renamed `_tool` decorator, not a "
+            "clean tool surface."
+        )
+
     # ── anti-vacuity floors (ADR-0080) ──────────────────────────────────────
     if check_floors:
         if scanned < MIN_FILES_SCANNED:
@@ -642,13 +839,18 @@ def check(
             )
 
     # ── Direction 1 — residue outside the allowlist ─────────────────────────
-    for rel in sorted(residue):
-        if any(_matches(pat, rel) for _, pat, _ in entries):
+    # Car I (2026-08-14): buckets are now ``<path>::<function>`` so a single
+    # violation in one function flags THAT function. Allowlist patterns still
+    # match by path (an entry's job is to opt the whole file out, not one
+    # function), so the prefix here is everything before the ``::`` separator.
+    for key in sorted(residue):
+        if any(_matches(pat, _path_of_bucket(key)) for _, pat, _ in entries):
             continue
-        sites = "; ".join(f"{ln}:{kind} {detail}" for ln, kind, detail in residue[rel][:6])
-        more = "" if len(residue[rel]) <= 6 else f" (+{len(residue[rel]) - 6} more)"
+        path_label = key  # <path>::<function> — already names the subject
+        sites = "; ".join(f"{ln}:{kind} {detail}" for ln, kind, detail in residue[key][:6])
+        more = "" if len(residue[key]) <= 6 else f" (+{len(residue[key]) - 6} more)"
         errors.append(
-            f"RESIDUE: {rel} has a `directory`-family token in a scoping position "
+            f"RESIDUE: {path_label} has a `directory`-family token in a scoping position "
             f"with no allowlist entry — {sites}{more}. Re-key it onto `project_id` "
             "(plan 0047 §2 Amendment 3: the table must carry `project_id` AND every "
             "caller must hold an identity), or add an allowlist entry WITH a tag and "
@@ -657,6 +859,10 @@ def check(
 
     # ── Direction 2 — stale allowlist entries (hard fail; see docstring) ────
     known = [rel for _, rel in iter_sources(repo_root, scan_roots)]
+    # Car I: residue buckets now carry ``::func`` suffixes, so the staleness
+    # check looks at the PATH portion only. An entry whose path still carries
+    # ANY function-level bucket is still resolving real residue.
+    residue_paths: set[str] = {_path_of_bucket(k) for k in residue}
     for tag, pattern, reason in entries:
         resolved = _pattern_files(repo_root, pattern, known)
         if not resolved:
@@ -665,7 +871,7 @@ def check(
                 f"Its reason ({reason!r}) describes nothing — delete or repoint it."
             )
             continue
-        if not any(rel in residue for rel in resolved):
+        if not any(rp in residue_paths for rp in resolved):
             errors.append(
                 f"STALE ENTRY (no residue): `{pattern}` [{tag}] resolves to "
                 f"{len(resolved)} file(s), none of which still carries residue. The "
@@ -687,6 +893,16 @@ def check(
 
 def allowlist_path(repo_root: Path) -> Path:
     return repo_root / "scripts" / "directory_residue_allowlist.txt"
+
+
+def _path_of_bucket(bucket: str) -> str:
+    """Strip the ``::func`` suffix off a residue bucket key.
+
+    Used by Direction 1 (allowlist matching) and Direction 2 (staleness) so
+    path-keyed allowlist entries still resolve against ``<path>::<function>``
+    buckets. Car I, 2026-08-14 train.
+    """
+    return bucket.partition("::")[0]
 
 
 # ---------------------------------------------------------------------------
@@ -715,11 +931,27 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
-        print(f"=== {scanned} files walked, {len(residue)} with residue ===")
-        for rel in sorted(residue):
-            print(f"\n{rel}  ({len(residue[rel])})")
-            for ln, kind, detail in residue[rel]:
-                print(f"  {ln:5d}  {kind:6s}  {detail}")
+        # --list output: group buckets back into their files (Car I keeps
+        # the file-level header so a reader can still scan a file's
+        # functions at a glance; the bucket key is the new line under it).
+        files_count = len({_path_of_bucket(k) for k in residue})
+        print(f"=== {scanned} files walked, {files_count} with residue ===")
+        by_file: dict[str, list[tuple[str, list[tuple[int, str, str]]]]] = {}
+        for bucket in sorted(residue):
+            path = _path_of_bucket(bucket)
+            func = bucket.partition("::")[2]
+            by_file.setdefault(path, []).append((func, residue[bucket]))
+        for path in sorted(by_file):
+            buckets = by_file[path]
+            total = sum(len(v) for _, v in buckets)
+            print(f"\n{path}  ({total})")
+            for func, hits in buckets:
+                if func == _MODULE_LEVEL_KEY:
+                    print("  (module-level)")
+                else:
+                    print(f"  ::{func}")
+                for ln, kind, detail in hits:
+                    print(f"    {ln:5d}  {kind:6s}  {detail}")
         return 0
 
     errors = check(repo_root, allow)

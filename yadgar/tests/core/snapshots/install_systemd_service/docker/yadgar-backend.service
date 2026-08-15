@@ -36,7 +36,7 @@ ExecStartPre=-docker network create yadgar-net
 ExecStart=docker run --name yadgar-backend --rm --security-opt label=disable --user root \
     --network yadgar-net \
     --health-cmd "curl -f http://localhost:8001/health || exit 1" \
-    --health-start-period=60s \
+    --health-start-period=90s \
     -p 127.0.0.1:8000:8000 \
     -p 127.0.0.1:8001:8001 \
     -v /home/testuser/.local/share/yadgar:/data \

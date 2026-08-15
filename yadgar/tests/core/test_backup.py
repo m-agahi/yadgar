@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -666,3 +667,190 @@ class TestBackupPathLayout:
 
         names = [e.name for e in list_config()]
         assert "YADGAR_BACKUP_RETENTION" in names
+
+
+# ---------------------------------------------------------------------------
+# Car J (2026-08-14 train): `yadgar snapshot restore` operator CLI
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotRestoreCli:
+    """Car J: expose ``restore_snapshot`` via ``yadgar snapshot restore``."""
+
+    def test_register_attaches_snapshot_restore(self) -> None:
+        """``register`` wires `snapshot restore` with a callable func."""
+        import argparse
+
+        from yadgar.core.cli import snapshot as snapshot_cli
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        snapshot_cli.register(sub)
+        args = parser.parse_args(["snapshot", "restore", "--snapshot", "/tmp/x.surql"])
+        assert args.snapshot == "/tmp/x.surql"
+        assert callable(args.func)
+
+    def test_default_backend_url_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``--backend-url`` default honours $YADGAR_DB_URL."""
+        import argparse
+
+        from yadgar.core.cli import snapshot as snapshot_cli
+
+        monkeypatch.setenv("YADGAR_DB_URL", "http://yadgar-backend:8000")
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        snapshot_cli.register(sub)
+        args = parser.parse_args(["snapshot", "restore", "--snapshot", "/tmp/y"])
+        assert args.backend_url == "http://yadgar-backend:8000"
+
+    def test_default_backend_url_loopback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``--backend-url`` default is loopback:8000 when no env var is set."""
+        import argparse
+
+        from yadgar.core.cli import snapshot as snapshot_cli
+
+        monkeypatch.delenv("YADGAR_DB_URL", raising=False)
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        snapshot_cli.register(sub)
+        args = parser.parse_args(["snapshot", "restore", "--snapshot", "/tmp/y"])
+        assert args.backend_url == "http://127.0.0.1:8000"
+
+    def test_cmd_restore_calls_restore_snapshot(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``cmd_snapshot_restore`` delegates to ``restore_snapshot`` and prints OK."""
+        import argparse
+
+        from yadgar.core.cli.snapshot import cmd_snapshot_restore
+
+        snap = tmp_path / "snap.surql"
+        snap.write_text("SELECT 1;")
+
+        with patch("yadgar.core.backup.restore_snapshot") as mock_restore:
+            rc = cmd_snapshot_restore(
+                argparse.Namespace(snapshot=str(snap), backend_url="http://be:8000")
+            )
+
+        assert rc == 0
+        mock_restore.assert_called_once_with(snapshot_path=snap, backend_url="http://be:8000")
+        captured = capsys.readouterr()
+        assert "restored" in captured.out
+
+    def test_cmd_restore_missing_snapshot_returns_2(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Missing --snapshot path returns exit code 2 (no DB call)."""
+        import argparse
+
+        from yadgar.core.cli.snapshot import cmd_snapshot_restore
+
+        with patch("yadgar.core.backup.restore_snapshot") as mock_restore:
+            rc = cmd_snapshot_restore(
+                argparse.Namespace(
+                    snapshot="/nonexistent/zzz.surql",
+                    backend_url="http://be:8000",
+                )
+            )
+        assert rc == 2
+        mock_restore.assert_not_called()
+        captured = capsys.readouterr()
+        assert "does not exist" in captured.err
+
+    def test_cmd_restore_runtime_error_returns_1(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``restore_snapshot`` raising RuntimeError surfaces as exit 1 + stderr."""
+        import argparse
+
+        from yadgar.core.cli.snapshot import cmd_snapshot_restore
+
+        snap = tmp_path / "snap.surql"
+        snap.write_text("x")
+
+        with patch(
+            "yadgar.core.backup.restore_snapshot",
+            side_effect=RuntimeError("import 500"),
+        ):
+            rc = cmd_snapshot_restore(
+                argparse.Namespace(snapshot=str(snap), backend_url="http://be:8000")
+            )
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "import 500" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Car J (2026-08-14 train): `backup_restore` MCP tool
+# ---------------------------------------------------------------------------
+
+
+class TestBackupRestoreMcpTool:
+    """Car J: ``backup_restore`` MCP tool mirrors the CLI for daemon callers."""
+
+    def test_tool_exported_from_server_namespace(self) -> None:
+        """``yadgar.core.server.backup_restore`` resolves (tools re-export)."""
+        import yadgar.core.server as srv
+
+        assert callable(getattr(srv, "backup_restore", None))
+
+    def test_calls_restore_snapshot_with_path(self, tmp_path: Path) -> None:
+        """Tool converts snapshot_id to Path and forwards backend_url."""
+        import yadgar.core.server as srv
+
+        snap = tmp_path / "x.surql"
+        snap.write_text("SELECT 1;")
+
+        with patch("yadgar.core.backup.restore_snapshot") as mock_restore:
+            result = srv.backup_restore(snapshot_id=str(snap), backend_url="http://be:8000")
+
+        assert result["status"] == "restored"
+        mock_restore.assert_called_once_with(snapshot_path=snap, backend_url="http://be:8000")
+
+    def test_default_backend_from_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``backend_url`` falls back to $YADGAR_DB_URL when omitted."""
+        import yadgar.core.server as srv
+
+        monkeypatch.setenv("YADGAR_DB_URL", "http://from-env:8000")
+        snap = tmp_path / "x.surql"
+        snap.write_text("SELECT 1;")
+
+        with patch("yadgar.core.backup.restore_snapshot") as mock_restore:
+            result = srv.backup_restore(snapshot_id=str(snap))
+
+        assert result["status"] == "restored"
+        assert result["backend_url"] == "http://from-env:8000"
+        mock_restore.assert_called_once_with(snapshot_path=snap, backend_url="http://from-env:8000")
+
+    def test_runtime_error_surfaces_as_error_payload(self, tmp_path: Path) -> None:
+        """``restore_snapshot`` raising → ``status: error`` payload, no raise."""
+        import yadgar.core.server as srv
+
+        snap = tmp_path / "x.surql"
+        snap.write_text("x")
+
+        with patch(
+            "yadgar.core.backup.restore_snapshot",
+            side_effect=RuntimeError("copytree rejected"),
+        ):
+            result = srv.backup_restore(snapshot_id=str(snap), backend_url="http://be:8000")
+
+        assert result["status"] == "error"
+        assert "copytree rejected" in result["reason"]
+
+    def test_missing_snapshot_returns_error_without_call(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Missing path → ``status: error`` payload, ``restore_snapshot`` not called."""
+        import yadgar.core.server as srv
+
+        with patch("yadgar.core.backup.restore_snapshot") as mock_restore:
+            result = srv.backup_restore(
+                snapshot_id="/nonexistent/zzz.surql",
+                backend_url="http://be:8000",
+            )
+        assert result["status"] == "error"
+        assert "does not exist" in result["reason"]
+        mock_restore.assert_not_called()
