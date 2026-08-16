@@ -362,7 +362,16 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             # so ``:status`` becomes ``IN (:status_1, :status_2, ...)`` at
             # execution. Single-element lists work the same as ``status = :status``
             # after expansion. Empty list already short-circuited above.
-            where_extra = " AND status IN (:status)"
+            #
+            # L10: NO literal parens around ``:status``. The expanding bindparam
+            # renders its OWN ``(...)`` at execution, so ``IN (:status)`` reaches
+            # the server as ``IN ((%s, %s))`` — and ``(a, b)`` is a MariaDB ROW
+            # CONSTRUCTOR, making the clause ``status = ROW('pending','in_progress')``:
+            # ``(4078, "Illegal parameter data types varchar and row for
+            # operation '='")``. One status hid it, because ``(x)`` ≡ ``x``.
+            # Executed against a real server by
+            # ``yadgar/tests/integration/test_task_list_status_filter.py``.
+            where_extra = " AND status IN :status"
             params["status"] = list(status)
         sql = text(
             f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
@@ -394,7 +403,10 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         params: dict[str, Any] = {}
         where_extra = ""
         if status:
-            where_extra = " WHERE status IN (:status)"
+            # L10: bare ``:status`` — the expanding bindparam supplies the parens.
+            # See ``list_task_rows`` for the ROW-constructor failure the literal
+            # parens produced.
+            where_extra = " WHERE status IN :status"
             params["status"] = list(status)
         sql = text(
             f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
