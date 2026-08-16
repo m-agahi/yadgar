@@ -58,6 +58,7 @@ Decisions:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from yadgar._shared.observability.observe import observe
 from yadgar.core.forward import _forward_admin
@@ -193,19 +194,36 @@ def _build_create_payload(
     return payload
 
 
+@dataclass(frozen=True, slots=True)
+class _TaskUpdateFields:
+    """The column-valued arguments of a ``task_write`` UPDATE, as one object.
+
+    Exists for the I13 ``params`` cap (8). ``_build_update_payload`` was
+    extracted from ``task_write`` to stay under that cap and had already
+    reached it with one parameter per column, so the next column-shaped
+    argument — ``title``, which the update path was dropping — would have
+    pushed it over. Passing the set as one frozen record keeps the builder at
+    two parameters however many columns the task table grows.
+
+    ``None`` means "the caller did not mention this column"; it never means
+    "set it to NULL". Nothing here is a partial-update exception except
+    ``title``, which ``task_write`` requires and therefore always carries.
+    """
+
+    title: str | None = None
+    status: str | None = None
+    state: str | None = None
+    active_form: str | None = None
+    plan_path: str | None = None
+    body_slug: str | None = None
+    blocked_by: list[int] | None = None
+    blocks: list[int] | None = None
+
+
 @observe(
     exempt="pure dict-builder; no I/O, no error branch — §16.10 status→state clearing is an inline conditional, not a spanable operation"
 )
-def _build_update_payload(
-    task_id: int,
-    status: str | None,
-    state: str | None,
-    active_form: str | None,
-    plan_path: str | None,
-    body_slug: str | None,
-    blocked_by: list[int] | None,
-    blocks: list[int] | None,
-) -> dict:
+def _build_update_payload(task_id: int, fields: _TaskUpdateFields) -> dict:
     """Compose the partial-UPDATE payload for the ``update_task_row`` admin op.
 
     §16.10: when ``status`` flips to ``completed``/``archived``, force
@@ -213,27 +231,33 @@ def _build_update_payload(
     DB's state column is cleared in the same UPDATE.
     """
     payload: dict = {"id": int(task_id)}
-    if status is not None:
-        payload["status"] = status
-    if status in _COMPLETED_LIKE_STATUSES:
+    # Ledger task 111: title was validated and then dropped on the floor here,
+    # while the tool returned ok=True. Storage has accepted the column all
+    # along (``update_task_row``'s allowlist). ``None`` is the defensive
+    # ``_validate_write_inputs`` path only — unreachable via the tool signature.
+    if fields.title is not None:
+        payload["title"] = fields.title
+    if fields.status is not None:
+        payload["status"] = fields.status
+    if fields.status in _COMPLETED_LIKE_STATUSES:
         # §16.10: completed/archived transition always clears state. Even if
         # the caller explicitly passed state="planned", the transition wins.
         payload["state"] = None
-    elif state is not None:
-        payload["state"] = state
-    if active_form is not None:
-        payload["active_form"] = active_form
-    if plan_path is not None:
-        payload["plan_path"] = plan_path
-    if body_slug is not None:
-        payload["body_slug"] = body_slug
+    elif fields.state is not None:
+        payload["state"] = fields.state
+    if fields.active_form is not None:
+        payload["active_form"] = fields.active_form
+    if fields.plan_path is not None:
+        payload["plan_path"] = fields.plan_path
+    if fields.body_slug is not None:
+        payload["body_slug"] = fields.body_slug
     # D39: join-edge sync — both ``blocked_by`` and ``blocks`` ride the same
     # ``task_blocked_by`` join table; the backend's update path reconciles
     # them (delete-then-insert of the live set).
-    if blocked_by is not None:
-        payload["blocked_by"] = [int(x) for x in blocked_by]
-    if blocks is not None:
-        payload["blocks"] = [int(x) for x in blocks]
+    if fields.blocked_by is not None:
+        payload["blocked_by"] = [int(x) for x in fields.blocked_by]
+    if fields.blocks is not None:
+        payload["blocks"] = [int(x) for x in fields.blocks]
     return payload
 
 
@@ -248,8 +272,10 @@ def _validate_write_inputs(
 ) -> tuple[str, str | None]:
     """Run boundary validation and return ``(project_id, normalized_title)``.
 
-    On UPDATE ``title`` may be ``None`` (the tool ignores it — the row keeps
-    its original title). On CREATE it is required and length-checked (D12).
+    ``title`` is required by the tool signature on BOTH paths and is
+    length-checked (D12) whenever it is a string. The ``None`` branch is
+    defensive only — unreachable through ``task_write``'s signature — and
+    signals "leave the column alone" to the update payload builder.
     """
     _validate_project_id(project_id)
     if is_update:
@@ -286,7 +312,10 @@ def task_write(
     number (ADR-0197, §14.1 — no ``number`` column, no allocation step).
     Returns the generated id. Update (``id`` given): UPDATE the row;
     ``status`` / ``state`` / ``active_form`` / ``plan_path`` / ``body_slug``
-    fields are partial-update (None = leave unchanged).
+    fields are partial-update (None = leave unchanged). ``title`` is NOT
+    partial — it is required, so a caller who states one means it and it is
+    written on every update (ledger task 111: it used to be validated and
+    then silently discarded).
 
     Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override is the
     cross-project address. When supplied, the validated project_id REPLACES
@@ -345,13 +374,16 @@ def task_write(
             assert id is not None  # is_update narrows id: None → int
             payload = _build_update_payload(
                 int(id),
-                status,
-                state,
-                active_form,
-                plan_path,
-                body_slug,
-                blocked_by,
-                blocks,
+                _TaskUpdateFields(
+                    title=normalized_title,
+                    status=status,
+                    state=state,
+                    active_form=active_form,
+                    plan_path=plan_path,
+                    body_slug=body_slug,
+                    blocked_by=blocked_by,
+                    blocks=blocks,
+                ),
             )
             result = _forward_admin(_UPDATE_OP, payload)
             if result.get("ok") is False:

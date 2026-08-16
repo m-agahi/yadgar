@@ -211,14 +211,28 @@ class TestTaskWriteUpdate:
         )
         assert _forward_capture["payload"]["state"] is None
 
-    def test_update_partial_update_omits_title_when_not_given(self, _forward_capture: dict) -> None:
-        """Update path: ``title=None`` means "leave unchanged"."""
+    def test_update_forwards_the_title_the_caller_stated(self, _forward_capture: dict) -> None:
+        """Ledger task 111: a stated title reaches the UPDATE payload.
+
+        This replaces ``test_update_partial_update_omits_title_when_not_given``,
+        which pinned the defect: it passed a real string (``title="ignored"``)
+        while its docstring described the ``None`` case, and asserted the tool
+        must NOT forward it. ``title`` is a required argument — there is no
+        "not given" case at this surface — so the old assertion made a
+        validated-then-discarded write the contract. Same wrong-premise-guard
+        family as the ``status IN (:status)`` test in Car B.
+        """
         from yadgar.core.server.tools.task import task_write
 
-        task_write(project_id="yadgar", title="ignored", id=231)
-        payload = _forward_capture["payload"]
-        # ``title`` is the create-time primary — on update it should NOT be in
-        # the forwarded UPDATE payload unless the caller passed it explicitly.
+        task_write(project_id="yadgar", title="the new title", id=231)
+        assert _forward_capture["payload"]["title"] == "the new title"
+
+    def test_update_omits_title_only_on_the_defensive_none_path(self) -> None:
+        """``None`` (unreachable through the tool signature) still means
+        "leave the column alone" — the payload builder's own contract."""
+        from yadgar.core.server.tools.task import _build_update_payload, _TaskUpdateFields
+
+        payload = _build_update_payload(231, _TaskUpdateFields(title=None))
         assert "title" not in payload
 
     def test_update_does_not_pass_origin(self, _forward_capture: dict) -> None:
