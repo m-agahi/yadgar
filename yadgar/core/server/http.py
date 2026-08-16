@@ -20,6 +20,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
@@ -1226,39 +1227,157 @@ async def _task_list_legacy_wiki_nudge(directory: str) -> str:
     )
 )
 def _format_task_list_nudge_rows(rows: list[dict], cap: int, project: str) -> str:
-    """Format a ledger-read result list into the forcing-nudge payload.
+    """Format a ledger-read result list into the restore nudge.
 
-    Extracted from `_task_list_restore_nudge` to keep the handler under the
-    C901 complexity cap. Returns "" when rows is empty.
+    Car C part 2 — this is now the FALLBACK. The primary mechanism is the
+    SessionStart hook seeding the harness store on disk
+    (``yadgar.core.hooks.task_seed``); this text is only reached when a seeder
+    guard trips or the hook predates Car C.
+
+    Two things changed, both about cost. The old form ordered a full hand
+    mirror — "Call TaskCreate for EACH one now" over every open task, each
+    carrying a subject, a description, an activeForm and a metadata blob. That
+    measured 16,705 output tokens across ~81 tasks. The instruction is now
+    exactly one call shape, ``TaskCreate(subject="{id}: {title}")``, at roughly
+    80 chars per task instead of 400. And the inline window is ordered
+    ``in_progress`` first: with real titles averaging ~70 chars a naive
+    id-ordered slice spends the whole budget on pending rows and hides the
+    tasks that were actually being worked on.
+
+    The ``[N]`` bracket prefix is gone with it. It existed so a hand-created
+    harness task could be reconciled back to a ledger id; the seeder makes the
+    ledger id BE the harness id, and the bare ``{id}:`` form matches what the
+    seeder writes, so both paths produce the same subject.
+
+    Returns "" when rows is empty.
     """
     if not rows:
         return ""
+    # `number` was a dead fallback — the task table has no such column, so a
+    # row missing `id` rendered as "?", an id that can never be reconciled.
+    # A row we cannot identify is now dropped loudly instead.
+    _renderable = [_r for _r in rows if _r.get("id") is not None]
+    if len(_renderable) != len(rows):
+        logger.warning(
+            "task-list nudge: %d of %d open rows carry no id and were omitted",
+            len(rows) - len(_renderable),
+            len(rows),
+        )
+    if not _renderable:
+        return ""
+    # in_progress first — the inline window is small and those rows are the
+    # ones that answer "what was I doing".
+    _ordered = sorted(_renderable, key=lambda _r: _r.get("status") != "in_progress")
+    _shown = _ordered[:cap]
+    _overflow = len(_ordered) - len(_shown)
     _lines = [
-        "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
-        f"{len(rows)} open task(s) for {project} from the task ledger. "
-        "Call TaskCreate for EACH one now:",
+        f"\n[yadgar] ACTION REQUIRED — restore your task list first. "
+        f"{len(_ordered)} open for {project}.",
+        'For each: TaskCreate(subject="{id}: {title}") — subject only, nothing else.',
     ]
-    _shown = rows[:cap]
-    _overflow = len(rows) - len(_shown)
     for _row in _shown:
-        _tid = _row.get("number") or _row.get("id") or "?"
         _subj = _row.get("title") or _row.get("subject") or "(no subject)"
-        _st = _row.get("status", "pending")
-        _lines.append(f"  - [{_tid}] {_subj} ({_st})")
+        _flag = " (in_progress)" if _row.get("status") == "in_progress" else ""
+        _lines.append(f"  {_row['id']}: {_subj}{_flag}")
     if _overflow > 0:
-        _lines.append(f"  …and {_overflow} more")
-    _lines.append(
-        "Preserve the `[N]` prefix at the start of each TaskCreate subject "
-        "so task ids reconcile across sessions. "
-        "Recreate every open task (pending / in_progress) with TaskCreate "
-        "before proceeding; skip completed. Do this FIRST.\n"
+        _lines.append(f'  +{_overflow} more: task_list(project_id="{project}")')
+    return "\n".join(_lines) + "\n"
+
+
+@observe(
+    exempt=(
+        "pure projection; three dict lookups per row, no I/O. Runs once per "
+        "seed-capable SessionStart render."
     )
-    return "\n".join(_lines)
+)
+def _task_list_payload(rows: list[dict]) -> list[dict]:
+    """Project ledger rows down to what the on-disk seeder actually writes.
+
+    Car C. Only ``id`` / ``title`` / ``status`` reach the hook: the harness
+    record has no home for ``state``, ``plan_path`` or the timestamps, and this
+    payload crosses the wire on every session start.
+
+    Car E adds ``blocked_by`` / ``blocks``, which the harness record DOES have
+    a home for and which the seeder wrote as ``[]`` for its whole life because
+    nothing could read them. Omitted per row when absent, so a core talking to
+    a backend that predates the edge read sends the Car C shape rather than a
+    row asserting the task has no dependencies.
+    """
+    out: list[dict] = []
+    for _r in rows:
+        if _r.get("id") is None:
+            continue
+        _rec = {"id": _r.get("id"), "title": _r.get("title"), "status": _r.get("status")}
+        for _key in ("blocked_by", "blocks"):
+            if _r.get(_key) is not None:
+                _rec[_key] = _r[_key]
+        out.append(_rec)
+    return out
 
 
 @observe(tier="stage")
-async def _task_list_restore_nudge(directory: str, project: str = "") -> str:
-    """Return the task-list restore-nudge line, or "" when no ledged exists.
+async def _read_open_task_rows(ledger: Any, project: str) -> list[dict]:
+    """Read the project's open task rows, surviving a ``with_edges`` skew.
+
+    Car E asks the ledger for the ``task_blocked_by`` join (``with_edges=True``)
+    because the seeder writes the harness record's ``blockedBy`` / ``blocks``
+    arrays. It costs one extra query on a path that already does exactly one
+    read — worth it while the parameter is there to ask for.
+
+    The narrow ``TypeError`` arm is the point of this helper. A TypeError from
+    this call is what a call that did not BIND looks like: the ledger on the
+    other side has no ``with_edges`` parameter, which is precisely the shape of
+    a core/backend version skew — routine here, since a deployed core and the
+    branch that adds a kwarg are not upgraded in the same instant. Under the
+    blanket ``except Exception -> []`` that used to sit here
+    the skew rendered an EMPTY nudge — byte-identical to a ledger with no open
+    tasks. So the nudge was dead-by-exception while every session looked clean,
+    which is the exact failure this path already suffered once.
+
+    Hence: retry WITHOUT the edges rather than render nothing (the edges are a
+    seeder nicety; the nudge is the fallback that has to survive), and say so
+    at WARNING rather than debug. A genuinely empty ledger still returns ``[]``
+    silently — only a read that FAILED is worth a line.
+
+    Extracted from ``_task_list_restore_nudge``: the retry arm pushed that
+    function to nesting=6, over the I13 hard cap of 4.
+    """
+    _kw: dict[str, Any] = {"project_id": project, "status": ["pending", "in_progress"]}
+    try:
+        return await asyncio.to_thread(ledger.task_list, **_kw, with_edges=True)
+    except TypeError as _sig:
+        logger.warning(
+            "task_list raised TypeError on the with_edges read (%s); retrying "
+            "without edges — the seeder loses blocked_by/blocks but the restore "
+            "nudge still renders",
+            _sig,
+        )
+    except Exception as _le:
+        # Still fail-open (session start is never blocked), but audible: a read
+        # that raised is not the same event as a ledger with no open tasks, and
+        # only one of those two should be silent.
+        logger.warning("task-list ledger read failed: %s", _le)
+        return []
+
+    try:
+        return await asyncio.to_thread(ledger.task_list, **_kw)
+    except Exception as _re:
+        logger.warning("task-list ledger retry without edges failed: %s", _re)
+        return []
+
+
+@observe(tier="stage")
+async def _task_list_restore_nudge(directory: str, project: str = "") -> tuple[str, list[dict]]:
+    """Return ``(nudge text, open task rows)`` — either may be empty.
+
+    Car C returns the ROWS alongside the rendered nudge because the SessionStart
+    hook can now seed the harness task store mechanically
+    (``yadgar.core.hooks.task_seed``) instead of ordering the model to
+    hand-mirror every task. The rows are the seeder's input; the nudge is the
+    fallback used only when a guard trips. The read happens once either way.
+
+    The rows are NOT capped — the cap belongs to the rendered nudge alone. A
+    seeder that only wrote the first 12 open tasks would silently hide the rest.
 
     Car E (0047 spine train): reads open tasks from the ``task`` ledger table
     (Car D ships the schema + tools) instead of parsing the `{project}-task-list`
@@ -1294,7 +1413,7 @@ async def _task_list_restore_nudge(directory: str, project: str = "") -> str:
     """
     try:
         if not project:
-            return ""
+            return "", []
 
         # ── Car E primary path: read the task ledger (Car D ships the table + tools)
         try:
@@ -1305,22 +1424,18 @@ async def _task_list_restore_nudge(directory: str, project: str = "") -> str:
             _ledger = None
 
         if _ledger is not None and hasattr(_ledger, "task_list"):
-            try:
-                _rows = await asyncio.to_thread(
-                    _ledger.task_list,
-                    project_id=project,
-                    status=["pending", "in_progress"],
-                )
-            except Exception as _le:
-                logger.debug("task-list ledger read failed: %s", _le)
-                _rows = []
-            return _format_task_list_nudge_rows(list(_rows or []), 12, project)
+            _rows = await _read_open_task_rows(_ledger, project)
+            _open = [_r for _r in (_rows or []) if isinstance(_r, dict)]
+            # Cap 5, down from 12: real ledger titles average ~76 chars, so a
+            # 12-row window costs ~1,255 chars of every session's context for a
+            # FALLBACK path. 5 lands at ~670 and still leads with in_progress.
+            return _format_task_list_nudge_rows(_open, 5, project), _open
 
         # ── Legacy path: wiki-page parse. Removed once Car D lands.
-        return await _task_list_legacy_wiki_nudge(directory)
+        return await _task_list_legacy_wiki_nudge(directory), []
     except Exception as _te:
         logger.debug("session-context task-list nudge error: %s", _te)
-        return ""
+        return "", []
 
 
 _CURRENT_PROJECT_BLOCK = "current_project"
@@ -1387,6 +1502,57 @@ def _code_graph_suggest_line(directory: str, blocks: list[dict]) -> str:
         return ""
 
 
+@observe(
+    exempt=(
+        "pure assembly; three dict keys over already-fetched values. No I/O, "
+        "no storage side effects."
+    )
+)
+def _seed_capable_payload(render: str, nudge: str, rows: list[dict]) -> dict:
+    """Response body for a caller that can seed the harness task store itself.
+
+    Car C. The nudge travels as its OWN key rather than prepended to ``text``:
+    a hook that seeds mechanically must not ALSO print an order to hand-create
+    the tasks it just wrote. It is still sent so the hook can print it when a
+    seeder guard trips.
+    """
+    return {"text": render, "task_nudge": nudge, "tasks": _task_list_payload(rows)}
+
+
+@observe(tier="stage")
+async def _checkpoint_resume_hint(directory: str, source: str) -> str:
+    """Return the active-checkpoint resume hint, or "" when there is none.
+
+    Extracted from ``hook_session_context`` (unchanged behaviour) to keep that
+    handler under the I30 function-length cap after Car C added the seeding
+    branch. Fail-open: any storage error yields "".
+    """
+    try:
+        from yadgar._shared.runtime.lifecycle import _get_storage as _gs  # noqa: PLC0415
+
+        _storage = _gs()
+        _cp = await asyncio.to_thread(_storage.get_active_checkpoint, directory)
+        if not _cp:
+            return ""
+        _task = _cp.get("current_task", "")
+        _ts = _cp.get("created_at", "")
+        _source_hint_prefix = {
+            "clear": "Session cleared — call restore() if needed.\n",
+            "startup": "Call restore() to pick up where you left off.\n",
+            "resume": "Checkpoint available — call restore() to load context.\n",
+        }.get(source, "")
+        return (
+            f"\n[yadgar] Active checkpoint for {directory}:\n"
+            f"  Task: {_task}\n"
+            f"  Time: {_ts}\n"
+            + (f"  {_source_hint_prefix}" if _source_hint_prefix else "")
+            + f'To resume: call `restore(directory="{directory}")`\n'
+        )
+    except Exception as _ce:
+        logger.debug("session-context checkpoint hint error: %s", _ce)
+        return ""
+
+
 @mcp_server.custom_route("/hooks/session-context", methods=["GET"])
 @trace_span()
 async def hook_session_context(request: Request) -> JSONResponse:
@@ -1402,7 +1568,12 @@ async def hook_session_context(request: Request) -> JSONResponse:
             "clear", "startup", "resume". Missing/unknown → treated as
             "startup". "compact" suppresses restore hint (compact handler
             owns auto-restore via /hooks/post-compact).
-    Returns: {"text": "...markdown..."}
+        seed: Car C capability flag. When set (and source != "compact") the
+            caller is declaring it can seed the harness task store itself, so
+            the task-restore nudge is returned OUT-OF-BAND rather than
+            prepended to the render.
+    Returns: {"text": "...markdown..."} — plus {"task_nudge", "tasks"} when the
+        caller sent seed=1.
     """
     directory = request.query_params.get("directory", os.getcwd())
     # Car C2 / ADR-0227: the project_id is MINTED HOST-SIDE by the SessionStart
@@ -1413,6 +1584,11 @@ async def hook_session_context(request: Request) -> JSONResponse:
     # v5.7.9: read source for per-source hint copy and compact suppression.
     # Unknown/missing values fall through to the "startup" default.
     source = request.query_params.get("source", "") or "startup"
+    # Car C: capability flag, sent only by a hook that can seed the harness task
+    # store on disk. Absent → the response shape is exactly what it was before
+    # Car C, so an older installed hook (hooks are COPIED into ~/.claude/hooks,
+    # they can lag the daemon) keeps getting the nudge inside `text`.
+    seed_capable = request.query_params.get("seed", "") not in ("", "0")
     _KNOWN_SOURCES = frozenset({"compact", "clear", "startup", "resume"})
     if source not in _KNOWN_SOURCES:
         source = "startup"
@@ -1498,39 +1674,21 @@ async def hook_session_context(request: Request) -> JSONResponse:
         # already-restored context.
         # For all other sources: hint only — never auto-call restore().
         if source != "compact":
-            try:
-                from yadgar._shared.runtime.lifecycle import _get_storage as _gs  # noqa: PLC0415
-
-                _storage = _gs()
-                _cp = await asyncio.to_thread(_storage.get_active_checkpoint, directory)
-                if _cp:
-                    _task = _cp.get("current_task", "")
-                    _ts = _cp.get("created_at", "")
-                    _source_hint_prefix = {
-                        "clear": "Session cleared — call restore() if needed.\n",
-                        "startup": "Call restore() to pick up where you left off.\n",
-                        "resume": "Checkpoint available — call restore() to load context.\n",
-                    }.get(source, "")
-                    _hint = (
-                        f"\n[yadgar] Active checkpoint for {directory}:\n"
-                        f"  Task: {_task}\n"
-                        f"  Time: {_ts}\n"
-                        + (f"  {_source_hint_prefix}" if _source_hint_prefix else "")
-                        + f'To resume: call `restore(directory="{directory}")`\n'
-                    )
-                    render = render + _hint
-            except Exception as _ce:
-                logger.debug("session-context checkpoint hint error: %s", _ce)
+            render = render + await _checkpoint_resume_hint(directory, source)
 
         # Task-list mirror restore-nudge (MAIN-THREAD-ONLY; existence-checked).
         # Gated source != "compact" (inherits the enclosing block). Extracted to
         # _task_list_restore_nudge to keep this handler under the I13 complexity
         # cap; that helper is fail-open (returns "" on any error).
         if source != "compact":
+            _nudge, _task_rows = await _task_list_restore_nudge(directory, project)
+            if seed_capable:
+                return JSONResponse(_seed_capable_payload(render, _nudge, _task_rows))
             # Hoisted FIRST (v5.149): the task-restore nudge led the render so it is
             # not buried under the project-brief catalog — the advisory tail form was
             # ignored. Prepend keeps it the first thing the model reads this session.
-            render = await _task_list_restore_nudge(directory, project) + render
+            # This arm stays byte-identical for hooks predating Car C.
+            render = _nudge + render
 
         return JSONResponse({"text": render})
     except Exception as _e:

@@ -12,6 +12,57 @@ import asyncio
 from unittest.mock import MagicMock
 
 
+def _effective_source(fn, depth: int = 2) -> str:
+    """Source of ``fn`` plus the source of the module-level helpers it calls.
+
+    These guards assert a property of the REQUEST PATH — "this blocking call
+    runs off the event loop" — not a property of one function body. Reading
+    only ``inspect.getsource(handler)`` conflates the two, and the difference
+    is not academic: ``_checkpoint_resume_hint`` was extracted out of
+    ``hook_session_context`` to keep it under the I30 function-length cap. The
+    call is still awaited from the handler and still wrapped in
+    ``asyncio.to_thread`` — behaviour identical — but the handler-only guard
+    went blind and reported a regression that did not exist.
+
+    Lowering the bar (a smaller count, a looser regex) would have made the
+    guard weaker than the property it protects. Following the extraction
+    instead keeps it exactly as strong, and survives the next one: ``depth=2``
+    covers a helper that later extracts a helper of its own.
+
+    Resolution is deliberately narrow — only names bound on ``fn``'s OWN
+    defining module are followed, so an unrelated same-named symbol elsewhere
+    cannot smuggle a passing match into the union.
+    """
+    import inspect
+    import re
+
+    module = inspect.getmodule(inspect.unwrap(fn))
+    seen: set[str] = set()
+    chunks: list[str] = []
+
+    def _walk(target, level: int) -> None:
+        try:
+            src = inspect.getsource(target)
+        except (OSError, TypeError):  # C-level / dynamically built callables  # fmt: skip
+            return
+        chunks.append(src)
+        if level <= 0:
+            return
+        for name in sorted(set(re.findall(r"\b(_[A-Za-z0-9_]+)\s*\(", src))):
+            if name in seen:
+                continue
+            seen.add(name)
+            helper = getattr(module, name, None)
+            if helper is None or not callable(helper):
+                continue
+            if inspect.getmodule(inspect.unwrap(helper)) is not module:
+                continue
+            _walk(helper, level - 1)
+
+    _walk(fn, depth)
+    return "\n".join(chunks)
+
+
 class TestActionBatchLock:
     """Q2: _action_batch must be protected by asyncio.Lock."""
 
@@ -149,42 +200,75 @@ class TestBlockingCallsOffThread:
         )
 
     def test_hook_session_context_project_brief_uses_to_thread(self):
-        """hook_session_context must call _pb (project_brief) via asyncio.to_thread (#58)."""
-        import inspect
+        """hook_session_context must call _pb (project_brief) via asyncio.to_thread (#58).
+
+        Named, not counted. A bare ``count("asyncio.to_thread") >= 3`` is
+        satisfied by ANY three occurrences — including three wrappings of some
+        other call — so it never actually pinned project_brief to a worker
+        thread. The regex does, and it cannot be satisfied by accident when the
+        effective source widens.
+        """
+        import re
 
         import yadgar.core.server as srv
 
-        source = inspect.getsource(srv.hook_session_context)
-        # The source must contain at least 3 asyncio.to_thread calls (one per blocking call).
-        count = source.count("asyncio.to_thread")
-        assert count >= 3, (
-            f"hook_session_context must have >=3 asyncio.to_thread calls (#58); found {count}"
+        source = _effective_source(srv.hook_session_context)
+        assert re.search(r"asyncio\.to_thread\(\s*_pb\b", source), (
+            "hook_session_context must wrap project_brief (_pb) in asyncio.to_thread (#58)"
         )
 
     def test_hook_session_context_checkpoint_uses_to_thread(self):
-        """get_active_checkpoint in hook_session_context must be off-thread (#58)."""
-        import inspect
+        """get_active_checkpoint on the session-context path must be off-thread (#58).
+
+        Reads the effective source (handler + the helpers it calls) so the
+        guard follows ``_checkpoint_resume_hint``, which was extracted out of
+        the handler for the I30 length cap without changing what it does.
+        """
         import re
 
         import yadgar.core.server as srv
 
-        source = inspect.getsource(srv.hook_session_context)
+        source = _effective_source(srv.hook_session_context)
         # whitespace-tolerant: ruff may wrap the call across lines after `(`.
         assert re.search(r"asyncio\.to_thread\(\s*_storage\.get_active_checkpoint", source), (
-            "hook_session_context must wrap _storage.get_active_checkpoint in asyncio.to_thread (#58)"
+            "the session-context path must wrap _storage.get_active_checkpoint "
+            "in asyncio.to_thread (#58)"
         )
 
     def test_hook_session_context_list_blocks_uses_to_thread(self):
-        """list_blocks in hook_session_context must be off-thread (#58)."""
-        import inspect
+        """list_blocks on the session-context path must be off-thread (#58)."""
         import re
 
         import yadgar.core.server as srv
 
-        source = inspect.getsource(srv.hook_session_context)
+        source = _effective_source(srv.hook_session_context)
         # whitespace-tolerant: ruff may wrap the call across lines after `(`.
         assert re.search(r"asyncio\.to_thread\(\s*_storage2\.list_blocks", source), (
-            "hook_session_context must wrap _storage2.list_blocks in asyncio.to_thread (#58)"
+            "the session-context path must wrap _storage2.list_blocks in asyncio.to_thread (#58)"
+        )
+
+    def test_effective_source_actually_follows_an_extraction(self):
+        """The walker must reach an extracted helper — otherwise the three
+        guards above are just the old handler-only read wearing a new name.
+
+        Pinned to ``_checkpoint_resume_hint`` because that IS the extraction
+        that blinded them: its body is absent from the handler's own source and
+        present in the effective source.
+        """
+        import inspect
+
+        import yadgar.core.server as srv
+
+        handler_only = inspect.getsource(srv.hook_session_context)
+        effective = _effective_source(srv.hook_session_context)
+
+        needle = "_storage.get_active_checkpoint"
+        assert needle not in handler_only, (
+            "premise broken: the checkpoint read is back inside the handler, so "
+            "this test no longer proves the walker follows anything"
+        )
+        assert needle in effective, (
+            "the effective source must reach the extracted _checkpoint_resume_hint"
         )
 
 

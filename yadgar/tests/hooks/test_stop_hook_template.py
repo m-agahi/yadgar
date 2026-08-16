@@ -176,35 +176,67 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      completed or blocked this session; TaskCreate any follow-ups you discovered.
      This is the every-checkpoint "update your task list" pass — do it before you
      mirror, so the ledger reflects reality.
-   - Step 5b — READ THE LEDGER FOR REAL: CALL task_list(project_id="{project}")
-     NOW and reconcile against the tasks + updated_at it RETURNS — never against
-     a remembered copy. D37 default is open-only (status ∈ {pending,
-     in_progress}); closed/archived require an explicit filter. Absent = no
-     saved ledger yet.
-   - Step 5c — BRANCH on {have open tasks after reconcile?} × {ledger has
-     open tasks?}:
-     - have tasks · NO ledger rows → CREATE. For each open task call
-       task_write(project_id="{project}", title=<subject>, status=<status>,
-       state=<state>, active_form=<active_form>). One call per task.
-     - NO tasks · NO ledger rows → SKIP. Nothing to do.
-     - NO tasks · ledger has rows → CATCH-UP SYNC. The ledger has tasks you
-       don't. Adopt its OPEN tasks (status ∈ {pending, in_progress}) into your
-       harness via TaskCreate — recovers a missed session-start restore or a
-       concurrent session's work. GUARD: never adopt a completed task; if ALL
-       ledger tasks are completed, OR the ledger's updated_at is older than 14
-       days, do NOT adopt — note "stale/finished saved list" and leave it. Adopt
-       by judgment: open tasks relevant to the work you are about to do; skip
-       ones clearly from a finished or unrelated effort.
-     - have tasks · ledger has rows → MERGE + WRITE BACK. Reconcile the ledger's
-       open tasks with yours (union; your live status wins for tasks you own;
-       keep ledger-only open tasks). For each task call task_write with the
-       merged fields. project_id is a caller parameter (ADR-0202) — use the
-       same {project} for every call this step.
-   - The harness `TaskCreate` subject must preserve the `[N]` prefix from the
-     ledger so the next session's reconcile can match it (D11). The task
-     ledger ids are Crockford base32 (digits + a-z minus i,l,o,u) with an
-     optional origin/ prefix for foreign tasks; the prefix is preserved in
-     the subject verbatim.
+   - Step 5b — WRITE BACK ONLY WHAT YOU TOUCHED. Other instances may be working
+     this same ledger right now, so a blind diff-and-push clobbers their work.
+     Only you know which rows you touched this session.
+     1. READ THE LEDGER FOR REAL: CALL task_list(project_id="{project}",
+        status=["pending", "in_progress"]) NOW and reconcile against what it
+        RETURNS — never against a remembered copy. It answers with id, title
+        and status only; that is all this step needs. D37 default is open-only
+        (status ∈ {pending, in_progress}); closed/archived require an explicit
+        filter. Absent = no saved ledger yet.
+     2. Compare it against your harness TaskList.
+     3. For EACH task whose status YOU changed this session:
+          task_write(project_id="{project}", id=<ledger id>, title=<title>,
+                     status=<new status>)
+        Send only what changed. Fields you omit are left unchanged by the
+        backend — do NOT read or re-send state, active_form, plan_path or
+        body_slug to "preserve" them. project_id is a caller parameter
+        (ADR-0202) — the same {project} on every call this step.
+     4. For EACH task you CREATED in the harness this session:
+          task_write(project_id="{project}", title=<title>, status="pending")
+        No id — the id it RETURNS is the ledger id, and the task comes back
+        under that id next session.
+     5. A row that changed in the ledger but NOT in your harness list is another
+        instance's work. LEAVE IT ALONE.
+   - Step 5c — TASK CONTEXT MAINTENANCE, same rule: only tasks YOU worked on.
+     A task row is a pointer; the substance lives in the wiki body page named by
+     its body_slug. When the row moves and the body does not, the context rots.
+     The step-5b list does not carry body_slug or plan_path — read the full row
+     with task_get(project_id="{project}", id=<id>), one call per task you
+     worked on. Never widen the LIST to fetch them for rows you did not touch.
+     - body_slug set → append what CHANGED THE APPROACH (root cause found,
+       decision taken, dead end ruled out, new dependency) via
+       wiki_append_section(slug=<body_slug>, ...). APPEND — never rewrite a body
+       page from memory of it.
+     - body_slug null AND the task now has real substance → write the page at
+       {project with / as _}_task-<id>, then task_write(project_id="{project}",
+       id=<id>, title=<title>, body_slug="<that slug>").
+     - A design doc was written for the task → task_write(..., plan_path=<path>).
+     - The doc at plan_path was deleted, superseded, or no longer governs →
+       task_write(..., clear_plan_path=True). Never leave a path pointing at a
+       file that is not the plan, and never "clear" a column by passing "" —
+       that stores an empty string, and the body_slug form of it violates a
+       unique index the second time you do it.
+     - The title no longer describes the task → send the corrected one; title is
+       written on every update.
+     Do NOT audit or repair rows you did not work on.
+   - Step 5d — CATCH-UP SYNC, and ONLY when your harness list is EMPTY while the
+     ledger has open rows (a missed session-start seed, or a concurrent
+     session's work). This is the one branch that needs the wide read: call
+     task_list(project_id="{project}", status=["pending", "in_progress"],
+     verbose=True) so the rows carry updated_at. Adopt its OPEN tasks into your
+     harness via TaskCreate. GUARD: never adopt a completed task; if ALL ledger
+     tasks are completed, OR the ledger's updated_at is older than 14 days, do
+     NOT adopt — note "stale/finished saved list" and leave it. That age gate is
+     NOT about completed rows (the status filter already excludes those): it
+     catches the row that was finished but never marked completed — one that
+     simply went quiet. Adopt by judgment: open tasks relevant to the work you
+     are about to do; skip ones clearly from a finished or unrelated effort.
+   - A harness subject carries the CURRENT ledger id and nothing else:
+     `41: title`. The SessionStart seeder writes the ledger id AS the harness
+     id, so there is nothing to reconcile — no `[N]` wrapper, no retired
+     pre-migration id (`0047`, `task:0080`), no re-sequenced number of your own.
 
 6. Call project_brief("{directory}", mode="signals", project="{project}").
    UNCONDITIONAL — this call is how you LEARN whether maintenance applies; it is
@@ -315,11 +347,13 @@ def test_template_has_protocol_content():
     # Car E (0047 §16): task-list mirror now reaches the SQL task ledger.
     assert "task_list(project_id=" in content
     assert "task_write(project_id=" in content
-    # The wiki_append_section surgical path was deliberately removed by Car E
-    # (the ledger is row-based, not markdown-section-atomic, so the
-    # replace_section shortcut is gone). The wiki still owns structural
-    # write-back in step 2 step — but not task-list mutation.
-    assert "wiki_append_section(" not in content
+    # Car E removed wiki_append_section from the TASK-LIST path: the ledger is
+    # row-based, so section-atomic markdown edits stopped being how a task's
+    # STATUS is written. Car C part 2 brings the call back for a different
+    # object — the per-task wiki BODY page, whose substance is still prose and
+    # must be appended to rather than rewritten. Assert the target, which is
+    # what separates the two, instead of the bare tool name.
+    assert "wiki_append_section(slug=<body_slug>" in content
 
 
 def test_template_has_substitution_header():
@@ -357,14 +391,13 @@ def test_task_list_mirror_step_present():
     """Step 5 (TASK-LIST MIRROR) persists the harness task list to the SQL
     task ledger (Car E, 0047 §16). The wiki task-list page is gone — it is
     read-only marker-only. Asserts the step names the harness tools
-    (TaskList/TaskUpdate/TaskCreate), the four state-machine cases, the
-    catch-up guard, the ledger read/write call shapes, the id-format rules
-    (Crockford base32 with optional origin/ prefix), the [N] prefix carry,
-    and the 14-day age gate."""
+    (TaskList/TaskUpdate/TaskCreate), the touched-only write-back rule, the
+    catch-up branch and its 14-day age gate, the ledger read/write call
+    shapes, and the `<id>: title` subject rule."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     # Named step + ledger call shapes (Car E).
     assert "TASK-LIST MIRROR" in content
-    assert 'task_list(project_id="{project}")' in content
+    assert 'task_list(project_id="{project}"' in content
     assert 'task_write(project_id="{project}"' in content
     # Reconcile own list FIRST via the harness tools.
     assert "TaskList" in content
@@ -373,11 +406,25 @@ def test_task_list_mirror_step_present():
     assert "RECONCILE YOUR OWN LIST FIRST" in content
     # Read-before-write (live ledger call, not a remembered copy).
     assert "READ THE LEDGER FOR REAL" in content
-    # The FOUR cases of the state machine — CREAT/E/SKIP/CATCH-UP SYNC/MERGE + WRITE BACK.
-    assert "CREATE" in content
-    assert "SKIP" in content
+    # Car C part 2: the write-back is scoped to what THIS instance touched.
+    # The ledger is shared across concurrently running instances, so the old
+    # "MERGE + WRITE BACK" union — which re-sent every ledger row it had read —
+    # would clobber another session's rows. It is gone and must not come back;
+    # so is the state/active_form re-send it carried, which duplicated work the
+    # backend already does (omitted fields are left unchanged).
+    assert "WRITE BACK ONLY WHAT YOU TOUCHED" in content
+    assert "MERGE + WRITE BACK" not in content
+    assert "another\n       instance's work. LEAVE IT ALONE" in content or (
+        "another instance's work. LEAVE IT ALONE" in " ".join(content.split())
+    )
+    # Car C part 2, second arm: task context maintenance. A row is a pointer;
+    # its substance lives in the body page, and nothing used to revisit either
+    # that or plan_path.
+    assert "TASK CONTEXT MAINTENANCE" in content
+    assert "wiki_append_section(slug=<body_slug>" in content
+    assert "clear_plan_path=True" in content
+    # The catch-up branch survives as the seeder's fallback.
     assert "CATCH-UP SYNC" in content
-    assert "MERGE + WRITE BACK" in content
     # Catch-up guard: skip completed, all-done→skip, 14-day age gate on ledger updated_at.
     assert "never adopt a completed task" in content
     assert "ALL\n       ledger tasks are completed" in content or (
@@ -395,14 +442,12 @@ def test_task_list_mirror_step_present():
     )
     # Ledger read parity: D37 default is open-only.
     assert "D37 default is open-only" in content
-    # [N] prefix preservation across the ledger boundary (D11) — the next
-    # session's reconcile matches on the prefix.
-    assert "`[N]` prefix from the\n     ledger" in content or (
-        "`[N]` prefix from the ledger" in " ".join(content.split())
-    )
-    # Crockford base32 id format + optional origin/ prefix for foreign tasks.
-    assert "Crockford base32" in content
-    assert "origin/" in content
+    # Subject format: the CURRENT ledger id and nothing else (Car C part 1 made
+    # the ledger id BE the harness id, so the `[N]` reconcile wrapper — and the
+    # Crockford-base32 display form it came with — have nothing left to do).
+    assert "`41: title`" in content
+    assert "no `[N]` wrapper" in " ".join(content.split())
+    assert "Crockford base32" not in content
     # project_id is a caller parameter (ADR-0202); the step must call it out.
     assert "project_id is a caller parameter" in content
     assert "ADR-0202" in content
@@ -412,7 +457,13 @@ def test_task_list_mirror_step_present():
     assert "wiki_write_task_list" not in content
     assert "## task:<id>" not in content
     assert "Zero-pad each <id>" not in content
-    assert "wiki_append_section" not in content
+    # NOTE: this list used to include `"wiki_append_section" not in content`.
+    # The retired artifact was the wiki TASK-LIST PAGE — asserted above by the
+    # {project}-task-list slug and wiki_write_task_list — and back then the
+    # only thing step 5 could have appended to was that page. Car C part 2
+    # calls wiki_append_section on per-task BODY pages, which are current, so
+    # the tool-name assertion no longer separates legacy from live; the slug
+    # assertions do.
 
 
 def test_subagent_findings_curation_step_present():

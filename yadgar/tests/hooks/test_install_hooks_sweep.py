@@ -166,6 +166,10 @@ _IMPORTED_ONLY = {
     # module, never an executable hook — it deliberately has no main() and is
     # never copied to hooks_dir.
     "_identity_mint.py",
+    # task_seed.py (Car C): the mechanical harness task-list seeder, imported by
+    # session-start-context.py. Same shape as _identity_mint.py — a library
+    # module with no main(), never copied to hooks_dir as an executable hook.
+    "task_seed.py",
 }
 
 # #64: hook_runner-dispatched core hooks. These are executed via

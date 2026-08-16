@@ -50,6 +50,12 @@ def _make_fake_sql_storage(
     storage.list_task_rows = AsyncMock(return_value=task_rows or [])
     storage.list_task_rows_all_projects = AsyncMock(return_value=task_rows_all or [])
     storage.get_task_row = AsyncMock(return_value=task_row)
+    # Car E: ``get_task_row`` reads the ``task_blocked_by`` join from both ends
+    # and ``list_task_rows`` does when asked. A bare MagicMock returns a
+    # non-awaitable here, so these have to be declared for the op to complete.
+    storage.list_task_blocked_by = AsyncMock(return_value=[])
+    storage.list_task_blocks = AsyncMock(return_value=[])
+    storage.list_task_edges = AsyncMock(return_value={})
     storage.list_adr_rows = AsyncMock(return_value=adr_rows or [])
     storage.get_adr_row = AsyncMock(return_value=adr_row)
     storage.list_agent_prompt_rows = AsyncMock(return_value=agent_prompt_rows or [])
@@ -131,8 +137,28 @@ class TestLedgerAsyncOps:
             "list_task_rows", {"project_id": "m-agahi/yadgar"}
         )
         assert result == {"rows": rows}
+        # ``summary`` defaults to False — a payload from an older core image
+        # carries no such key and must keep getting every column.
+        # Car D: paging reaches storage as ``None`` when the payload states
+        # neither — that is the layer's "emit no clause", not a default cap.
         sql_storage.list_task_rows.assert_awaited_once_with(
-            project_id="m-agahi/yadgar", status=None
+            project_id="m-agahi/yadgar", status=None, summary=False, limit=None, offset=None
+        )
+
+    async def test_list_task_rows_forwards_the_summary_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The lean projection is opt-in, and the op is what carries the opt-in."""
+        sql_storage = _make_fake_sql_storage(task_rows=[])
+        monkeypatch.setattr(
+            "yadgar.backend.admin_exec.ledger._get_sql_storage",
+            lambda: sql_storage,
+        )
+        await admin_exec.run_admin_op_async(
+            "list_task_rows", {"project_id": "m-agahi/yadgar", "summary": True}
+        )
+        sql_storage.list_task_rows.assert_awaited_once_with(
+            project_id="m-agahi/yadgar", status=None, summary=True, limit=None, offset=None
         )
 
     async def test_get_task_row_returns_row_or_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,7 +168,11 @@ class TestLedgerAsyncOps:
             lambda: sql_storage,
         )
         result = await admin_exec.run_admin_op_async("get_task_row", {"id": 7})
-        assert result == {"row": {"id": 7, "title": "t7"}}
+        # Car E: the single-row read always carries both edge directions. The
+        # values are pinned by yadgar/tests/backend/test_car_e_task_edges.py
+        # (write, then read the actual ids back); this file's subject is the
+        # dispatch reaching the chokepoint.
+        assert result == {"row": {"id": 7, "title": "t7", "blocked_by": [], "blocks": []}}
         sql_storage.get_task_row.assert_awaited_once_with(7)
 
     async def test_get_task_row_missing_returns_none_row(
@@ -165,7 +195,9 @@ class TestLedgerAsyncOps:
         )
         result = await admin_exec.run_admin_op_async("list_task_rows_all_projects", {})
         assert result == {"rows": rows}
-        sql_storage.list_task_rows_all_projects.assert_awaited_once_with(status=None)
+        sql_storage.list_task_rows_all_projects.assert_awaited_once_with(
+            status=None, summary=False, limit=None, offset=None
+        )
 
     async def test_list_adr_rows_returns_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         rows = [{"id": 11, "title": "a1"}]

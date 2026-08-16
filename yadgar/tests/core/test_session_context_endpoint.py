@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -372,7 +373,10 @@ def _seed_task_list_page(
     if monkeypatch is not None:
         _rows = _parse_task_sections(content)
 
-        def _fake_task_list(project_id: str, status=None):
+        def _fake_task_list(project_id: str, status=None, with_edges: bool = False):
+            # `with_edges` is Car E's opt-in join read. The stub must accept it
+            # or the call does not bind, and a TypeError on the binding is
+            # indistinguishable here from a ledger with no open tasks.
             return [r for r in _rows if r.get("status", "pending") in (status or [])]
 
         try:
@@ -430,7 +434,14 @@ def test_task_list_nudge_absent_when_page_missing(tmp_path, monkeypatch):
     try:
         from yadgar.core.server.tools import task as _task_tools
 
-        monkeypatch.setattr(_task_tools, "task_list", lambda project_id, status=None: [])
+        # Accepts `with_edges` (Car E) so this test asserts "the ledger is
+        # empty", not "the call failed to bind" — the two used to render the
+        # same empty nudge, which is what made the skew invisible.
+        monkeypatch.setattr(
+            _task_tools,
+            "task_list",
+            lambda project_id, status=None, with_edges=False: [],
+        )
     except ImportError:
         pass
 
@@ -556,6 +567,72 @@ def test_task_list_nudge_fail_open_on_existence_check_error(tmp_path, monkeypatc
     assert "CATALOG BODY" in body["text"]
 
 
+def test_signature_skew_is_loud_and_still_renders_the_nudge(caplog):
+    """A ledger that rejects ``with_edges`` must NOT yield a silent empty nudge.
+
+    This is the regression the whole path exists to prevent. Car E added
+    ``with_edges=True`` to the ledger read; a core talking to a backend that
+    predates it gets a TypeError at the call binding. Under the old blanket
+    ``except Exception -> _rows = []`` that produced exactly the same output as
+    a ledger with no open tasks — an empty string — so a dead nudge and a clean
+    session were indistinguishable, in the logs and on the wire.
+
+    Two halves, and both are the property:
+      1. the read is retried WITHOUT the edges, so the nudge still renders;
+      2. it is logged at WARNING, so the skew is visible rather than inferred.
+    """
+    import logging
+
+    from yadgar.core.server import http as _http
+
+    seen: list[dict] = []
+
+    def _no_edges_ledger(project_id, status=None):
+        """A pre-Car-E ledger: no ``with_edges`` parameter at all."""
+        seen.append({"project_id": project_id, "status": status})
+        return [{"id": 7, "title": "survives the skew", "status": "in_progress"}]
+
+    with patch("yadgar.core.server.tools.task.task_list", _no_edges_ledger):
+        with caplog.at_level(logging.WARNING, logger=_http.logger.name):
+            nudge, rows = asyncio.run(_http._task_list_restore_nudge("/repo", "m-agahi/yadgar"))
+
+    assert len(seen) == 1, f"the edge-less retry must actually reach the ledger; calls={seen!r}"
+    assert "survives the skew" in nudge, f"a signature skew must not empty the nudge; got {nudge!r}"
+    assert rows, f"the seeder rows must survive the skew too; got {rows!r}"
+    assert any(
+        "with_edges" in r.message or "with_edges" in r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+    ), (
+        "the skew must be LOUD — a debug-level line is how the last dead nudge "
+        f"stayed invisible; records={[r.getMessage() for r in caplog.records]!r}"
+    )
+
+
+def test_a_genuinely_empty_ledger_stays_silent(caplog):
+    """The other half: no open tasks renders nothing, and says nothing.
+
+    The narrowed swallow must not turn every quiet session into a warning —
+    only a read that FAILED is worth a line.
+    """
+    import logging
+
+    from yadgar.core.server import http as _http
+
+    def _empty_ledger(project_id, status=None, with_edges=False):
+        return []
+
+    with patch("yadgar.core.server.tools.task.task_list", _empty_ledger):
+        with caplog.at_level(logging.WARNING, logger=_http.logger.name):
+            nudge, rows = asyncio.run(_http._task_list_restore_nudge("/repo", "m-agahi/yadgar"))
+
+    assert nudge == "", f"an empty ledger renders no nudge; got {nudge!r}"
+    assert rows == []
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+        f"an empty ledger is not an error; got {[r.getMessage() for r in caplog.records]!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Inline open-task summary (checkpoint-symmetric, v5.142.0)
 # ---------------------------------------------------------------------------
@@ -627,33 +704,99 @@ def test_task_list_nudge_inlines_open_task_subjects(tmp_path, monkeypatch):
 
     with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
         client = _make_client(token, monkeypatch)
-        resp = client.get(
-            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
-            headers={"Authorization": f"Bearer {token}"},
+        _url = (
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar"
         )
+        resp = client.get(_url, headers={"Authorization": f"Bearer {token}"})
+        # Same render, seed-capable: `task_nudge` is the nudge in ISOLATION, so
+        # the assertions below cannot pass on text contributed by another
+        # section. Slicing the render was how the old basename assertion passed
+        # for the wrong reason — it was matching a code_graph line, not the nudge.
+        seeded = client.get(_url + "&seed=1", headers={"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 200
     text = resp.json()["text"]
+    nudge = seeded.json()["task_nudge"]
 
     # Header must include open count. _MIXED_CONTENT has 3 open tasks
     # (1 in_progress + 2 pending) and 1 completed.
-    assert "3 open task" in text, f"expected open task count in render; got: {text!r}"
+    assert "3 open" in nudge, f"expected open task count in nudge; got: {nudge!r}"
     # Subjects for open tasks must appear inline.
-    assert "Write failing tests" in text, f"expected subject 'Write failing tests'; got: {text!r}"
-    assert "Implement inline summary" in text, (
-        f"expected subject 'Implement inline summary'; got: {text!r}"
+    assert "Write failing tests" in nudge, f"expected subject 'Write failing tests'; got: {nudge!r}"
+    assert "Implement inline summary" in nudge, (
+        f"expected subject 'Implement inline summary'; got: {nudge!r}"
     )
-    # Car E: TaskCreate instruction still hoists; the legacy wiki slug is gone
-    # from the PRIMARY render path (ledger-keyed).
-    assert "TaskCreate" in text
-    # project_id (basename) appears in the nudge header.
-    assert project in text, f"project_id ({project}) must appear in the nudge; got: {text!r}"
+    # Car C: exactly ONE call shape, subject only. The old form asked for a
+    # description + activeForm + metadata per task — 16,705 output tokens.
+    assert 'TaskCreate(subject="{id}: {title}")' in nudge, (
+        f"the nudge must name the cheap call shape verbatim; got: {nudge!r}"
+    )
+    assert "description" not in nudge, "the nudge must not ask for per-task descriptions"
+    # The nudge names the project_id it was CALLED with (the minted owner/repo
+    # key), never the directory basename — that is not an identity.
+    assert "m-agahi/yadgar" in nudge, f"the minted project_id must key the nudge; got: {nudge!r}"
+    assert project not in nudge, "the directory basename must not key the nudge"
     # v5.149 (Option B): forcing form + hoisted FIRST so it is not buried under the
     # project-brief catalog (the advisory tail nudge was ignored).
     assert "ACTION REQUIRED" in text, f"expected forcing nudge; got: {text!r}"
     assert text.lstrip().startswith("[yadgar] ACTION REQUIRED"), (
         f"task-restore nudge must lead the render (first), not be appended; got: {text[:120]!r}"
     )
+
+
+def test_render_never_orders_a_full_hand_mirror(tmp_path, monkeypatch):
+    """Regression guard: the expensive instruction must not creep back.
+
+    "Call TaskCreate for EACH one now" over ~81 open tasks measured 16,705
+    output tokens per session. Car C replaced it with a mechanical seeder plus
+    a bounded fallback; nothing in the render may re-issue that order.
+    """
+    token = "tl-no-mirror"
+    from yadgar.core import server as _server
+
+    content = _seed_many_open_tasks(str(tmp_path), 15)
+    _seed_task_list_page(str(tmp_path), content=content, monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    text = resp.json()["text"]
+    assert "Call TaskCreate for EACH one now" not in text
+    assert "Recreate every open task" not in text
+    assert "Preserve the `[N]` prefix" not in text, (
+        "the bracket prefix is retired — the seeder makes the ledger id the harness id"
+    )
+
+
+def test_nudge_leads_with_in_progress_rows(tmp_path, monkeypatch):
+    """The inline window is 5 rows; id-ordered slicing would hide the
+    in_progress tasks behind pending ones, which is the opposite of useful."""
+    token = "tl-inprog"
+    from yadgar.core import server as _server
+
+    lines = ["## Meta\n- project: p\n"]
+    for i in range(1, 9):
+        lines.append(f"\n## task:{i:04d}\n- subject: pending task {i}\n- status: pending\n")
+    lines.append("\n## task:0009\n- subject: THE ACTIVE ONE\n- status: in_progress\n")
+    _seed_task_list_page(str(tmp_path), content="".join(lines), monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    text = resp.json()["text"]
+    assert "THE ACTIVE ONE" in text, (
+        f"the in_progress row must survive the cap; got: {text.split('CATALOG')[0]!r}"
+    )
+    assert "(in_progress)" in text
+    assert "pending task 6" not in text, "rows past the cap must not render"
 
 
 def test_task_list_nudge_excludes_completed_tasks(tmp_path, monkeypatch):
@@ -681,9 +824,14 @@ def test_task_list_nudge_excludes_completed_tasks(tmp_path, monkeypatch):
     )
 
 
-def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
-    """When >12 open tasks exist, render shows 12 + '…and N more' (v5.142.0)."""
-    token = "tl-cap12"
+def test_task_list_nudge_caps_at_5_open_tasks(tmp_path, monkeypatch):
+    """When >5 open tasks exist, render shows 5 + a pointer to the rest.
+
+    Car C dropped the cap from 12 to 5: real ledger titles average ~76 chars,
+    so a 12-row window costs ~1,255 chars of every session's context for a path
+    that is now only the FALLBACK to mechanical seeding.
+    """
+    token = "tl-cap5"
     from yadgar.core import server as _server
 
     n = 15
@@ -700,7 +848,118 @@ def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
     assert resp.status_code == 200
     text = resp.json()["text"]
 
-    # Must show exactly 12 tasks (subjects task 1–12) and a "…and 3 more" tail.
-    assert "task 12" in text, f"expected 12th task to appear; got: {text!r}"
-    assert "task 13" not in text, f"task 13 must be hidden behind the cap; got: {text!r}"
-    assert "and 3 more" in text, f"expected '…and 3 more' overflow marker; got: {text!r}"
+    # Exactly 5 tasks, then a pointer to the full set — never a truncated list
+    # the model would silently treat as complete.
+    assert "task 5" in text, f"expected 5th task to appear; got: {text!r}"
+    assert "task 6" not in text, f"task 6 must be hidden behind the cap; got: {text!r}"
+    assert "+10 more" in text, f"expected overflow marker; got: {text!r}"
+    assert 'task_list(project_id="m-agahi/yadgar")' in text, (
+        "the overflow line must say how to get the rest"
+    )
+    seeded = client.get(
+        f"/hooks/session-context?directory={tmp_path}&source=startup"
+        "&project=m-agahi%2Fyadgar&seed=1",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert len(seeded.json()["task_nudge"]) < 700, "the fallback nudge must stay cheap"
+
+
+# ---------------------------------------------------------------------------
+# Car C — mechanical seeding contract (?seed=1)
+# ---------------------------------------------------------------------------
+
+
+def test_seed_capable_caller_gets_rows_and_no_nudge_in_text(tmp_path, monkeypatch):
+    """A hook that can seed the harness store gets the ROWS, not an order.
+
+    The nudge still travels (as `task_nudge`) for the guard-tripped fallback,
+    but it must NOT be in `text` — printing both would have the model hand-create
+    tasks the seeder just wrote to disk.
+    """
+    token = "tl-seed"
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup"
+            "&project=m-agahi%2Fyadgar&seed=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert _NUDGE_MARKER not in body["text"], (
+        f"seed-capable callers must not be told to hand-mirror; got: {body['text']!r}"
+    )
+    assert "CATALOG BODY" in body["text"]
+    assert _NUDGE_MARKER in body["task_nudge"], "the fallback nudge must still be reachable"
+    assert body["tasks"], "seed-capable callers need the rows to write"
+    assert set(body["tasks"][0]) == {"id", "title", "status"}, (
+        "the payload is exactly what the on-disk record needs — nothing wider"
+    )
+
+
+def test_seed_flag_absent_keeps_the_pre_car_c_shape(tmp_path, monkeypatch):
+    """Hooks are COPIED into ~/.claude/hooks and can lag the daemon: an older
+    one sends no `seed` and must keep getting the nudge inside `text`."""
+    token = "tl-noseed"
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    body = resp.json()
+    assert _NUDGE_MARKER in body["text"]
+    assert "tasks" not in body
+
+
+def test_seed_rows_are_not_capped(tmp_path, monkeypatch):
+    """The 12-row cap belongs to the rendered nudge. A seeder given only the
+    first 12 would silently hide every other open task."""
+    token = "tl-seed-cap"
+    from yadgar.core import server as _server
+
+    content = _seed_many_open_tasks(str(tmp_path), 15)
+    _seed_task_list_page(str(tmp_path), content=content, monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup"
+            "&project=m-agahi%2Fyadgar&seed=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    body = resp.json()
+    assert len(body["tasks"]) == 15, (
+        f"all open rows must reach the seeder; got {len(body['tasks'])}"
+    )
+    assert "+10 more" in body["task_nudge"], "the NUDGE is what stays capped, not the rows"
+
+
+def test_seed_flag_is_ignored_on_compact(tmp_path, monkeypatch):
+    """compact early-returns before any task read; no rows, no nudge."""
+    token = "tl-seed-compact"
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=compact&seed=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    body = resp.json()
+    assert "tasks" not in body
+    assert _NUDGE_MARKER not in body["text"]

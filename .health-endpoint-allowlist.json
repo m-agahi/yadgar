@@ -39,10 +39,10 @@
   "yadgar/core/daemon/units.py:454": {
     "rationale": "task:0105's docker readiness gate for the CORE unit, standing in for podman's sd_notify proxy, which docker does not have. It must approximate READY=1 — emitted LAST, after the full engine set (bootstrap.py). /health/live goes green as soon as the HTTP server binds, so gating on liveness would mark the docker unit active EARLIER than the podman arm does, a semantic regression. Readiness is genuinely required."
   },
-  "yadgar/core/server/http.py:614": {
+  "yadgar/core/server/http.py:615": {
     "rationale": "This is core's own /health readiness handler (_probe_dependency) probing a dependency (db or embed) to build the readiness payload. It IS the readiness implementation, not a caller needing liveness."
   },
-  "yadgar/core/server/http.py:732": {
+  "yadgar/core/server/http.py:733": {
     "rationale": "Car F (task #61) version-handshake helper _handshake_block reads the `version` and `versions_compatible` fields from the backend's /health response to surface a deploy-window warning to the operator. /health/live does not carry those fields — readiness is the only probe that returns the version payload. The handshake must NOT silently downgrade to liveness when liveness says 'process up' but readiness would say 'wire incompatible'."
   }
 }

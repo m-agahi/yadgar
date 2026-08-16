@@ -27,10 +27,26 @@ Test strategy
   ``tests/_shared/test_mariadb_ledger_crud.py``.
 * When SQLAlchemy IS available, the test reads the method source via
   ``ast.unparse`` (mirrors the sibling test) and asserts:
-    1. the SQL clause is ``status IN (:status)``, NOT ``status = :status``;
-    2. the call wires ``bindparam("status", expanding=True)``;
-    3. the type signature is ``list[str] | None`` (catches a regression to
+    1. the call wires ``bindparam("status", expanding=True)``;
+    2. the type signature is ``list[str] | None`` (catches a regression to
        the old ``str | None`` — what triggered the live-box failure).
+
+L10 (2026-08-16) — WHAT THIS FILE NO LONGER ASSERTS, AND WHY
+------------------------------------------------------------
+It used to open with ``assert "status IN (:status)" in src``. That literal was
+the BUG: the expanding bindparam emits its own parens, so the statement that
+reached MariaDB was ``IN ((%s, %s))`` — a row constructor — and any call with
+two or more statuses died on ``(4078, "Illegal parameter data types varchar
+and row for operation '='")``. The assertion pinned the defect as a
+requirement and passed for its entire life, because string-matching unparsed
+source never compiles or executes anything.
+
+Its replacement is not a better string match — a compiled-SQL assertion would
+fail the same way, since ``expanding=True`` defers rendering the placeholder
+list until bind values arrive. The replacement EXECUTES the statement with two
+statuses against a real server:
+``yadgar/tests/integration/test_task_list_status_filter.py``. That file is
+``-m integration``, which the default addopts exclude — run it explicitly.
 * The MCP boundary is exercised via the same ``_forward_admin`` patch style as
   ``tests/core/test_task_tools.py`` — confirms the D37 default ``list(_OPEN_STATUSES)``
   flows through the tool without rejection, plus the single-element and ``None``
@@ -68,17 +84,6 @@ def _method_source(name: str) -> str:
 class TestListTaskRowsBindShape:
     """``list_task_rows`` binds ``status`` via the expanding bindparam."""
 
-    def test_sql_clause_uses_in_not_equals(self) -> None:
-        """The WHERE clause MUST be ``status IN (:status)`` (list filter)."""
-        src = _method_source("list_task_rows")
-        assert "status IN (:status)" in src, (
-            "list_task_rows must bind status as IN (:status) — scalar bind "
-            "rejects lists. See docs/plans/next-train-2026-08-14.md §4."
-        )
-        assert "status = :status" not in src, (
-            "list_task_rows regressed to scalar bind — list values will be rejected"
-        )
-
     def test_expanding_bindparam_is_wired(self) -> None:
         """The ``:status`` bindparam MUST be marked ``expanding=True``."""
         src = _method_source("list_task_rows")
@@ -107,11 +112,6 @@ class TestListTaskRowsBindShape:
 
 class TestListTaskRowsAllProjectsBindShape:
     """``list_task_rows_all_projects`` must follow the same shape."""
-
-    def test_sql_clause_uses_in_not_equals(self) -> None:
-        src = _method_source("list_task_rows_all_projects")
-        assert "status IN (:status)" in src
-        assert "status = :status" not in src
 
     def test_expanding_bindparam_is_wired(self) -> None:
         src = _method_source("list_task_rows_all_projects")

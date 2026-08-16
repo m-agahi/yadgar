@@ -13,10 +13,20 @@ dispatcher (``run_admin_op_async``) keeps SYNC bodies on
 PAYLOAD SHAPES (contract for Cars D / F / I):
 
     list_task_rows(payload) -> {"rows": list[dict]}
-        payload: {"project_id": str, "status"?: list[str]}
+        payload: {"project_id": str, "status"?: list[str], "summary"?: bool,
+                  "with_edges"?: bool, "limit"?: int, "offset"?: int}
+        ``summary: True`` projects ``id, title, status`` only; absent/False
+        keeps the full 11-column shape.
+        ``with_edges: True`` adds ``blocked_by`` / ``blocks`` to every row
+        (Car E). OPT-IN, because it is a second query the projection win
+        (Car A, 324 -> 110 chars/row) would otherwise be spent on: the
+        harness seeder needs the edges, a status sweep does not.
 
     get_task_row(payload) -> {"row": dict | None}
         payload: {"id": int}
+        The single-row read ALWAYS carries ``blocked_by`` / ``blocks``
+        (Car E) — there is no width argument for one row, and a caller
+        asking about one task is the caller most likely to want them.
 
     create_task_row(payload) -> {"id": int, ...row}
         payload: {"project_id": str, "title": str, "status"?: str,
@@ -32,9 +42,12 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
         transitions). ``blocked_by`` / ``blocks`` lists are reconciled against
         the ``task_blocked_by`` join table (D39) — they are NOT columns on
         ``task``; the admin op handles the join-edge sync side-channel.
+        A join-edge sync FAILURE is reported as ``{"ok": False, ...}``
+        (Car E) — see ``_reconcile_edges``.
 
     list_task_rows_all_projects(payload) -> {"rows": list[dict]}
-        payload: {"status"?: list[str]}
+        payload: {"status"?: list[str], "summary"?: bool, "limit"?: int,
+                  "offset"?: int}
 
     list_adr_rows(payload) -> {"rows": list[dict]}
         payload: {"project_id": str, "status"?: str, "tier"?: str, "subsystem"?: str}
@@ -73,9 +86,113 @@ def _get_sql_storage() -> Any:
     return _get_sql_storage()
 
 
+# ── Car E: task_blocked_by join edges, read + reconcile ──────────────────────
+
+
+@observe(tier="stage", metric="backend.admin.ledger.attach_task_edges")
+async def _attach_task_edges(storage: Any, rows: list[dict]) -> list[dict]:
+    """Return ``rows`` with ``blocked_by`` / ``blocks`` on every row.
+
+    One bulk query for the whole page (``list_task_edges``), never a pair of
+    reads per row. Rows with no ``id`` are passed through untouched — they
+    cannot be keyed, and dropping them would turn a projection surprise into
+    a silently shorter list.
+    """
+    ids = [int(r["id"]) for r in rows if isinstance(r, dict) and r.get("id") is not None]
+    edges = await storage.list_task_edges(ids)
+    out: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("id") is None:
+            out.append(row)
+            continue
+        entry = edges.get(int(row["id"])) or {}
+        out.append(
+            {
+                **row,
+                "blocked_by": list(entry.get("blocked_by", [])),
+                "blocks": list(entry.get("blocks", [])),
+            }
+        )
+    return out
+
+
+@observe(tier="stage", metric="backend.admin.ledger.reconcile_task_edges")
+async def _reconcile_edges(
+    storage: Any,
+    task_id: int,
+    desired_ids: Any,
+    *,
+    inverse: bool,
+) -> None:
+    """Make the live edge set for ``task_id`` equal ``desired_ids``.
+
+    ``inverse=False`` is the ``blocked_by`` direction — rows
+    ``(task_id, other)``. ``inverse=True`` is the ``blocks`` direction — rows
+    ``(other, task_id)``. One join table, read and written from both ends.
+
+    The inverse direction had NO implementation before Car E: ``blocks`` was
+    accepted by ``task_write``, stripped out of the column payload here, and
+    then dropped — a write that returned ``ok: true`` and stored nothing.
+    Shipping the ``blocks`` READ without this would have made every
+    write-then-read look like a broken reader.
+
+    Raises whatever storage raises; both callers turn that into an
+    ``{"ok": False, ...}`` envelope rather than logging it and reporting
+    success.
+    """
+    read = storage.list_task_blocks if inverse else storage.list_task_blocked_by
+    existing = {int(x) for x in await read(task_id)}
+    desired = {int(x) for x in desired_ids}
+    for gone in sorted(existing - desired):
+        pair = (gone, task_id) if inverse else (task_id, gone)
+        await storage.remove_task_blocked_by(*pair)
+    for new in sorted(desired - existing):
+        pair = (new, task_id) if inverse else (task_id, new)
+        await storage.add_task_blocked_by(*pair)
+
+
+@observe(tier="stage", metric="backend.admin.ledger.sync_task_edges")
+async def _sync_task_edges(storage: Any, task_id: int, payload: dict) -> str | None:
+    """Reconcile both edge directions named in ``payload``; message on failure.
+
+    Returns ``None`` when there was nothing to do or everything was written,
+    and a HUMAN-READABLE tail (the caller prefixes what survived) when a
+    direction failed. Absent keys are left alone — ``blocked_by`` missing
+    means "the caller did not mention dependencies", never "clear them".
+    """
+    for key, inverse in (("blocked_by", False), ("blocks", True)):
+        desired = payload.get(key)
+        if desired is None:
+            continue
+        try:
+            await _reconcile_edges(storage, task_id, desired, inverse=inverse)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("task %s %s edge sync error: %s", task_id, key, exc)
+            return f"its {key} edges were not written: {exc}"
+    return None
+
+
 @observe(tier="boundary", metric="backend.admin.ledger.list_task_rows")
 async def list_task_rows(payload: dict) -> dict:
-    """Project-scoped ``task`` read. payload: {project_id, status?}."""
+    """Project-scoped ``task`` read. payload: {project_id, status?, summary?,
+    with_edges?}.
+
+    ``summary`` (bool) selects the lean ``id, title, status`` projection. It
+    defaults to ``False`` — the pre-projection shape — so a payload from an
+    older core image (which sends no such key) keeps getting every column
+    rather than silently losing the ones its consumers read. The lean shape is
+    the ``task_list`` tool's default and that tool always sends the key.
+
+    ``with_edges`` (bool, Car E) adds ``blocked_by`` / ``blocks``. It defaults
+    to ``False`` in the OTHER direction to ``summary``, and for the same
+    reason read the other way round: absent means an older core that never
+    asked, and a list read must not pay for a join nobody wanted.
+
+    ``limit`` / ``offset`` (Car D) are forwarded as ``None`` when absent, which
+    the storage layer reads as "emit no clause". They used to be read by
+    nothing at all: the tool forwarded ``limit`` when non-default and the
+    op body dropped it on the floor.
+    """
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
@@ -83,7 +200,12 @@ async def list_task_rows(payload: dict) -> dict:
         rows = await storage.list_task_rows(
             project_id=payload["project_id"],
             status=payload.get("status"),
+            summary=bool(payload.get("summary", False)),
+            limit=payload.get("limit"),
+            offset=payload.get("offset"),
         )
+        if payload.get("with_edges"):
+            rows = await _attach_task_edges(storage, rows)
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_task_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -92,12 +214,30 @@ async def list_task_rows(payload: dict) -> dict:
 
 @observe(tier="boundary", metric="backend.admin.ledger.get_task_row")
 async def get_task_row(payload: dict) -> dict:
-    """Single ``task`` lookup by id. payload: {id}."""
+    """Single ``task`` lookup by id. payload: {id}.
+
+    Car E: the returned row ALWAYS carries ``blocked_by`` and ``blocks``.
+    They are join rows, not ``task`` columns, so they cost two extra reads —
+    accepted unconditionally here because this op reads ONE row and the
+    ``task_get`` caller has no width knob to turn.
+
+    An edge read that FAILS fails the whole op. The alternative (empty lists
+    on error) is indistinguishable from "this task has no dependencies", which
+    is the exact reading that lost six real edges during the 2026-08-15
+    backfill.
+    """
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         row = await storage.get_task_row(int(payload["id"]))
+        if row is not None and row.get("id") is not None:
+            task_id = int(row["id"])
+            row = {
+                **row,
+                "blocked_by": list(await storage.list_task_blocked_by(task_id)),
+                "blocks": list(await storage.list_task_blocks(task_id)),
+            }
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_task_row error id=%s: %s", payload.get("id"), exc)
         return {"ok": False, "error": str(exc)}
@@ -106,14 +246,23 @@ async def get_task_row(payload: dict) -> dict:
 
 @observe(tier="boundary", metric="backend.admin.ledger.list_task_rows_all_projects")
 async def list_task_rows_all_projects(payload: dict) -> dict:
-    """Cross-project ``task`` read. payload: {status?}."""
+    """Cross-project ``task`` read. payload: {status?, summary?, with_edges?}.
+
+    ``summary`` defaults to ``False`` and ``with_edges`` to ``False`` — see
+    ``list_task_rows`` for both.
+    """
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         rows = await storage.list_task_rows_all_projects(
             status=payload.get("status"),
+            summary=bool(payload.get("summary", False)),
+            limit=payload.get("limit"),
+            offset=payload.get("offset"),
         )
+        if payload.get("with_edges"):
+            rows = await _attach_task_edges(storage, rows)
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_task_rows_all_projects error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -149,14 +298,19 @@ async def create_task_row(payload: dict) -> dict:
         return {"ok": False, "error": str(exc)}
     # D39: optionally reconcile ``task_blocked_by`` join edges on CREATE.
     inserted_id = int(result.get("id", 0))
-    blocked_by = payload.get("blocked_by")
-    if blocked_by is not None and inserted_id:
-        try:
-            for blocker_id in blocked_by:
-                await storage.add_task_blocked_by(inserted_id, int(blocker_id))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("create_task_row blocked_by sync error: %s", exc)
-            # Row created; edge-sync failure is non-fatal — surface the id.
+    edge_error = await _sync_task_edges(storage, inserted_id, payload) if inserted_id else None
+    if edge_error is not None:
+        # Car E: this used to be a ``logger.warning`` followed by ``return
+        # result`` — a dropped edge and a written edge were the SAME answer to
+        # the caller, and the 2026-08-15 backfill wrote six edges it could not
+        # confirm. The row IS created and its id is carried on the envelope:
+        # the honest report of partial state is partial state, not a rollback
+        # spanning two statements this op cannot make atomic.
+        return {
+            "ok": False,
+            "id": inserted_id,
+            "error": f"task row {inserted_id} was created, but {edge_error}",
+        }
     return result
 
 
@@ -178,27 +332,14 @@ async def update_task_row(payload: dict) -> dict:
         logger.warning("update_task_row error: %s", exc)
         return {"ok": False, "error": str(exc)}
     # D39: optionally reconcile ``task_blocked_by`` join edges on UPDATE.
-    blocked_by = payload.get("blocked_by")
-    if blocked_by is not None:
-        try:
-            # Read the existing set; delete the diff (removed); insert the diff (added).
-            existing = set(await storage.list_task_blocked_by(task_id))
-            desired = {int(x) for x in blocked_by}
-            from sqlalchemy import text as _sa_text  # noqa: PLC0415
-
-            async with storage._engine.begin() as conn:  # type: ignore[attr-defined]
-                for gone in existing - desired:
-                    await conn.execute(
-                        _sa_text(
-                            "DELETE FROM task_blocked_by "
-                            "WHERE task_id = :task_id AND blocked_by_id = :blocked_by_id"
-                        ),
-                        {"task_id": task_id, "blocked_by_id": gone},
-                    )
-            for new in desired - existing:
-                await storage.add_task_blocked_by(task_id, new)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("update_task_row blocked_by sync error: %s", exc)
+    edge_error = await _sync_task_edges(storage, task_id, payload)
+    if edge_error is not None:
+        # Car E: was a warning + ``ok`` on the way out — see ``create_task_row``.
+        return {
+            "ok": False,
+            "id": task_id,
+            "error": f"task row {task_id} columns were updated, but {edge_error}",
+        }
     return {"id": task_id, **column_payload}
 
 

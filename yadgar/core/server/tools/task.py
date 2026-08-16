@@ -58,6 +58,7 @@ Decisions:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from yadgar._shared.observability.observe import observe
 from yadgar.core.forward import _forward_admin
@@ -193,19 +194,62 @@ def _build_create_payload(
     return payload
 
 
-@observe(
-    exempt="pure dict-builder; no I/O, no error branch — §16.10 status→state clearing is an inline conditional, not a spanable operation"
-)
-def _build_update_payload(
-    task_id: int,
-    status: str | None,
-    state: str | None,
-    active_form: str | None,
-    plan_path: str | None,
-    body_slug: str | None,
+@observe(exempt="pure dict-mutator; two absence checks over an already-built payload, no I/O")
+def _add_edge_keys(
+    payload: dict,
     blocked_by: list[int] | None,
     blocks: list[int] | None,
 ) -> dict:
+    """Attach the D39 join-edge keys to a create/update payload, in place.
+
+    Car E. The CREATE payload never carried them: ``task_write`` accepted
+    ``blocked_by`` on a create, validated nothing, and built a payload without
+    it — so the backend's create-side edge sync (which has existed since Car D)
+    was unreachable code and every dependency stated at create time was lost
+    under an ``ok: true``. A separate function rather than two more parameters
+    on ``_build_create_payload``, which is at the I13 params cap already.
+    """
+    if blocked_by is not None:
+        payload["blocked_by"] = [int(x) for x in blocked_by]
+    if blocks is not None:
+        payload["blocks"] = [int(x) for x in blocks]
+    return payload
+
+
+@dataclass(frozen=True, slots=True)
+class _TaskUpdateFields:
+    """The column-valued arguments of a ``task_write`` UPDATE, as one object.
+
+    Exists for the I13 ``params`` cap (8). ``_build_update_payload`` was
+    extracted from ``task_write`` to stay under that cap and had already
+    reached it with one parameter per column, so the next column-shaped
+    argument — ``title``, which the update path was dropping — would have
+    pushed it over. Passing the set as one frozen record keeps the builder at
+    two parameters however many columns the task table grows.
+
+    ``None`` means "the caller did not mention this column"; it never means
+    "set it to NULL". Nothing here is a partial-update exception except
+    ``title``, which ``task_write`` requires and therefore always carries.
+    Clearing a column to NULL is what the two ``clear_*`` flags are for —
+    ``None`` cannot express it and ``""`` is a different value, not an absence.
+    """
+
+    title: str | None = None
+    status: str | None = None
+    state: str | None = None
+    active_form: str | None = None
+    plan_path: str | None = None
+    body_slug: str | None = None
+    blocked_by: list[int] | None = None
+    blocks: list[int] | None = None
+    clear_plan_path: bool = False
+    clear_body_slug: bool = False
+
+
+@observe(
+    exempt="pure dict-builder; no I/O, no error branch — §16.10 status→state clearing is an inline conditional, not a spanable operation"
+)
+def _build_update_payload(task_id: int, fields: _TaskUpdateFields) -> dict:
     """Compose the partial-UPDATE payload for the ``update_task_row`` admin op.
 
     §16.10: when ``status`` flips to ``completed``/``archived``, force
@@ -213,28 +257,71 @@ def _build_update_payload(
     DB's state column is cleared in the same UPDATE.
     """
     payload: dict = {"id": int(task_id)}
-    if status is not None:
-        payload["status"] = status
-    if status in _COMPLETED_LIKE_STATUSES:
+    # Ledger task 111: title was validated and then dropped on the floor here,
+    # while the tool returned ok=True. Storage has accepted the column all
+    # along (``update_task_row``'s allowlist). ``None`` is the defensive
+    # ``_validate_write_inputs`` path only — unreachable via the tool signature.
+    if fields.title is not None:
+        payload["title"] = fields.title
+    if fields.status is not None:
+        payload["status"] = fields.status
+    if fields.status in _COMPLETED_LIKE_STATUSES:
         # §16.10: completed/archived transition always clears state. Even if
         # the caller explicitly passed state="planned", the transition wins.
         payload["state"] = None
-    elif state is not None:
-        payload["state"] = state
-    if active_form is not None:
-        payload["active_form"] = active_form
-    if plan_path is not None:
-        payload["plan_path"] = plan_path
-    if body_slug is not None:
-        payload["body_slug"] = body_slug
+    elif fields.state is not None:
+        payload["state"] = fields.state
+    if fields.active_form is not None:
+        payload["active_form"] = fields.active_form
+    # An explicit NULL on the wire — the same shape §16.10 already forces for
+    # ``state`` above. Storage is null-transparent, so this reaches the column
+    # as ``SET plan_path = NULL``; ``""`` would be a real value, and for
+    # ``body_slug`` it would collide on ``uq_task_project_body_slug`` the
+    # second time a row in the project was cleared that way.
+    if fields.clear_plan_path:
+        payload["plan_path"] = None
+    elif fields.plan_path is not None:
+        payload["plan_path"] = fields.plan_path
+    if fields.clear_body_slug:
+        payload["body_slug"] = None
+    elif fields.body_slug is not None:
+        payload["body_slug"] = fields.body_slug
     # D39: join-edge sync — both ``blocked_by`` and ``blocks`` ride the same
     # ``task_blocked_by`` join table; the backend's update path reconciles
     # them (delete-then-insert of the live set).
-    if blocked_by is not None:
-        payload["blocked_by"] = [int(x) for x in blocked_by]
-    if blocks is not None:
-        payload["blocks"] = [int(x) for x in blocks]
-    return payload
+    return _add_edge_keys(payload, fields.blocked_by, fields.blocks)
+
+
+@observe(
+    exempt="pure argument-combination predicate; no I/O, returns the message instead of raising"
+)
+def _validate_clear_flags(
+    *,
+    is_update: bool,
+    plan_path: str | None,
+    body_slug: str | None,
+    clear_plan_path: bool,
+    clear_body_slug: bool,
+) -> str | None:
+    """Reject contradictory / inapplicable ``clear_*`` usage; message or None.
+
+    Two rejections, both because the alternative is a silent wrong write:
+
+    * ``clear_X=True`` with a non-None ``X`` states two different values for
+      one column in one call. Picking one would make the tool's behaviour
+      depend on an ordering the caller cannot see.
+    * ``clear_X=True`` on a CREATE has nothing to clear. A new row's columns
+      are already absent, so honouring it would be a no-op reported as
+      success — the exact shape of the ``title`` defect this car fixes.
+    """
+    if clear_plan_path and plan_path is not None:
+        return "clear_plan_path=True conflicts with plan_path=<value> — pass one or the other"
+    if clear_body_slug and body_slug is not None:
+        return "clear_body_slug=True conflicts with body_slug=<value> — pass one or the other"
+    if not is_update and (clear_plan_path or clear_body_slug):
+        flag = "clear_plan_path" if clear_plan_path else "clear_body_slug"
+        return f"{flag}=True requires id=<task id> — a create has no column to clear"
+    return None
 
 
 @observe(
@@ -248,8 +335,10 @@ def _validate_write_inputs(
 ) -> tuple[str, str | None]:
     """Run boundary validation and return ``(project_id, normalized_title)``.
 
-    On UPDATE ``title`` may be ``None`` (the tool ignores it — the row keeps
-    its original title). On CREATE it is required and length-checked (D12).
+    ``title`` is required by the tool signature on BOTH paths and is
+    length-checked (D12) whenever it is a string. The ``None`` branch is
+    defensive only — unreachable through ``task_write``'s signature — and
+    signals "leave the column alone" to the update payload builder.
     """
     _validate_project_id(project_id)
     if is_update:
@@ -276,6 +365,8 @@ def task_write(
     active_form: str | None = None,
     plan_path: str | None = None,
     body_slug: str | None = None,
+    clear_plan_path: bool = False,
+    clear_body_slug: bool = False,
     blocked_by: list[int] | None = None,
     blocks: list[int] | None = None,
     project: str | None = None,
@@ -286,7 +377,20 @@ def task_write(
     number (ADR-0197, §14.1 — no ``number`` column, no allocation step).
     Returns the generated id. Update (``id`` given): UPDATE the row;
     ``status`` / ``state`` / ``active_form`` / ``plan_path`` / ``body_slug``
-    fields are partial-update (None = leave unchanged).
+    fields are partial-update (None = leave unchanged). ``title`` is NOT
+    partial — it is required, so a caller who states one means it and it is
+    written on every update (ledger task 111: it used to be validated and
+    then silently discarded).
+
+    CLEARING A COLUMN: ``plan_path=None`` / ``body_slug=None`` mean "leave it
+    alone", so they cannot express "this row no longer has one". Pass
+    ``clear_plan_path=True`` / ``clear_body_slug=True`` to set the column to
+    SQL NULL — use it when the plan doc at ``plan_path`` was deleted or
+    superseded, rather than leaving the row pointing at a file that is not
+    the plan. Never clear by passing ``""``: it is a real value, and a second
+    ``body_slug=""`` in one project violates ``uq_task_project_body_slug``.
+    The flags are UPDATE-only and conflict with passing the same column a
+    value; both cases are rejected rather than silently resolved.
 
     Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override is the
     cross-project address. When supplied, the validated project_id REPLACES
@@ -303,7 +407,11 @@ def task_write(
     D36: ``state`` is NULLABLE; cleared (set to NULL) when ``status``
     transitions to ``completed``/``archived`` (§16.10).
     D39: ``blocked_by`` / ``blocks`` manage ``task_blocked_by`` join rows
-    (both FK → task.id CASCADE). One table serves both directions.
+    (both FK → task.id CASCADE). One table serves both directions, both
+    reconcile on CREATE and UPDATE, and a failed edge write returns
+    ``{"ok": False, ...}`` naming the row that survived it (Car E — before it,
+    create carried no edge keys, ``blocks`` had no writer at all, and a sync
+    failure was logged and answered ``ok: true``).
     D26: task mutability = free (no lock).
     §14.1: no ``origin`` parameter (column dropped).
     §15 / ADR-0078: forwards over HTTP to the backend PTC — does NOT call
@@ -318,6 +426,16 @@ def task_write(
         )
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
+
+    clear_error = _validate_clear_flags(
+        is_update=is_update,
+        plan_path=plan_path,
+        body_slug=body_slug,
+        clear_plan_path=clear_plan_path,
+        clear_body_slug=clear_body_slug,
+    )
+    if clear_error is not None:
+        return {"ok": False, "error": clear_error}
 
     # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
     # explicit ``project_id`` arg (precedence: project > project_id arg).
@@ -345,13 +463,18 @@ def task_write(
             assert id is not None  # is_update narrows id: None → int
             payload = _build_update_payload(
                 int(id),
-                status,
-                state,
-                active_form,
-                plan_path,
-                body_slug,
-                blocked_by,
-                blocks,
+                _TaskUpdateFields(
+                    title=normalized_title,
+                    status=status,
+                    state=state,
+                    active_form=active_form,
+                    plan_path=plan_path,
+                    body_slug=body_slug,
+                    blocked_by=blocked_by,
+                    blocks=blocks,
+                    clear_plan_path=clear_plan_path,
+                    clear_body_slug=clear_body_slug,
+                ),
             )
             result = _forward_admin(_UPDATE_OP, payload)
             if result.get("ok") is False:
@@ -365,14 +488,9 @@ def task_write(
         # so it was validated into a real string.
         assert normalized_title is not None  # _validate_write_inputs guarantees
         payload = _build_create_payload(
-            project_id,
-            normalized_title,
-            status,
-            state,
-            active_form,
-            plan_path,
-            body_slug,
+            project_id, normalized_title, status, state, active_form, plan_path, body_slug
         )
+        _add_edge_keys(payload, blocked_by, blocks)  # Car E: create carried no edges
         result = _forward_admin(_CREATE_OP, payload)
         if result.get("ok") is False:
             # Backend-side rejection (e.g. unknown project_id, ADR-0202) —
@@ -409,9 +527,11 @@ def task_list(
     *,
     include_closed: bool = False,
     status: list[str] | None = None,
-    limit: int = 100,
+    limit: int | None = None,
     offset: int = 0,
     project: str | None = None,
+    verbose: bool = False,
+    with_edges: bool = False,
 ) -> list[dict]:
     """List tasks for the given ``project_id``.
 
@@ -431,9 +551,43 @@ def task_list(
     override (§16.6, ADR-0202).
 
     Returns the list of task row dicts keyed on ``id`` (NOT ``number`` —
-    §13.2 blocker 2). Each row includes ``id``, ``project_id``, ``title``,
-    ``status``, ``state``, ``active_form``, ``plan_path``, ``body_slug``,
-    ``created_at``, ``updated_at``.
+    §13.2 blocker 2).
+
+    ROW WIDTH — ``verbose`` (default ``False``): each row carries ``id``,
+    ``title`` and ``status``, and nothing else. That is what a caller listing
+    tasks reads. ``verbose=True`` restores the full 11-column shape (adds
+    ``project_id``, ``state``, ``active_form``, ``plan_path``, ``body_slug``,
+    ``completed_at``, ``created_at``, ``updated_at``) for the callers that
+    genuinely need it — chiefly the session-end catch-up sync, which reads
+    ``updated_at`` for its staleness guard. Measured 2026-08-16 on the live
+    corpus: 81 open rows cost 26,242 chars at 11 columns (324/row) against
+    8,900 at three (110/row) — a 66.1% reduction.
+    ``task_get`` is unaffected — the single-row read is always full.
+
+    ROW COUNT is untouched by ``verbose``: every matching task is returned
+    either way. Only the width changes.
+
+    DEPENDENCIES — ``with_edges`` (default ``False``, Car E): adds
+    ``blocked_by`` and ``blocks`` (lists of task ids, from the
+    ``task_blocked_by`` join table) to every row. OPT-IN on purpose. It is a
+    second query and two more keys per row, which is exactly what the
+    projection above just stopped paying for — the SessionStart harness seeder
+    asks for it, a status sweep should not. ``task_get`` carries both
+    unconditionally; the single-row read has no width to protect.
+
+    PAGING — ``limit`` / ``offset`` (Car D): both reach a real ``LIMIT`` /
+    ``OFFSET`` clause now. They did not before: they were accepted, ``limit``
+    was forwarded when non-default, and no reader below this tool emitted a
+    clause — ``limit=5`` returned all 77 rows, confirmed live 2026-08-16.
+
+    THERE IS NO DEFAULT CAP, and that is deliberate. ``limit`` defaults to
+    ``None`` = every matching row, not to the ``100`` it used to claim.
+    Implementing the parameter while keeping ``100`` as its default would have
+    turned a decorative argument into a silent truncation at row 101 for every
+    caller that never asked to page — and the callers here are the session
+    restore nudge and the harness seeder, both of which need the COMPLETE open
+    set. Paging is available to a caller that states it; it is not the default
+    and must not become it.
 
     Car 6 (bug-train 2026-08-13) — DECISION on backend rejection vs. "empty":
     the fail-quiet-to-``[]`` contract below covers two cases ONLY: an
@@ -474,11 +628,21 @@ def task_list(
     payload: dict = {
         "project_id": project_id,
         "status": _resolve_list_status(status, include_closed),
+        # ALWAYS sent, both ways round: the lean shape is this tool's
+        # decision, never something inherited from a backend-side default.
+        # The storage/admin layers default to the full projection so a caller
+        # that says nothing cannot silently lose columns it reads.
+        "summary": not verbose,
+        # Car E: also always sent, for the same reason — the decision to pay
+        # for the join belongs to this tool, not to a backend default.
+        "with_edges": bool(with_edges),
     }
-    if limit is not None and int(limit) != 100:
-        payload["limit"] = int(limit)
-    if offset is not None and int(offset) > 0:
-        payload["offset"] = int(offset)
+    # Car D: forwarded UNCONDITIONALLY, not "when non-default". The old
+    # conditional was the shape that let the parameter look implemented — a
+    # caller passing the default got no key on the wire, and a caller passing
+    # anything else got a key nothing read.
+    payload["limit"] = None if limit is None else int(limit)
+    payload["offset"] = int(offset or 0)
 
     try:
         result = _forward_admin(_LIST_OP, payload)
@@ -519,6 +683,12 @@ def task_get(
 
     Returns the row dict (id-keyed, §13.2 blocker 2) or ``None`` if absent.
     The forwarded payload keys on ``id``, NEVER ``number`` (§14.1).
+
+    Car E: the row carries ``blocked_by`` and ``blocks`` — the ids on either
+    end of this task's ``task_blocked_by`` edges. Always, with no flag: the
+    edges were writable and unreadable for the join table's whole life, and a
+    caller asked "title, status and blocked by" could only answer that task
+    rows have no dependency field.
 
     Car 6 (bug-train 2026-08-13) — same DECISION as ``task_list``: fail-quiet
     to ``None`` covers argument validation and a raised forwarding exception

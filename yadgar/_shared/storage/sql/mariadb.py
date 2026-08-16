@@ -85,6 +85,42 @@ DEFAULT_MAX_OVERFLOW = 5
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+# MariaDB has NO ``OFFSET`` without ``LIMIT``. The documented idiom for
+# "everything from row N onwards" is a maximal row count — the value below is
+# 2**64-1, the one MySQL's own SELECT docs name for this case. Emitted only
+# when a caller states an offset and no limit; a plain unpaged read appends
+# no clause at all.
+_MAX_ROWS = 18446744073709551615
+
+
+@observe(
+    exempt="pure clause builder; no I/O — binds two ints into the caller's params dict and returns a string, and the statement it is appended to is already spanned by list_task_rows"
+)
+def _paging_tail(params: dict[str, Any], limit: int | None, offset: int | None) -> str:
+    """Return the ``LIMIT``/``OFFSET`` tail for a SELECT, binding into ``params``.
+
+    Empty string when neither is stated — an unpaged read must reach the
+    server as the statement it was before paging existed.
+
+    Both values are bound, never interpolated, and both are rejected when
+    negative rather than handed to the server as a syntax error.
+    """
+    if limit is not None and int(limit) < 0:
+        raise ValueError(f"limit must be >= 0, got {limit}")
+    if offset is not None and int(offset) < 0:
+        raise ValueError(f"offset must be >= 0, got {offset}")
+    tail = ""
+    if limit is not None:
+        params["limit"] = int(limit)
+        tail = " LIMIT :limit"
+    elif offset:
+        tail = f" LIMIT {_MAX_ROWS}"
+    if offset:
+        params["offset"] = int(offset)
+        tail += " OFFSET :offset"
+    return tail
+
+
 class MariaStorageEngine(_ProjectRegistryMixin):
     """Engine-#2 handle: an async SQLAlchemy engine over a local MariaDB socket.
 
@@ -342,6 +378,9 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         *,
         project_id: str,
         status: list[str] | None = None,
+        summary: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[dict]:
         """Project-scoped ``task`` read, optionally filtered by status.
 
@@ -352,6 +391,27 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         ``["pending", "in_progress"]`` at the MCP tool layer). Empty list is
         treated as "no filter" — same semantics as ``None`` — to mirror the
         ``include_closed``-controls-default contract on the call site.
+
+        ``summary=True`` projects ``TASK_COLUMNS_SUMMARY`` (``id, title,
+        status``) instead of the full 11 — the width fix for the ~315
+        chars/row a listing caller pays for columns it never reads.
+
+        IT DEFAULTS TO ``False`` ON PURPOSE, and the default is load-bearing:
+        ``nightly_sweep`` calls this method with no ``summary`` kwarg and then
+        reads ``body_slug`` / ``completed_at`` / ``project_id`` off the rows.
+        A lean default would leave that sweep archiving nothing while
+        reporting success — the exact silent degradation ``ledger_columns``'s
+        docstring exists to prevent. The lean shape is chosen at the boundary
+        that actually wants it (the ``task_list`` MCP tool sends it
+        explicitly), never inherited from a default here.
+
+        ``limit`` / ``offset`` (Car D) BOTH DEFAULT TO ``None`` = no clause.
+        This method emitted no ``LIMIT`` at all until Car D, while
+        ``task_list`` accepted a ``limit`` and forwarded it — so ``limit=5``
+        returned all 77 rows (confirmed live 2026-08-16). Absent, not 100, is
+        the honest default: a defaulted cap here would silently truncate every
+        unpaged caller at row 101, which is the same class of quiet wrong
+        answer the parameter's decorative version already was.
         """
         from sqlalchemy import bindparam, text  # noqa: PLC0415
 
@@ -362,11 +422,22 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             # so ``:status`` becomes ``IN (:status_1, :status_2, ...)`` at
             # execution. Single-element lists work the same as ``status = :status``
             # after expansion. Empty list already short-circuited above.
-            where_extra = " AND status IN (:status)"
+            #
+            # L10: NO literal parens around ``:status``. The expanding bindparam
+            # renders its OWN ``(...)`` at execution, so ``IN (:status)`` reaches
+            # the server as ``IN ((%s, %s))`` — and ``(a, b)`` is a MariaDB ROW
+            # CONSTRUCTOR, making the clause ``status = ROW('pending','in_progress')``:
+            # ``(4078, "Illegal parameter data types varchar and row for
+            # operation '='")``. One status hid it, because ``(x)`` ≡ ``x``.
+            # Executed against a real server by
+            # ``yadgar/tests/integration/test_task_list_status_filter.py``.
+            where_extra = " AND status IN :status"
             params["status"] = list(status)
+        columns = lc.TASK_COLUMNS_SUMMARY if summary else lc.TASK_COLUMNS
+        tail = _paging_tail(params, limit, offset)
         sql = text(
-            f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
-            "FROM task WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC"
+            f"SELECT {columns} "  # noqa: S608 — module constant, no interpolation
+            "FROM task WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC" + tail
         )
         if status:
             sql = sql.bindparams(bindparam("status", expanding=True))
@@ -379,6 +450,9 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         self,
         *,
         status: list[str] | None = None,
+        summary: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[dict]:
         """Cross-project ``task`` read — used by ops / dashboards, not users.
 
@@ -388,17 +462,30 @@ class MariaStorageEngine(_ProjectRegistryMixin):
 
         ``status`` is a list of allowed statuses (Car C — see
         ``list_task_rows``). Empty list = no filter.
+
+        ``summary`` selects the lean projection, defaulting to ``False`` for
+        the same reason as ``list_task_rows`` — and more sharply here:
+        ``nightly_sweep._resolve_projects`` derives the whole sweep set from
+        this method's ``project_id`` column, which the lean shape drops.
+
+        ``limit`` / ``offset`` (Car D) default to ``None`` = no clause — see
+        ``list_task_rows`` for why absent rather than a number.
         """
         from sqlalchemy import bindparam, text  # noqa: PLC0415
 
         params: dict[str, Any] = {}
         where_extra = ""
         if status:
-            where_extra = " WHERE status IN (:status)"
+            # L10: bare ``:status`` — the expanding bindparam supplies the parens.
+            # See ``list_task_rows`` for the ROW-constructor failure the literal
+            # parens produced.
+            where_extra = " WHERE status IN :status"
             params["status"] = list(status)
+        columns = lc.TASK_COLUMNS_SUMMARY if summary else lc.TASK_COLUMNS
+        tail = _paging_tail(params, limit, offset)
         sql = text(
-            f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
-            "FROM task" + where_extra + " ORDER BY id ASC"
+            f"SELECT {columns} "  # noqa: S608 — module constant, no interpolation
+            "FROM task" + where_extra + " ORDER BY id ASC" + tail
         )
         if status:
             sql = sql.bindparams(bindparam("status", expanding=True))
@@ -494,6 +581,92 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         async with self._engine.connect() as conn:
             result = await conn.execute(sql, {"task_id": task_id})
             return [int(row[0]) for row in result]
+
+    @observe(tier="boundary", metric="backend.sql.task.list_blocks")
+    async def list_task_blocks(self, task_id: int) -> list[int]:
+        """Return the list of task ids that ``task_id`` blocks, ordered ASC.
+
+        The INVERSE of ``list_task_blocked_by`` over the same
+        ``task_blocked_by`` rows — one edge read from the other end. It did not
+        exist before Car E: the join table has been written from the
+        ``blocked_by`` side since 002 and could only ever be read back from
+        that side, so the ``blocks`` direction was unreachable for every
+        caller including the reconciler.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT task_id FROM task_blocked_by "
+            "WHERE blocked_by_id = :task_id ORDER BY task_id ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"task_id": task_id})
+            return [int(row[0]) for row in result]
+
+    @observe(tier="boundary", metric="backend.sql.task.remove_blocked_by")
+    async def remove_task_blocked_by(self, task_id: int, blocked_by_id: int) -> None:
+        """Delete one ``task_blocked_by`` row. Absent row = no-op, not an error.
+
+        The DELETE half of ``add_task_blocked_by``. It used to live as inline
+        ``text("DELETE FROM task_blocked_by ...")`` in the admin op body
+        (``admin_exec/ledger.py``) — the one piece of ledger-table SQL outside
+        this engine, which slipped past ``check_ledger_chokepoint`` only
+        because it was written through an aliased ``text`` import the AST
+        walker does not recognise. Car E needs the same DELETE from the
+        ``blocks`` direction too, so the choice was one method here or a second
+        copy of raw SQL up there.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "DELETE FROM task_blocked_by WHERE task_id = :task_id AND blocked_by_id = :blocked_by_id"
+        )
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"task_id": task_id, "blocked_by_id": blocked_by_id})
+
+    @observe(tier="boundary", metric="backend.sql.task.list_edges")
+    async def list_task_edges(self, task_ids: list[int]) -> dict[int, dict[str, list[int]]]:
+        """Return ``{id: {"blocked_by": [...], "blocks": [...]}}`` for ``task_ids``.
+
+        ONE query for the whole set. The per-row alternative
+        (``list_task_blocked_by`` + ``list_task_blocks`` each) is 2N
+        round-trips, and the caller that wants edges on a LIST read is the
+        SessionStart harness seeder, which lists every open task — ~80 rows on
+        the live corpus, so 160 queries on the session-start path.
+
+        Every requested id is present in the result, with empty lists when it
+        has no edges: a caller must be able to tell "asked and has none" from
+        "did not ask", and a sparse dict cannot express that.
+        """
+        from sqlalchemy import bindparam, text  # noqa: PLC0415
+
+        ids = [int(t) for t in task_ids]
+        edges: dict[int, dict[str, list[int]]] = {i: {"blocked_by": [], "blocks": []} for i in ids}
+        if not ids:
+            return edges
+        # L10: NO literal parens around an expanding bindparam. It renders its
+        # OWN ``(...)`` at execution, so ``IN (:ids)`` reaches the server as
+        # ``IN ((%s, %s))`` — a MariaDB ROW CONSTRUCTOR, not set membership
+        # (4078). Two distinct names because one bindparam cannot be expanded
+        # twice in a single statement.
+        sql = text(
+            "SELECT task_id, blocked_by_id FROM task_blocked_by "
+            "WHERE task_id IN :ids_a OR blocked_by_id IN :ids_b"
+        ).bindparams(
+            bindparam("ids_a", expanding=True),
+            bindparam("ids_b", expanding=True),
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"ids_a": ids, "ids_b": ids})
+            for blocked, blocker in result:
+                if int(blocked) in edges:
+                    edges[int(blocked)]["blocked_by"].append(int(blocker))
+                if int(blocker) in edges:
+                    edges[int(blocker)]["blocks"].append(int(blocked))
+        for entry in edges.values():
+            entry["blocked_by"].sort()
+            entry["blocks"].sort()
+        return edges
 
     # ── adr ──────────────────────────────────────────────────────────────
 

@@ -47,6 +47,14 @@ _TASK_METHODS = (
     "set_task_body_slug",
     "add_task_blocked_by",
     "list_task_blocked_by",
+    # Car E: the read half of the join table. ``list_task_blocks`` is the
+    # inverse direction (no reader existed), ``remove_task_blocked_by`` is the
+    # DELETE that used to be inline SQL in the admin op body, and
+    # ``list_task_edges`` is the bulk both-directions read the LIST path uses
+    # instead of 2N round-trips.
+    "list_task_blocks",
+    "remove_task_blocked_by",
+    "list_task_edges",
 )
 _ADR_METHODS = (
     "create_adr_row",
