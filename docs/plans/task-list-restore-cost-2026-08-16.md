@@ -77,7 +77,10 @@ Intended outcome: session-start task cost ~300 tokens; a full 79-row `task_list`
 - Row count is **not** capped. `task_list` returns every open task; only the width changes.
 - **Second consumer, not Python.** `yadgar/core/hooks/templates/stop_checkpoint_prompt.md:133-156` is a prompt template — it instructs the *model* to call `task_list` at every session-end checkpoint, then reads `updated_at` (`:134`, plus a 14-day staleness guard at `:148`) and `state` / `active_form` for merge write-back (`:142`, `:152-156`). The docstring's "one production caller" claim is false; this consumer fires more often than the SessionStart nudge.
 - **It does not need `verbose=True`.** `task_write` is already partial-update — `status`, `state`, `active_form`, `plan_path` and `body_slug` are left unchanged when passed `None`. An instance updating a task it worked on therefore never needs to read `state`/`active_form` in order to preserve them; the storage layer preserves them. The merge-write-back at `:142`/`:152-156` duplicates work the backend already does. The 3-column default serves this consumer once that redundant step is removed (Car C).
-- OPEN: the `updated_at` 14-day staleness guard at `:148` — what it protects against is not established. Do not delete it blind; determine its purpose before dropping `updated_at` from what the prompt reads.
+- **The `updated_at` 14-day guard at `:148` stays — RESOLVED 2026-08-16.** Its rationale was never promoted to an ADR; it lives in `docs/plans/archive/task-list-mirror-2026-07-14.md` (shipped in `da94237e`, 2026-07-14). It does NOT guard against adopting completed tasks — the status filter does that. It guards the case the status filter *cannot* see: a task that was finished but never marked completed, i.e. a row that simply went quiet. `updated_at` is the only last-touched signal in the row set; `created_at` measures age-since-creation, which the sibling 90-day retirement clock (`ledger_columns.py:69-93`) already documents as the wrong signal for this. There is no code-side backstop — the prompt text is the entire implementation, so removing the read removes the guard.
+- **It fires in exactly one branch**: harness list empty AND ledger has rows (catch-up sync). That branch calls `task_list` with `verbose=True`; every other path keeps the 3-column default. `task.updated_at` is engine-auto-bumped (`server_default=CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`), so the "automatic and can't be forgotten" premise the guard relies on still holds post-ledger-migration.
+- Note: a reliable mechanical seeder largely retires this branch — if SessionStart seeds, the harness is never empty at session end, so catch-up only covers a concurrent session's work. Do not delete the branch in this train; it is the fallback when seeding is guarded off.
+- `yadgar/tests/hooks/test_stop_hook_template.py` pins the guard: `test_task_list_mirror_step_present` asserts on the "14 days" wording and "never adopt a completed task", and `_EXPECTED_TEMPLATE` is a verbatim byte-pin that needs re-syncing on any edit to this template.
 - Do **not** modify the shared `TASK_COLUMNS` constant. `get_task_row` and the nightly sweep both depend on it — the sweep reads `body_slug`, `completed_at` and `project_id`, and its own docstring warns the failure mode is "archives nothing, reports success". Add `TASK_COLUMNS_SUMMARY` alongside; never narrow the shared one.
 - Note: no shared row-serialisation helper exists — `dict(row._mapping)` is inlined at `mariadb.py:375`, `:407`, `:418`. Projection changes the SELECT so no helper is needed, but one edit does not cover all readers.
 
@@ -100,7 +103,7 @@ Primary mechanism — **mechanical seeder**. Promotes ledger task 20, held since
 - On-disk schema (verified 2026-07-17, anchored memory 532566): `{"id", "subject", "description", "activeForm", "status" (pending|in_progress|completed), "blocks": [], "blockedBy": []}`, plus a `.lock` file in the directory. The hook already receives `session_id` and `cwd` on stdin.
 - Must `mkdir -p` (the harness creates the dir lazily on first `TaskCreate`), write atomically via temp+rename, respect `.lock`, and dedupe idempotently.
 - **Subject format: `41: title`** — bare number, no `[L]` wrapper, and it MUST be the exact ledger SQL id. Never an instance-chosen or re-sequenced number.
-- **Probe before designing:** if the harness tolerates non-contiguous ids, write `41.json` with `id: "41"` so the ledger id *is* the harness id and the prefix disappears entirely. Memory 532566 records ids as "sequential integer id as string" and flags `.lock`/`.highwatermark` semantics as undocumented — a seeder that ignores a highwatermark may collide with the next real `TaskCreate`.
+- **Id scheme — RESOLVED empirically 2026-08-16, seeding is safe.** Write `41.json` with `id: "41"` so the ledger id *is* the harness id; no prefix needed at all. Measured: allocation does not reuse gaps (created 80, deleted it — the file is physically removed — created again and got 81). `.highwatermark` is written on DELETE, never on create; it appeared with value `80` at the second task 80 was deleted, which is why it trails max id in older dirs. Allocation behaves as `max(file ids, .highwatermark) + 1`, existing so that deleting the top task cannot cause id reuse. A dir seeded with ledger ids 10..92 therefore yields 93 on the next `TaskCreate`. Writing `.highwatermark = max seeded id` is optional belt-and-braces. `.lock` is a 0-byte sentinel — presence is the signal, no PID or flock bytes. The schema tolerates sparse keys (`activeForm` absent entirely in some files) and persists a custom `metadata` object verbatim. Full detail in anchored memory 532566, updated with these measurements.
 - Format is undocumented and internal, so version-fragile. Guard on schema mismatch and fall back to the lean nudge.
 
 **Direction split — decided 2026-08-16, and the reason is concurrency.**
@@ -128,7 +131,26 @@ Stop side, second arm — **task context maintenance**. Status sync alone is not
 - Title no longer describes the task → update it.
 - Only tasks the instance touched. Do not audit rows it did not work on.
 
-**Blocker for the "plan dropped" instruction.** `task_write`'s partial-update contract is "None = leave unchanged", so there is currently no way to CLEAR `plan_path` or `body_slug` — `None` means don't touch, and `""` may store an empty string rather than NULL. Same shape as ledger task 92's write-only edges. Verify the clear semantics before shipping that instruction; if clearing is impossible, it needs a small `task_write` change in this train.
+**Blocker for the "plan dropped" instruction — CONFIRMED 2026-08-16, needs a code fix in this train.** `plan_path` and `body_slug` cannot be cleared today:
+
+- `plan_path=None` → `_build_update_payload` (`task.py:226-229`) drops the key; the column never reaches the SET clause and keeps its old value.
+- `plan_path=""` → writes the literal empty string, not `NULL`.
+- `body_slug=""` is actively unsafe: `uq_task_project_body_slug` (migration `002_ledger_tables.py:199`) permits repeated `NULL`s but `''` is a real value, so the second task cleared this way in the same project violates the unique index.
+
+Both columns are nullable (`002_ledger_tables.py:187-199`) and `update_task_row` (`mariadb.py:421-459`) is already null-transparent — an explicit `None` reaching it emits `SET plan_path = NULL` correctly. The whole gap is the `if plan_path is not None:` guard, which cannot distinguish "caller didn't mention this field" from "caller wants it cleared".
+
+Precedent for the fix is in the same function: `task.py:218-221` already writes `payload["state"] = None` unconditionally on a completed/archived transition, forcing a NULL through this exact stack. Sibling convention elsewhere: `wiki_set_mutability` / `wiki_set_metadata` (`wiki.py:1362-1460`) are single-field setters where `None` unambiguously *is* the new value; `wiki.py:342-346` documents this explicit-null-vs-omitted bug class directly.
+
+**DECIDED 2026-08-16 — boolean clear flags, extending the existing block.** Add `clear_plan_path: bool = False` and `clear_body_slug: bool = False` to `task_write`, handled in `_build_update_payload`:
+
+```python
+if clear_plan_path:
+    payload["plan_path"] = None
+elif plan_path is not None:
+    payload["plan_path"] = plan_path
+```
+
+Same shape for `body_slug`. No new MCP tools — the surface is already large enough that ledger task 76 wants it classified. Storage needs no change; it is already null-transparent. Reject the combination `clear_plan_path=True` with a non-None `plan_path` rather than silently picking one. Cover with a test that clears a populated `plan_path` and asserts the stored value is `NULL`, not `''`.
 
 Fallback mechanism for the downstream direction — **lean nudge**:
 
