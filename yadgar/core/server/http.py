@@ -1226,34 +1226,61 @@ async def _task_list_legacy_wiki_nudge(directory: str) -> str:
     )
 )
 def _format_task_list_nudge_rows(rows: list[dict], cap: int, project: str) -> str:
-    """Format a ledger-read result list into the forcing-nudge payload.
+    """Format a ledger-read result list into the restore nudge.
 
-    Extracted from `_task_list_restore_nudge` to keep the handler under the
-    C901 complexity cap. Returns "" when rows is empty.
+    Car C part 2 — this is now the FALLBACK. The primary mechanism is the
+    SessionStart hook seeding the harness store on disk
+    (``yadgar.core.hooks.task_seed``); this text is only reached when a seeder
+    guard trips or the hook predates Car C.
+
+    Two things changed, both about cost. The old form ordered a full hand
+    mirror — "Call TaskCreate for EACH one now" over every open task, each
+    carrying a subject, a description, an activeForm and a metadata blob. That
+    measured 16,705 output tokens across ~81 tasks. The instruction is now
+    exactly one call shape, ``TaskCreate(subject="{id}: {title}")``, at roughly
+    80 chars per task instead of 400. And the inline window is ordered
+    ``in_progress`` first: with real titles averaging ~70 chars a naive
+    id-ordered slice spends the whole budget on pending rows and hides the
+    tasks that were actually being worked on.
+
+    The ``[N]`` bracket prefix is gone with it. It existed so a hand-created
+    harness task could be reconciled back to a ledger id; the seeder makes the
+    ledger id BE the harness id, and the bare ``{id}:`` form matches what the
+    seeder writes, so both paths produce the same subject.
+
+    Returns "" when rows is empty.
     """
     if not rows:
         return ""
+    # `number` was a dead fallback — the task table has no such column, so a
+    # row missing `id` rendered as "?", an id that can never be reconciled.
+    # A row we cannot identify is now dropped loudly instead.
+    _renderable = [_r for _r in rows if _r.get("id") is not None]
+    if len(_renderable) != len(rows):
+        logger.warning(
+            "task-list nudge: %d of %d open rows carry no id and were omitted",
+            len(rows) - len(_renderable),
+            len(rows),
+        )
+    if not _renderable:
+        return ""
+    # in_progress first — the inline window is small and those rows are the
+    # ones that answer "what was I doing".
+    _ordered = sorted(_renderable, key=lambda _r: _r.get("status") != "in_progress")
+    _shown = _ordered[:cap]
+    _overflow = len(_ordered) - len(_shown)
     _lines = [
-        "\n[yadgar] ACTION REQUIRED — restore your task list BEFORE any other work.",
-        f"{len(rows)} open task(s) for {project} from the task ledger. "
-        "Call TaskCreate for EACH one now:",
+        f"\n[yadgar] ACTION REQUIRED — restore your task list first. "
+        f"{len(_ordered)} open for {project}.",
+        'For each: TaskCreate(subject="{id}: {title}") — subject only, nothing else.',
     ]
-    _shown = rows[:cap]
-    _overflow = len(rows) - len(_shown)
     for _row in _shown:
-        _tid = _row.get("number") or _row.get("id") or "?"
         _subj = _row.get("title") or _row.get("subject") or "(no subject)"
-        _st = _row.get("status", "pending")
-        _lines.append(f"  - [{_tid}] {_subj} ({_st})")
+        _flag = " (in_progress)" if _row.get("status") == "in_progress" else ""
+        _lines.append(f"  {_row['id']}: {_subj}{_flag}")
     if _overflow > 0:
-        _lines.append(f"  …and {_overflow} more")
-    _lines.append(
-        "Preserve the `[N]` prefix at the start of each TaskCreate subject "
-        "so task ids reconcile across sessions. "
-        "Recreate every open task (pending / in_progress) with TaskCreate "
-        "before proceeding; skip completed. Do this FIRST.\n"
-    )
-    return "\n".join(_lines)
+        _lines.append(f'  +{_overflow} more: task_list(project_id="{project}")')
+    return "\n".join(_lines) + "\n"
 
 
 @observe(
@@ -1344,7 +1371,10 @@ async def _task_list_restore_nudge(directory: str, project: str = "") -> tuple[s
                 logger.debug("task-list ledger read failed: %s", _le)
                 _rows = []
             _open = [_r for _r in (_rows or []) if isinstance(_r, dict)]
-            return _format_task_list_nudge_rows(_open, 12, project), _open
+            # Cap 5, down from 12: real ledger titles average ~76 chars, so a
+            # 12-row window costs ~1,255 chars of every session's context for a
+            # FALLBACK path. 5 lands at ~670 and still leads with in_progress.
+            return _format_task_list_nudge_rows(_open, 5, project), _open
 
         # ── Legacy path: wiki-page parse. Removed once Car D lands.
         return await _task_list_legacy_wiki_nudge(directory), []

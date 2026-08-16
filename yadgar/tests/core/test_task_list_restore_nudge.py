@@ -63,28 +63,21 @@ def _extract_nudge_body(src_text: str) -> str:
     return "\n".join(pieces)
 
 
-def test_nudge_includes_d11_prefix_preserve_instruction():
-    """The nudge template body MUST include the D11 prefix-preserve instruction.
-
-    Per ADR-0137 + D11: the model must preserve the `[N]` prefix in the
-    `TaskCreate` subject so task ids reconcile across sessions.
-    """
-    body = _extract_nudge_body(_read_source())
-    needle = "Preserve the `["
-    assert needle in body, (
-        f"nudge template must include the D11 prefix-preserve instruction (searched for {needle!r})"
-    )
-
-
-def test_nudge_includes_taskcreate_action():
-    """The nudge body still instructs the model to call TaskCreate.
-
-    ADR-0137: forcing-nudge form (Option B) instructs the HARNESS TaskCreate
-    tool, not the yadgar `task_write` tool. The two surfaces are not
-    interchangeable — D11's prefix-preserve is on the harness subject.
-    """
-    body = _extract_nudge_body(_read_source())
-    assert "TaskCreate" in body, "nudge must instruct the model to call TaskCreate"
+# Car C deleted two tests that lived here:
+#
+#   test_nudge_includes_d11_prefix_preserve_instruction  (asserted "Preserve the `[")
+#   test_nudge_includes_taskcreate_action                (asserted "TaskCreate")
+#
+# Both regex-scraped the SOURCE TEXT of http.py and substring-matched a wording
+# choice. Neither was rewritten to the new wording, because the mechanic itself
+# is the problem: they were passing on the strength of `_task_list_legacy_wiki_nudge`,
+# an UNREACHABLE rollback arm that still contains both phrases — so they would have
+# stayed green through any rewrite of the live path, including one that deleted the
+# instruction entirely. The D11 `[N]` prefix is retired regardless: the seeder makes
+# the ledger id the harness id, so there is no prefix left to preserve. The
+# behavioural replacements render through HTTP and assert on the response, in
+# yadgar/tests/core/test_session_context_endpoint.py
+# (test_render_never_orders_a_full_hand_mirror, test_nudge_leads_with_in_progress_rows).
 
 
 def test_nudge_emits_open_status_set():
@@ -139,11 +132,14 @@ def test_nudge_source_targets_ledger_path():
 
 
 def test_nudge_works_without_storage(monkeypatch):
-    """Even when storage is unavailable the nudge returns ``""`` (fail-open)."""
-    # Drive the function via a stand-in directory: the storage-import path
-    # can be None and the function must return "". This is the existing
-    # behavior preserved by Car E.
+    """Even when storage is unavailable the nudge fails open — no text, no rows.
+
+    Car C: the function returns ``(nudge, rows)``; the rows feed the on-disk
+    seeder. The empty ROW list matters as much as the empty string — a caller
+    that seeded from a failed read would write a partial task list.
+    """
     from yadgar.core.server import http
 
-    result = asyncio.run(http._task_list_restore_nudge(""))
-    assert result == ""
+    nudge, rows = asyncio.run(http._task_list_restore_nudge(""))
+    assert nudge == ""
+    assert rows == []
