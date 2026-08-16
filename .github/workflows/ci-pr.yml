@@ -464,6 +464,20 @@ jobs:
         # with nothing to diagnose from but "s" characters (car G5: 41
         # skipped in 2.31s, cause invisible from the artifact alone). `-ra`
         # reports every non-passing outcome, including skip reasons.
+        #
+        # THE FILE LIST BELOW IS HAND-MAINTAINED AND WAS WRONG (task #77):
+        # every file here carries `pytest.mark.xdist_group("engine2_mariadb")`
+        # in addition to `integration`, but three siblings that carry the same
+        # xdist_group tag were never added — test_cross_engine_invariants.py
+        # said so in its own docstring ("this file is not in the CI job's file
+        # list, so it carried both defects latently after its three siblings
+        # were fixed"), and the two newest files (Car B's row-constructor fix,
+        # Car C2's NULL-clearing fix) landed marked `integration` and were
+        # therefore silently EXCLUDED by every other job's `-m 'not
+        # integration and not e2e and not perf'` — never run anywhere.
+        # `yadgar/tests/scripts/test_engine2_integration_coverage.py` now
+        # gates this list against the marker so a future omission fails loudly
+        # instead of vanishing the same way.
         run: |
           set -o pipefail
           uv run --python 3.14 --extra sql --extra test python -m pytest \
@@ -471,6 +485,9 @@ jobs:
             yadgar/tests/integration/test_mariadb_connection.py \
             yadgar/tests/integration/test_mariadb_dump_arm.py \
             yadgar/tests/integration/test_mariadb_restore_arm.py \
+            yadgar/tests/integration/test_cross_engine_invariants.py \
+            yadgar/tests/integration/test_task_list_status_filter.py \
+            yadgar/tests/integration/test_task_write_clear_columns.py \
             -m integration \
             -n 0 \
             -q -ra --tb=short \
