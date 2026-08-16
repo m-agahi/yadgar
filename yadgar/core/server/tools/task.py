@@ -527,7 +527,7 @@ def task_list(
     *,
     include_closed: bool = False,
     status: list[str] | None = None,
-    limit: int = 100,
+    limit: int | None = None,
     offset: int = 0,
     project: str | None = None,
     verbose: bool = False,
@@ -575,13 +575,19 @@ def task_list(
     asks for it, a status sweep should not. ``task_get`` carries both
     unconditionally; the single-row read has no width to protect.
 
-    ``limit`` / ``offset`` ARE NOT IMPLEMENTED. They are accepted, and
-    ``limit`` is forwarded when non-default, but no reader below this tool
-    emits a ``LIMIT`` clause — ``limit=5`` returns every matching row.
-    Confirmed live 2026-08-16. Do not rely on them; do not read the "default
-    100" as a cap. Making them honest (or deleting them) is tracked
-    separately — this docstring says so rather than continuing to imply a
-    behaviour that has never existed.
+    PAGING — ``limit`` / ``offset`` (Car D): both reach a real ``LIMIT`` /
+    ``OFFSET`` clause now. They did not before: they were accepted, ``limit``
+    was forwarded when non-default, and no reader below this tool emitted a
+    clause — ``limit=5`` returned all 77 rows, confirmed live 2026-08-16.
+
+    THERE IS NO DEFAULT CAP, and that is deliberate. ``limit`` defaults to
+    ``None`` = every matching row, not to the ``100`` it used to claim.
+    Implementing the parameter while keeping ``100`` as its default would have
+    turned a decorative argument into a silent truncation at row 101 for every
+    caller that never asked to page — and the callers here are the session
+    restore nudge and the harness seeder, both of which need the COMPLETE open
+    set. Paging is available to a caller that states it; it is not the default
+    and must not become it.
 
     Car 6 (bug-train 2026-08-13) — DECISION on backend rejection vs. "empty":
     the fail-quiet-to-``[]`` contract below covers two cases ONLY: an
@@ -631,10 +637,12 @@ def task_list(
         # for the join belongs to this tool, not to a backend default.
         "with_edges": bool(with_edges),
     }
-    if limit is not None and int(limit) != 100:
-        payload["limit"] = int(limit)
-    if offset is not None and int(offset) > 0:
-        payload["offset"] = int(offset)
+    # Car D: forwarded UNCONDITIONALLY, not "when non-default". The old
+    # conditional was the shape that let the parameter look implemented — a
+    # caller passing the default got no key on the wire, and a caller passing
+    # anything else got a key nothing read.
+    payload["limit"] = None if limit is None else int(limit)
+    payload["offset"] = int(offset or 0)
 
     try:
         result = _forward_admin(_LIST_OP, payload)

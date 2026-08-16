@@ -309,3 +309,70 @@ async def test_list_task_edges_keys_every_requested_id(seeded):
 async def test_list_task_edges_on_an_empty_id_list_runs_no_query(seeded):
     """An empty page must not reach the server with ``IN ()``."""
     assert await seeded.list_task_edges([]) == {}
+
+
+# ── Car D: limit / offset reach a real clause ────────────────────────────────
+
+
+async def test_limit_returns_exactly_that_many_rows(seeded):
+    """THE regression: ``limit=5`` returned all 77 rows on the live corpus."""
+    rows = await seeded.list_task_rows(project_id=_PROJECT, status=None, limit=5)
+
+    assert len(rows) == 5
+
+
+async def test_no_limit_still_returns_every_row(seeded):
+    """The default must stay uncapped — the seeder needs the complete open set."""
+    rows = await seeded.list_task_rows(project_id=_PROJECT, status=None)
+
+    assert len(rows) == 6
+
+
+async def test_offset_skips_from_the_front(seeded):
+    ids = await _ids(seeded)
+
+    rows = await seeded.list_task_rows(project_id=_PROJECT, status=None, limit=2, offset=2)
+
+    assert [int(r["id"]) for r in rows] == ids[2:4]
+
+
+async def test_offset_without_limit_runs_and_skips(seeded):
+    """MariaDB has no bare OFFSET; the maximal-LIMIT idiom must actually execute."""
+    ids = await _ids(seeded)
+
+    rows = await seeded.list_task_rows(project_id=_PROJECT, status=None, offset=4)
+
+    assert [int(r["id"]) for r in rows] == ids[4:]
+
+
+async def test_paging_composes_with_the_status_filter(seeded):
+    """The clause is appended after an expanding bindparam — order matters."""
+    rows = await seeded.list_task_rows(
+        project_id=_PROJECT, status=["pending", "in_progress"], limit=3
+    )
+
+    assert len(rows) == 3
+
+
+async def test_limit_zero_returns_no_rows(seeded):
+    """``0`` is a stated cap, not a synonym for "unlimited"."""
+    rows = await seeded.list_task_rows(project_id=_PROJECT, status=None, limit=0)
+
+    assert rows == []
+
+
+async def test_offset_past_the_end_returns_no_rows(seeded):
+    rows = await seeded.list_task_rows(project_id=_PROJECT, status=None, limit=5, offset=99)
+
+    assert rows == []
+
+
+async def test_the_cross_project_reader_pages_too(seeded):
+    rows = await seeded.list_task_rows_all_projects(status=None, limit=2)
+
+    assert len(rows) == 2
+
+
+async def test_a_negative_limit_is_rejected_not_sent(seeded):
+    with pytest.raises(ValueError, match="limit"):
+        await seeded.list_task_rows(project_id=_PROJECT, status=None, limit=-1)

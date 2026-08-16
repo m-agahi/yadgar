@@ -139,8 +139,10 @@ class TestLedgerAsyncOps:
         assert result == {"rows": rows}
         # ``summary`` defaults to False — a payload from an older core image
         # carries no such key and must keep getting every column.
+        # Car D: paging reaches storage as ``None`` when the payload states
+        # neither — that is the layer's "emit no clause", not a default cap.
         sql_storage.list_task_rows.assert_awaited_once_with(
-            project_id="m-agahi/yadgar", status=None, summary=False
+            project_id="m-agahi/yadgar", status=None, summary=False, limit=None, offset=None
         )
 
     async def test_list_task_rows_forwards_the_summary_flag(
@@ -156,7 +158,7 @@ class TestLedgerAsyncOps:
             "list_task_rows", {"project_id": "m-agahi/yadgar", "summary": True}
         )
         sql_storage.list_task_rows.assert_awaited_once_with(
-            project_id="m-agahi/yadgar", status=None, summary=True
+            project_id="m-agahi/yadgar", status=None, summary=True, limit=None, offset=None
         )
 
     async def test_get_task_row_returns_row_or_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -193,7 +195,9 @@ class TestLedgerAsyncOps:
         )
         result = await admin_exec.run_admin_op_async("list_task_rows_all_projects", {})
         assert result == {"rows": rows}
-        sql_storage.list_task_rows_all_projects.assert_awaited_once_with(status=None, summary=False)
+        sql_storage.list_task_rows_all_projects.assert_awaited_once_with(
+            status=None, summary=False, limit=None, offset=None
+        )
 
     async def test_list_adr_rows_returns_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         rows = [{"id": 11, "title": "a1"}]

@@ -14,7 +14,7 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
 
     list_task_rows(payload) -> {"rows": list[dict]}
         payload: {"project_id": str, "status"?: list[str], "summary"?: bool,
-                  "with_edges"?: bool}
+                  "with_edges"?: bool, "limit"?: int, "offset"?: int}
         ``summary: True`` projects ``id, title, status`` only; absent/False
         keeps the full 11-column shape.
         ``with_edges: True`` adds ``blocked_by`` / ``blocks`` to every row
@@ -46,7 +46,8 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
         (Car E) — see ``_reconcile_edges``.
 
     list_task_rows_all_projects(payload) -> {"rows": list[dict]}
-        payload: {"status"?: list[str], "summary"?: bool}
+        payload: {"status"?: list[str], "summary"?: bool, "limit"?: int,
+                  "offset"?: int}
 
     list_adr_rows(payload) -> {"rows": list[dict]}
         payload: {"project_id": str, "status"?: str, "tier"?: str, "subsystem"?: str}
@@ -186,6 +187,11 @@ async def list_task_rows(payload: dict) -> dict:
     to ``False`` in the OTHER direction to ``summary``, and for the same
     reason read the other way round: absent means an older core that never
     asked, and a list read must not pay for a join nobody wanted.
+
+    ``limit`` / ``offset`` (Car D) are forwarded as ``None`` when absent, which
+    the storage layer reads as "emit no clause". They used to be read by
+    nothing at all: the tool forwarded ``limit`` when non-default and the
+    op body dropped it on the floor.
     """
     storage = _get_sql_storage()
     if storage is None:
@@ -195,6 +201,8 @@ async def list_task_rows(payload: dict) -> dict:
             project_id=payload["project_id"],
             status=payload.get("status"),
             summary=bool(payload.get("summary", False)),
+            limit=payload.get("limit"),
+            offset=payload.get("offset"),
         )
         if payload.get("with_edges"):
             rows = await _attach_task_edges(storage, rows)
@@ -250,6 +258,8 @@ async def list_task_rows_all_projects(payload: dict) -> dict:
         rows = await storage.list_task_rows_all_projects(
             status=payload.get("status"),
             summary=bool(payload.get("summary", False)),
+            limit=payload.get("limit"),
+            offset=payload.get("offset"),
         )
         if payload.get("with_edges"):
             rows = await _attach_task_edges(storage, rows)

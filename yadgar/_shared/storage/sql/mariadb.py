@@ -85,6 +85,42 @@ DEFAULT_MAX_OVERFLOW = 5
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+# MariaDB has NO ``OFFSET`` without ``LIMIT``. The documented idiom for
+# "everything from row N onwards" is a maximal row count — the value below is
+# 2**64-1, the one MySQL's own SELECT docs name for this case. Emitted only
+# when a caller states an offset and no limit; a plain unpaged read appends
+# no clause at all.
+_MAX_ROWS = 18446744073709551615
+
+
+@observe(
+    exempt="pure clause builder; no I/O — binds two ints into the caller's params dict and returns a string, and the statement it is appended to is already spanned by list_task_rows"
+)
+def _paging_tail(params: dict[str, Any], limit: int | None, offset: int | None) -> str:
+    """Return the ``LIMIT``/``OFFSET`` tail for a SELECT, binding into ``params``.
+
+    Empty string when neither is stated — an unpaged read must reach the
+    server as the statement it was before paging existed.
+
+    Both values are bound, never interpolated, and both are rejected when
+    negative rather than handed to the server as a syntax error.
+    """
+    if limit is not None and int(limit) < 0:
+        raise ValueError(f"limit must be >= 0, got {limit}")
+    if offset is not None and int(offset) < 0:
+        raise ValueError(f"offset must be >= 0, got {offset}")
+    tail = ""
+    if limit is not None:
+        params["limit"] = int(limit)
+        tail = " LIMIT :limit"
+    elif offset:
+        tail = f" LIMIT {_MAX_ROWS}"
+    if offset:
+        params["offset"] = int(offset)
+        tail += " OFFSET :offset"
+    return tail
+
+
 class MariaStorageEngine(_ProjectRegistryMixin):
     """Engine-#2 handle: an async SQLAlchemy engine over a local MariaDB socket.
 
@@ -343,6 +379,8 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         project_id: str,
         status: list[str] | None = None,
         summary: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[dict]:
         """Project-scoped ``task`` read, optionally filtered by status.
 
@@ -366,6 +404,14 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         docstring exists to prevent. The lean shape is chosen at the boundary
         that actually wants it (the ``task_list`` MCP tool sends it
         explicitly), never inherited from a default here.
+
+        ``limit`` / ``offset`` (Car D) BOTH DEFAULT TO ``None`` = no clause.
+        This method emitted no ``LIMIT`` at all until Car D, while
+        ``task_list`` accepted a ``limit`` and forwarded it — so ``limit=5``
+        returned all 77 rows (confirmed live 2026-08-16). Absent, not 100, is
+        the honest default: a defaulted cap here would silently truncate every
+        unpaged caller at row 101, which is the same class of quiet wrong
+        answer the parameter's decorative version already was.
         """
         from sqlalchemy import bindparam, text  # noqa: PLC0415
 
@@ -388,9 +434,10 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             where_extra = " AND status IN :status"
             params["status"] = list(status)
         columns = lc.TASK_COLUMNS_SUMMARY if summary else lc.TASK_COLUMNS
+        tail = _paging_tail(params, limit, offset)
         sql = text(
             f"SELECT {columns} "  # noqa: S608 — module constant, no interpolation
-            "FROM task WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC"
+            "FROM task WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC" + tail
         )
         if status:
             sql = sql.bindparams(bindparam("status", expanding=True))
@@ -404,6 +451,8 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         *,
         status: list[str] | None = None,
         summary: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[dict]:
         """Cross-project ``task`` read — used by ops / dashboards, not users.
 
@@ -418,6 +467,9 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         the same reason as ``list_task_rows`` — and more sharply here:
         ``nightly_sweep._resolve_projects`` derives the whole sweep set from
         this method's ``project_id`` column, which the lean shape drops.
+
+        ``limit`` / ``offset`` (Car D) default to ``None`` = no clause — see
+        ``list_task_rows`` for why absent rather than a number.
         """
         from sqlalchemy import bindparam, text  # noqa: PLC0415
 
@@ -430,9 +482,10 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             where_extra = " WHERE status IN :status"
             params["status"] = list(status)
         columns = lc.TASK_COLUMNS_SUMMARY if summary else lc.TASK_COLUMNS
+        tail = _paging_tail(params, limit, offset)
         sql = text(
             f"SELECT {columns} "  # noqa: S608 — module constant, no interpolation
-            "FROM task" + where_extra + " ORDER BY id ASC"
+            "FROM task" + where_extra + " ORDER BY id ASC" + tail
         )
         if status:
             sql = sql.bindparams(bindparam("status", expanding=True))
