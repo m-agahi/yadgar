@@ -71,7 +71,7 @@ Intended outcome: session-start task cost ~300 tokens; a full 79-row `task_list`
 ### Car A — column projection (the fix)
 
 - `ledger_columns.py:45-48`: add `TASK_COLUMNS_SUMMARY = "id, title, status"` alongside `TASK_COLUMNS`. Do not modify `TASK_COLUMNS` — `task_get` and `task_write` need the full set.
-- `mariadb.py` `list_task_rows` and `list_task_rows_all_projects`: select the summary constant by default.
+- `mariadb.py` `list_task_rows` and `list_task_rows_all_projects`: accept `summary`, defaulting to **`False` (full)** — CORRECTED 2026-08-16 during build. An earlier draft of this plan said `summary: bool = True` at storage. That would have broken the nightly sweep, which calls both readers with no `summary` kwarg (`nightly_sweep.py:377, 426, 508, 512`) and reads `body_slug`, `completed_at` and `project_id` off the results — leaving it archiving nothing while reporting success, the exact silent degradation `ledger_columns`' docstring exists to prevent. Lean-by-default lives **only at the MCP surface**: `task_list` sends `"summary": not verbose` on every call, and no `nightly_sweep` call site needed editing.
 - Thread through `ledger.py:76-90` and `task.py:406-501`. Expose on the MCP tool as `verbose: bool = False`; `verbose=True` restores the 11-column shape.
 - `task_get` unchanged — the single-row read stays full.
 - Row count is **not** capped. `task_list` returns every open task; only the width changes.
