@@ -208,6 +208,8 @@ class _TaskUpdateFields:
     ``None`` means "the caller did not mention this column"; it never means
     "set it to NULL". Nothing here is a partial-update exception except
     ``title``, which ``task_write`` requires and therefore always carries.
+    Clearing a column to NULL is what the two ``clear_*`` flags are for —
+    ``None`` cannot express it and ``""`` is a different value, not an absence.
     """
 
     title: str | None = None
@@ -218,6 +220,8 @@ class _TaskUpdateFields:
     body_slug: str | None = None
     blocked_by: list[int] | None = None
     blocks: list[int] | None = None
+    clear_plan_path: bool = False
+    clear_body_slug: bool = False
 
 
 @observe(
@@ -247,9 +251,18 @@ def _build_update_payload(task_id: int, fields: _TaskUpdateFields) -> dict:
         payload["state"] = fields.state
     if fields.active_form is not None:
         payload["active_form"] = fields.active_form
-    if fields.plan_path is not None:
+    # An explicit NULL on the wire — the same shape §16.10 already forces for
+    # ``state`` above. Storage is null-transparent, so this reaches the column
+    # as ``SET plan_path = NULL``; ``""`` would be a real value, and for
+    # ``body_slug`` it would collide on ``uq_task_project_body_slug`` the
+    # second time a row in the project was cleared that way.
+    if fields.clear_plan_path:
+        payload["plan_path"] = None
+    elif fields.plan_path is not None:
         payload["plan_path"] = fields.plan_path
-    if fields.body_slug is not None:
+    if fields.clear_body_slug:
+        payload["body_slug"] = None
+    elif fields.body_slug is not None:
         payload["body_slug"] = fields.body_slug
     # D39: join-edge sync — both ``blocked_by`` and ``blocks`` ride the same
     # ``task_blocked_by`` join table; the backend's update path reconciles
@@ -259,6 +272,38 @@ def _build_update_payload(task_id: int, fields: _TaskUpdateFields) -> dict:
     if fields.blocks is not None:
         payload["blocks"] = [int(x) for x in fields.blocks]
     return payload
+
+
+@observe(
+    exempt="pure argument-combination predicate; no I/O, returns the message instead of raising"
+)
+def _validate_clear_flags(
+    *,
+    is_update: bool,
+    plan_path: str | None,
+    body_slug: str | None,
+    clear_plan_path: bool,
+    clear_body_slug: bool,
+) -> str | None:
+    """Reject contradictory / inapplicable ``clear_*`` usage; message or None.
+
+    Two rejections, both because the alternative is a silent wrong write:
+
+    * ``clear_X=True`` with a non-None ``X`` states two different values for
+      one column in one call. Picking one would make the tool's behaviour
+      depend on an ordering the caller cannot see.
+    * ``clear_X=True`` on a CREATE has nothing to clear. A new row's columns
+      are already absent, so honouring it would be a no-op reported as
+      success — the exact shape of the ``title`` defect this car fixes.
+    """
+    if clear_plan_path and plan_path is not None:
+        return "clear_plan_path=True conflicts with plan_path=<value> — pass one or the other"
+    if clear_body_slug and body_slug is not None:
+        return "clear_body_slug=True conflicts with body_slug=<value> — pass one or the other"
+    if not is_update and (clear_plan_path or clear_body_slug):
+        flag = "clear_plan_path" if clear_plan_path else "clear_body_slug"
+        return f"{flag}=True requires id=<task id> — a create has no column to clear"
+    return None
 
 
 @observe(
@@ -302,6 +347,8 @@ def task_write(
     active_form: str | None = None,
     plan_path: str | None = None,
     body_slug: str | None = None,
+    clear_plan_path: bool = False,
+    clear_body_slug: bool = False,
     blocked_by: list[int] | None = None,
     blocks: list[int] | None = None,
     project: str | None = None,
@@ -316,6 +363,16 @@ def task_write(
     partial — it is required, so a caller who states one means it and it is
     written on every update (ledger task 111: it used to be validated and
     then silently discarded).
+
+    CLEARING A COLUMN: ``plan_path=None`` / ``body_slug=None`` mean "leave it
+    alone", so they cannot express "this row no longer has one". Pass
+    ``clear_plan_path=True`` / ``clear_body_slug=True`` to set the column to
+    SQL NULL — use it when the plan doc at ``plan_path`` was deleted or
+    superseded, rather than leaving the row pointing at a file that is not
+    the plan. Never clear by passing ``""``: it is a real value, and a second
+    ``body_slug=""`` in one project violates ``uq_task_project_body_slug``.
+    The flags are UPDATE-only and conflict with passing the same column a
+    value; both cases are rejected rather than silently resolved.
 
     Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override is the
     cross-project address. When supplied, the validated project_id REPLACES
@@ -347,6 +404,16 @@ def task_write(
         )
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
+
+    clear_error = _validate_clear_flags(
+        is_update=is_update,
+        plan_path=plan_path,
+        body_slug=body_slug,
+        clear_plan_path=clear_plan_path,
+        clear_body_slug=clear_body_slug,
+    )
+    if clear_error is not None:
+        return {"ok": False, "error": clear_error}
 
     # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
     # explicit ``project_id`` arg (precedence: project > project_id arg).
@@ -383,6 +450,8 @@ def task_write(
                     body_slug=body_slug,
                     blocked_by=blocked_by,
                     blocks=blocks,
+                    clear_plan_path=clear_plan_path,
+                    clear_body_slug=clear_body_slug,
                 ),
             )
             result = _forward_admin(_UPDATE_OP, payload)

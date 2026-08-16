@@ -1,12 +1,19 @@
 """``task_write`` UPDATE, verified by RE-READING the row — not by trusting ``ok``.
 
-Car C part 2. The defect this module pins returned ``{"ok": True}`` while
-writing nothing: **``title`` was discarded on UPDATE** (ledger task 111).
-``title`` is a REQUIRED argument of ``task_write`` and is run through
-``_validate_write_inputs`` — and ``_build_update_payload`` then never put it
-in the forwarded payload. Storage accepted it the whole time
-(``update_task_row``'s allowlist has ``"title"``). Found by a user who noticed
-two titles had not changed after the tool said they had.
+Car C part 2. Two defects, both of which returned ``{"ok": True}`` while
+writing nothing:
+
+* **``title`` was discarded on UPDATE** (ledger task 111). ``title`` is a
+  REQUIRED argument of ``task_write`` and is run through
+  ``_validate_write_inputs`` — and ``_build_update_payload`` then never put it
+  in the forwarded payload. Storage accepted it the whole time
+  (``update_task_row``'s allowlist has ``"title"``). Found by a user who
+  noticed two titles had not changed after the tool said they had.
+* **``plan_path`` / ``body_slug`` could not be cleared.** ``None`` means
+  "the caller did not mention this column" and drops the key; ``""`` writes an
+  empty string, which for ``body_slug`` violates ``uq_task_project_body_slug``
+  on the second row cleared that way in a project. The ``clear_*`` flags are
+  the only way to reach SQL NULL.
 
 WHY A ROUND-TRIP AND NOT A PAYLOAD ASSERTION
 --------------------------------------------
@@ -19,6 +26,12 @@ storage engine is a double, and it is deliberately dumb — it applies
 ``**fields`` onto a dict and enforces the same column allowlist the SQL
 engine does, nothing more. A double authored to model the outcome under test
 would be the same vacuous pass in a new costume.
+
+What the double CANNOT settle is SQL ``NULL`` versus ``''`` in the column —
+that distinction lives in the database, and is covered live in
+``yadgar/tests/integration/test_task_write_clear_columns.py``. Here the
+discriminating assertion is that an explicit ``None``, not ``""``, is what
+the read returns.
 """
 
 from __future__ import annotations
@@ -158,3 +171,85 @@ class TestUpdateStoresTitle:
 
         assert result.get("ok") is False
         assert _read(task_id)["title"] == "short"
+
+
+class TestClearFlags:
+    """``clear_plan_path`` / ``clear_body_slug`` — the only way to NULL a column."""
+
+    def test_clear_plan_path_stores_none(self, ledger_roundtrip) -> None:
+        from yadgar.core.server.tools.task import task_write
+
+        task_id = _create(title="t", plan_path="docs/plans/deleted.md")
+        result = task_write(
+            project_id="m-agahi/yadgar", title="t", id=task_id, clear_plan_path=True
+        )
+
+        assert result.get("ok") is True
+        # None, never "" — an empty string is a real value and would leave the
+        # path pointing at nothing while reading as set.
+        assert _read(task_id)["plan_path"] is None
+
+    def test_clear_body_slug_stores_none(self, ledger_roundtrip) -> None:
+        from yadgar.core.server.tools.task import task_write
+
+        task_id = _create(title="t", body_slug="m-agahi_yadgar_task-1")
+        task_write(project_id="m-agahi/yadgar", title="t", id=task_id, clear_body_slug=True)
+
+        # "" would violate uq_task_project_body_slug on the next row cleared
+        # this way in the same project — MySQL permits repeated NULLs, not
+        # repeated ''.
+        assert _read(task_id)["body_slug"] is None
+
+    def test_clear_is_not_the_default(self, ledger_roundtrip) -> None:
+        """An ordinary update must not wipe the columns it never mentions."""
+        from yadgar.core.server.tools.task import task_write
+
+        task_id = _create(title="t", plan_path="docs/plans/live.md", body_slug="slug-1")
+        task_write(project_id="m-agahi/yadgar", title="t", id=task_id, status="in_progress")
+
+        row = _read(task_id)
+        assert row["plan_path"] == "docs/plans/live.md"
+        assert row["body_slug"] == "slug-1"
+
+    def test_clear_and_set_together_is_rejected(self, ledger_roundtrip) -> None:
+        """Contradictory intent is an error, not a silent pick."""
+        from yadgar.core.server.tools.task import task_write
+
+        task_id = _create(title="t", plan_path="docs/plans/live.md")
+        result = task_write(
+            project_id="m-agahi/yadgar",
+            title="t",
+            id=task_id,
+            plan_path="docs/plans/other.md",
+            clear_plan_path=True,
+        )
+
+        assert result.get("ok") is False
+        assert "clear_plan_path" in result.get("error", "")
+        assert _read(task_id)["plan_path"] == "docs/plans/live.md"
+
+    def test_clear_body_slug_and_set_together_is_rejected(self, ledger_roundtrip) -> None:
+        from yadgar.core.server.tools.task import task_write
+
+        task_id = _create(title="t", body_slug="slug-1")
+        result = task_write(
+            project_id="m-agahi/yadgar",
+            title="t",
+            id=task_id,
+            body_slug="slug-2",
+            clear_body_slug=True,
+        )
+
+        assert result.get("ok") is False
+        assert "clear_body_slug" in result.get("error", "")
+        assert _read(task_id)["body_slug"] == "slug-1"
+
+    def test_clear_on_create_is_rejected(self, ledger_roundtrip) -> None:
+        """The flags are UPDATE-only — a create has nothing to clear, and a
+        silent no-op would read as success."""
+        from yadgar.core.server.tools.task import task_write
+
+        result = task_write(project_id="m-agahi/yadgar", title="fresh row", clear_plan_path=True)
+
+        assert result.get("ok") is False
+        assert "clear_plan_path" in result.get("error", "")
