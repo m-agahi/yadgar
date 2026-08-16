@@ -340,6 +340,30 @@ class TestTaskList:
             rows = task_mod.task_list(project_id="yadgar", include_closed=True)
         assert rows == [{"id": 1, "title": "a"}, {"id": 2, "title": "b"}]
 
+    def test_lean_projection_is_the_default(self, _forward_capture: dict) -> None:
+        """``verbose=False`` (default) → ``summary: True`` — id/title/status only."""
+        from yadgar.core.server.tools.task import task_list
+
+        task_list(project_id="yadgar")
+
+        assert _forward_capture["payload"]["summary"] is True
+
+    def test_verbose_restores_the_full_projection(self, _forward_capture: dict) -> None:
+        from yadgar.core.server.tools.task import task_list
+
+        task_list(project_id="yadgar", verbose=True)
+
+        assert _forward_capture["payload"]["summary"] is False
+
+    def test_summary_is_always_sent(self, _forward_capture: dict) -> None:
+        """Never omitted: the backend defaults to the FULL shape, so a missing
+        key would silently return 11 columns while the tool advertises 3."""
+        from yadgar.core.server.tools.task import task_list
+
+        task_list(project_id="yadgar", include_closed=True, status=["archived"])
+
+        assert "summary" in _forward_capture["payload"]
+
 
 # ── task_get ────────────────────────────────────────────────────────────────
 

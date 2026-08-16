@@ -310,3 +310,76 @@ async def test_all_projects_no_status_filter_executes(seeded):
     rows = await seeded.list_task_rows_all_projects(status=None)
 
     assert len(rows) == 5
+
+
+# ── the projection (``summary``) ─────────────────────────────────────────────
+#
+# Asserted against a real server rather than the SELECT string: the point of
+# the projection is which keys COME BACK, and only the driver settles that.
+
+_FULL_KEYS = {
+    "id",
+    "project_id",
+    "title",
+    "status",
+    "state",
+    "active_form",
+    "plan_path",
+    "body_slug",
+    "completed_at",
+    "created_at",
+    "updated_at",
+}
+_SUMMARY_KEYS = {"id", "title", "status"}
+
+
+async def test_summary_projection_returns_exactly_id_title_status(seeded):
+    rows = await seeded.list_task_rows(
+        project_id=_PROJECT,
+        status=["pending", "in_progress"],
+        summary=True,
+    )
+
+    assert rows, "the projection must not change which rows come back"
+    assert all(set(r) == _SUMMARY_KEYS for r in rows)
+
+
+async def test_summary_projection_does_not_change_the_row_count(seeded):
+    """Width only. The lean shape is not a cap."""
+    lean = await seeded.list_task_rows(project_id=_PROJECT, status=None, summary=True)
+    full = await seeded.list_task_rows(project_id=_PROJECT, status=None, summary=False)
+
+    assert len(lean) == len(full) == 4
+    assert [r["id"] for r in lean] == [r["id"] for r in full]
+
+
+async def test_full_projection_is_the_default_and_carries_all_eleven(seeded):
+    """The default is FULL — ``nightly_sweep`` passes no ``summary`` kwarg and
+    reads ``body_slug`` / ``completed_at`` / ``project_id`` off these rows."""
+    rows = await seeded.list_task_rows(project_id=_PROJECT, status=["pending"])
+
+    assert rows
+    assert all(set(r) == _FULL_KEYS for r in rows)
+
+
+async def test_all_projects_summary_projection(seeded):
+    rows = await seeded.list_task_rows_all_projects(status=None, summary=True)
+
+    assert len(rows) == 5
+    assert all(set(r) == _SUMMARY_KEYS for r in rows)
+
+
+async def test_all_projects_default_keeps_project_id(seeded):
+    """``nightly_sweep._resolve_projects`` derives the whole sweep set from it."""
+    rows = await seeded.list_task_rows_all_projects()
+
+    assert {r["project_id"] for r in rows} == {_PROJECT, _OTHER_PROJECT}
+
+
+async def test_get_task_row_is_never_narrowed(seeded):
+    """The single-row read stays full — it has no ``summary`` switch at all."""
+    listed = await seeded.list_task_rows(project_id=_PROJECT, status=["pending"], summary=True)
+    row = await seeded.get_task_row(int(listed[0]["id"]))
+
+    assert row is not None
+    assert set(row) == _FULL_KEYS

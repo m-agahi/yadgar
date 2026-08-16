@@ -42,10 +42,29 @@ import datetime
 
 #: ``task`` reader projection — ``list_task_rows``,
 #: ``list_task_rows_all_projects``, ``get_task_row``.
+#:
+#: DO NOT NARROW THIS. The nightly archive sweep reads ``body_slug``,
+#: ``completed_at`` and ``project_id`` off rows it gets from ``list_task_rows``
+#: / ``list_task_rows_all_projects``, and its failure mode is "archives
+#: nothing, reports success" — see the module docstring above, which exists
+#: because a reader missing a filtered column degrades SILENTLY. The lean
+#: shape is a SEPARATE constant, opted into per call.
 TASK_COLUMNS = (
     "id, project_id, title, status, state, active_form, "
     "plan_path, body_slug, completed_at, created_at, updated_at"
 )
+
+#: The LEAN ``task`` list projection — what a caller listing tasks actually
+#: reads (``list_task_rows`` / ``list_task_rows_all_projects``, opt-in via
+#: ``summary=True``; the ``task_list`` MCP tool's default, ``verbose=False``).
+#:
+#: WHY IT EXISTS: measured 2026-08-16 on the live corpus — 79 open rows
+#: rendered 24,889 chars through ``TASK_COLUMNS``, 315 chars/row, against ~90
+#: for these three columns. ``project_id`` is constant across a project-scoped
+#: result and ``state`` / ``active_form`` / ``plan_path`` / ``body_slug`` / the
+#: three timestamps are read by NO consumer of a list result. The single-row
+#: read (``get_task_row``) is deliberately NOT affected: it stays full.
+TASK_COLUMNS_SUMMARY = "id, title, status"
 
 #: ``adr`` reader projection — ``list_adr_rows``, ``get_adr_row``.
 ADR_COLUMNS = (

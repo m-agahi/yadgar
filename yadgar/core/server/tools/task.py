@@ -412,6 +412,7 @@ def task_list(
     limit: int = 100,
     offset: int = 0,
     project: str | None = None,
+    verbose: bool = False,
 ) -> list[dict]:
     """List tasks for the given ``project_id``.
 
@@ -431,9 +432,29 @@ def task_list(
     override (§16.6, ADR-0202).
 
     Returns the list of task row dicts keyed on ``id`` (NOT ``number`` —
-    §13.2 blocker 2). Each row includes ``id``, ``project_id``, ``title``,
-    ``status``, ``state``, ``active_form``, ``plan_path``, ``body_slug``,
-    ``created_at``, ``updated_at``.
+    §13.2 blocker 2).
+
+    ROW WIDTH — ``verbose`` (default ``False``): each row carries ``id``,
+    ``title`` and ``status``, and nothing else. That is what a caller listing
+    tasks reads. ``verbose=True`` restores the full 11-column shape (adds
+    ``project_id``, ``state``, ``active_form``, ``plan_path``, ``body_slug``,
+    ``completed_at``, ``created_at``, ``updated_at``) for the callers that
+    genuinely need it — chiefly the session-end catch-up sync, which reads
+    ``updated_at`` for its staleness guard. Measured 2026-08-16 on the live
+    corpus: 81 open rows cost 26,242 chars at 11 columns (324/row) against
+    8,900 at three (110/row) — a 66.1% reduction.
+    ``task_get`` is unaffected — the single-row read is always full.
+
+    ROW COUNT is untouched by ``verbose``: every matching task is returned
+    either way. Only the width changes.
+
+    ``limit`` / ``offset`` ARE NOT IMPLEMENTED. They are accepted, and
+    ``limit`` is forwarded when non-default, but no reader below this tool
+    emits a ``LIMIT`` clause — ``limit=5`` returns every matching row.
+    Confirmed live 2026-08-16. Do not rely on them; do not read the "default
+    100" as a cap. Making them honest (or deleting them) is tracked
+    separately — this docstring says so rather than continuing to imply a
+    behaviour that has never existed.
 
     Car 6 (bug-train 2026-08-13) — DECISION on backend rejection vs. "empty":
     the fail-quiet-to-``[]`` contract below covers two cases ONLY: an
@@ -474,6 +495,11 @@ def task_list(
     payload: dict = {
         "project_id": project_id,
         "status": _resolve_list_status(status, include_closed),
+        # ALWAYS sent, both ways round: the lean shape is this tool's
+        # decision, never something inherited from a backend-side default.
+        # The storage/admin layers default to the full projection so a caller
+        # that says nothing cannot silently lose columns it reads.
+        "summary": not verbose,
     }
     if limit is not None and int(limit) != 100:
         payload["limit"] = int(limit)

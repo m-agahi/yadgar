@@ -13,7 +13,9 @@ dispatcher (``run_admin_op_async``) keeps SYNC bodies on
 PAYLOAD SHAPES (contract for Cars D / F / I):
 
     list_task_rows(payload) -> {"rows": list[dict]}
-        payload: {"project_id": str, "status"?: list[str]}
+        payload: {"project_id": str, "status"?: list[str], "summary"?: bool}
+        ``summary: True`` projects ``id, title, status`` only; absent/False
+        keeps the full 11-column shape.
 
     get_task_row(payload) -> {"row": dict | None}
         payload: {"id": int}
@@ -34,7 +36,7 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
         ``task``; the admin op handles the join-edge sync side-channel.
 
     list_task_rows_all_projects(payload) -> {"rows": list[dict]}
-        payload: {"status"?: list[str]}
+        payload: {"status"?: list[str], "summary"?: bool}
 
     list_adr_rows(payload) -> {"rows": list[dict]}
         payload: {"project_id": str, "status"?: str, "tier"?: str, "subsystem"?: str}
@@ -75,7 +77,14 @@ def _get_sql_storage() -> Any:
 
 @observe(tier="boundary", metric="backend.admin.ledger.list_task_rows")
 async def list_task_rows(payload: dict) -> dict:
-    """Project-scoped ``task`` read. payload: {project_id, status?}."""
+    """Project-scoped ``task`` read. payload: {project_id, status?, summary?}.
+
+    ``summary`` (bool) selects the lean ``id, title, status`` projection. It
+    defaults to ``False`` — the pre-projection shape — so a payload from an
+    older core image (which sends no such key) keeps getting every column
+    rather than silently losing the ones its consumers read. The lean shape is
+    the ``task_list`` tool's default and that tool always sends the key.
+    """
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
@@ -83,6 +92,7 @@ async def list_task_rows(payload: dict) -> dict:
         rows = await storage.list_task_rows(
             project_id=payload["project_id"],
             status=payload.get("status"),
+            summary=bool(payload.get("summary", False)),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_task_rows error: %s", exc)
@@ -106,13 +116,17 @@ async def get_task_row(payload: dict) -> dict:
 
 @observe(tier="boundary", metric="backend.admin.ledger.list_task_rows_all_projects")
 async def list_task_rows_all_projects(payload: dict) -> dict:
-    """Cross-project ``task`` read. payload: {status?}."""
+    """Cross-project ``task`` read. payload: {status?, summary?}.
+
+    ``summary`` defaults to ``False`` — see ``list_task_rows``.
+    """
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         rows = await storage.list_task_rows_all_projects(
             status=payload.get("status"),
+            summary=bool(payload.get("summary", False)),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_task_rows_all_projects error: %s", exc)

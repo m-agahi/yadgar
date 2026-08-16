@@ -342,6 +342,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         *,
         project_id: str,
         status: list[str] | None = None,
+        summary: bool = False,
     ) -> list[dict]:
         """Project-scoped ``task`` read, optionally filtered by status.
 
@@ -352,6 +353,19 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         ``["pending", "in_progress"]`` at the MCP tool layer). Empty list is
         treated as "no filter" — same semantics as ``None`` — to mirror the
         ``include_closed``-controls-default contract on the call site.
+
+        ``summary=True`` projects ``TASK_COLUMNS_SUMMARY`` (``id, title,
+        status``) instead of the full 11 — the width fix for the ~315
+        chars/row a listing caller pays for columns it never reads.
+
+        IT DEFAULTS TO ``False`` ON PURPOSE, and the default is load-bearing:
+        ``nightly_sweep`` calls this method with no ``summary`` kwarg and then
+        reads ``body_slug`` / ``completed_at`` / ``project_id`` off the rows.
+        A lean default would leave that sweep archiving nothing while
+        reporting success — the exact silent degradation ``ledger_columns``'s
+        docstring exists to prevent. The lean shape is chosen at the boundary
+        that actually wants it (the ``task_list`` MCP tool sends it
+        explicitly), never inherited from a default here.
         """
         from sqlalchemy import bindparam, text  # noqa: PLC0415
 
@@ -373,8 +387,9 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             # ``yadgar/tests/integration/test_task_list_status_filter.py``.
             where_extra = " AND status IN :status"
             params["status"] = list(status)
+        columns = lc.TASK_COLUMNS_SUMMARY if summary else lc.TASK_COLUMNS
         sql = text(
-            f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
+            f"SELECT {columns} "  # noqa: S608 — module constant, no interpolation
             "FROM task WHERE project_id = :project_id" + where_extra + " ORDER BY id ASC"
         )
         if status:
@@ -388,6 +403,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         self,
         *,
         status: list[str] | None = None,
+        summary: bool = False,
     ) -> list[dict]:
         """Cross-project ``task`` read — used by ops / dashboards, not users.
 
@@ -397,6 +413,11 @@ class MariaStorageEngine(_ProjectRegistryMixin):
 
         ``status`` is a list of allowed statuses (Car C — see
         ``list_task_rows``). Empty list = no filter.
+
+        ``summary`` selects the lean projection, defaulting to ``False`` for
+        the same reason as ``list_task_rows`` — and more sharply here:
+        ``nightly_sweep._resolve_projects`` derives the whole sweep set from
+        this method's ``project_id`` column, which the lean shape drops.
         """
         from sqlalchemy import bindparam, text  # noqa: PLC0415
 
@@ -408,8 +429,9 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             # parens produced.
             where_extra = " WHERE status IN :status"
             params["status"] = list(status)
+        columns = lc.TASK_COLUMNS_SUMMARY if summary else lc.TASK_COLUMNS
         sql = text(
-            f"SELECT {lc.TASK_COLUMNS} "  # noqa: S608 — module constant, no interpolation
+            f"SELECT {columns} "  # noqa: S608 — module constant, no interpolation
             "FROM task" + where_extra + " ORDER BY id ASC"
         )
         if status:
