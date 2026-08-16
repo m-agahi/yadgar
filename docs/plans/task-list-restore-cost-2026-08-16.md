@@ -168,6 +168,23 @@ Corpus:
 - Rewrite memory 532567 ("mirror them into the harness via TaskCreate FIRST THING before other work", `is_protected`, `useful_count` 84). Keep the requirement, change the mechanism — the seeder populates the list; a model that hand-mirrors uses bare `{id}: {title}` subjects only.
 - `_task_list_legacy_wiki_nudge` (`http.py:1137-1217`) is unreachable — the `ImportError` guard at `http.py:1300-1305` never trips. Leave it; its docstring documents it as a rollback path.
 
+### Car E — expose `blocked_by` / `blocks` on reads (ledger task 92)
+
+Added 2026-08-16 after a second instance, on a different project, was asked for "title, status and blocked by" and could not deliver — it reported "yadgar task rows have no dependency field" and concluded "no task-to-task links exist to restore". The first half is true of the row shape; the second is an unsafe inference that may have silently dropped real edges.
+
+What actually exists, verified:
+
+- `task_blocked_by` — composite PK `(task_id, blocked_by_id)`, FKs both ways to `task.id` (`002_ledger_tables.py:267-276`).
+- Write path — `add_task_blocked_by` (`mariadb.py:509`), called on create (`ledger.py:164-172`) and reconciled on update.
+- **A storage reader already exists and nothing calls it** — `list_task_blocked_by(task_id)` (`mariadb.py:520-525`). This is a zero-reader function, task 13's class, not the "no read path" that task 92's title claims.
+
+Work:
+
+- Expose the existing reader through an admin op and return `blocked_by` / `blocks` on `task_get`, and on `task_list` when asked for. It cannot be a `TASK_COLUMNS` entry — it is a join, so it needs an explicit join or a second query. Do not regress Car A's projection win by making it unconditional on list reads; the seeder needs it, a status sweep does not.
+- Stop swallowing join-sync failures: `ledger.py:172` does `logger.warning("create_task_row blocked_by sync error: %s", exc)` and returns `ok: true` regardless. Raise instead, so a failed edge write is not reported as success. Same defect class as tasks 111 and 13.
+- The mechanical seeder (Car C) currently writes `blockedBy: []` and `blocks: []` unconditionally because it has nothing to read. Populate them once this lands.
+- Correct task 92's title — "no read path" is wrong; the reader exists and is unused.
+
 ### Car D — make `limit`/`offset` honest (demoted, optional)
 
 Not load-bearing once Car A lands, since `task_list` returns the full open set by design. Kept only because the docstring currently claims a cap that does not exist and `_task_list_restore_nudge` fetches believing it is capped.
