@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -372,7 +373,10 @@ def _seed_task_list_page(
     if monkeypatch is not None:
         _rows = _parse_task_sections(content)
 
-        def _fake_task_list(project_id: str, status=None):
+        def _fake_task_list(project_id: str, status=None, with_edges: bool = False):
+            # `with_edges` is Car E's opt-in join read. The stub must accept it
+            # or the call does not bind, and a TypeError on the binding is
+            # indistinguishable here from a ledger with no open tasks.
             return [r for r in _rows if r.get("status", "pending") in (status or [])]
 
         try:
@@ -430,7 +434,14 @@ def test_task_list_nudge_absent_when_page_missing(tmp_path, monkeypatch):
     try:
         from yadgar.core.server.tools import task as _task_tools
 
-        monkeypatch.setattr(_task_tools, "task_list", lambda project_id, status=None: [])
+        # Accepts `with_edges` (Car E) so this test asserts "the ledger is
+        # empty", not "the call failed to bind" — the two used to render the
+        # same empty nudge, which is what made the skew invisible.
+        monkeypatch.setattr(
+            _task_tools,
+            "task_list",
+            lambda project_id, status=None, with_edges=False: [],
+        )
     except ImportError:
         pass
 
@@ -554,6 +565,72 @@ def test_task_list_nudge_fail_open_on_existence_check_error(tmp_path, monkeypatc
     # Fail-open: nudge omitted but the catalog render survives.
     assert _NUDGE_MARKER not in body["text"]
     assert "CATALOG BODY" in body["text"]
+
+
+def test_signature_skew_is_loud_and_still_renders_the_nudge(caplog):
+    """A ledger that rejects ``with_edges`` must NOT yield a silent empty nudge.
+
+    This is the regression the whole path exists to prevent. Car E added
+    ``with_edges=True`` to the ledger read; a core talking to a backend that
+    predates it gets a TypeError at the call binding. Under the old blanket
+    ``except Exception -> _rows = []`` that produced exactly the same output as
+    a ledger with no open tasks — an empty string — so a dead nudge and a clean
+    session were indistinguishable, in the logs and on the wire.
+
+    Two halves, and both are the property:
+      1. the read is retried WITHOUT the edges, so the nudge still renders;
+      2. it is logged at WARNING, so the skew is visible rather than inferred.
+    """
+    import logging
+
+    from yadgar.core.server import http as _http
+
+    seen: list[dict] = []
+
+    def _no_edges_ledger(project_id, status=None):
+        """A pre-Car-E ledger: no ``with_edges`` parameter at all."""
+        seen.append({"project_id": project_id, "status": status})
+        return [{"id": 7, "title": "survives the skew", "status": "in_progress"}]
+
+    with patch("yadgar.core.server.tools.task.task_list", _no_edges_ledger):
+        with caplog.at_level(logging.WARNING, logger=_http.logger.name):
+            nudge, rows = asyncio.run(_http._task_list_restore_nudge("/repo", "m-agahi/yadgar"))
+
+    assert len(seen) == 1, f"the edge-less retry must actually reach the ledger; calls={seen!r}"
+    assert "survives the skew" in nudge, f"a signature skew must not empty the nudge; got {nudge!r}"
+    assert rows, f"the seeder rows must survive the skew too; got {rows!r}"
+    assert any(
+        "with_edges" in r.message or "with_edges" in r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+    ), (
+        "the skew must be LOUD — a debug-level line is how the last dead nudge "
+        f"stayed invisible; records={[r.getMessage() for r in caplog.records]!r}"
+    )
+
+
+def test_a_genuinely_empty_ledger_stays_silent(caplog):
+    """The other half: no open tasks renders nothing, and says nothing.
+
+    The narrowed swallow must not turn every quiet session into a warning —
+    only a read that FAILED is worth a line.
+    """
+    import logging
+
+    from yadgar.core.server import http as _http
+
+    def _empty_ledger(project_id, status=None, with_edges=False):
+        return []
+
+    with patch("yadgar.core.server.tools.task.task_list", _empty_ledger):
+        with caplog.at_level(logging.WARNING, logger=_http.logger.name):
+            nudge, rows = asyncio.run(_http._task_list_restore_nudge("/repo", "m-agahi/yadgar"))
+
+    assert nudge == "", f"an empty ledger renders no nudge; got {nudge!r}"
+    assert rows == []
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+        f"an empty ledger is not an error; got {[r.getMessage() for r in caplog.records]!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

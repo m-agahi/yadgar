@@ -20,6 +20,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
@@ -1315,6 +1316,57 @@ def _task_list_payload(rows: list[dict]) -> list[dict]:
 
 
 @observe(tier="stage")
+async def _read_open_task_rows(ledger: Any, project: str) -> list[dict]:
+    """Read the project's open task rows, surviving a ``with_edges`` skew.
+
+    Car E asks the ledger for the ``task_blocked_by`` join (``with_edges=True``)
+    because the seeder writes the harness record's ``blockedBy`` / ``blocks``
+    arrays. It costs one extra query on a path that already does exactly one
+    read — worth it while the parameter is there to ask for.
+
+    The narrow ``TypeError`` arm is the point of this helper. A TypeError from
+    this call is what a call that did not BIND looks like: the ledger on the
+    other side has no ``with_edges`` parameter, which is precisely the shape of
+    a core/backend version skew — routine here, since a deployed core and the
+    branch that adds a kwarg are not upgraded in the same instant. Under the
+    blanket ``except Exception -> []`` that used to sit here
+    the skew rendered an EMPTY nudge — byte-identical to a ledger with no open
+    tasks. So the nudge was dead-by-exception while every session looked clean,
+    which is the exact failure this path already suffered once.
+
+    Hence: retry WITHOUT the edges rather than render nothing (the edges are a
+    seeder nicety; the nudge is the fallback that has to survive), and say so
+    at WARNING rather than debug. A genuinely empty ledger still returns ``[]``
+    silently — only a read that FAILED is worth a line.
+
+    Extracted from ``_task_list_restore_nudge``: the retry arm pushed that
+    function to nesting=6, over the I13 hard cap of 4.
+    """
+    _kw: dict[str, Any] = {"project_id": project, "status": ["pending", "in_progress"]}
+    try:
+        return await asyncio.to_thread(ledger.task_list, **_kw, with_edges=True)
+    except TypeError as _sig:
+        logger.warning(
+            "task_list raised TypeError on the with_edges read (%s); retrying "
+            "without edges — the seeder loses blocked_by/blocks but the restore "
+            "nudge still renders",
+            _sig,
+        )
+    except Exception as _le:
+        # Still fail-open (session start is never blocked), but audible: a read
+        # that raised is not the same event as a ledger with no open tasks, and
+        # only one of those two should be silent.
+        logger.warning("task-list ledger read failed: %s", _le)
+        return []
+
+    try:
+        return await asyncio.to_thread(ledger.task_list, **_kw)
+    except Exception as _re:
+        logger.warning("task-list ledger retry without edges failed: %s", _re)
+        return []
+
+
+@observe(tier="stage")
 async def _task_list_restore_nudge(directory: str, project: str = "") -> tuple[str, list[dict]]:
     """Return ``(nudge text, open task rows)`` — either may be empty.
 
@@ -1372,20 +1424,7 @@ async def _task_list_restore_nudge(directory: str, project: str = "") -> tuple[s
             _ledger = None
 
         if _ledger is not None and hasattr(_ledger, "task_list"):
-            try:
-                _rows = await asyncio.to_thread(
-                    _ledger.task_list,
-                    project_id=project,
-                    status=["pending", "in_progress"],
-                    # Car E: the seeder writes the harness record's
-                    # ``blockedBy`` / ``blocks`` arrays, so this is the one
-                    # list read that genuinely needs the join. Costs one extra
-                    # query on a path that already does exactly one read.
-                    with_edges=True,
-                )
-            except Exception as _le:
-                logger.debug("task-list ledger read failed: %s", _le)
-                _rows = []
+            _rows = await _read_open_task_rows(_ledger, project)
             _open = [_r for _r in (_rows or []) if isinstance(_r, dict)]
             # Cap 5, down from 12: real ledger titles average ~76 chars, so a
             # 12-row window costs ~1,255 chars of every session's context for a
