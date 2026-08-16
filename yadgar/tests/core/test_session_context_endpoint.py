@@ -704,3 +704,104 @@ def test_task_list_nudge_caps_at_12_open_tasks(tmp_path, monkeypatch):
     assert "task 12" in text, f"expected 12th task to appear; got: {text!r}"
     assert "task 13" not in text, f"task 13 must be hidden behind the cap; got: {text!r}"
     assert "and 3 more" in text, f"expected '…and 3 more' overflow marker; got: {text!r}"
+
+
+# ---------------------------------------------------------------------------
+# Car C — mechanical seeding contract (?seed=1)
+# ---------------------------------------------------------------------------
+
+
+def test_seed_capable_caller_gets_rows_and_no_nudge_in_text(tmp_path, monkeypatch):
+    """A hook that can seed the harness store gets the ROWS, not an order.
+
+    The nudge still travels (as `task_nudge`) for the guard-tripped fallback,
+    but it must NOT be in `text` — printing both would have the model hand-create
+    tasks the seeder just wrote to disk.
+    """
+    token = "tl-seed"
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup"
+            "&project=m-agahi%2Fyadgar&seed=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert _NUDGE_MARKER not in body["text"], (
+        f"seed-capable callers must not be told to hand-mirror; got: {body['text']!r}"
+    )
+    assert "CATALOG BODY" in body["text"]
+    assert _NUDGE_MARKER in body["task_nudge"], "the fallback nudge must still be reachable"
+    assert body["tasks"], "seed-capable callers need the rows to write"
+    assert set(body["tasks"][0]) == {"id", "title", "status"}, (
+        "the payload is exactly what the on-disk record needs — nothing wider"
+    )
+
+
+def test_seed_flag_absent_keeps_the_pre_car_c_shape(tmp_path, monkeypatch):
+    """Hooks are COPIED into ~/.claude/hooks and can lag the daemon: an older
+    one sends no `seed` and must keep getting the nudge inside `text`."""
+    token = "tl-noseed"
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup&project=m-agahi%2Fyadgar",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    body = resp.json()
+    assert _NUDGE_MARKER in body["text"]
+    assert "tasks" not in body
+
+
+def test_seed_rows_are_not_capped(tmp_path, monkeypatch):
+    """The 12-row cap belongs to the rendered nudge. A seeder given only the
+    first 12 would silently hide every other open task."""
+    token = "tl-seed-cap"
+    from yadgar.core import server as _server
+
+    content = _seed_many_open_tasks(str(tmp_path), 15)
+    _seed_task_list_page(str(tmp_path), content=content, monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=startup"
+            "&project=m-agahi%2Fyadgar&seed=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    body = resp.json()
+    assert len(body["tasks"]) == 15, (
+        f"all open rows must reach the seeder; got {len(body['tasks'])}"
+    )
+    assert "and 3 more" in body["task_nudge"], "the NUDGE is what stays capped at 12"
+
+
+def test_seed_flag_is_ignored_on_compact(tmp_path, monkeypatch):
+    """compact early-returns before any task read; no rows, no nudge."""
+    token = "tl-seed-compact"
+    from yadgar.core import server as _server
+
+    _seed_task_list_page(str(tmp_path), monkeypatch=monkeypatch)
+
+    with patch.object(_server, "project_brief", return_value=_brief_stub("# CATALOG BODY")):
+        client = _make_client(token, monkeypatch)
+        resp = client.get(
+            f"/hooks/session-context?directory={tmp_path}&source=compact&seed=1",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    body = resp.json()
+    assert "tasks" not in body
+    assert _NUDGE_MARKER not in body["text"]

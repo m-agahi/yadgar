@@ -138,9 +138,12 @@ def test_task_nudge_returns_empty_when_no_project_supplied(tmp_path):
         return [{"id": 1, "title": "leaked", "status": "pending"}]
 
     with patch("yadgar.core.server.tools.task.task_list", _fake_task_list):
-        out = asyncio.run(_http._task_list_restore_nudge(str(tmp_path), ""))
+        nudge, rows = asyncio.run(_http._task_list_restore_nudge(str(tmp_path), ""))
 
-    assert out == "", f"a missing identity must produce no nudge; got {out!r}"
+    assert nudge == "", f"a missing identity must produce no nudge; got {nudge!r}"
+    # Car C: the rows feed the on-disk seeder. Leaking another project's rows
+    # here would write them into this session's harness task list.
+    assert rows == [], f"a missing identity must produce no rows to seed; got {rows!r}"
     assert "project_id" not in calls, (
         f"the ledger must not be read at all without an identity; got {calls!r}"
     )
