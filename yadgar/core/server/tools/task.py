@@ -194,6 +194,28 @@ def _build_create_payload(
     return payload
 
 
+@observe(exempt="pure dict-mutator; two absence checks over an already-built payload, no I/O")
+def _add_edge_keys(
+    payload: dict,
+    blocked_by: list[int] | None,
+    blocks: list[int] | None,
+) -> dict:
+    """Attach the D39 join-edge keys to a create/update payload, in place.
+
+    Car E. The CREATE payload never carried them: ``task_write`` accepted
+    ``blocked_by`` on a create, validated nothing, and built a payload without
+    it — so the backend's create-side edge sync (which has existed since Car D)
+    was unreachable code and every dependency stated at create time was lost
+    under an ``ok: true``. A separate function rather than two more parameters
+    on ``_build_create_payload``, which is at the I13 params cap already.
+    """
+    if blocked_by is not None:
+        payload["blocked_by"] = [int(x) for x in blocked_by]
+    if blocks is not None:
+        payload["blocks"] = [int(x) for x in blocks]
+    return payload
+
+
 @dataclass(frozen=True, slots=True)
 class _TaskUpdateFields:
     """The column-valued arguments of a ``task_write`` UPDATE, as one object.
@@ -267,11 +289,7 @@ def _build_update_payload(task_id: int, fields: _TaskUpdateFields) -> dict:
     # D39: join-edge sync — both ``blocked_by`` and ``blocks`` ride the same
     # ``task_blocked_by`` join table; the backend's update path reconciles
     # them (delete-then-insert of the live set).
-    if fields.blocked_by is not None:
-        payload["blocked_by"] = [int(x) for x in fields.blocked_by]
-    if fields.blocks is not None:
-        payload["blocks"] = [int(x) for x in fields.blocks]
-    return payload
+    return _add_edge_keys(payload, fields.blocked_by, fields.blocks)
 
 
 @observe(
@@ -389,7 +407,11 @@ def task_write(
     D36: ``state`` is NULLABLE; cleared (set to NULL) when ``status``
     transitions to ``completed``/``archived`` (§16.10).
     D39: ``blocked_by`` / ``blocks`` manage ``task_blocked_by`` join rows
-    (both FK → task.id CASCADE). One table serves both directions.
+    (both FK → task.id CASCADE). One table serves both directions, both
+    reconcile on CREATE and UPDATE, and a failed edge write returns
+    ``{"ok": False, ...}`` naming the row that survived it (Car E — before it,
+    create carried no edge keys, ``blocks`` had no writer at all, and a sync
+    failure was logged and answered ``ok: true``).
     D26: task mutability = free (no lock).
     §14.1: no ``origin`` parameter (column dropped).
     §15 / ADR-0078: forwards over HTTP to the backend PTC — does NOT call
@@ -466,14 +488,9 @@ def task_write(
         # so it was validated into a real string.
         assert normalized_title is not None  # _validate_write_inputs guarantees
         payload = _build_create_payload(
-            project_id,
-            normalized_title,
-            status,
-            state,
-            active_form,
-            plan_path,
-            body_slug,
+            project_id, normalized_title, status, state, active_form, plan_path, body_slug
         )
+        _add_edge_keys(payload, blocked_by, blocks)  # Car E: create carried no edges
         result = _forward_admin(_CREATE_OP, payload)
         if result.get("ok") is False:
             # Backend-side rejection (e.g. unknown project_id, ADR-0202) —
@@ -514,6 +531,7 @@ def task_list(
     offset: int = 0,
     project: str | None = None,
     verbose: bool = False,
+    with_edges: bool = False,
 ) -> list[dict]:
     """List tasks for the given ``project_id``.
 
@@ -548,6 +566,14 @@ def task_list(
 
     ROW COUNT is untouched by ``verbose``: every matching task is returned
     either way. Only the width changes.
+
+    DEPENDENCIES — ``with_edges`` (default ``False``, Car E): adds
+    ``blocked_by`` and ``blocks`` (lists of task ids, from the
+    ``task_blocked_by`` join table) to every row. OPT-IN on purpose. It is a
+    second query and two more keys per row, which is exactly what the
+    projection above just stopped paying for — the SessionStart harness seeder
+    asks for it, a status sweep should not. ``task_get`` carries both
+    unconditionally; the single-row read has no width to protect.
 
     ``limit`` / ``offset`` ARE NOT IMPLEMENTED. They are accepted, and
     ``limit`` is forwarded when non-default, but no reader below this tool
@@ -601,6 +627,9 @@ def task_list(
         # The storage/admin layers default to the full projection so a caller
         # that says nothing cannot silently lose columns it reads.
         "summary": not verbose,
+        # Car E: also always sent, for the same reason — the decision to pay
+        # for the join belongs to this tool, not to a backend default.
+        "with_edges": bool(with_edges),
     }
     if limit is not None and int(limit) != 100:
         payload["limit"] = int(limit)
@@ -646,6 +675,12 @@ def task_get(
 
     Returns the row dict (id-keyed, §13.2 blocker 2) or ``None`` if absent.
     The forwarded payload keys on ``id``, NEVER ``number`` (§14.1).
+
+    Car E: the row carries ``blocked_by`` and ``blocks`` — the ids on either
+    end of this task's ``task_blocked_by`` edges. Always, with no flag: the
+    edges were writable and unreadable for the join table's whole life, and a
+    caller asked "title, status and blocked by" could only answer that task
+    rows have no dependency field.
 
     Car 6 (bug-train 2026-08-13) — same DECISION as ``task_list``: fail-quiet
     to ``None`` covers argument validation and a raised forwarding exception

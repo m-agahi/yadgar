@@ -62,6 +62,7 @@ class _DictStorage:
 
     def __init__(self) -> None:
         self.rows: dict[int, dict] = {}
+        self.edges: set[tuple[int, int]] = set()
         self._next_id = 1
 
     async def create_task_row(self, **fields: Any) -> dict:
@@ -82,6 +83,21 @@ class _DictStorage:
         if unknown:
             raise ValueError(f"unknown task columns: {sorted(unknown)}")
         self.rows[int(task_id)].update(fields)
+
+    # Car E: ``task_get`` now reads the ``task_blocked_by`` join from both
+    # ends, so a double that omits these is no longer a stand-in for the real
+    # engine — the op fails and every read in this file 500s.
+    async def add_task_blocked_by(self, task_id: int, blocked_by_id: int) -> None:
+        self.edges.add((int(task_id), int(blocked_by_id)))
+
+    async def remove_task_blocked_by(self, task_id: int, blocked_by_id: int) -> None:
+        self.edges.discard((int(task_id), int(blocked_by_id)))
+
+    async def list_task_blocked_by(self, task_id: int) -> list[int]:
+        return sorted(b for t, b in self.edges if t == int(task_id))
+
+    async def list_task_blocks(self, task_id: int) -> list[int]:
+        return sorted(t for t, b in self.edges if b == int(task_id))
 
 
 @pytest.fixture

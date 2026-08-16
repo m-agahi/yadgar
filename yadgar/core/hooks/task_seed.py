@@ -108,11 +108,50 @@ def _normalise_rows(rows: Any) -> tuple[list[dict[str, Any]], int]:
                 "subject": f"{task_id}: {title.strip()}",
                 "description": "",
                 "status": status,
-                "blocks": [],
-                "blockedBy": [],
+                "blocks": _edge_ids(row.get("blocks")),
+                "blockedBy": _edge_ids(row.get("blocked_by")),
             }
         )
-    return out, skipped
+    return _prune_dangling_edges(out, seen), skipped
+
+
+def _edge_ids(raw: Any) -> list[str]:
+    """Normalise one ledger edge list to harness ids (strings), or ``[]``.
+
+    Harness ids are JSON STRINGS — ``id`` is ``"41"``, not ``41``, measured
+    across 400 live files. The edge arrays were empty in every one of those
+    files, so their element type is INFERRED from ``id``'s, not measured. That
+    inference is why everything unrecognisable degrades to ``[]`` here rather
+    than being passed through: this store's doctrine is that a wrong write is
+    worse than no write.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        try:
+            value = int(str(item).strip())
+        except (TypeError, ValueError):  # fmt: skip
+            continue
+        if value > 0 and str(value) not in out:
+            out.append(str(value))
+    return out
+
+
+def _prune_dangling_edges(records: list[dict[str, Any]], seen: set[int]) -> list[dict[str, Any]]:
+    """Drop edge targets that are not themselves in the seeded set.
+
+    The ledger's open tasks can depend on CLOSED ones, and a closed task is
+    not written to the harness store. An edge pointing at an id the harness
+    does not hold is an untested path through an undocumented reader — the
+    seeder's whole posture is to write only shapes it has seen, so a target
+    outside the set is dropped rather than offered up.
+    """
+    known = {str(i) for i in seen}
+    for rec in records:
+        for key in ("blocks", "blockedBy"):
+            rec[key] = [t for t in rec[key] if t in known and t != rec["id"]]
+    return records
 
 
 def _inspect_dir(session_dir: Path) -> tuple[set[int], int, str]:

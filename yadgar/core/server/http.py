@@ -1295,12 +1295,23 @@ def _task_list_payload(rows: list[dict]) -> list[dict]:
     Car C. Only ``id`` / ``title`` / ``status`` reach the hook: the harness
     record has no home for ``state``, ``plan_path`` or the timestamps, and this
     payload crosses the wire on every session start.
+
+    Car E adds ``blocked_by`` / ``blocks``, which the harness record DOES have
+    a home for and which the seeder wrote as ``[]`` for its whole life because
+    nothing could read them. Omitted per row when absent, so a core talking to
+    a backend that predates the edge read sends the Car C shape rather than a
+    row asserting the task has no dependencies.
     """
-    return [
-        {"id": _r.get("id"), "title": _r.get("title"), "status": _r.get("status")}
-        for _r in rows
-        if _r.get("id") is not None
-    ]
+    out: list[dict] = []
+    for _r in rows:
+        if _r.get("id") is None:
+            continue
+        _rec = {"id": _r.get("id"), "title": _r.get("title"), "status": _r.get("status")}
+        for _key in ("blocked_by", "blocks"):
+            if _r.get(_key) is not None:
+                _rec[_key] = _r[_key]
+        out.append(_rec)
+    return out
 
 
 @observe(tier="stage")
@@ -1366,6 +1377,11 @@ async def _task_list_restore_nudge(directory: str, project: str = "") -> tuple[s
                     _ledger.task_list,
                     project_id=project,
                     status=["pending", "in_progress"],
+                    # Car E: the seeder writes the harness record's
+                    # ``blockedBy`` / ``blocks`` arrays, so this is the one
+                    # list read that genuinely needs the join. Costs one extra
+                    # query on a path that already does exactly one read.
+                    with_edges=True,
                 )
             except Exception as _le:
                 logger.debug("task-list ledger read failed: %s", _le)

@@ -529,6 +529,92 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             result = await conn.execute(sql, {"task_id": task_id})
             return [int(row[0]) for row in result]
 
+    @observe(tier="boundary", metric="backend.sql.task.list_blocks")
+    async def list_task_blocks(self, task_id: int) -> list[int]:
+        """Return the list of task ids that ``task_id`` blocks, ordered ASC.
+
+        The INVERSE of ``list_task_blocked_by`` over the same
+        ``task_blocked_by`` rows — one edge read from the other end. It did not
+        exist before Car E: the join table has been written from the
+        ``blocked_by`` side since 002 and could only ever be read back from
+        that side, so the ``blocks`` direction was unreachable for every
+        caller including the reconciler.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT task_id FROM task_blocked_by "
+            "WHERE blocked_by_id = :task_id ORDER BY task_id ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"task_id": task_id})
+            return [int(row[0]) for row in result]
+
+    @observe(tier="boundary", metric="backend.sql.task.remove_blocked_by")
+    async def remove_task_blocked_by(self, task_id: int, blocked_by_id: int) -> None:
+        """Delete one ``task_blocked_by`` row. Absent row = no-op, not an error.
+
+        The DELETE half of ``add_task_blocked_by``. It used to live as inline
+        ``text("DELETE FROM task_blocked_by ...")`` in the admin op body
+        (``admin_exec/ledger.py``) — the one piece of ledger-table SQL outside
+        this engine, which slipped past ``check_ledger_chokepoint`` only
+        because it was written through an aliased ``text`` import the AST
+        walker does not recognise. Car E needs the same DELETE from the
+        ``blocks`` direction too, so the choice was one method here or a second
+        copy of raw SQL up there.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "DELETE FROM task_blocked_by WHERE task_id = :task_id AND blocked_by_id = :blocked_by_id"
+        )
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"task_id": task_id, "blocked_by_id": blocked_by_id})
+
+    @observe(tier="boundary", metric="backend.sql.task.list_edges")
+    async def list_task_edges(self, task_ids: list[int]) -> dict[int, dict[str, list[int]]]:
+        """Return ``{id: {"blocked_by": [...], "blocks": [...]}}`` for ``task_ids``.
+
+        ONE query for the whole set. The per-row alternative
+        (``list_task_blocked_by`` + ``list_task_blocks`` each) is 2N
+        round-trips, and the caller that wants edges on a LIST read is the
+        SessionStart harness seeder, which lists every open task — ~80 rows on
+        the live corpus, so 160 queries on the session-start path.
+
+        Every requested id is present in the result, with empty lists when it
+        has no edges: a caller must be able to tell "asked and has none" from
+        "did not ask", and a sparse dict cannot express that.
+        """
+        from sqlalchemy import bindparam, text  # noqa: PLC0415
+
+        ids = [int(t) for t in task_ids]
+        edges: dict[int, dict[str, list[int]]] = {i: {"blocked_by": [], "blocks": []} for i in ids}
+        if not ids:
+            return edges
+        # L10: NO literal parens around an expanding bindparam. It renders its
+        # OWN ``(...)`` at execution, so ``IN (:ids)`` reaches the server as
+        # ``IN ((%s, %s))`` — a MariaDB ROW CONSTRUCTOR, not set membership
+        # (4078). Two distinct names because one bindparam cannot be expanded
+        # twice in a single statement.
+        sql = text(
+            "SELECT task_id, blocked_by_id FROM task_blocked_by "
+            "WHERE task_id IN :ids_a OR blocked_by_id IN :ids_b"
+        ).bindparams(
+            bindparam("ids_a", expanding=True),
+            bindparam("ids_b", expanding=True),
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"ids_a": ids, "ids_b": ids})
+            for blocked, blocker in result:
+                if int(blocked) in edges:
+                    edges[int(blocked)]["blocked_by"].append(int(blocker))
+                if int(blocker) in edges:
+                    edges[int(blocker)]["blocks"].append(int(blocked))
+        for entry in edges.values():
+            entry["blocked_by"].sort()
+            entry["blocks"].sort()
+        return edges
+
     # ── adr ──────────────────────────────────────────────────────────────
 
     @observe(tier="boundary", metric="backend.sql.adr.create")
