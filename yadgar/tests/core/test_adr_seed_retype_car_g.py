@@ -235,45 +235,61 @@ class _OrderFakeStorage:
 
 
 class TestSeedAdrRowsAscendingOrder:
-    """seed_adr_rows must insert candidate pages in ascending ADR-number
-    order — insertion order determines which ledger AUTO_INCREMENT id a page
-    lands on, and the whole "historical ADR-0001 skipped, 0002-0230 land on
-    ids 2-230" numbering scheme depends on ascending insertion.
+    """seed_adr_rows must insert candidate pages in ascending ADR-number order.
+
+    Insertion order is the ONLY lever on which ledger id a page lands on: the
+    op cannot supply an id (``adr.id`` is AUTO_INCREMENT and IS the ADR number,
+    ADR-0197), so the Nth insert takes the Nth free id and nothing downstream
+    can correct a wrong order.
+
+    REWRITTEN (task 168). The previous fixture asserted ``yadgar-adr-0001`` was
+    inserted FIRST, encoding a world where exactly one low id had been spent —
+    and, since it injected ``row_inserter``, observing only a synthetic
+    ``{"id": len(inserted_order)}``. Nine ids are spent now, and the ADRs whose
+    numbers they occupy are the ones the skip-set exists to leave alone; a test
+    that demands 0001 be inserted first demands the corpus be misnumbered.
+    The ORDERING contract is unchanged and still asserted below; the real
+    AUTO_INCREMENT ids live in ``tests/integration/test_adr_seed_ledger_ids.py``,
+    which is where a synthetic id cannot hide a misnumbering.
     """
 
-    async def test_inserts_in_ascending_adr_number_order_regardless_of_page_order(self) -> None:
-        from yadgar.backend.admin_exec.adr_seed import seed_adr_rows
-
+    @staticmethod
+    def _pages() -> list[dict]:
         # Deliberately out-of-order + not alphabetically-sorted-equivalent
         # (0010 sorts before 0002 lexicographically if slugs were compared
         # as strings without the numeric parse — this fixture would catch
         # that regression too).
-        pages = [
+        return [
             {"slug": "yadgar-adr-0010", "content": "# ADR-0010: j\nbody"},
             {"slug": "yadgar-adr-0002", "content": "# ADR-0002: b\nbody"},
             {"slug": "yadgar-adr-0003", "content": "# ADR-0003: c\nbody"},
             {"slug": "yadgar-adr-0001", "content": "# ADR-0001: a\nbody"},
         ]
-        storage = _OrderFakeStorage(pages)
+
+    @staticmethod
+    async def _run(pages: list[dict], **kwargs) -> tuple[dict, list[str]]:
+        from yadgar.backend.admin_exec.adr_seed import seed_adr_rows
 
         inserted_order: list[str] = []
 
         def _row_inserter(payload: dict) -> dict:
             inserted_order.append(payload["body_slug"])
-            # id doesn't need to reflect a real AUTO_INCREMENT here — the
-            # assertion is purely about call ORDER.
+            # A synthetic id: this suite asserts CALL ORDER only. Real ids are
+            # the integration test's subject, deliberately not this one's.
             return {"id": len(inserted_order)}
 
-        def _slug_linker(adr_id: int, slug: str) -> None:
-            return None
-
-        await seed_adr_rows(
+        result = await seed_adr_rows(
             project_id="m-agahi/yadgar",
             directory="/home/max/git/yadgar",
-            storage=storage,
+            storage=_OrderFakeStorage(pages),
             row_inserter=_row_inserter,
-            slug_linker=_slug_linker,
+            slug_linker=lambda adr_id, slug: None,
+            **kwargs,
         )
+        return result, inserted_order
+
+    async def test_inserts_in_ascending_adr_number_order_regardless_of_page_order(self) -> None:
+        _result, inserted_order = await self._run(self._pages())
 
         assert inserted_order == [
             "yadgar-adr-0001",
@@ -281,6 +297,54 @@ class TestSeedAdrRowsAscendingOrder:
             "yadgar-adr-0003",
             "yadgar-adr-0010",
         ], f"expected ascending ADR-number insertion order, got {inserted_order}"
+
+    async def test_skipped_numbers_drop_out_and_the_rest_keep_their_order(self) -> None:
+        """ADR-0006's skip, composed with the ordering contract.
+
+        Skipping must REMOVE entries, never reorder the survivors — a skip that
+        shuffled the remainder would put every later ADR on the wrong id just as
+        surely as inserting the skipped one would.
+        """
+        result, inserted_order = await self._run(self._pages(), skip_adr_numbers=[1, 2])
+
+        assert inserted_order == ["yadgar-adr-0003", "yadgar-adr-0010"]
+        assert result["rows_skipped_by_request"] == 2
+        assert result["rows_inserted"] == 2
+        assert result["pages_seen"] == 4, "a skipped page is still SEEN, just not inserted"
+
+    async def test_skip_is_keyed_on_the_number_not_the_slug_shape(self) -> None:
+        """One number, two slug shapes, ONE skip decision.
+
+        The live corpus has both a legacy ``yadgar-adr-0001`` and a canonical
+        ``m-agahi_yadgar_adr-0001`` page. A slug-keyed skip set would need both
+        spellings and would silently insert whichever one the operator did not
+        type — onto the id the other one needed.
+        """
+        pages = [
+            {"slug": "yadgar-adr-0001", "content": "# ADR-0001: a\nbody"},
+            {"slug": "m-agahi_yadgar_adr-0001", "content": "# ADR-0001: a'\nbody"},
+            {"slug": "yadgar-adr-0002", "content": "# ADR-0002: b\nbody"},
+        ]
+        result, inserted_order = await self._run(pages, skip_adr_numbers=[1])
+
+        assert inserted_order == ["yadgar-adr-0002"]
+        assert result["rows_skipped_by_request"] == 2
+
+    async def test_dry_run_inserts_nothing_and_returns_the_planned_mapping(self) -> None:
+        result, inserted_order = await self._run(self._pages(), dry_run=True)
+
+        assert inserted_order == [], "a dry run must not reach the inserter at all"
+        assert result["rows_inserted"] == 0
+        assert [e["adr"] for e in result["plan"]] == [
+            "ADR-0001",
+            "ADR-0002",
+            "ADR-0003",
+            "ADR-0010",
+        ]
+        # Contiguous ids from the same base, in insertion order — the mapping an
+        # operator gates the irreversible run on.
+        planned = [e["planned_id"] for e in result["plan"]]
+        assert planned == list(range(planned[0], planned[0] + 4))
 
     def test_sort_key_handles_unparsable_slug_without_crashing(self) -> None:
         """Defensive contract on the sort key itself: an unparsable-suffix
