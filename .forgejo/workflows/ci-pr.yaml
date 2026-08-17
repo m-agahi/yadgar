@@ -17,25 +17,17 @@ on:
       - 'flake.lock'
       - 'MIGRATION_NOTES.md'
       - '.gitignore'
-  # Nightly master baseline (docs/issues/0001-pr40-carryover.md §2.4). Before
-  # this, ci-release.yaml (push-triggered) runs zero pytest — nothing ever
-  # exercised the suite against master, so every "introduced by this PR"
-  # verdict rested on `git diff master...HEAD` plus inference, not a real A/B.
-  # Deliberately `schedule:`, not a trigger on every push to master: the
-  # GitHub mirror's runner is a SINGLE self-hosted box (see the wave-staggering
-  # comments on the `tests` matrix below — three concurrent heavy groups
-  # already OOM it), and master here receives many merges a day, so a push
-  # trigger would queue a ~60-90 min full suite behind every single one of
-  # them, on top of concurrent PR runs and ci-release's image builds on
-  # version-bump pushes. Nightly amortizes that cost to once/day while still
-  # giving a real, green-or-red baseline to A/B a PR's failures against.
-  # Mirrored here for parity even though this mirror's runners are hosted
-  # (ubuntu-latest, not the capacity-constrained box) — same reasoning stands.
-  schedule:
-    - cron: '17 3 * * *'  # 03:17 UTC — off-peak, off the top of the hour
-  # Manual escape hatch — verify the baseline on demand without waiting for
-  # the next cron tick (e.g. right after landing this change, or to
-  # re-confirm a suspected master regression before it ages another day).
+  # Master baseline — ON DEMAND ONLY. There is no cron here on purpose.
+  #
+  # A nightly `schedule:` used to live at this spot, mirrored from the GitHub
+  # workflow. It was never asked for, and on the GitHub side the runner is the
+  # OWNER'S LAPTOP: a single self-hosted box that the cron saturated during
+  # working hours. Removed there; removed here too so the mirrors stay in
+  # parity and the pattern does not creep back via this file.
+  #
+  # The baseline stays available on demand — trigger it from the Actions tab.
+  #
+  # Do not re-add `schedule:` without the repo owner explicitly asking.
   workflow_dispatch:
 
 # Cancel superseded test runs on a fresh push to the same PR branch.
