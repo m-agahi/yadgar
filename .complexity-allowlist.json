@@ -13,9 +13,8 @@
   {
     "path": "yadgar/backend/admin_exec/adr_seed.py",
     "function": "seed_adr_rows",
-    "lineno": 248,
+    "lineno": 602,
     "metrics": {
-      "cyclomatic": 23,
       "fn_loc": 193
     },
     "rationale": "Car G (0047 \u00a77): seed_adr_rows cyclomatic moved from the legacy ~10 (ad-hoc page-by-page loop with parse_index_rows fallback) to 23 after the D35a/D35b re-point to per-ADR pages and the async storage refactor that put list/create/link/supersede on the ledger directly (the layer-boundary cleanup removed the _forward_admin bridge \u2014 every storage call now carries its own await + try/except guard). The branches are irreducible: idempotency check (body_slug existing), per-page title/status/date parse, body_writer/row_inserter/slug_linker injector selection, supersede-target extraction + add_adr_supersedes forward, page-id\u2194row-id resolution, gate predicate on success, type guards on storage returns (async vs sync stub), result-shape narrowing \u2014 all part of the seed's stated contract. Splitting into _seed_one_page + _finalize_seed helpers would still need the same branches somewhere; cyclomatic wouldn't reduce.",
