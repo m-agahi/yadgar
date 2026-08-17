@@ -36,6 +36,7 @@ def _make_args(
     reslug_adr_pages=False,
     adr_rows=False,
     apply=False,
+    skip_adr=None,
 ):
     return SimpleNamespace(
         directory=directory,
@@ -43,6 +44,7 @@ def _make_args(
         reslug_adr_pages=reslug_adr_pages,
         adr_rows=adr_rows,
         apply=apply,
+        skip_adr=skip_adr,
     )
 
 
@@ -200,7 +202,9 @@ class TestCmdBackfillAdrRows:
         result = {
             "pages_seen": 2,
             "rows_inserted": 2,
-            "rows_skipped": 0,
+            "rows_already_present": 0,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
             "flagged": [],
             "supersedes_links": 0,
             "gate": {
@@ -214,7 +218,11 @@ class TestCmdBackfillAdrRows:
             rc = cmd_backfill(_make_args(directory=str(tmp_path), adr_rows=True))
         fwd.assert_called_once_with(
             "seed_adr_rows",
-            {"project_id": "owner/repo", "directory": str(tmp_path.resolve())},
+            {
+                "project_id": "owner/repo",
+                "directory": str(tmp_path.resolve()),
+                "dry_run": True,
+            },
         )
         assert rc == 0
 
@@ -222,7 +230,9 @@ class TestCmdBackfillAdrRows:
         result = {
             "pages_seen": 1,
             "rows_inserted": 1,
-            "rows_skipped": 0,
+            "rows_already_present": 0,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
             "flagged": [],
             "supersedes_links": 0,
             "gate": {
@@ -241,7 +251,9 @@ class TestCmdBackfillAdrRows:
         result = {
             "pages_seen": 3,
             "rows_inserted": 3,
-            "rows_skipped": 0,
+            "rows_already_present": 0,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
             "flagged": [],
             "supersedes_links": 0,
             "gate": {
@@ -256,7 +268,8 @@ class TestCmdBackfillAdrRows:
         err = capsys.readouterr().err
         assert "pages_seen" in err
         assert "rows_inserted" in err
-        assert "rows_skipped" in err
+        assert "rows_already_present" in err
+        assert "rows_failed" in err
         assert "flagged" in err
         assert "gate" in err
 
@@ -264,7 +277,9 @@ class TestCmdBackfillAdrRows:
         result = {
             "pages_seen": 1,
             "rows_inserted": 1,
-            "rows_skipped": 0,
+            "rows_already_present": 0,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
             "flagged": [],
             "supersedes_links": 0,
             "gate": {
@@ -275,14 +290,16 @@ class TestCmdBackfillAdrRows:
             },
         }
         with _patched(forward_return=result):
-            rc = cmd_backfill(_make_args(adr_rows=True))
+            rc = cmd_backfill(_make_args(adr_rows=True, apply=True))
         assert rc == 0
 
     def test_exit_nonzero_when_gate_exact_match_false(self):
         result = {
             "pages_seen": 2,
             "rows_inserted": 1,
-            "rows_skipped": 0,
+            "rows_already_present": 0,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
             "flagged": [],
             "supersedes_links": 0,
             "gate": {
@@ -293,7 +310,7 @@ class TestCmdBackfillAdrRows:
             },
         }
         with _patched(forward_return=result):
-            rc = cmd_backfill(_make_args(adr_rows=True))
+            rc = cmd_backfill(_make_args(adr_rows=True, apply=True))
         assert rc != 0
 
     def test_exit_nonzero_when_flagged_nonempty_even_if_gate_matches(self):
@@ -303,7 +320,9 @@ class TestCmdBackfillAdrRows:
         result = {
             "pages_seen": 1,
             "rows_inserted": 1,
-            "rows_skipped": 0,
+            "rows_already_present": 0,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
             "flagged": [{"slug": "yadgar-adr-0124", "reason": "no index row provenance"}],
             "supersedes_links": 0,
             "gate": {
@@ -314,7 +333,7 @@ class TestCmdBackfillAdrRows:
             },
         }
         with _patched(forward_return=result):
-            rc = cmd_backfill(_make_args(adr_rows=True))
+            rc = cmd_backfill(_make_args(adr_rows=True, apply=True))
         assert rc != 0
 
     def test_forward_error_propagates(self):
@@ -334,3 +353,161 @@ class TestCmdBackfillNoMode:
             rc = cmd_backfill(_make_args())
         fwd.assert_not_called()
         assert rc != 0
+
+
+# ---------------------------------------------------------------------------
+# --skip-adr (Car 2) — ADR-0006's mandated skip, which had no mechanism
+# ---------------------------------------------------------------------------
+
+
+def _seed_result(**over) -> dict:
+    base = {
+        "pages_seen": 10,
+        "rows_inserted": 1,
+        "rows_already_present": 0,
+        "rows_failed": 0,
+        "rows_skipped_by_request": 9,
+        "next_id": 10,
+        "next_id_basis": "information_schema",
+        "flagged": [],
+        "supersedes_links": 0,
+        "gate": {
+            "index_rows": 10,
+            "pages_seen": 10,
+            "page_type_adr_rows": 10,
+            "exact_match": True,
+        },
+    }
+    base.update(over)
+    return base
+
+
+class TestParseSkipAdr:
+    """A typo'd skip silently shifts every later ADR onto the wrong ledger id,
+    and ``adr.id`` has no undo — so parsing is strict and loud."""
+
+    def test_repeated_flags_accumulate(self):
+        from yadgar.core.cli.backfill import _parse_skip_adr
+
+        assert _parse_skip_adr(["1", "5", "6"]) == [1, 5, 6]
+
+    def test_comma_separated_single_flag(self):
+        from yadgar.core.cli.backfill import _parse_skip_adr
+
+        assert _parse_skip_adr(["1,5,6,7,8,9"]) == [1, 5, 6, 7, 8, 9]
+
+    def test_mixed_forms_and_adr_prefix(self):
+        from yadgar.core.cli.backfill import _parse_skip_adr
+
+        assert _parse_skip_adr(["ADR-0001,0005", "6", "adr-0007"]) == [1, 5, 6, 7]
+
+    def test_none_and_empty_yield_no_skips(self):
+        from yadgar.core.cli.backfill import _parse_skip_adr
+
+        assert _parse_skip_adr(None) == []
+        assert _parse_skip_adr([""]) == []
+
+    def test_duplicates_collapse(self):
+        from yadgar.core.cli.backfill import _parse_skip_adr
+
+        assert _parse_skip_adr(["5", "0005", "ADR-0005"]) == [5]
+
+    def test_garbage_raises(self):
+        from yadgar.core.cli.backfill import _parse_skip_adr
+
+        with pytest.raises(ValueError, match="not an ADR number"):
+            _parse_skip_adr(["seven"])
+
+
+class TestSkipAdrWiring:
+    def test_register_accepts_repeated_and_comma_forms(self):
+        root = argparse.ArgumentParser()
+        subs = root.add_subparsers()
+        register(subs)
+        args = root.parse_args(
+            ["backfill", "--adr-rows", "--skip-adr", "1,5", "--skip-adr", "ADR-0006"]
+        )
+        assert args.skip_adr == ["1,5", "ADR-0006"]
+
+    def test_skip_numbers_reach_the_payload(self):
+        with _patched(forward_return=_seed_result()) as (fwd, _resolve):
+            cmd_backfill(_make_args(adr_rows=True, skip_adr=["1,5,6", "7", "8", "9"]))
+        payload = fwd.call_args[0][1]
+        assert payload["skip_adr_numbers"] == [1, 5, 6, 7, 8, 9]
+
+    def test_absent_skip_omits_the_key_entirely(self):
+        """An explicit empty list would read as "the operator stated no skips";
+        omitting the key leaves the op's own default in charge."""
+        with _patched(forward_return=_seed_result(rows_skipped_by_request=0)) as (fwd, _r):
+            cmd_backfill(_make_args(adr_rows=True))
+        assert "skip_adr_numbers" not in fwd.call_args[0][1]
+
+
+class TestAdrRowsDryRunByDefault:
+    """``--apply`` used to be wired ONLY to the reslug branch, so the
+    unrepairable half of this CLI was the half with no preview."""
+
+    def test_default_is_dry_run(self):
+        with _patched(forward_return=_seed_result()) as (fwd, _resolve):
+            cmd_backfill(_make_args(adr_rows=True))
+        assert fwd.call_args[0][1]["dry_run"] is True
+
+    def test_apply_turns_the_dry_run_off(self):
+        with _patched(forward_return=_seed_result()) as (fwd, _resolve):
+            cmd_backfill(_make_args(adr_rows=True, apply=True))
+        assert fwd.call_args[0][1]["dry_run"] is False
+
+    def test_dry_run_exits_zero_despite_a_mismatched_gate(self):
+        """Nothing was written, so the gate necessarily disagrees. Exiting
+        non-zero on every dry run teaches the operator to ignore the exit code
+        on the run that matters."""
+        result = _seed_result(
+            dry_run=True,
+            rows_inserted=0,
+            gate={
+                "index_rows": 230,
+                "pages_seen": 236,
+                "page_type_adr_rows": 6,
+                "exact_match": False,
+            },
+        )
+        with _patched(forward_return=result):
+            assert cmd_backfill(_make_args(adr_rows=True)) == 0
+
+    def test_dry_run_plan_is_printed(self, capsys):
+        result = _seed_result(
+            dry_run=True,
+            rows_inserted=0,
+            plan=[
+                {"adr": "ADR-0010", "slug": "yadgar-adr-0010", "planned_id": 10},
+                {"adr": "ADR-0011", "slug": "yadgar-adr-0011", "planned_id": 11},
+            ],
+        )
+        with _patched(forward_return=result):
+            cmd_backfill(_make_args(adr_rows=True))
+        err = capsys.readouterr().err
+        assert "[DRY RUN]" in err
+        assert "PLAN: ADR-0010 -> id 10" in err
+        assert "PLAN: ADR-0011 -> id 11" in err
+
+
+class TestAdrRowsFailureIsVisible:
+    def test_structural_abort_exits_nonzero_and_names_the_resume_point(self, capsys):
+        result = _seed_result(
+            ok=False,
+            error="the ledger surface cannot take an ADR insert (AttributeError: ...)",
+            resume_after_adr=57,
+            rows_inserted=47,
+        )
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(adr_rows=True, apply=True))
+        assert rc != 0
+        err = capsys.readouterr().err
+        assert "ABORTED" in err
+        assert "resume after ADR-57" in err
+
+    def test_rows_failed_exits_nonzero_even_with_a_matching_gate(self):
+        """A per-row failure leaves a permanent hole in the numbering; it must
+        not be absorbed by an otherwise-clean report."""
+        with _patched(forward_return=_seed_result(rows_failed=3)):
+            assert cmd_backfill(_make_args(adr_rows=True, apply=True)) != 0

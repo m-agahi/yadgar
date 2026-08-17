@@ -16,10 +16,21 @@ Safety:
     own safe default); ``--apply`` is required to write anything. There is
     no flag combination that applies by accident.
   - ``--adr-rows`` seeds the ``adr`` ledger table from existing per-ADR wiki
-    pages. The op itself never raises on a D35c gate failure or a D35b
-    flagged row — this CLI is where that becomes an actionable non-zero
-    exit code, since an operator reads stdout/stderr to decide whether to
-    continue, and a silently-swallowed result dict would defeat that.
+    pages, and now defaults to dry-run for the SAME reason — the claim above
+    used to be false for exactly this branch. ``--apply`` was wired only to
+    the reslug half, so the irreversible half was the half with no preview:
+    ``adr.id`` is AUTO_INCREMENT, IS the ADR number (ADR-0197), never moves
+    backwards, and ``TRUNCATE`` is FK-blocked by ``adr_supersedes``. A wrong
+    insert is permanent.
+  - The op itself never raises on a D35c gate failure or a D35b flagged row —
+    this CLI is where that becomes an actionable non-zero exit code, since an
+    operator reads stdout/stderr to decide whether to continue, and a
+    silently-swallowed result dict would defeat that. NOTE that the gate is
+    computed AFTER the writes commit, so its exit code is a post-mortem: the
+    pre-write check is the dry run.
+  - ``--skip-adr`` states which ADR numbers to leave un-inserted (ADR-0006:
+    the ids they need are already spent). Repeatable and comma-separated.
+    Without it the governing ADR had no mechanism at all.
 """
 
 from __future__ import annotations
@@ -28,6 +39,34 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+
+def _parse_skip_adr(raw: list[str] | None) -> list[int]:
+    """Parse ``--skip-adr`` values into a sorted list of ADR numbers.
+
+    Accepts repetition (``--skip-adr 1 --skip-adr 5``), commas
+    (``--skip-adr 1,5,6``), any mix of the two, and either bare numbers or the
+    ``ADR-NNNN`` form an operator reads in the procedure doc.
+
+    Raises:
+        ValueError: a token is not an ADR number. Loud, because a typo'd skip
+            silently shifts every later ADR onto the wrong id.
+    """
+    numbers: set[int] = set()
+    for entry in raw or []:
+        for token in str(entry).split(","):
+            token = token.strip()
+            if not token:
+                continue
+            cleaned = token[4:] if token[:4].lower() == "adr-" else token
+            try:
+                numbers.add(int(cleaned))
+            except ValueError as exc:
+                raise ValueError(
+                    f"--skip-adr: {token!r} is not an ADR number (expected e.g. "
+                    "`7`, `0007` or `ADR-0007`)"
+                ) from exc
+    return sorted(numbers)
 
 
 def _print_reslug_report(result: dict, *, dry_run: bool) -> None:
@@ -53,23 +92,39 @@ def _print_reslug_report(result: dict, *, dry_run: bool) -> None:
         )
 
 
-def _print_seed_report(result: dict) -> None:
+def _print_seed_report(result: dict, *, dry_run: bool) -> None:
     """Print a readable summary of the seed result to stderr.
 
-    Surfaces exactly the fields the task calls out: pages_seen /
-    rows_inserted / rows_skipped / flagged / gate — an operator reads this
-    to decide whether the backfill is safe to consider done.
+    The four outcome counters print separately. ``rows_skipped`` used to be one
+    number covering "already had a row", "the insert raised" and "the insert
+    returned no id" — so the line an operator reads to decide whether the
+    backfill worked could not tell "nothing to do" from "totally broken", which
+    is exactly how a run that inserted zero rows read as a success.
     """
+    mode = "DRY RUN" if dry_run else "APPLY"
     gate = result.get("gate", {}) or {}
     flagged = result.get("flagged", []) or []
     print(
-        f"pages_seen={result.get('pages_seen')} "
+        f"[{mode}] pages_seen={result.get('pages_seen')} "
         f"rows_inserted={result.get('rows_inserted')} "
-        f"rows_skipped={result.get('rows_skipped')} "
+        f"rows_already_present={result.get('rows_already_present')} "
+        f"rows_failed={result.get('rows_failed')} "
+        f"rows_skipped_by_request={result.get('rows_skipped_by_request')} "
+        f"next_id={result.get('next_id')} ({result.get('next_id_basis')}) "
         f"flagged={len(flagged)} "
         f"gate={gate}",
         file=sys.stderr,
     )
+    if result.get("ok") is False:
+        print(
+            f"  ABORTED: {result.get('error')} (resume after ADR-{result.get('resume_after_adr')})",
+            file=sys.stderr,
+        )
+    for entry in result.get("plan") or []:
+        print(
+            f"  PLAN: {entry.get('adr')} -> id {entry.get('planned_id')} ({entry.get('slug')})",
+            file=sys.stderr,
+        )
     for f in flagged:
         print(f"  FLAGGED: {f}", file=sys.stderr)
 
@@ -95,9 +150,23 @@ def cmd_backfill(args: argparse.Namespace) -> int:
         return 0
 
     if getattr(args, "adr_rows", False):
-        result = _forward_admin("seed_adr_rows", {"project_id": project_id, "directory": directory})
-        _print_seed_report(result)
+        dry_run = not getattr(args, "apply", False)
+        payload: dict = {"project_id": project_id, "directory": directory, "dry_run": dry_run}
+        skip = _parse_skip_adr(getattr(args, "skip_adr", None))
+        if skip:
+            payload["skip_adr_numbers"] = skip
+        result = _forward_admin("seed_adr_rows", payload)
+        _print_seed_report(result, dry_run=dry_run)
         print(json.dumps(result))
+        if result.get("ok") is False or (result.get("rows_failed") or 0):
+            return 1
+        if dry_run:
+            # The D35c gate reconciles the ledger against the page census, so on
+            # a dry run it necessarily disagrees — nothing was written. Gating
+            # the preview on it would make every dry run exit non-zero and
+            # teach the operator to ignore the exit code on the run that
+            # matters.
+            return 0
         gate = result.get("gate", {}) or {}
         flagged = result.get("flagged", []) or []
         if not gate.get("exact_match", False) or flagged:
@@ -141,12 +210,27 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         dest="adr_rows",
         action="store_true",
         default=False,
-        help="Seed the adr ledger table from existing per-ADR wiki pages (D35a)",
+        help=(
+            "Seed the adr ledger table from existing per-ADR wiki pages (D35a) "
+            "(dry-run by default; pass --apply to write)"
+        ),
+    )
+    p.add_argument(
+        "--skip-adr",
+        dest="skip_adr",
+        action="append",
+        metavar="N[,N...]",
+        default=None,
+        help=(
+            "ADR number(s) to leave un-inserted because their ledger ids are "
+            "already spent (ADR-0006). Repeatable and comma-separated; accepts "
+            "`7`, `0007` or `ADR-0007`. Only meaningful with --adr-rows"
+        ),
     )
     p.add_argument(
         "--apply",
         action="store_true",
         default=False,
-        help="Apply --reslug-adr-pages (default: dry-run report only, no writes)",
+        help=("Apply --reslug-adr-pages or --adr-rows (default: dry-run report only, no writes)"),
     )
     p.set_defaults(func=cmd_backfill)
