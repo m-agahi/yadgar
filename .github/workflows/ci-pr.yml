@@ -18,23 +18,21 @@ on:
       - 'flake.lock'
       - 'MIGRATION_NOTES.md'
       - '.gitignore'
-  # Nightly master baseline (docs/issues/0001-pr40-carryover.md §2.4). Before
-  # this, ci-release.yml (push-triggered) runs zero pytest — nothing ever
-  # exercised the suite against master, so every "introduced by this PR"
-  # verdict rested on `git diff master...HEAD` plus inference, not a real A/B.
-  # Deliberately `schedule:`, not a trigger on every push to master: the
-  # runner is a SINGLE self-hosted box (see the CI_MAX_PARALLEL knob below —
-  # three concurrent heavy groups already OOM it), and master here receives
-  # many merges a day, so a push trigger would
-  # queue a ~60-90 min full suite behind every single one of them, on top of
-  # concurrent PR runs and ci-release's image builds on version-bump pushes.
-  # Nightly amortizes that cost to once/day while still giving a real,
-  # green-or-red baseline to A/B a PR's failures against.
-  schedule:
-    - cron: '17 3 * * *'  # 03:17 UTC — off-peak, off the top of the hour
-  # Manual escape hatch — verify the baseline on demand without waiting for
-  # the next cron tick (e.g. right after landing this change, or to
-  # re-confirm a suspected master regression before it ages another day).
+  # Master baseline — ON DEMAND ONLY. There is no cron here on purpose.
+  #
+  # A nightly `schedule:` used to live at this spot. It was never asked for,
+  # and the runner is the OWNER'S LAPTOP: a single self-hosted box. The cron
+  # fired at 03:17 UTC, GitHub's scheduler delivered it up to an hour late,
+  # and a ~60-90 min full suite then saturated the machine during working
+  # hours — four SurrealDB instances at ~73% CPU each, load average ~5.7,
+  # discovered only because the laptop got slow.
+  #
+  # The baseline it produced is genuinely useful for A/B-ing a PR's failures
+  # against master, so the capability stays — but it runs when a human asks
+  # for it, not on a timer against someone else's hardware. Trigger it from
+  # the Actions tab, or: gh workflow run 'CI (PR)' --ref master
+  #
+  # Do not re-add `schedule:` without the repo owner explicitly asking.
   workflow_dispatch:
 
 # Cancel superseded test runs on a fresh push to the same PR branch.
