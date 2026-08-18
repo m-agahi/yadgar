@@ -131,3 +131,110 @@ def test_seed_adr_rows_dispatches_async_not_sync() -> None:
     with patch.object(admin_exec, "_ensure_engines", lambda: None):
         with pytest.raises(TypeError, match="dispatch it via run_admin_op_async"):
             admin_exec.run_admin_op("seed_adr_rows", {})
+
+
+# ── task 193: every op the CORE forwards must be REGISTERED ──────────────────
+#
+# The complement of test 1 above. That test asks "is every registered op
+# callable?"; this one asks "is every op the core calls actually registered?".
+# Both halves are needed, and only this half catches a tool that is fully
+# implemented, exported and documented but absent from ``_ADMIN_OPS``:
+# ``run_admin_op`` raises ``KeyError`` and the route maps it to a bare HTTP 400
+# with no logged reason, so the tool looks merely broken rather than unwired.
+#
+# That is exactly how ``wiki_set_mutability`` shipped dead. It is the sole
+# documented escape hatch for the Car J mutability gate, which guards
+# insert/update/delete on ``page_type='adr'`` pages — so with the op missing,
+# the entire ADR corpus was uneditable and undeletable, and the gate's own
+# error text pointed at a tool that returned 400. Verified live 2026-08-18.
+#
+# Derived EMPIRICALLY from the source, so a tool added later with no
+# registration fails here rather than being discovered in production.
+
+
+def _forwarded_op_names() -> dict[str, set[str]]:
+    """Resolve every ``_forward_admin`` op name reachable under ``yadgar/core``.
+
+    Handles the two real call shapes: a string literal, and a module-level
+    ``_NAME_OP = "op"`` constant passed by name (``tools/task.py``,
+    ``backup/quiesce.py``). ``staleness.py`` forwards a *parameter*, which no
+    static scan can resolve; its ops are covered by their own call sites.
+    """
+    import pathlib  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    literal = re.compile(r'_forward_admin\(\s*"([a-z_0-9]+)"')
+    by_const = re.compile(r"_forward_admin\(\s*([A-Z_][A-Z_0-9]*)\s*,")
+    const_def = re.compile(r'^([A-Z_][A-Z_0-9]*)\s*=\s*"([a-z_0-9]+)"', re.M)
+
+    core = pathlib.Path(__file__).resolve().parents[2] / "core"
+    found: dict[str, set[str]] = {}
+    for path in core.rglob("*.py"):
+        src = path.read_text()
+        consts = dict(const_def.findall(src))
+        names = list(literal.findall(src))
+        names += [consts[c] for c in by_const.findall(src) if c in consts]
+        for op in names:
+            found.setdefault(op, set()).add(path.name)
+    return found
+
+
+def test_every_forwarded_op_is_registered() -> None:
+    """No ``_forward_admin`` call may name an op absent from ``_ADMIN_OPS``."""
+    forwarded = _forwarded_op_names()
+    # Guard the guard: if the scan resolves nothing the assertion below is
+    # vacuous, which is the failure mode that lets this rot silently.
+    assert len(forwarded) > 50, f"scan resolved only {len(forwarded)} ops — regex rotted"
+
+    missing = {
+        op: sorted(files) for op, files in forwarded.items() if op not in admin_exec._ADMIN_OPS
+    }
+    assert not missing, (
+        "core forwards admin ops that are not registered — each raises "
+        f"KeyError -> HTTP 400 at runtime: {missing}"
+    )
+
+
+def test_wiki_set_mutability_is_registered_and_callable() -> None:
+    """The Car J mutability escape hatch is reachable through the dispatch.
+
+    Pinned by name as well as by the sweep above: this op is what stands
+    between an operator and a permanently immutable ADR corpus, so a
+    regression here should name itself rather than appear as a dict diff.
+    """
+    impl = admin_exec._ADMIN_OPS.get("wiki_set_mutability")
+    assert impl is not None, "wiki_set_mutability missing from _ADMIN_OPS"
+
+    # Reachable through the real sync dispatcher, reaching its own body rather
+    # than dying in the adapter. A WikiStore stub stands in because the impl
+    # asserts one is initialised before it validates anything.
+    import yadgar._shared.runtime.state as _st  # noqa: PLC0415
+
+    seen: dict = {}
+
+    class _StubWiki:
+        def set_mutability_by_slug(self, slug, value, *, reason):
+            seen.update(slug=slug, value=value, reason=reason)
+            return {"ok": True, "slug": slug, "rows_updated": 1, "page_ids": [7]}
+
+    with (
+        patch.object(admin_exec, "_ensure_engines", lambda: None),
+        patch.object(_st, "_wiki", _StubWiki()),
+    ):
+        # Empty reason is the documented rejection (D26 audit-log requirement),
+        # and it must be refused BEFORE the storage write.
+        rejected = admin_exec.run_admin_op(
+            "wiki_set_mutability", {"slug": "zz-probe", "value": "free", "reason": ""}
+        )
+        assert rejected["ok"] is False
+        assert "reason is required" in rejected["error"]
+        assert seen == {}, "rejected call must not reach the storage writer"
+
+        # The real path: payload reaches the sole writer with all three fields.
+        accepted = admin_exec.run_admin_op(
+            "wiki_set_mutability",
+            {"slug": "zz-probe", "value": "free", "reason": "task 193 pin"},
+        )
+
+    assert accepted["ok"] is True
+    assert seen == {"slug": "zz-probe", "value": "free", "reason": "task 193 pin"}
