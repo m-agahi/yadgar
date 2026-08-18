@@ -353,6 +353,7 @@ jobs:
             yadgar/tests/integration/test_task_list_status_filter.py \
             yadgar/tests/integration/test_task_write_clear_columns.py \
             yadgar/tests/integration/test_task_edges_and_paging.py \
+            yadgar/tests/integration/test_adr_seed_ledger_ids.py \
             -m integration \
             -n 0 \
             -q -ra --tb=short \

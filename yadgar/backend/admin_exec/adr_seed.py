@@ -1,7 +1,15 @@
 """Car G (0047 spine train) — ADR seed (pages→ledger) + retype mutator.
 
 D35a: the SEED is a one-shot admin op the migration merely enables, NOT a
-migration step. Shipped as explicit admin op, idempotent on ``body_slug``.
+migration step. Shipped as explicit admin op, idempotent on the ADR NUMBER
+parsed out of ``body_slug`` — task 168 corrected this from string equality on
+``body_slug`` itself, which never matched once a row carried a canonical slug
+and its page still carried the legacy one.
+
+TWO STORAGE HANDLES. No single storage object has both ``list_wiki_pages`` and
+``create_adr_row``, so ``seed_adr_rows`` takes ``storage`` (wiki) and
+``sql_storage`` (ledger) separately. ``retype_page_type`` is wiki-only and keeps
+its single handle. See ``_StructuralSeedError`` for what one handle cost.
 
 D35b: source of truth = per-ADR wiki PAGES (slug prefix enumeration + body
 parse), NOT parse_index_rows — the index may lag (and historically drops
@@ -22,7 +30,8 @@ destroyed 3,622 memories through a ``>=`` check).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from typing import Any
 
 from yadgar._shared.observability.observe import observe
@@ -276,51 +285,386 @@ def _extract_title_and_status(body: str) -> tuple[str, str, str]:
     return title, status, date
 
 
+@dataclass
+class _SeedRun:
+    """One seed pass: its run-scoped inputs, plus the tally it accumulates.
+
+    Grouped into an object because the I13 caps are hard (params <= 8) and the
+    per-page helper needs all of it — the alternative was a ten-parameter
+    function the hook rejected outright. Every test seam stays a named field
+    constructed in ``seed_adr_rows``; only the argument list is hidden.
+
+    ``rows_skipped`` used to be ONE counter absorbing "already had a row", "the
+    insert raised" and "the insert returned no id", so the report could not tell
+    "nothing to do" from "totally broken" — the wrong-engine bug's observable
+    symptom was ``rows_inserted=0, rows_skipped=236``. Three fields now, three
+    result keys.
+
+    ``present`` holds the ADR NUMBERS already in the ledger: read once before the
+    loop, updated in place on each insert.
+    """
+
+    project_id: str
+    sql_storage: Any
+    skip: set[int]
+    dry_run: bool
+    next_id: int
+    row_inserter: Callable[..., dict[str, object]] | None = None
+    slug_linker: Callable[[int, str], None] | None = None
+    present: set[int] = field(default_factory=set)
+    rows_inserted: int = 0
+    rows_already_present: int = 0
+    rows_failed: int = 0
+    rows_skipped_by_request: int = 0
+    supersedes_links: int = 0
+    supersedes_failed: int = 0
+    flagged: list[dict[str, Any]] = field(default_factory=list)
+    plan: list[dict[str, Any]] = field(default_factory=list)
+    last_inserted_number: int | None = None
+
+
+class _StructuralSeedError(RuntimeError):
+    """The ledger surface itself is wrong — a missing method or a bad signature.
+
+    Car 4 / defect 1: the ledger calls used to run against the SurrealDB handle,
+    which has no ADR methods at all, and the resulting ``AttributeError`` was
+    caught by a blanket ``except Exception`` and counted as a skip. The op then
+    reported ``rows_inserted=0, rows_skipped=236`` — indistinguishable from
+    "already backfilled". A structural fault is NOT a per-row failure: it will
+    hit every remaining page identically, so the loop stops and says so
+    (same lesson as PR #48's ``with_edges`` regression).
+    """
+
+
+@observe(tier="hot", span=False)
+def _normalise_skip_numbers(raw: Iterable[int] | None) -> set[int]:
+    """Coerce the ``skip_adr_numbers`` payload value to a ``set[int]``.
+
+    Annotated ``Iterable[int]`` rather than ``set[int]`` because this op is
+    registered under ``_kwargs_op`` (``fn(**payload)``) and the payload arrives
+    from JSON — a set cannot survive that transport, so the honest declared
+    type is the iterable the CLI actually forwards (a list).
+    """
+    if raw is None:
+        return set()
+    return {int(n) for n in raw}
+
+
+@observe(tier="boundary", metric="backend.admin.adr_seed._present_adr_numbers")
+async def _present_adr_numbers(sql_storage: Any, project_id: str) -> set[int]:
+    """ADR NUMBERS already carrying a ledger row, read once for the whole run.
+
+    Car 3 fixes two halves of one defect. The lookup was keyed on a project id
+    regex-parsed out of the page slug (``yadgar-adr-0001`` → ``yadgar``) while
+    rows live under the real ``owner/repo`` key, so ``list_adr_rows`` returned
+    ``[]`` for every slug shape; and the comparison was exact string equality
+    against the page's CURRENT slug, so a row stamped with a canonical
+    ``body_slug`` never matched its legacy-slugged page — the shape all six
+    existing rows have. Reducing both sides to the ADR NUMBER fixes both, and is
+    symmetric by construction: nothing is rewritten, so no direction can be got
+    wrong.
+
+    Read ONCE before the loop, not per page: 230 pages × a full-table list is
+    230 round trips, normalising once cannot drift from normalising 230 times,
+    and it closes the inverse hole — a number owning both slug shapes was
+    inserted twice by the per-page check.
+
+    Empty set when the ledger handle is absent; the caller decides whether that
+    is fatal (it is, for a real insert).
+    """
+    if sql_storage is None:
+        return set()
+    rows_obj = sql_storage.list_adr_rows(project_id=project_id)
+    if hasattr(rows_obj, "__await__"):
+        rows_obj = await rows_obj
+    if not isinstance(rows_obj, list):
+        return set()
+    present: set[int] = set()
+    for r in rows_obj:
+        if not isinstance(r, dict):
+            continue
+        number = _parse_adr_id_from_slug(r.get("body_slug") or "")
+        if number is not None:
+            present.add(number)
+    return present
+
+
+@observe(tier="boundary", metric="backend.admin.adr_seed._read_next_adr_id")
+async def _read_next_adr_id(sql_storage: Any, project_id: str) -> tuple[int, str]:
+    """The id the NEXT ``adr`` INSERT will take, plus which source said so.
+
+    ``information_schema.TABLES.AUTO_INCREMENT`` first, ``max(id) + 1`` as the
+    fallback. The order is not stylistic: ADR-0006 MEASURED on
+    ``mariadb:11.4.12`` that deleting rows leaves the counter untouched (the next
+    insert took id 2, not 1), so ``max(id) + 1`` under-predicts in exactly the
+    state this table is in — and it is project-scoped while the counter is
+    table-global, so it also under-predicts when another project holds a higher
+    id. The dry run is the human gate in front of an unrepairable write; it must
+    not be able to lie about the numbering.
+
+    Returns ``(next_id, basis)`` — basis ``"information_schema"`` | ``"max_id"``
+    | ``"unavailable"``. A ``"max_id"`` basis is a signal to stop, not a value to
+    trust; that is why it is returned alongside the number.
+    """
+    engine = getattr(sql_storage, "engine", None) or getattr(sql_storage, "_engine", None)
+    if engine is not None:
+        from sqlalchemy import text as _sa_text  # noqa: PLC0415
+
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(
+                    _sa_text(
+                        "SELECT AUTO_INCREMENT FROM information_schema.TABLES "
+                        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'adr'"
+                    )
+                )
+                row = result.first()
+            if row is not None and row[0] is not None:
+                return int(row[0]), "information_schema"
+        except Exception as exc:  # noqa: BLE001 — fall through to the max(id) read
+            logger.warning(
+                "seed_adr_rows: information_schema AUTO_INCREMENT read failed (%s); "
+                "falling back to max(id)+1, which under-predicts after a DELETE",
+                exc,
+            )
+    present = await _present_adr_row_ids(sql_storage, project_id)
+    if not present:
+        return 1, "max_id" if sql_storage is not None else "unavailable"
+    return max(present) + 1, "max_id"
+
+
+@observe(tier="boundary", metric="backend.admin.adr_seed._present_adr_row_ids")
+async def _present_adr_row_ids(sql_storage: Any, project_id: str) -> set[int]:
+    """Ledger ``adr.id`` values for *project_id* — the ``max(id)+1`` fallback input."""
+    if sql_storage is None:
+        return set()
+    rows_obj = sql_storage.list_adr_rows(project_id=project_id)
+    if hasattr(rows_obj, "__await__"):
+        rows_obj = await rows_obj
+    if not isinstance(rows_obj, list):
+        return set()
+    return {int(r["id"]) for r in rows_obj if isinstance(r, dict) and r.get("id")}
+
+
+@observe(tier="stage", metric="backend.admin.adr_seed._seed_one_page")
+async def _seed_one_page(page: dict[str, Any], run: _SeedRun) -> None:
+    """Decide ONE page's outcome, mutating *run*. Raises on a structural fault.
+
+    Four outcomes and nothing else: unparsable (flagged), skipped by request,
+    already present, or handed to ``_insert_one_row``.
+    """
+    slug = page.get("slug") or ""
+    body = page.get("content") or ""
+    number = _parse_adr_id_from_slug(slug)
+    if number is None:
+        run.flagged.append({"slug": slug, "reason": "unparsable slug suffix"})
+        return
+
+    # Car 2 / ADR-0006: the operator-stated skip. Keyed on the NUMBER, not the
+    # slug, so both slug shapes for the same ADR collapse to one decision — a
+    # slug-keyed set would silently miss whichever shape was not typed.
+    if number in run.skip:
+        run.rows_skipped_by_request += 1
+        return
+
+    if number in run.present:
+        run.rows_already_present += 1
+        return
+
+    title, status, date = _extract_title_and_status(body)
+    row_payload: dict[str, Any] = {
+        "project_id": run.project_id,
+        "title": title,
+        "status": status,
+        "decided_on": date or None,
+        "body_slug": slug,
+    }
+
+    if run.dry_run:
+        # planned_id counts from the REAL next AUTO_INCREMENT value, and the
+        # offset is the plan's own length — ids are handed out in insertion
+        # order, so the Nth planned insert takes the Nth free id.
+        run.plan.append(
+            {
+                "adr": f"ADR-{number:04d}",
+                "slug": slug,
+                "planned_id": run.next_id + len(run.plan),
+                "title": title,
+                "status": status,
+            }
+        )
+        run.present.add(number)
+        return
+
+    await _insert_one_row(run, number=number, slug=slug, body=body, payload=row_payload)
+
+
+@observe(tier="stage", metric="backend.admin.adr_seed._insert_one_row")
+async def _insert_one_row(
+    run: _SeedRun,
+    *,
+    number: int,
+    slug: str,
+    body: str,
+    payload: dict[str, Any],
+) -> None:
+    """Write one ``adr`` row and its follow-on links, mutating *run*.
+
+    Split from ``_seed_one_page`` because the two do different jobs (classify vs
+    write) and the combined function exceeded the I13 hard caps.
+
+    Raises:
+        _StructuralSeedError: the ledger SURFACE is wrong (missing method,
+            signature mismatch). Every remaining page would fail identically, so
+            the caller stops rather than counting 230 identical faults.
+    """
+    try:
+        if run.row_inserter is not None:
+            insert_result: object = run.row_inserter(payload)
+            result: dict[str, object] | object = (
+                insert_result if isinstance(insert_result, dict) else {}
+            )
+        else:
+            result = await _insert_adr_row(run.sql_storage, payload)
+    except (AttributeError, TypeError) as exc:
+        # Swallowing this is what made the wrong-engine defect invisible for the
+        # op's whole life: an AttributeError became an empty dict, then a missing
+        # id, then a skip, then a success-shaped report.
+        raise _StructuralSeedError(
+            f"the ledger surface cannot take an ADR insert ({type(exc).__name__}: {exc}); "
+            f"failed at slug={slug!r}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — this ROW failed; the next may not
+        logger.warning("seed_adr_rows: row insert failed for slug=%s err=%s", slug, exc)
+        run.rows_failed += 1
+        return
+
+    inserted_id = int(str((result if isinstance(result, dict) else {}).get("id") or 0))
+    if not inserted_id:
+        logger.warning("seed_adr_rows: insert returned no id for slug=%s", slug)
+        run.rows_failed += 1
+        return
+    run.rows_inserted += 1
+    run.last_inserted_number = number
+    run.present.add(number)
+
+    await _link_and_supersede(run, adr_id=inserted_id, slug=slug, body=body)
+
+    # Flag the page-only case (ADR-0124 documented: no index row, body exists).
+    if not _has_index_provenance({"slug": slug}):
+        run.flagged.append(
+            {
+                "slug": slug,
+                "adr_id": f"ADR-{number:04d}",
+                "reason": "no index row provenance (D35b: page-only)",
+            }
+        )
+
+
+@observe(tier="stage", metric="backend.admin.adr_seed._link_and_supersede")
+async def _link_and_supersede(
+    run: _SeedRun,
+    *,
+    adr_id: int,
+    slug: str,
+    body: str,
+) -> None:
+    """Re-stamp ``body_slug`` and insert the page's ``supersedes`` links.
+
+    Both best-effort AND counted: ``create_adr_row`` already wrote ``body_slug``
+    in the INSERT, and an unresolvable supersede target is expected residue.
+    Counted because ``supersedes_links += 1`` used to run unconditionally
+    against a helper that swallowed its own failure — reporting failed links as
+    successes.
+    """
+    if run.slug_linker is not None:
+        try:
+            run.slug_linker(adr_id, slug)
+        except Exception as exc:  # noqa: BLE001 — same best-effort contract as the real path
+            logger.warning(
+                "seed_adr_rows: injected slug_linker failed for id=%s slug=%s: %s",
+                adr_id,
+                slug,
+                exc,
+            )
+    else:
+        await _link_body_slug(run.sql_storage, adr_id, slug)
+
+    # The rendered body carries ``supersedes: ADR-0001,ADR-0002`` as a bullet (D23).
+    for tid in _parse_supersede_targets_from_body(body):
+        if await _add_supersedes_link(run.sql_storage, adr_id, tid):
+            run.supersedes_links += 1
+        else:
+            run.supersedes_failed += 1
+
+
 @observe(tier="boundary", metric="backend.admin.adr_seed.seed_adr_rows")
-async def seed_adr_rows(  # noqa: C901 - cohesive: orchestrator stitches idempotency, per-page parse, ledger insert, supersede links, D35c gate — same irreducible surface Car F allowlisted on WikiStore.add (cyclomatic=16, 2026-08-09).
+async def seed_adr_rows(
     *,
     project_id: str,
     directory: str,
     storage: Any | None = None,
-    body_writer: Callable[..., dict[str, object]] | None = None,
+    sql_storage: Any | None = None,
+    skip_adr_numbers: Iterable[int] | None = None,
+    dry_run: bool = False,
     row_inserter: Callable[..., dict[str, object]] | None = None,
     slug_linker: Callable[[int, str], None] | None = None,
 ) -> dict[str, object]:
     """One-shot: lift existing per-ADR wiki PAGES into the ``adr`` ledger table.
 
     Source of truth = per-ADR PAGES (D35b), NOT the index — enumerates pages
-    via slug prefix and parses each body. Idempotent on ``body_slug``:
-    re-running converges; a second run inserts 0 rows. Metadata absent from
-    the page body is recovered from the index row where one exists; where
-    none exists (ADR-0124) it is flagged, not dropped.
+    via slug prefix and parses each body. Idempotent on the ADR NUMBER behind
+    ``body_slug``: re-running converges; a second run inserts 0 rows.
+
+    TWO STORAGE HANDLES, not one. This op used to resolve ``_get_storage()``
+    alone and call the ADR methods on it; because it is registered under
+    ``_kwargs_op`` (``fn(**payload)``, which never injects ``storage=``),
+    ``storage`` was ALWAYS ``None`` in production and always resolved to the
+    engine with zero ADR methods. Split now, resolved the way the sibling
+    one-shot seed (``seed_adr_tier_subsystem``) already resolved them.
 
     Args:
-        project_id: the canonical project key (Car A0 derive-and-cache).
+        project_id: the canonical ``owner/repo`` project key.
         directory: absolute project root for §25 wiki resolution.
-        storage: optional storage override (test seam); defaults to the live
-            runtime storage.
-        body_writer: optional callable (per-ADR page dict) — NOT used today
-            (the body pages already exist; the seed reads them, never writes).
-            Retained for the dry-run path to validate the body parse.
-        row_inserter: optional callable replacing
-            ``MariaStorageEngine.create_adr_row`` — test seam.
-        slug_linker: optional callable replacing
-            ``MariaStorageEngine.set_adr_body_slug`` — test seam.
+        storage: WIKI handle (SurrealDB) — ``list_wiki_pages`` /
+            ``get_wiki_page_by_slug*``. Optional test seam; defaults to
+            ``_get_storage()``.
+        sql_storage: LEDGER handle (MariaDB) — ``list_adr_rows`` /
+            ``create_adr_row`` / ``set_adr_body_slug`` / ``add_adr_supersedes``.
+            Optional test seam; defaults to ``_get_sql_storage()``, which is
+            legitimately ``None`` when engine #2 did not come up. A real insert
+            against a ``None`` handle returns ``{"ok": False}``, not a skip.
+        skip_adr_numbers: ADR numbers to leave un-inserted (ADR-0006: the ids
+            they need are already spent). Keyed on the NUMBER so both slug
+            shapes for one ADR collapse to a single decision.
+        dry_run: compute and return the planned (ADR number → ledger id)
+            mapping without writing anything.
+        row_inserter: optional callable replacing ``create_adr_row`` — test
+            seam. When supplied it owns idempotency, so the pre-read
+            present-set is skipped.
+        slug_linker: optional callable replacing ``set_adr_body_slug`` — test
+            seam.
 
     Returns:
         dict with keys:
-          - pages_seen: total per-ADR pages enumerated (D35b source of truth)
-          - rows_inserted: new ``adr`` rows this run
-          - rows_skipped: pages that already had a row (``body_slug`` set)
-          - flagged: pages with a metadata gap (e.g. ADR-0124 missing
-            index-row provenance) — surfaced, not dropped
-          - supersedes_links: number of ``adr_supersedes`` join rows inserted
-          - gate: ``{"index_rows": N, "pages_seen": N, "page_type_adr_rows":
-            N, "exact_match": True/False}`` — D35c verification gate output
+          - pages_seen: per-ADR pages enumerated (D35b source of truth). Counts
+            SLUGS, so an ADR owning both slug shapes is counted twice — 236 for a
+            230-ADR corpus with six re-slugged namesakes.
+          - rows_inserted / rows_already_present / rows_failed /
+            rows_skipped_by_request: the four outcomes ``rows_skipped`` conflated.
+          - next_id / next_id_basis: the id the first insert took (or would), and
+            which source said so.
+          - plan: dry-run only — one entry per planned insert.
+          - flagged, supersedes_links, supersedes_failed.
+          - gate: D35c output ``{"index_rows", "pages_seen",
+            "page_type_adr_rows", "exact_match"}``.
+        On a structural fault: ``{"ok": False, "error", "resume_after_adr"}``
+        alongside the partial counts. Never raises — ``admin_exec`` pins the
+        never-raise error model and both tool shells key on ``ok is False``.
 
-    D35c: caller MUST inspect ``gate["exact_match"]`` and refuse to ship the
-    cutover when it is False. The residue (pages with no index row, extra
-    page_type rows) is explained in ``flagged`` — never silently absorbed.
+    D35c: caller MUST inspect ``gate["exact_match"]``. NOTE that the gate is
+    computed AFTER the writes commit, so a False there is a post-mortem, not a
+    guard — use ``dry_run`` for the pre-write check.
     """
     if storage is None:
         from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
@@ -328,25 +672,19 @@ async def seed_adr_rows(  # noqa: C901 - cohesive: orchestrator stitches idempot
         storage = _get_storage()
     if storage is None:
         raise RuntimeError("seed_adr_rows requires storage; runtime storage not initialised")
+    if sql_storage is None:
+        from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
+
+        sql_storage = _get_sql_storage()
+
+    skip = _normalise_skip_numbers(skip_adr_numbers)
 
     # D35b: enumerate per-ADR pages (slug prefix + filter), not parse_index_rows.
-    # The slug prefix the live yadgar project uses today is ``yadgar-adr-``
-    # (legacy Car 2 format) — Car L's reslug is shipped but the operator runs
-    # it dry-run by default. The seed is format-agnostic: any slug matching
-    # ``-adr-NNNN`` is consumed.
-    #
-    # C10 (0047 §5, judgement site (d)): the prefix is built from ADR-0202's
-    # CANONICAL slug form (``owner/repo`` → ``owner_repo`` via
-    # ``reslug._project_id_to_slug``), not ``basename(directory)``. Basename was
-    # a project-name surrogate: two checkouts of different repos with the same
-    # directory name produced the same prefix.
-    #
-    # BOTH prefixes are enumerated EVERY run, and the results are UNIONED
-    # (de-duplicated by slug). The live corpus is still on the legacy
-    # ``yadgar-adr-`` shape, so a canonical-only scan (or a break-on-first-
-    # nonempty loop that stops the moment the canonical prefix matches the
-    # single already-reslugged page) would silently find just that one page
-    # and never touch the 200+ legacy-format pages this seed exists to lift.
+    # BOTH prefixes are scanned EVERY run and the results UNIONED (de-duplicated
+    # by slug) — see ``_adr_slug_prefixes`` for which two and why. A
+    # canonical-only scan, or a break-on-first-nonempty loop, finds the single
+    # already-reslugged page and never touches the 200+ legacy-format pages this
+    # seed exists to lift.
     seen_slugs: set[str] = set()
     pages: list[dict[str, Any]] = []
     for _prefix in _adr_slug_prefixes(project_id, directory):
@@ -363,178 +701,88 @@ async def seed_adr_rows(  # noqa: C901 - cohesive: orchestrator stitches idempot
             seen_slugs.add(_slug)
             pages.append(_page)
 
-    # Ascending ADR-number insertion order (task decision, backfill run):
-    # insertion order determines which AUTO_INCREMENT ledger id a page lands
-    # on, so pages must be inserted 0002, 0003, ... in numeric order for the
-    # "historical ADR-0001 skipped, 0002-0230 land on ids 2-230" numbering
-    # scheme to hold. Pages whose slug does not parse (flagged below with
-    # reason "unparsable slug suffix", never inserted) sort LAST — they
-    # can't be assigned a numeric position, and since they are flagged and
-    # skipped before ever reaching the insert call, their exact placement in
-    # this list has no effect on ledger ids; sorting them last just keeps
-    # the enumeration order deterministic and out of the way of the
-    # numerically-meaningful pages.
+    # Ascending ADR-number insertion order. Insertion order is the ONLY lever on
+    # which AUTO_INCREMENT id a page lands on, so the non-skipped pages must go
+    # out in numeric order for "skip the spent numbers, the rest land on their
+    # own" to hold. Unparsable slugs sort LAST: they are flagged and never
+    # inserted, so their placement cannot move an id — sorting them out of the
+    # way just keeps the enumeration deterministic.
     pages = sorted(pages, key=_adr_page_sort_key)
 
     pages_seen = len(pages)
-    rows_inserted = 0
-    rows_skipped = 0
-    flagged: list[dict[str, Any]] = []
-    supersedes_links = 0
 
-    for page in pages:
-        slug = page.get("slug") or ""
-        body = page.get("content") or ""
-        adr_id_int = _parse_adr_id_from_slug(slug)
-        if adr_id_int is None:
-            flagged.append({"slug": slug, "reason": "unparsable slug suffix"})
-            continue
-
-        # Idempotency check: if the adr row already has a body_slug stamp,
-        # the seed skips (keyed on body_slug per D35a).
-        if row_inserter is None:
-            existing = await _read_existing_adr_row(storage, slug)
-            if existing is not None:
-                existing_slug = existing.get("body_slug") if hasattr(existing, "get") else None
-                if existing_slug:
-                    rows_skipped += 1
-                    continue
-        # When a custom row_inserter is injected (tests), idempotency is the
-        # inserter's job — we count the call as a "would-insert".
-
-        title, status, date = _extract_title_and_status(body)
-
-        # Compose the row payload (same shape as ``create_adr_row``).
-        row_payload: dict[str, Any] = {
-            "project_id": project_id,
-            "title": title,
-            "status": status,
-            "decided_on": date or None,
-            "body_slug": slug,
-        }
-
-        try:
-            if row_inserter is not None:
-                insert_result: object = row_inserter(row_payload)
-                result: dict[str, object] | object = (
-                    insert_result if isinstance(insert_result, dict) else {}
-                )
-            else:
-                result = await _insert_adr_row(storage, row_payload)
-        except Exception as exc:  # noqa: BLE001 — idempotent on duplicate
-            logger.debug("seed_adr_rows: row insert failed for slug=%s err=%s", slug, exc)
-            rows_skipped += 1
-            continue
-
-        inserted_id = int(str((result if isinstance(result, dict) else {}).get("id") or 0))
-        if not inserted_id:
-            rows_skipped += 1
-            continue
-        rows_inserted += 1
-
-        # Stamp body_slug (D4: body lives in SurrealDB; the row only knows
-        # the slug). The inserter path above may have already done this when
-        # body_slug was passed in the INSERT; we re-stamp defensively in case
-        # the inserter deferred it.
-        try:
-            if slug_linker is not None:
-                slug_linker(inserted_id, slug)
-            else:
-                await _link_body_slug(storage, inserted_id, slug)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "seed_adr_rows: set_adr_body_slug failed for id=%s slug=%s: %s",
-                inserted_id,
-                slug,
-                exc,
-            )
-
-        # Recover supersede targets from the page body (the rendered body
-        # carries ``supersedes: ADR-0001,ADR-0002`` as a bullet — D23).
-        targets = _parse_supersede_targets_from_body(body)
-        for tid in targets:
-            try:
-                await _add_supersedes_link(storage, inserted_id, tid)
-                supersedes_links += 1
-            except Exception as exc:  # noqa: BLE001
-                logger.debug(
-                    "seed_adr_rows: supersede link failed for adr_id=%s target=%s: %s",
-                    inserted_id,
-                    tid,
-                    exc,
-                )
-
-        # Flag the page-only case (ADR-0124 documented: no index row, body
-        # exists; metadata filled from the page and flagged for review).
-        # Today the seed is page-driven, so EVERY page is "page-only" by
-        # construction — the flag is informational; it surfaces the
-        # count delta between the index parse (pre-G) and the page census
-        # (post-G) so the operator can see what the index would have missed.
-        if not _has_index_provenance(page):
-            flagged.append(
-                {
-                    "slug": slug,
-                    "adr_id": f"ADR-{adr_id_int:04d}",
-                    "reason": "no index row provenance (D35b: page-only)",
-                }
-            )
-
-    # D35c: the verification gate. EXACT equality on the stated predicate.
-    # Index-rows vs pages-seen vs page_type='adr' rows must reconcile. Today
-    # the page_type counts come from the ledger after this run; the index
-    # rows come from the legacy <project>-adr-index page if it still exists.
-    index_rows = _count_legacy_index_rows(directory, storage)
-    page_type_adr_rows = await _count_page_type_adr_rows(storage, project_id)
-    exact_match = _exact_equality_gate(
-        index_rows=index_rows,
-        pages_seen=pages_seen,
-        page_type_adr_rows=page_type_adr_rows,
+    # Car 3: ONE pre-loop read of what the ledger already holds, reduced to ADR
+    # NUMBERS. An injected ``row_inserter`` owns its own idempotency (that is
+    # what the seam is for), so the set stays empty on that path.
+    next_id, next_id_basis = await _read_next_adr_id(sql_storage, project_id)
+    run = _SeedRun(
+        project_id=project_id,
+        sql_storage=sql_storage,
+        skip=skip,
+        dry_run=dry_run,
+        next_id=next_id,
+        row_inserter=row_inserter,
+        slug_linker=slug_linker,
+        present=(
+            set()
+            if row_inserter is not None
+            else await _present_adr_numbers(sql_storage, project_id)
+        ),
     )
 
-    return {
+    structural_error: str | None = None
+    for page in pages:
+        try:
+            await _seed_one_page(page, run)
+        except _StructuralSeedError as exc:
+            structural_error = str(exc)
+            break
+
+    # D35c: the verification gate. EXACT equality on the stated predicate.
+    # Index-rows vs pages-seen vs page_type='adr' rows must reconcile. The
+    # index rows come from the legacy <project>-adr-index WIKI page; the row
+    # count comes from the LEDGER — the two handles, not one.
+    index_rows = _count_legacy_index_rows(directory, storage)
+    page_type_adr_rows = await _count_page_type_adr_rows(sql_storage, project_id)
+    result_dict: dict[str, object] = {
         "project_id": project_id,
         "directory": directory,
+        "dry_run": dry_run,
         "pages_seen": pages_seen,
-        "rows_inserted": rows_inserted,
-        "rows_skipped": rows_skipped,
-        "flagged": flagged,
-        "supersedes_links": supersedes_links,
+        "rows_inserted": run.rows_inserted,
+        "rows_already_present": run.rows_already_present,
+        "rows_failed": run.rows_failed,
+        "rows_skipped_by_request": run.rows_skipped_by_request,
+        "skip_adr_numbers": sorted(skip),
+        "next_id": next_id,
+        "next_id_basis": next_id_basis,
+        "flagged": run.flagged,
+        "supersedes_links": run.supersedes_links,
+        "supersedes_failed": run.supersedes_failed,
         "gate": {
             "index_rows": index_rows,
             "pages_seen": pages_seen,
             "page_type_adr_rows": page_type_adr_rows,
-            "exact_match": exact_match,
+            "exact_match": _exact_equality_gate(
+                index_rows=index_rows,
+                pages_seen=pages_seen,
+                page_type_adr_rows=page_type_adr_rows,
+            ),
         },
     }
+    if dry_run:
+        result_dict["plan"] = run.plan
+    if structural_error is not None:
+        # ERROR MODEL (admin_exec): never raise. The partial counts and the
+        # resume point ride along — an operator whose 230-row insert aborted
+        # mid-way needs to know where it stopped, and ``adr.id`` has no undo.
+        result_dict["ok"] = False
+        result_dict["error"] = structural_error
+        result_dict["resume_after_adr"] = run.last_inserted_number
+    return result_dict
 
 
 # ── internal storage helpers (kept private to this module) ─────────────────
-
-
-@observe(tier="boundary", metric="backend.admin.adr_seed._read_existing_adr_row")
-async def _read_existing_adr_row(storage: Any, slug: str) -> object:
-    """Look up the ``adr`` row by ``body_slug`` (D4 idempotency key).
-
-    Async because the MariaStorageEngine list_adr_rows is async; this
-    helper is invoked from the async seed loop. Returns ``None`` when
-    the storage surface is partial (the test stub path) or when no row
-    exists with that body_slug.
-    """
-    project_id = _project_slug_from_page_slug(slug)
-    try:
-        rows_obj = storage.list_adr_rows(project_id=project_id)
-        # Storage returns a coroutine on the real engine; tests inject
-        # sync stubs that return a list directly. Handle both shapes.
-        if hasattr(rows_obj, "__await__"):
-            rows_obj = await rows_obj
-    except Exception:  # noqa: BLE001
-        return None
-    if not isinstance(rows_obj, list):
-        return None
-    for r in rows_obj:
-        if isinstance(r, dict) and (r.get("body_slug") or "") == slug:
-            return r
-    return None
 
 
 @observe(tier="hot", span=False)
@@ -570,53 +818,42 @@ def _adr_slug_prefixes(project_id: str, directory: str) -> list[str]:
     return list(dict.fromkeys(p for p in prefixes if p))
 
 
-def _project_slug_from_page_slug(slug: str) -> str:
-    """Extract the project part of a per-ADR page slug: ``X-adr-0001`` → ``X``.
-
-    NOT ``identity.derive_project_id`` despite the old name
-    (``_derive_project_id_for_slug``, renamed by C10 §5(d)). This derives
-    nothing about the host — it regex-parses a slug that was already built
-    elsewhere, and is used only to look a row back up by ``body_slug``. The old
-    name invited the next reader to delete it as a duplicate of the real
-    resolver; it is not one.
-    """
-    import re as _re
-
-    m = _re.match(r"^(.+?)[-_]adr-\d{4}$", slug or "")
-    return m.group(1) if m else ""
-
-
 @observe(tier="boundary", metric="backend.admin.adr_seed._insert_adr_row")
-async def _insert_adr_row(storage: Any, payload: dict[str, object]) -> object:
+async def _insert_adr_row(sql_storage: Any, payload: dict[str, object]) -> object:
     """Insert one ``adr`` row via ``MariaStorageEngine.create_adr_row``.
 
-    Returns the inserted row dict (carries the AUTO_INCREMENT id per
-    ADR-0197). Async because ``create_adr_row`` is async; tests inject
-    sync stubs that return a dict directly — handled below.
+    Returns the inserted row dict (carries the AUTO_INCREMENT id per ADR-0197).
+    Async because ``create_adr_row`` is async; tests inject sync stubs that
+    return a dict directly — handled below.
+
+    RAISES: the ``except Exception: return {}`` that used to sit here is what
+    made the wrong-engine defect silent. The caller cannot distinguish a
+    structural fault from a per-row failure if this swallows both.
     """
-    try:
-        result_obj = storage.create_adr_row(
-            project_id=str(payload.get("project_id", "")),
-            title=str(payload.get("title", "")),
-            status=str(payload.get("status", "open")),
-            decided_on=payload.get("decided_on"),
-            subsystem=payload.get("subsystem"),
-            tier=payload.get("tier"),
-            body_slug=payload.get("body_slug"),
-        )
-        if hasattr(result_obj, "__await__"):
-            result_obj = await result_obj
-    except Exception:  # noqa: BLE001
-        return {}
+    result_obj = sql_storage.create_adr_row(
+        project_id=str(payload.get("project_id", "")),
+        title=str(payload.get("title", "")),
+        status=str(payload.get("status", "open")),
+        decided_on=payload.get("decided_on"),
+        subsystem=payload.get("subsystem"),
+        tier=payload.get("tier"),
+        body_slug=payload.get("body_slug"),
+    )
+    if hasattr(result_obj, "__await__"):
+        result_obj = await result_obj
     return result_obj if isinstance(result_obj, dict) else {}
 
 
 @observe(tier="boundary", metric="backend.admin.adr_seed._link_body_slug")
-async def _link_body_slug(storage: Any, adr_id: int, slug: str) -> None:
+async def _link_body_slug(sql_storage: Any, adr_id: int, slug: str) -> None:
     """Stamp the body_slug onto an ``adr`` row (D4: wiki body stays in SurrealDB;
-    the ledger row only carries the slug pointer)."""
+    the ledger row only carries the slug pointer).
+
+    Best-effort: the row already carries its slug from the INSERT, so a failure
+    here is logged at WARNING and never counted as a row failure.
+    """
     try:
-        result_obj = storage.set_adr_body_slug(adr_id=adr_id, body_slug=slug)
+        result_obj = sql_storage.set_adr_body_slug(adr_id=adr_id, body_slug=slug)
         if hasattr(result_obj, "__await__"):
             await result_obj
     except Exception as exc:  # noqa: BLE001
@@ -629,16 +866,28 @@ async def _link_body_slug(storage: Any, adr_id: int, slug: str) -> None:
 
 
 @observe(tier="boundary", metric="backend.admin.adr_seed._add_supersedes_link")
-async def _add_supersedes_link(storage: Any, adr_id: int, supersedes_id: int) -> None:
+async def _add_supersedes_link(sql_storage: Any, adr_id: int, supersedes_id: int) -> bool:
     """Insert one ``adr_supersedes`` join row (D23: supersede is the link,
-    not a column mutation)."""
+    not a column mutation).
+
+    Returns whether the link landed. It used to return ``None`` on both paths
+    while swallowing the exception, so the caller's ``supersedes_links += 1``
+    counted ATTEMPTS and reported failed links as successes — the same
+    silent-success family as the rest of this file.
+    """
     try:
-        result_obj = storage.add_adr_supersedes(adr_id=adr_id, supersedes_id=supersedes_id)
+        result_obj = sql_storage.add_adr_supersedes(adr_id=adr_id, supersedes_id=supersedes_id)
         if hasattr(result_obj, "__await__"):
             await result_obj
-    except Exception:  # noqa: BLE001
-        return None
-    return None
+    except Exception as exc:  # noqa: BLE001 — a dangling target is expected residue
+        logger.warning(
+            "seed_adr_rows: supersede link failed for adr_id=%s target=%s: %s",
+            adr_id,
+            supersedes_id,
+            exc,
+        )
+        return False
+    return True
 
 
 @observe(tier="stage", metric="backend.admin.adr_seed._parse_supersede_targets_from_body")
@@ -701,7 +950,12 @@ def _count_legacy_index_rows(directory: str, storage: Any) -> int:
             page = storage.get_wiki_page_by_slug(slug)
         if not page:
             return 0
-    except Exception:  # noqa: BLE001
+    except AttributeError:
+        # A PARTIAL wiki surface only — the stub storages the unit tests inject
+        # expose ``list_wiki_pages`` and nothing else. Narrowed from a blanket
+        # ``except Exception`` (Car 4): a real query error must not read as
+        # "the index page is gone", which is what the D35c gate would then
+        # silently absorb as a legacy-trace of 0.
         return 0
     body = page.get("content") or ""
     # Count the table rows: lines starting with ``| ADR-``.
@@ -711,7 +965,7 @@ def _count_legacy_index_rows(directory: str, storage: Any) -> int:
 
 
 @observe(tier="boundary", metric="backend.admin.adr_seed._count_page_type_adr_rows")
-async def _count_page_type_adr_rows(storage: Any, project_id: str) -> int:
+async def _count_page_type_adr_rows(sql_storage: Any, project_id: str) -> int:
     """Count rows in the ``adr`` ledger table for *project_id*.
 
     Reads via ``list_adr_rows`` (the same path Car F re-pointed onto); the
@@ -719,13 +973,16 @@ async def _count_page_type_adr_rows(storage: Any, project_id: str) -> int:
     ``project_id`` (migration 002, ``ix_adr_project_id``), so this is a
     cheap COUNT-style query. We list because the seed runs once; the
     ledger already enforces id allocation via AUTO_INCREMENT.
+
+    Reaches the LEDGER handle. It used to reach the wiki one, where
+    ``list_adr_rows`` does not exist — so this counter read 0 on every
+    production call and the D35c gate reconciled against a fiction.
     """
-    try:
-        rows_obj = storage.list_adr_rows(project_id=project_id)
-        if hasattr(rows_obj, "__await__"):
-            rows_obj = await rows_obj
-    except Exception:  # noqa: BLE001
+    if sql_storage is None:
         return 0
+    rows_obj = sql_storage.list_adr_rows(project_id=project_id)
+    if hasattr(rows_obj, "__await__"):
+        rows_obj = await rows_obj
     if not isinstance(rows_obj, list):
         return 0
     return sum(
