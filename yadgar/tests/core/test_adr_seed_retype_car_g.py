@@ -1074,3 +1074,63 @@ class TestSupersedeResolvesThroughMap:
         assert result["supersedes_unresolved"] == 1
         reasons = " ".join(str(f.get("reason", "")) for f in result["flagged"])
         assert "ADR-0001" in reasons and "no row" in reasons
+
+    @pytest.mark.asyncio
+    async def test_resumed_run_resolves_a_target_that_landed_in_an_earlier_pass(self):
+        """The map is seeded from EXISTING rows, so a resume still links.
+
+        This is the production scenario, not a corner: `_StructuralSeedError`
+        stops a bad run mid-way BY DESIGN, so the 230-row backfill is expected
+        to be resumed. On a resume the target of a `supersedes:` line landed in
+        an EARLIER pass, so nothing in this run's insert loop can know its id —
+        only `_present_adr_number_to_id` can, by parsing the number back out of
+        `body_slug`.
+
+        The pre-existing row deliberately carries the CANONICAL slug
+        (`m-agahi_yadgar_adr-0001`) while its page carries the LEGACY one
+        (`yadgar-adr-0001`). That is the shape the live corpus is actually in —
+        the mismatch Car 3 keyed on the NUMBER to survive — so this also pins
+        that the map's parse accepts both separators.
+        """
+        from yadgar.backend.admin_exec import adr_seed
+
+        pages = [
+            {"slug": "yadgar-adr-0001", "content": "# ADR-0001: first\nbody", "tags": []},
+            {
+                "slug": "yadgar-adr-0002",
+                "content": "# ADR-0002: second\n- supersedes: ADR-0001\nbody",
+                "tags": [],
+            },
+        ]
+        links: list[tuple[int, int]] = []
+
+        class _ResumedSqlDouble:
+            """ADR-0001 already landed — at id 500, which is NOT its number."""
+
+            def list_adr_rows(self, **_kw: object) -> list[dict]:
+                return [{"id": 500, "body_slug": "m-agahi_yadgar_adr-0001"}]
+
+            def create_adr_row(self, **_kw: object) -> dict:
+                return {"id": 777}
+
+            def add_adr_supersedes(self, *, adr_id: int, supersedes_id: int) -> dict:
+                links.append((adr_id, supersedes_id))
+                return {"ok": True}
+
+        result = await adr_seed.seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/tmp/yadgar",
+            storage=_OrderFakeStorage(pages),
+            sql_storage=_ResumedSqlDouble(),
+            # NO row_inserter: that seam zeroes the map by design, so it would
+            # bypass the very function under test.
+            slug_linker=lambda adr_id, slug: None,
+        )
+
+        assert result["rows_already_present"] == 1, "ADR-0001 must not be inserted twice"
+        assert result["rows_inserted"] == 1
+        assert links == [(777, 500)], (
+            "ADR-0002 (row 777) must supersede ADR-0001's EXISTING row 500, read back "
+            f"from body_slug; got {links}"
+        )
+        assert result["supersedes_unresolved"] == 0
