@@ -42,7 +42,7 @@ volumes:
 
 services:
   backend:
-    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.76.1}
+    image: openfantasy/yadgar-backend:${BACKEND_VERSION:-5.76.2}
     build:
       context: .
       dockerfile: Dockerfile.backend

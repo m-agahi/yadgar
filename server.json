@@ -8,7 +8,7 @@
     "source": "github"
   },
   "version": "5.183.6",
-  "backend_version": "5.76.1",
+  "backend_version": "5.76.2",
   "remotes": [
     {
       "type": "streamable-http",
