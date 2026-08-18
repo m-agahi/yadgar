@@ -1,3 +1,15 @@
+> **SUPERSEDED 2026-08-18 — do not run this.**
+>
+> Replaced by `relanding-adrs-onto-row-ids.md`. This procedure preserves the historical ADR number
+> in the slug and points `body_slug` at the existing page. The decided shape is the opposite: the
+> ledger row is written first, its **id is authoritative**, the body page is re-created at a slug
+> derived from that id, and the old page is deleted.
+>
+> It is also stale in three ways that were never fixed here: Step 3's arithmetic assumes ONE spent
+> id (it is nine and grows), Step 4's idempotency claim is false for exactly the pages the skip
+> covers, and Step 2 instructs `yadgar backfill --reslug-adr-pages --apply`, which cannot run at all
+> because ADR pages are `locked` (ledger task 192).
+
 # Prompt — backfill a project's ADR wiki pages into the `adr` ledger
 
 **Human-invoked, one project per run. Nothing here runs automatically.**
