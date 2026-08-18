@@ -123,6 +123,7 @@ carve-out-3  yadgar/_shared/file_queue/queue.py            # _find_terminal walk
 carve-out-3  yadgar/backend/retrieval/core.py              # basename(directory) is EMBEDDING INPUT TEXT, not a scope key; changing it
                                                            # silently shifts new rows out of the existing corpus's cosine space.
 carve-out-3  yadgar/backend/admin_exec/adr_seed.py         # basename() project-NAME surrogate for display; never compared to an identity
+carve-out-3  yadgar/backend/admin_exec/adr_retype.py       # retype_page_type moved here from adr_seed.py 2026-08-18 (I30 file_loc cap); the `directory` param is unchanged pre-existing code and resolves a WIKI page by slug+directory, never an identity — same carve-out as the entry above
 
 # ── carve-out 2: a signature named after the stored directory_context column ─
 carve-out-2  yadgar/_shared/storage/_project_id_writer.py  # _resolve_project_id_for_write(directory_context) — the column's own writer

@@ -858,3 +858,107 @@ class TestPerAdrSlugRegexBothSeparators:
             "m-agahi_yadgar_adr-0001",
             "m-agahi_yadgar_adr-0002",
         ]
+
+
+# ── failure visibility (tasks 174 / 175, VM rehearsal 2026-08-18) ────────────
+
+
+class _FailingSqlStorage:
+    """Ledger handle whose insert always raises the given exception."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def create_adr_row(self, **_kw: object) -> dict:
+        raise self._exc
+
+    def list_adr_rows(self, **_kw: object) -> list[dict]:
+        return []
+
+
+class _UnknownProjectError(RuntimeError):
+    """Stand-in for the ADR-0078 registry guard's error.
+
+    Deliberately NOT AttributeError/TypeError — that is the whole point of
+    task 175. The real one lives in ``_shared.storage.sql.registry`` and the
+    seed must not depend on its type to recognise a structural fault.
+    """
+
+
+def _two_page_storage() -> _OrderFakeStorage:
+    return _OrderFakeStorage(
+        [
+            {"slug": "yadgar-adr-0001", "content": "# ADR-0001: a\nbody", "tags": []},
+            {"slug": "yadgar-adr-0002", "content": "# ADR-0002: b\nbody", "tags": []},
+        ]
+    )
+
+
+class TestFailureVisibility:
+    """A failed insert must say WHY in the result dict, and a structural fault must stop.
+
+    Both defects were found by the 2026-08-18 VM rehearsal, where all 230 pages
+    failed on ``UnknownProjectError`` (the project registry was never seeded on
+    that VM). The op reported ``rows_failed=230, flagged=[]`` — an operator on
+    the live box, who cannot read the backend container log by any sanctioned
+    route, had no way to learn the reason.
+    """
+
+    @pytest.mark.asyncio
+    async def test_row_failure_records_its_reason_in_flagged(self):
+        """task 174: rows_failed must never be reported with an empty flagged."""
+        from yadgar.backend.admin_exec import adr_seed
+
+        # A failure on the SECOND page: the first succeeds, so this is a genuine
+        # per-row fault, not the structural case covered below.
+        calls = {"n": 0}
+
+        def _inserter(payload: dict) -> dict:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"id": 1}
+            raise _UnknownProjectError("unknown project_id: 'm-agahi/yadgar'")
+
+        result = await adr_seed.seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/tmp/yadgar",
+            storage=_two_page_storage(),
+            row_inserter=_inserter,
+            slug_linker=lambda adr_id, slug: None,
+        )
+
+        assert result["rows_failed"] == 1
+        assert result["flagged"], "rows_failed>0 with flagged=[] leaves no reason anywhere"
+        reasons = " ".join(str(f.get("reason", "")) for f in result["flagged"])
+        assert "UnknownProjectError" in reasons or "unknown project_id" in reasons
+
+    @pytest.mark.asyncio
+    async def test_first_insert_failure_stops_instead_of_counting_every_page(self):
+        """task 175: a structural fault is positional, not type-based.
+
+        ``UnknownProjectError`` is neither AttributeError nor TypeError, so the
+        type allowlist let it through and the op counted 230 identical faults.
+        Nothing about page 2 differs from page 1, so the run must stop.
+        """
+        from yadgar.backend.admin_exec import adr_seed
+
+        def _always_fails(_payload: dict) -> dict:
+            raise _UnknownProjectError("unknown project_id: 'm-agahi/yadgar'")
+
+        result = await adr_seed.seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/tmp/yadgar",
+            storage=_two_page_storage(),
+            row_inserter=_always_fails,
+            slug_linker=lambda adr_id, slug: None,
+        )
+
+        # The op does NOT raise out of admin_exec — that layer pins
+        # "ERROR MODEL: never raise". _StructuralSeedError breaks the loop and
+        # surfaces as result["error"], which is the contract the CLI reads.
+        assert result["error"], "a structural fault must reach the caller, not just the log"
+        assert "first ADR insert failed" in result["error"]
+        assert "UnknownProjectError" in result["error"]
+        # The point of stopping: page 2 must never have been attempted.
+        assert result["rows_failed"] == 0, "the loop must break, not count every page"
+        assert result["rows_inserted"] == 0
