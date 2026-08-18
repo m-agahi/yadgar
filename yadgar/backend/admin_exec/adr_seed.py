@@ -220,6 +220,13 @@ class _SeedRun:
     flagged: list[dict[str, Any]] = field(default_factory=list)
     plan: list[dict[str, Any]] = field(default_factory=list)
     last_inserted_number: int | None = None
+    #: ADR number -> the ledger row id it actually landed on. The ids are
+    #: NOT the numbers (one global AUTO_INCREMENT, many projects — task 177),
+    #: so a `supersedes: ADR-0042` line in prose cannot be used as an FK.
+    #: This map is the resolution ADR-0197's own consequences demanded:
+    #: "derived from slugs rather than from numbers written in old prose".
+    number_to_id: dict[int, int] = field(default_factory=dict)
+    supersedes_unresolved: int = 0
 
 
 class _StructuralSeedError(RuntimeError):
@@ -299,6 +306,34 @@ async def _present_adr_numbers(sql_storage: Any, project_id: str) -> set[int]:
         if number is not None:
             present.add(number)
     return present
+
+
+@observe(tier="boundary", metric="backend.admin.adr_seed._present_adr_number_to_id")
+async def _present_adr_number_to_id(sql_storage: Any, project_id: str) -> dict[int, int]:
+    """ADR number -> row id, for rows THIS project already has.
+
+    Seeds ``run.number_to_id`` so a resumed run can resolve a ``supersedes:``
+    target that landed in an earlier run. Keyed on the number parsed out of
+    ``body_slug`` — the slug is the durable link between the page's number and
+    the row, which is exactly what ADR-0197 said supersede targets must be
+    derived from.
+    """
+    if sql_storage is None:
+        return {}
+    rows_obj = sql_storage.list_adr_rows(project_id=project_id)
+    if hasattr(rows_obj, "__await__"):
+        rows_obj = await rows_obj
+    if not isinstance(rows_obj, list):
+        return {}
+    mapping: dict[int, int] = {}
+    for r in rows_obj:
+        if not isinstance(r, dict):
+            continue
+        number = _parse_adr_id_from_slug(r.get("body_slug") or "")
+        row_id = r.get("id")
+        if number is not None and row_id is not None:
+            mapping[number] = int(row_id)
+    return mapping
 
 
 @observe(tier="boundary", metric="backend.admin.adr_seed._read_next_adr_id")
@@ -489,6 +524,7 @@ async def _insert_one_row(
     run.rows_inserted += 1
     run.last_inserted_number = number
     run.present.add(number)
+    run.number_to_id[number] = inserted_id
 
     await _link_and_supersede(run, adr_id=inserted_id, slug=slug, body=body)
 
@@ -532,9 +568,26 @@ async def _link_and_supersede(
     else:
         await _link_body_slug(run.sql_storage, adr_id, slug)
 
-    # The rendered body carries ``supersedes: ADR-0001,ADR-0002`` as a bullet (D23).
-    for tid in _parse_supersede_targets_from_body(body):
-        if await _add_supersedes_link(run.sql_storage, adr_id, tid):
+    # ``supersedes:`` (D23) parses to ADR NUMBERS, not row ids: one global
+    # AUTO_INCREMENT, many projects (task 177). Resolve through the slug-derived
+    # map, which is what ADR-0197's own consequences required.
+    for target_number in _parse_supersede_targets_from_body(body):
+        target_id = run.number_to_id.get(target_number)
+        if target_id is None:
+            # Forward ref or skipped. A wrong FK is unrepairable; a gap is not.
+            run.supersedes_unresolved += 1
+            run.flagged.append(
+                {
+                    "slug": slug,
+                    "adr_id": f"ADR-{target_number:04d}",
+                    "reason": (
+                        f"supersedes target ADR-{target_number:04d} has no row in this "
+                        f"project yet — link not written"
+                    ),
+                }
+            )
+            continue
+        if await _add_supersedes_link(run.sql_storage, adr_id, target_id):
             run.supersedes_links += 1
         else:
             run.supersedes_failed += 1
@@ -670,6 +723,12 @@ async def seed_adr_rows(
             if row_inserter is not None
             else await _present_adr_numbers(sql_storage, project_id)
         ),
+        # Seeded from existing rows so a RESUMED run resolves earlier landings.
+        number_to_id=(
+            {}
+            if row_inserter is not None
+            else await _present_adr_number_to_id(sql_storage, project_id)
+        ),
     )
 
     structural_error: str | None = None
@@ -701,6 +760,9 @@ async def seed_adr_rows(
         "flagged": run.flagged,
         "supersedes_links": run.supersedes_links,
         "supersedes_failed": run.supersedes_failed,
+        "supersedes_unresolved": run.supersedes_unresolved,
+        # Where each ADR actually landed. Ids are not numbers.
+        "number_to_id": dict(sorted(run.number_to_id.items())),
         "gate": {
             "index_rows": index_rows,
             "pages_seen": pages_seen,

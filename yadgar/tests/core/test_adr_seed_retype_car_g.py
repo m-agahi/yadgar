@@ -962,3 +962,175 @@ class TestFailureVisibility:
         # The point of stopping: page 2 must never have been attempted.
         assert result["rows_failed"] == 0, "the loop must break, not count every page"
         assert result["rows_inserted"] == 0
+
+
+# ── supersede targets resolve through the map, never the prose number ────────
+
+
+class TestSupersedeResolvesThroughMap:
+    """A `supersedes: ADR-NNNN` line must never be used as a row id.
+
+    `adr.id` is ONE global AUTO_INCREMENT shared by every project (task 177),
+    so this project's ADR-0011 and another project's row 11 are different
+    decisions. ADR-0197's own consequences named this: supersede targets "MUST
+    be derived from slugs rather than from numbers written in old prose, or a
+    stale number becomes a stored pointer to the wrong decision".
+    """
+
+    @pytest.mark.asyncio
+    async def test_target_resolves_to_the_landed_row_id_not_the_prose_number(self):
+        from yadgar.backend.admin_exec import adr_seed
+
+        # ADR-0002 supersedes ADR-0001. Ids are deliberately NOT the numbers —
+        # this is the shape the live ledger is actually in.
+        pages = [
+            {"slug": "yadgar-adr-0001", "content": "# ADR-0001: first\nbody", "tags": []},
+            {
+                "slug": "yadgar-adr-0002",
+                "content": "# ADR-0002: second\n- supersedes: ADR-0001\nbody",
+                "tags": [],
+            },
+        ]
+        landed: list[int] = []
+        links: list[tuple[int, int]] = []
+
+        def _inserter(_payload: dict) -> dict:
+            new_id = 500 + len(landed)  # ids far from the ADR numbers
+            landed.append(new_id)
+            return {"id": new_id}
+
+        class _SqlDouble:
+            # `list_adr_rows` is NOT optional here: seed_adr_rows reaches the
+            # ledger handle three times outside the row_inserter seam —
+            # _read_next_adr_id -> _present_adr_row_ids before the loop, and
+            # _count_page_type_adr_rows for the D35c gate after it. A double
+            # without it raises AttributeError out of the FIRST of those, long
+            # before any supersede logic runs. Empty is the honest answer: this
+            # project has no rows yet, which is the state the fixture describes.
+            def list_adr_rows(self, **_kw: object) -> list[dict]:
+                return []
+
+            def add_adr_supersedes(self, *, adr_id: int, supersedes_id: int) -> dict:
+                links.append((adr_id, supersedes_id))
+                return {"ok": True}
+
+        result = await adr_seed.seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/tmp/yadgar",
+            storage=_OrderFakeStorage(pages),
+            sql_storage=_SqlDouble(),
+            row_inserter=_inserter,
+            slug_linker=lambda adr_id, slug: None,
+        )
+
+        assert result["rows_inserted"] == 2
+        assert links == [(501, 500)], (
+            "ADR-0002 (row 501) must supersede ADR-0001's LANDED row 500 — "
+            f"linking to the prose number 1 would point at another project's row; got {links}"
+        )
+        assert result["number_to_id"] == {1: 500, 2: 501}
+
+    @pytest.mark.asyncio
+    async def test_unresolvable_target_is_flagged_not_guessed(self):
+        """A forward or skipped target writes NO link and says so."""
+        from yadgar.backend.admin_exec import adr_seed
+
+        pages = [
+            {
+                "slug": "yadgar-adr-0002",
+                "content": "# ADR-0002: second\n- supersedes: ADR-0001\nbody",
+                "tags": [],
+            },
+        ]
+        links: list[tuple[int, int]] = []
+
+        class _SqlDouble:
+            # `list_adr_rows` is NOT optional here: seed_adr_rows reaches the
+            # ledger handle three times outside the row_inserter seam —
+            # _read_next_adr_id -> _present_adr_row_ids before the loop, and
+            # _count_page_type_adr_rows for the D35c gate after it. A double
+            # without it raises AttributeError out of the FIRST of those, long
+            # before any supersede logic runs. Empty is the honest answer: this
+            # project has no rows yet, which is the state the fixture describes.
+            def list_adr_rows(self, **_kw: object) -> list[dict]:
+                return []
+
+            def add_adr_supersedes(self, *, adr_id: int, supersedes_id: int) -> dict:
+                links.append((adr_id, supersedes_id))
+                return {"ok": True}
+
+        result = await adr_seed.seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/tmp/yadgar",
+            storage=_OrderFakeStorage(pages),
+            sql_storage=_SqlDouble(),
+            # ADR-0001 is skipped, so its target never lands.
+            skip_adr_numbers=[1],
+            row_inserter=lambda _p: {"id": 900},
+            slug_linker=lambda adr_id, slug: None,
+        )
+
+        assert links == [], "an unresolvable target must write NO link, not a guessed one"
+        assert result["supersedes_unresolved"] == 1
+        reasons = " ".join(str(f.get("reason", "")) for f in result["flagged"])
+        assert "ADR-0001" in reasons and "no row" in reasons
+
+    @pytest.mark.asyncio
+    async def test_resumed_run_resolves_a_target_that_landed_in_an_earlier_pass(self):
+        """The map is seeded from EXISTING rows, so a resume still links.
+
+        This is the production scenario, not a corner: `_StructuralSeedError`
+        stops a bad run mid-way BY DESIGN, so the 230-row backfill is expected
+        to be resumed. On a resume the target of a `supersedes:` line landed in
+        an EARLIER pass, so nothing in this run's insert loop can know its id —
+        only `_present_adr_number_to_id` can, by parsing the number back out of
+        `body_slug`.
+
+        The pre-existing row deliberately carries the CANONICAL slug
+        (`m-agahi_yadgar_adr-0001`) while its page carries the LEGACY one
+        (`yadgar-adr-0001`). That is the shape the live corpus is actually in —
+        the mismatch Car 3 keyed on the NUMBER to survive — so this also pins
+        that the map's parse accepts both separators.
+        """
+        from yadgar.backend.admin_exec import adr_seed
+
+        pages = [
+            {"slug": "yadgar-adr-0001", "content": "# ADR-0001: first\nbody", "tags": []},
+            {
+                "slug": "yadgar-adr-0002",
+                "content": "# ADR-0002: second\n- supersedes: ADR-0001\nbody",
+                "tags": [],
+            },
+        ]
+        links: list[tuple[int, int]] = []
+
+        class _ResumedSqlDouble:
+            """ADR-0001 already landed — at id 500, which is NOT its number."""
+
+            def list_adr_rows(self, **_kw: object) -> list[dict]:
+                return [{"id": 500, "body_slug": "m-agahi_yadgar_adr-0001"}]
+
+            def create_adr_row(self, **_kw: object) -> dict:
+                return {"id": 777}
+
+            def add_adr_supersedes(self, *, adr_id: int, supersedes_id: int) -> dict:
+                links.append((adr_id, supersedes_id))
+                return {"ok": True}
+
+        result = await adr_seed.seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/tmp/yadgar",
+            storage=_OrderFakeStorage(pages),
+            sql_storage=_ResumedSqlDouble(),
+            # NO row_inserter: that seam zeroes the map by design, so it would
+            # bypass the very function under test.
+            slug_linker=lambda adr_id, slug: None,
+        )
+
+        assert result["rows_already_present"] == 1, "ADR-0001 must not be inserted twice"
+        assert result["rows_inserted"] == 1
+        assert links == [(777, 500)], (
+            "ADR-0002 (row 777) must supersede ADR-0001's EXISTING row 500, read back "
+            f"from body_slug; got {links}"
+        )
+        assert result["supersedes_unresolved"] == 0
