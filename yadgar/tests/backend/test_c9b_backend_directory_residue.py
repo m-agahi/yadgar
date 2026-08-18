@@ -60,6 +60,12 @@ ALLOWLIST: dict[str, str] = {
     "admin_exec/restoration.py": "C10 (b) — forwards into checkpoint_restore.restore",
     "write_exec/checkpoint_impl.py": "C10 (b) — forwards into replay.create_checkpoint",
     "admin_exec/adr_seed.py": "C10 (d) — basename() project-name surrogate",
+    "admin_exec/adr_retype.py": (
+        "same C10 (d) carve-out as adr_seed.py above — retype_page_type MOVED here "
+        "2026-08-18 when adr_seed.py crossed the I30 file_loc cap. The `directory` "
+        "param is unchanged pre-existing code: it resolves a WIKI page by "
+        "slug+directory, never an identity"
+    ),
     "retrieval/core.py": (
         "basename(directory) embedding-prefix surrogate — same class as C10 (d), "
         "unowned by the plan; changing it changes stored embedding text"
