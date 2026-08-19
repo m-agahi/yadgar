@@ -116,7 +116,7 @@ repos:
       - id: check-ledger-chokepoint
         name: "Check ledger chokepoint (D20: every ledger table access goes through MariaStorageEngine)"
         language: system
-        entry: python scripts/check_ledger_chokepoint.py
+        entry: python scripts/check_ledger_chokepoint.py --allowlist .ledger-chokepoint-allowlist.txt
         types: [python]
         pass_filenames: false
         files: ^yadgar/.*\.py$

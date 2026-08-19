@@ -169,6 +169,35 @@ def _load_allowlist(path: Path | None) -> set[tuple[str, int]]:
 # ---------------------------------------------------------------------------
 
 
+def _build_alias_map(tree: ast.Module) -> dict[str, str]:
+    """Map each ``from ... import X as Y`` local binding to its origin symbol.
+
+    ``from sqlalchemy import text as sql`` binds the local name ``sql`` to
+    the origin symbol ``text``. Later, a bare ``sql(...)`` call is an
+    ``ast.Name(id="sql")`` — without this map, matching on the surface name
+    alone would never see ``text`` and the chokepoint check would silently
+    not apply.
+
+    Only ``ast.ImportFrom`` is walked. Plain ``ast.Import`` (``import
+    sqlalchemy as sa``) binds the local name to a *module*, not a callable —
+    calls through it are ``ast.Attribute`` (``sa.text(...)``), whose
+    ``.attr`` is already the real symbol name (``"text"``) independent of
+    the module alias, so no resolution is needed for that shape.
+
+    Walks the WHOLE module tree (not just top-level statements), so imports
+    local to a function body are covered too. A name imported more than once
+    (rebound) takes the last binding seen — mirrors ordinary Python name
+    shadowing; the guard does not attempt control-flow-sensitive resolution.
+    """
+    alias_map: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                bound_name = alias.asname or alias.name
+                alias_map[bound_name] = alias.name
+    return alias_map
+
+
 def _is_engine_class(class_node: ast.ClassDef) -> bool:
     """True when ``class_node``'s name is ``MariaStorageEngine``.
 
@@ -200,6 +229,7 @@ def _violations_in_call(
     call: ast.Call,
     src_file: Path,
     in_engine: bool,
+    alias_map: dict[str, str],
 ) -> list[Violation]:
     """Detect chokepoint violations inside a Call node's string args.
 
@@ -212,6 +242,14 @@ def _violations_in_call(
 
     A string argument to one of these that mentions a ledger table is a
     chokepoint violation, UNLESS the call sits inside the engine class.
+
+    A bare ``Name`` call (``sql(...)``) is resolved through ``alias_map``
+    before the ``_SQL_EXEC_FUNCS`` check — an aliased import
+    (``from sqlalchemy import text as sql``) binds the SQL-exec function to
+    a different surface name, and matching on the surface name alone lets it
+    slip past the guard entirely. ``Attribute`` calls (``sa.text(...)``) are
+    unaffected: the attribute name is already the real symbol name regardless
+    of what the owning module was imported as.
     """
     if in_engine:
         return []
@@ -219,7 +257,7 @@ def _violations_in_call(
     func = call.func
     func_name: str | None = None
     if isinstance(func, ast.Name):
-        func_name = func.id
+        func_name = alias_map.get(func.id, func.id)
     elif isinstance(func, ast.Attribute):
         func_name = func.attr
 
@@ -273,25 +311,50 @@ def _violations_in_string_literal(
     return out
 
 
+def _allowlist_key(src_file: Path) -> str:
+    """Normalize a scanned path for allowlist matching.
+
+    Prefers repo-root-relative (portable across machines/CI/worktrees, and
+    the form every OTHER committed allowlist in this repo uses — e.g.
+    ``.auth-token-pattern-allowlist.txt``'s
+    ``yadgar/backend/embed_service/embed_service.py:790``) and falls back to
+    the absolute path when ``src_file`` is not under ``_REPO_ROOT`` — e.g. a
+    test scanning a ``tmp_path`` fixture root, which is exactly what this
+    file's own ``test_allowlisted_file_passes`` does. Mirrors
+    ``check_auth_token_pattern.py``'s ``_allowlist_key`` (same repo, same
+    pattern, added there specifically because this script's original
+    absolute-path-only matching does not survive a checkout at a different
+    path — including a git worktree of the same repo, whose absolute prefix
+    differs from the main checkout's).
+    """
+    resolved = src_file.resolve()
+    try:
+        return str(resolved.relative_to(_REPO_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
 def _scan_function_body(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     src_file: Path,
     in_engine: bool,
     allowed: set[tuple[str, int]],
+    alias_map: dict[str, str],
 ) -> list[Violation]:
     """Inspect one function's Call nodes for SQL-execution-shaped chokepoint uses.
 
-    Only calls to ``text(...)`` / ``execute(...)`` / ``exec(...)`` whose
-    string arguments mention a ledger table are reported. Free-standing
-    string literals are ignored — that is the difference between an SQL
-    statement and a docstring / log message.
+    Only calls to ``text(...)`` / ``execute(...)`` / ``exec(...)`` (resolved
+    through ``alias_map`` for aliased imports) whose string arguments mention
+    a ledger table are reported. Free-standing string literals are ignored —
+    that is the difference between an SQL statement and a docstring / log
+    message.
     """
     violations: list[Violation] = []
     for node in ast.walk(func):
         if not isinstance(node, ast.Call):
             continue
-        for v in _violations_in_call(node, src_file, in_engine):
-            key = (str(v.source_file), v.lineno)
+        for v in _violations_in_call(node, src_file, in_engine, alias_map):
+            key = (_allowlist_key(v.source_file), v.lineno)
             if key in allowed:
                 continue
             violations.append(v)
@@ -302,13 +365,14 @@ def _scan_class(
     class_node: ast.ClassDef,
     src_file: Path,
     allowed: set[tuple[str, int]],
+    alias_map: dict[str, str],
 ) -> list[Violation]:
     """Scan every method in the class. Methods inside the engine are exempt."""
     violations: list[Violation] = []
     in_engine = _is_engine_class(class_node)
     for sub in ast.walk(class_node):
         if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            violations.extend(_scan_function_body(sub, src_file, in_engine, allowed))
+            violations.extend(_scan_function_body(sub, src_file, in_engine, allowed, alias_map))
     return violations
 
 
@@ -332,17 +396,22 @@ def scan_file(
         print(f"WARNING: could not read {src_file}: {exc}", file=sys.stderr)
         return []
 
+    alias_map = _build_alias_map(tree)
     violations: list[Violation] = []
 
     # 1. Module-level (free) functions: NOT in any class → always in scope.
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            violations.extend(_scan_function_body(node, src_file, in_engine=False, allowed=allowed))
+            violations.extend(
+                _scan_function_body(
+                    node, src_file, in_engine=False, allowed=allowed, alias_map=alias_map
+                )
+            )
 
     # 2. Class method bodies: in-engine methods are exempt, others are in scope.
     for sub in ast.walk(tree):
         if isinstance(sub, ast.ClassDef):
-            violations.extend(_scan_class(sub, src_file, allowed))
+            violations.extend(_scan_class(sub, src_file, allowed, alias_map))
     return violations
 
 
