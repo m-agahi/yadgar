@@ -702,8 +702,14 @@ These fields exist on the SurrealDB tables but have no corresponding env var or 
 > Both tables carried an `option<string> branch` field captured at write time.
 > The whole branch-scoping mechanism — write-path auto-capture, the retrieval
 > filter, the score boost, and the §25 four-step `wiki_read` ladder — was retired.
-> Reads now resolve on `directory_context` alone: (1) caller directory,
+> Reads then resolved on `directory_context` alone: (1) caller directory,
 > (2) `'global'`, (3) not found.
+>
+> **Re-keyed — `wiki_read` (ADR-0233, ledger task 219).** `directory` is no
+> longer a scoping key, so `wiki_read`'s two-rung ladder now reads
+> (1) `project_id = <resolved>`, (2) the global reach tag, (3) not found.
+> The `directory_context` ladder survives for the readers that still resolve on
+> the column (`_resolve_page_id_by_slug` and the ADR seed/retype backend ops).
 
 ---
 

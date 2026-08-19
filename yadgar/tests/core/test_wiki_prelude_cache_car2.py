@@ -50,6 +50,12 @@ class _FakeWikiStore:
     def read_by_directory(self, slug, caller_dir):
         return dict(self.pages[slug]) if slug in self.pages else None
 
+    # Car W2: ``wiki_read`` resolves on the project_id now (ADR-0233). Scope is
+    # irrelevant to THESE tests — they are about cache invalidation — so the
+    # slug-only shape is kept, mirrored onto the new entry point.
+    def read_by_project(self, slug, project_id):
+        return dict(self.pages[slug]) if slug in self.pages else None
+
     def delete(self, slug):
         if slug not in self.pages:
             return False
@@ -168,13 +174,13 @@ def test_wiki_set_metadata_busts_wiki_read_cache(monkeypatch):
 def test_wiki_read_hit_skips_store(monkeypatch):
     fake, _storage, wtool = _wire_fake_wiki(monkeypatch)
     calls = []
-    orig = fake.read_by_directory
+    orig = fake.read_by_project
 
-    def counting_read(slug, caller_dir):
+    def counting_read(slug, project_id):
         calls.append(slug)
-        return orig(slug, caller_dir)
+        return orig(slug, project_id)
 
-    monkeypatch.setattr(fake, "read_by_directory", counting_read)
+    monkeypatch.setattr(fake, "read_by_project", counting_read)
     fake.pages["p"] = {"slug": "p", "title": "T", "content": "c"}
 
     wtool.wiki_read("p", directory="/repo", project=TEST_PROJECT_ID)
