@@ -363,7 +363,7 @@ def delete_branches(
         for wt_path in wt_paths:
             wt_path_obj = Path(wt_path)
             dirty = False
-            if not dry_run and wt_path_obj.is_dir():
+            if wt_path_obj.is_dir():
                 dirty, _ = is_worktree_dirty(wt_path_obj)
             if dry_run:
                 if dirty:

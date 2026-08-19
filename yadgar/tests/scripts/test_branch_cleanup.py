@@ -306,6 +306,26 @@ class TestDeleteBranches:
         assert not wt_path.exists()
         assert not patches_dir.exists() or not list(patches_dir.iterdir())
 
+    def test_dry_run_previews_dirty_worktree_correctly(self, tmp_path, capsys):
+        """A dry-run over a dirty worktree must say so — the whole point of
+        --dry-run is letting a reviewer see what a live run would actually
+        do, and a dirty worktree gets different (patch-saving) treatment
+        than a clean one on a live run."""
+        repo = _init_repo(tmp_path)
+        _git(repo, "checkout", "-b", "feat/dirty-preview")
+        _commit(repo, "z.py", "z\n", "change")
+        _git(repo, "checkout", "master")
+        wt_path = tmp_path / "wt-dirty-preview"
+        _git(repo, "worktree", "add", str(wt_path), "feat/dirty-preview")
+        (wt_path / "z.py").write_text("uncommitted\n", encoding="utf-8")
+
+        classification = bc.ClassificationResult(merged={"feat/dirty-preview"})
+        bc.delete_branches(repo, classification, dry_run=True, patches_dir=tmp_path / "patches")
+
+        captured = capsys.readouterr()
+        assert "would save patch + remove dirty worktree" in captured.out
+        assert wt_path.exists(), "dry-run must not touch the worktree"
+
 
 # ── phase 2: worktree-age sweep ───────────────────────────────────────────────
 
