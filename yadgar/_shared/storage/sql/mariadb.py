@@ -736,6 +736,11 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         open. The migration-002 ``ix_adr_project_id`` index keeps the base
         scan cheap; tier/subsystem filters are non-indexed table scans today
         (~195 rows; not worth a per-column index yet).
+
+        Ledger task 191: the ``tier`` clause is NOT a plain equality for the
+        two D27 values — a NULL-tier row is classified by its ``status`` so it
+        remains reachable through exactly one filter value. ``tier=None`` still
+        means "no filter" and is unchanged. See ``ledger_columns.adr_tier_where``.
         """
         from sqlalchemy import text  # noqa: PLC0415
 
@@ -745,8 +750,13 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             where_extra += " AND status = :status"
             params["status"] = status
         if tier is not None:
-            where_extra += " AND tier = :tier"
-            params["tier"] = tier
+            # Ledger task 191: NULL-tier rows are classified by ``status`` under
+            # the same D27 mapping the write side applies. See
+            # ``ledger_columns.adr_tier_where`` for why this is not a blanket
+            # "NULL means binding".
+            tier_clause, tier_params = lc.adr_tier_where(tier)
+            where_extra += tier_clause
+            params.update(tier_params)
         if subsystem is not None:
             where_extra += " AND subsystem = :subsystem"
             params["subsystem"] = subsystem
@@ -759,13 +769,32 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             return [dict(row._mapping) for row in result]
 
     @observe(tier="boundary", metric="backend.sql.adr.get")
-    async def get_adr_row(self, adr_id: int) -> dict | None:
-        """Single-row ``adr`` lookup by ``id``."""
+    async def get_adr_row(self, adr_id: int, *, project_id: str | None = None) -> dict | None:
+        """Single-row ``adr`` lookup by ``id``, scoped to ``project_id``.
+
+        Ledger task 188: ``adr.id`` is ONE GLOBAL ``AUTO_INCREMENT`` shared by
+        every project (``quinyx/flux`` owns 7–22 and 257–332, ``m-agahi/yadgar``
+        owns 23–252) while ``list_adr_rows`` is project-scoped, so an unscoped
+        by-id lookup returns FOREIGN rows routinely and ``adr_get`` merges their
+        metadata onto this project's body page.
+
+        ``project_id`` is OPTIONAL here and REQUIRED at the admin op (the only
+        reachable caller) — the guard belongs where a future caller would
+        forget it, and the unscoped form stays available to the corpus-audit
+        paths that legitimately span projects.
+        """
         from sqlalchemy import text  # noqa: PLC0415
 
-        sql = text(f"SELECT {lc.ADR_COLUMNS} FROM adr WHERE id = :id")  # noqa: S608
+        params: dict[str, Any] = {"id": adr_id}
+        where_extra = ""
+        if project_id is not None:
+            where_extra = " AND project_id = :project_id"
+            params["project_id"] = project_id
+        sql = text(
+            f"SELECT {lc.ADR_COLUMNS} FROM adr WHERE id = :id" + where_extra  # noqa: S608
+        )
         async with self._engine.connect() as conn:
-            result = await conn.execute(sql, {"id": adr_id})
+            result = await conn.execute(sql, params)
             row = result.first()
         return None if row is None else dict(row._mapping)
 

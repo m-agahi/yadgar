@@ -223,9 +223,16 @@ class TestLedgerAsyncOps:
             "yadgar.backend.admin_exec.ledger._get_sql_storage",
             lambda: sql_storage,
         )
-        result = await admin_exec.run_admin_op_async("get_adr_row", {"id": 22})
+        # Car B1 / ledger task 188: ``project_id`` is REQUIRED on this op and is
+        # forwarded to the chokepoint as a kwarg — ``adr.id`` is one global
+        # AUTO_INCREMENT shared across projects, so an unscoped by-id lookup
+        # returns foreign rows. See ``test_adr_car_b1_admin_ops`` for the
+        # scoping behaviour itself.
+        result = await admin_exec.run_admin_op_async(
+            "get_adr_row", {"id": 22, "project_id": "m-agahi/yadgar"}
+        )
         assert result == {"row": {"id": 22, "title": "a22"}}
-        sql_storage.get_adr_row.assert_awaited_once_with(22)
+        sql_storage.get_adr_row.assert_awaited_once_with(22, project_id="m-agahi/yadgar")
 
     async def test_list_agent_prompt_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         rows = [{"name": "dispatch-fix-bug"}]
