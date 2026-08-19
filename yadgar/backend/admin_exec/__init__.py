@@ -100,6 +100,11 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "wiki_restore": wiki.wiki_restore,
     "wiki_append_section": wiki.wiki_append_section,
     "wiki_set_metadata": wiki.wiki_set_metadata,
+    # task 193: the Car J mutability escape hatch. Implemented, exported and
+    # documented since Car J, but never registered here — so every call raised
+    # KeyError -> HTTP 400 and the ADR corpus (page_type='adr' => 'locked') was
+    # uncreatable, uneditable and undeletable through every unsanctioned path.
+    "wiki_set_mutability": wiki.wiki_set_mutability,
     "wiki_replace_text": wiki.wiki_replace_text,
     "wiki_delete_text": wiki.wiki_delete_text,
     "wiki_insert_after": wiki.wiki_insert_after,
