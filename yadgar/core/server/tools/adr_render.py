@@ -104,16 +104,31 @@ def _parse_supersedes(supersedes: str) -> list[str]:
 
 
 @observe(tier="stage", metric="tools.adr._flip_superseded_target")
-def _flip_superseded_target(resolved: str, target_id: str, new_adr_id: str) -> None:
+def _flip_superseded_target(
+    resolved: str, target_id: str, new_adr_id: str, *, project_id: str | None = None
+) -> None:
     """Flip a superseded ADR page's status tag to 'superseded' (best-effort).
 
     Reads the target page canonically, replaces its adr-status:* tag with
     adr-status:superseded, and records the superseding id in an adr-superseded-by
     tag. Never raises — a missing target must not abort the new ADR write.
+
+    Car W4 (ledger task 226): ``resolved`` is a DIRECTORY (``_resolve_project_root``
+    output — a git worktree root), and it was being fed to
+    ``_resolve_page_id_by_slug`` as the sole scoping key. ``project_id`` is the
+    ADR-0233 key and is threaded separately: the two are NOT interchangeable
+    even though ``adr_page_slug`` basenames whichever it is given — the live
+    corpus has ``local/scratch`` stamped on rows at
+    ``/home/max/quinyx/reusable-workflows-apim``, where the basenames differ.
+
+    NOTE: this function has NO live caller. ``adr.py`` imports it only to
+    re-export it in ``__all__``; ``supersede`` handling runs through the ledger
+    (``adr_supersedes`` + the D23 status flip) instead. The parameter is added
+    so the seam is correct if it is ever wired, not because a caller exists.
     """
     try:
         slug = adr_page_slug(resolved, target_id)
-        page_id, page = _resolve_page_id_by_slug(slug, directory=resolved)
+        page_id, page = _resolve_page_id_by_slug(slug, directory=resolved, project_id=project_id)
         if page_id is None or page is None:
             return
         tags = list(page.get("tags") or [])

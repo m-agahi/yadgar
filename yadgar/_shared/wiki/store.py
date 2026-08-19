@@ -897,10 +897,15 @@ class WikiStore:
         2. the Car C7 global reach tag   (the cross-project library)
         3. Returns None if not found.
 
-        ``read_by_directory`` is KEPT, not replaced: ``adr_seed``, ``adr_retype``
-        and ``_resolve_page_id_by_slug`` still resolve on the stored
-        ``directory_context`` column, which ADR-0233 retires as a scoping KEY
-        without dropping the column.
+        ``read_by_directory`` is KEPT, not replaced: ``adr_seed`` and
+        ``adr_retype`` still resolve on the stored ``directory_context`` column,
+        which ADR-0233 retires as a scoping KEY without dropping the column.
+
+        Car W4 removed ``_resolve_page_id_by_slug`` from that list. It now
+        prefers this method and falls back to ``read_by_directory`` only when no
+        identity was resolved — the back-compat floor the four
+        ``http_wiki_versioning`` endpoints stand on (they pass a slug and
+        nothing else).
         """
         return self._storage.get_wiki_page_by_slug_project(slug, project_id)
 
