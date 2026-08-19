@@ -53,7 +53,10 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
         payload: {"project_id": str, "status"?: str, "tier"?: str, "subsystem"?: str}
 
     get_adr_row(payload) -> {"row": dict | None}
-        payload: {"id": int}
+        payload: {"id": int, "project_id": str}
+        ``project_id`` is REQUIRED (ledger task 188) — ``adr.id`` is one
+        global AUTO_INCREMENT shared across projects, so an unscoped by-id
+        lookup returns foreign rows. Absent → ``{"ok": False, "error": ...}``.
 
     list_agent_prompt_rows(payload) -> {"rows": list[dict]}
         payload: {}   # no parameters today
@@ -373,12 +376,30 @@ async def list_adr_rows(payload: dict) -> dict:
 
 @observe(tier="boundary", metric="backend.admin.ledger.get_adr_row")
 async def get_adr_row(payload: dict) -> dict:
-    """Single ``adr`` lookup by id. payload: {id}."""
+    """Single ``adr`` lookup by id, SCOPED to a project. payload: {id, project_id}.
+
+    Ledger task 188: ``project_id`` is REQUIRED. ``adr.id`` is one global
+    ``AUTO_INCREMENT`` shared across every project, so an unscoped by-id lookup
+    returns foreign rows routinely and ``adr_get`` merges their metadata onto
+    this project's body page. Refusing beats defaulting to ``None``: a silent
+    degrade to a corpus-wide lookup is the defect itself, and core's
+    ``adr_get`` — the only caller — always holds a project_id post-ADR-0227.
+    """
+    project_id = payload.get("project_id")
+    if not project_id:
+        return {
+            "ok": False,
+            "error": (
+                "get_adr_row requires project_id — adr.id is a global "
+                "AUTO_INCREMENT shared across projects, so an unscoped lookup "
+                "can return another project's row (ledger task 188)"
+            ),
+        }
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
-        row = await storage.get_adr_row(int(payload["id"]))
+        row = await storage.get_adr_row(int(payload["id"]), project_id=str(project_id))
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_adr_row error id=%s: %s", payload.get("id"), exc)
         return {"ok": False, "error": str(exc)}

@@ -530,6 +530,22 @@ class TestAdrAddPostRepoint:
                         "body_slug": payload.get("body_slug"),
                     }
                 }
+            # Car B1 / ledger task 190: the supersede target is now RESOLVED
+            # against the writing project before the FK is written, so this
+            # stub has to own a row 7 in that project. The old shape
+            # (``{"ok": True}`` for every non-create op) now means "no such
+            # row", and the link is correctly skipped — the fix working, not
+            # a regression. Cross-project + missing targets are covered in
+            # ``test_adr_car_b1_supersede_fk``.
+            if op == "get_adr_row":
+                return {
+                    "row": {
+                        "id": int(payload["id"]),
+                        "project_id": payload["project_id"],
+                        "title": "supersede target",
+                        "status": "accepted",
+                    }
+                }
             return {"ok": True}
 
         with (
