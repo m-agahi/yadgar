@@ -1140,18 +1140,91 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
 # ── v5.41.0: Versioning + section-patching tools ──────────────────────────────
 
 
+@observe(
+    exempt=(
+        "single resolve + UnresolvedProjectError mapping; no I/O — called at the "
+        "slug-resolution family's tool boundary"
+    )
+)
+def _resolve_slug_scope_project(
+    *, project: str | None, directory: str | None, tool: str
+) -> str | None:
+    """Car W4: resolve the scoping project_id for the slug-resolution family.
+
+    TOLERANT ON PURPOSE, and this is the one place the car differs from
+    ``_resolve_wiki_read_project``. That resolver is strict — an unresolved
+    identity raises ``UnresolvedProjectError``. It can afford to be: it landed
+    with car M, BEFORE the value became a lookup key, and ``wiki_read``'s
+    browser counterpart (``api_wiki_read``, ``http.py``) bypasses the tool and
+    reads the store directly.
+
+    This family has no such escape. ``api_wiki_history``,
+    ``api_wiki_read_version``, ``api_wiki_diff`` and ``api_wiki_restore``
+    (``http_wiki_versioning.py``) call the TOOLS positionally with a slug and
+    nothing else — no directory, no project. A raise here would take the viz's
+    version-history, diff and restore surfaces offline to fix a defect that is
+    entirely about ``project=`` being ignored WHEN SUPPLIED. So an unresolved
+    identity degrades to ``None`` and ``_resolve_page_id_by_slug`` keeps its
+    directory rung. ADR-0233's residue on this path is therefore reduced, not
+    yet zero; making it fail loud needs the four endpoints re-plumbed first.
+
+    ``InvalidProjectOverrideError`` still propagates — a MALFORMED override is a
+    caller bug, and that is exactly what ``accept_project_param`` (the call this
+    replaces) did at every one of these sites.
+    """
+    try:
+        return resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,
+            tool=tool,
+        )
+    except UnresolvedProjectError:
+        return None
+
+
 @observe(tier="stage", metric="tools.wiki._resolve_page_id_by_slug")
 def _resolve_page_id_by_slug(
     slug: str,
     directory: str | None = None,
+    *,
+    project_id: str | None = None,
 ) -> tuple[int | None, dict | None]:
-    """Directory-resolve slug → page dict. Returns (page_id, page) or (None, None).
+    """Resolve slug → (page_id, page), or (None, None). Project-keyed first.
 
-    v5.42.5 (F1 fix): accepts directory from the caller so resolution uses caller
-    context instead of daemon os.getcwd(). ADR-0215 removed the branch axis.
+    Car W4 (ledger task 226) — the ADR-0233 re-key of the shared resolver behind
+    the whole section-patch / versioning family. It used to call
+    ``read_by_directory(slug, directory)`` unconditionally, so a caller's
+    ``project=`` reached ``accept_project_param``'s validation and nothing else:
+    thirteen tools each dropped the resolved value on the floor. Same shape as
+    the ``wiki_read`` defect car W2 fixed one layer up, and the same shape car 3
+    found on the prelude path.
+
+    THREE RUNGS, in this order:
+
+    1. ``project_id`` supplied → ``read_by_project`` (own project, then the Car
+       C7 global reach tag). This is the fix.
+    2. no project, ``directory`` supplied → ``read_by_directory`` (exact
+       directory, then ``'global'``). KEPT as the back-compat floor — see
+       ``_resolve_slug_scope_project`` for why this family cannot fail loud yet.
+       It is also what stops an unresolved directory WIDENING: without it a
+       caller in tree A falls through to an unscoped ``LIMIT 1`` slug match and
+       can be served tree B's row.
+    3. neither → unscoped slug match (``read_by_directory(slug, None)``,
+       unchanged). What the four browser endpoints do.
+
+    Measured 2026-08-19 on the live corpus (2523 rows): ``project_id`` ↔
+    ``directory_context`` is NOT 1:1 — ``quinyx/qwfm`` owns rows at six distinct
+    directories, and ~57 rows corpus-wide sit at subdirectory paths that the
+    exact-match directory ladder cannot reach from their own project root. Slugs
+    are unique corpus-wide (2523 distinct), so rung 1 cannot change WHICH row
+    resolves — only whether one resolves at all.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
-    page = _st._wiki.read_by_directory(slug, directory)
+    if project_id:
+        page = _st._wiki.read_by_project(slug, project_id)
+    else:
+        page = _st._wiki.read_by_directory(slug, directory)
     if page is None:
         return None, None
     return page.get("id"), page
@@ -1176,12 +1249,17 @@ def wiki_history(
         slug: Wiki page slug.
         limit: Max versions to return (default 20).
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_history")
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, page = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     versions = _st._wiki.history(page_id, limit=limit)
@@ -1199,6 +1277,9 @@ def wiki_read_version(
         slug: Wiki page slug.
         version: Version number (1-based; use wiki_history to find version numbers).
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns the full snapshot including: version, title, content, category, tags,
     confidence, source_memory_ids, change_summary, created_at.
@@ -1209,11 +1290,15 @@ def wiki_read_version(
 
     Error: {"error": "...", "max_version": N} if version not found.
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_read_version"
+    )
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.read_version(page_id, version)
@@ -1239,16 +1324,21 @@ def wiki_diff(
         v2: Second (newer) version number.
         fmt: "unified" (default, human-readable text diff) or "json" (structured).
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     unified format returns: {"diff": "<unified diff text>", "v1": N, "v2": M, ...}
     json format returns: {"hunks": [...], "added_lines": N, "removed_lines": M,
                           "sections_changed": [...], ...}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_diff")
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.diff(page_id, v1, v2, fmt=fmt)
@@ -1288,16 +1378,21 @@ def wiki_restore(
         wait: Accepted for API symmetry with wiki_add. This tool writes
             synchronously (no queue) — wait=True is a no-op.
         directory: Caller directory for §25 resolution (v5.42.5 F1 fix).
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {"page_id": N, "restored_from_version": V, "new_version": N+1, "note": "..."}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_restore")
     # R3 Car 3c: slug→page_id resolution stays CORE (backend has a different cwd,
     # so backend-side resolution would resolve the wrong row); the restore write
     # forwards keyed by page_id.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     return _forward_admin("wiki_restore", {"page_id": page_id, "version": version, "slug": slug})
@@ -1345,12 +1440,20 @@ def wiki_append_section(
     wait: Accepted for API symmetry with wiki_add. This tool writes
         synchronously (no queue) — wait=True is a no-op.
 
+    project: Cross-project override. When it resolves, it REPLACES ``directory``
+        as the scope key (ADR-0233, car W4); the directory rung is reached only
+        when no identity resolves.
+
     Returns: {"page_id": N, "new_version": M, "section_heading": "...",
               "action": "appended", "size_before": X, "size_after": Y}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_append_section"
+    )
     # I26: secret-gate on written content (STAYS core)
     _gate = gate_or_reject(content, tags=[])
     if _gate is not None:
@@ -1358,7 +1461,7 @@ def wiki_append_section(
 
     # R3 Car 3c: slug→page_id resolution stays core (backend has no git/cwd); the
     # section write forwards keyed by page_id.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
 
@@ -1512,19 +1615,26 @@ def wiki_replace_text(
         new_text: Replacement text.
         occurrences: Expected match count, or 'all'.
         directory: Caller directory for §25 resolution.
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_replace_text"
+    )
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1563,15 +1673,22 @@ def wiki_delete_text(
         text: Text to remove (exact match, case-sensitive).
         occurrences: Expected match count when text present, or 'all'.
         directory: Caller directory for §25 resolution.
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_delete_text"
+    )
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     # No secret gate (nothing new is written).
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1600,19 +1717,26 @@ def wiki_insert_after(
         anchor_text: Unique text to locate (exact, case-sensitive).
         new_text: Content to insert immediately after anchor_text.
         directory: Caller directory for §25 resolution.
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_insert_after"
+    )
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1641,19 +1765,26 @@ def wiki_insert_before(
         anchor_text: Unique text to locate (exact, case-sensitive).
         new_text: Content to insert immediately before anchor_text.
         directory: Caller directory for §25 resolution.
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_insert_before"
+    )
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1695,20 +1826,25 @@ def wiki_replace_at(
         new_text: Replacement text.
         anchor_hint: Expected text at (line, col). Must be ≥20 chars.
         directory: Caller directory for §25 resolution.
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_replace_at")
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1754,16 +1890,21 @@ def wiki_delete_at(
         length: Number of chars to delete.
         anchor_hint: Expected text at (line, col). Must be ≥20 chars.
         directory: Caller directory for §25 resolution.
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_delete_at")
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     # No secret gate (nothing new is written).
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1807,20 +1948,25 @@ def wiki_insert_at(
         new_text: Text to insert at position.
         anchor_hint: Expected text immediately before insertion point. Must be ≥20 chars.
         directory: Caller directory for §25 resolution.
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {ok, page_id, version_id, applied, length_delta}
       Mismatch: {ok: false, reason: "anchor_hint mismatch", actual_text_preview: "..."}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_insert_at")
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_text, tags=[])
     if _gate is not None:
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1868,19 +2014,26 @@ def wiki_replace_markdown_block(
         block_index: 0-based index within that block_type.
         new_content: Replacement content for the block (whole span including markers).
         directory: Caller directory for §25 resolution.
+        project: Cross-project override. When it resolves, it REPLACES
+            ``directory`` as the scope key (ADR-0233, car W4); the
+            directory rung is reached only when no identity resolves.
 
     Returns: {ok, page_id, version_id, replaced_count, length_delta}
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car W4 (ledger task 226): the resolved project_id is the SCOPE KEY
+    # (ADR-0233), not just a validated argument. This was a bare
+    # ``accept_project_param(project, directory)`` whose return value was
+    # discarded, so ``project=`` never reached the lookup.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_replace_markdown_block"
+    )
     # I26: secret gate on new written content (STAYS core)
     _gate = gate_or_reject(new_content, tags=[])
     if _gate is not None:
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory)
+    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
