@@ -118,32 +118,33 @@ def run_wiki_add_replay(payload: dict) -> dict:
             _mirror_wiki(result.get("slug", title), content)
             return result
 
+    # W1 (ledger task 220): ONE option bundle for both branches. The append
+    # branch used to hand ``ingest`` four positionals plus ``project_id`` and
+    # drop the other six values on the floor — so an explicitly-slugged append
+    # re-derived its slug from the TITLE and wrote a shadow page there, while
+    # the response reported the caller's slug back. C13 fixed exactly one of the
+    # six (``project_id``) because that one raised; the rest failed silently.
+    _opts = WikiAddOptions(
+        source_memory_ids=source_memory_ids,
+        confidence=confidence,
+        directory_context=directory_context,
+        page_type=page_type,
+        slug=explicit_slug,  # Car B (#83): store at caller slug, no title fallback
+        upsert=upsert,
+        sanctioned=_sanctioned,
+        project_id=project_id,
+    )
     if append:
-        # C13 (0047 PR#40 §5): the THIRD write path, missed when C3 threaded
-        # "both construction sites". ``ingest`` had no project_id parameter at
-        # all, so an ``append=True`` write whose slug did not exist yet fell
-        # through to ``WikiStore.add`` unstamped — and after C5 deleted the
-        # derivation, that is a hard ``UnresolvedProjectError`` on a call whose
-        # caller supplied ``project=``. The value is held right here; dropping
-        # it was the defect.
-        result = _st._wiki.ingest(content, title, tags, source_memory_ids, project_id=project_id)
-    else:
-        result = _st._wiki.add(
-            title,
+        result = _st._wiki.ingest(
             content,
-            category,
-            tags or [],
-            opts=WikiAddOptions(
-                source_memory_ids=source_memory_ids,
-                confidence=confidence,
-                directory_context=directory_context,
-                page_type=page_type,
-                slug=explicit_slug,  # Car B (#83): store at caller slug, no title fallback
-                upsert=upsert,
-                sanctioned=_sanctioned,
-                project_id=project_id,
-            ),
+            title,
+            tags,
+            source_memory_ids,
+            category=category,
+            opts=_opts,
         )
+    else:
+        result = _st._wiki.add(title, content, category, tags or [], opts=_opts)
     # Car C (#83): upsert=False collision → surface synchronously.
     # WikiStore.add returns {stored: False, reason: "slug_exists"} when upsert=False
     # and the slug already exists. _apply_inner ignores the return value, so the

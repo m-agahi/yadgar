@@ -12,6 +12,7 @@ import difflib
 import logging
 import re
 import time as _time
+from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 
 from yadgar._shared.observability.observe import observe
@@ -1291,19 +1292,48 @@ class WikiStore:
         tags: list[str] | None = None,
         source_memory_ids: list[int] | None = None,
         *,
-        project_id: str | None = None,
+        category: str = "reference",
+        opts: WikiAddOptions | None = None,
     ) -> dict:
-        """Ingest content. If title matches existing page, append with timestamp.
+        """Ingest content. Appends with a timestamp when the slug already exists.
 
-        C13 (0047 PR#40 §5): ``project_id`` is threaded through to the create
-        branch. The append branch does not need it — it UPDATEs a row whose
-        owner was stamped by whoever inserted it, and re-stamping on append
-        would let a second writer rename an existing page's owner. The create
-        branch is a real insert, and after C5 an unstamped insert raises.
+        W1 (ledger task 220): the target slug is ``opts.slug`` when the caller
+        supplies one, and only falls back to ``self._slugify(title)`` when it
+        does not. Before W1 this method had no slug parameter at all, so the
+        ``wiki_add(append=True)`` path — its only production caller — silently
+        re-derived the slug from the TITLE and wrote a SHADOW page at
+        ``slugify(title)`` while reporting the caller's slug back. Invisible
+        whenever ``slug == slugify(title)``; always wrong for the project-
+        prefixed ``{project}_{name}`` scheme (ADR-0211), whose slug never
+        equals its title's.
+
+        ``opts`` replaces the former ``project_id`` keyword rather than sitting
+        beside it: the caller now has six values to hand over (slug,
+        directory_context, page_type, confidence, source_memory_ids,
+        project_id) and ``WikiAddOptions`` is already the bundle ``add()``
+        takes them in. Passing them individually would put this signature at
+        eleven params, over I13's ``params_hard=8``. ``category`` stays a named
+        param because it is a positional of ``add()``, not a member of the
+        bundle.
+
+        The two branches carry the bundle DIFFERENTLY, on purpose:
+
+        * **create** forwards it whole. That branch is a real insert, and it is
+          the one that manufactured the ``directory_context="global"``,
+          ``category="reference"`` shadow rows — an insert that drops the
+          caller's scope invents a page nobody asked for.
+        * **merge** writes CONTENT and content-derived fields only, exactly as
+          it did before W1. C13 already argued this for ``project_id``:
+          re-stamping an existing page on append lets a second writer rename a
+          page it did not create. The same argument covers scope and category —
+          and ``category`` would be worse, because its ``"reference"`` default
+          is always non-None on the drainer payload, so carrying it would
+          downgrade a ``decision`` page on every append.
         """
+        o = opts or WikiAddOptions()
         if title is None:
             title = "Untitled"
-        slug = self._slugify(title)
+        slug = o.slug if o.slug is not None else self._slugify(title)
         existing = self._storage.get_wiki_page_by_slug(slug)
 
         if existing:
@@ -1328,14 +1358,22 @@ class WikiStore:
             self._link_memories(slug, source_memory_ids or [])
             return {**existing, **updates}
 
+        # W1: forward the bundle WHOLE — slug, directory_context, category,
+        # confidence, page_type, upsert, sanctioned, project_id. ``add`` resolves
+        # ``opts.slug`` the same way this method just did, so the created page
+        # lands at the caller's slug and not at ``slugify(title)``.
+        # ``source_memory_ids`` stays the positional param (the pre-W1 contract).
+        # A caller who states one there OVERRIDES the bundle's copy, so passing
+        # both is unambiguous; omitting it (``None``) falls through to the
+        # bundle, which is what a caller who only fills ``opts`` expects.
         return self.add(
             title=title,
             content=content,
+            category=category,
             tags=tags,
-            opts=WikiAddOptions(
-                source_memory_ids=source_memory_ids,
-                project_id=project_id,
-            ),
+            opts=o
+            if source_memory_ids is None
+            else _dc_replace(o, source_memory_ids=source_memory_ids),
         )
 
     @observe(tier="boundary")

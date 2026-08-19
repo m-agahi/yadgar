@@ -72,9 +72,14 @@ def _add(*args, **kwargs):
 
 
 def _ingest(*args, **kwargs):
-    """``WikiStore.ingest`` with this file's project named — same reason as ``_add``."""
-    kwargs.setdefault("project_id", TEST_PROJECT_ID)
-    return _wiki().ingest(*args, **kwargs)
+    """``WikiStore.ingest`` with this file's project named — same reason as ``_add``.
+
+    W1 (task 220): ``ingest`` takes the ``WikiAddOptions`` bundle now, not a
+    bare ``project_id`` kwarg — the append path has six values to carry, and
+    the bundle is the shape ``add`` already takes them in.
+    """
+    opts = kwargs.pop("opts", None) or WikiAddOptions()
+    return _wiki().ingest(*args, opts=replace(opts, project_id=TEST_PROJECT_ID), **kwargs)
 
 
 # ── A. Slug Generation ──────────────────────────────────────────────────────
