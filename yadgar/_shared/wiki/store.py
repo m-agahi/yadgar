@@ -30,6 +30,7 @@ from yadgar._shared.wiki.contract import (
 from yadgar._shared.wiki.policy import MUTABILITY_VALUES
 from yadgar._shared.wiki.policy import get_policy as _get_wiki_policy
 from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
+from yadgar._shared.wiki.slug import MAX_SLUG_LEN as _MAX_SLUG_LEN
 from yadgar._shared.wiki.slug import slugify as _slugify_fn
 from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 
@@ -1872,10 +1873,13 @@ class WikiStore:
         size_before = len(page_content.encode())
         size_after = len(new_content.encode())
 
-        self._storage.update_wiki_page(page_id, {"content": new_content})
+        # Car W3 (ledger task 216): ``append_section`` already synced crossrefs
+        # but wrote ``content`` alone, so the table was right while the
+        # denormalised ``links`` array rotted — the pair was inconsistent.
+        links = self._extract_wikilinks(new_content)
+        self._storage.update_wiki_page(page_id, {"content": new_content, "links": links})
         new_version = self._storage.get_max_version_for_page(page_id)
 
-        links = self._extract_wikilinks(new_content)
         self._sync_crossrefs(page.get("slug", ""), links)
 
         return {
@@ -2190,7 +2194,17 @@ class WikiStore:
         rejected = self._reject_if_discipline_weakening(page_id, old_content, new_content)
         if rejected is not None:
             return rejected
-        self._storage.update_wiki_page(page_id, {"content": new_content})
+        # Car W3 (ledger task 216): re-derive links from the POST-edit content
+        # and write both surfaces, mirroring ``ingest``'s merge branch. Writing
+        # only ``content`` left the denormalised ``links`` array stale and never
+        # touched ``wiki_crossref`` at all — a link ADDED or REMOVED by a
+        # surgical edit was invisible in both. Full re-derive (not append) is
+        # what makes the removal direction work.
+        links = self._extract_wikilinks(new_content)
+        self._storage.update_wiki_page(page_id, {"content": new_content, "links": links})
+        page = self._storage.get_wiki_page(page_id)
+        if page:
+            self._sync_crossrefs(page.get("slug", ""), links)
         new_version = self._storage.get_max_version_for_page(page_id)
         return {
             "ok": True,
@@ -2572,10 +2586,38 @@ class WikiStore:
         """
         return _slugify_fn(title)
 
+    #: A bracket body that is ALREADY a slug: lowercase alnum plus ``-``/``_``.
+    #: Car W3 (ledger task 218): ``slugify`` collapses ``_`` to ``-``, so every
+    #: post-ADR-0211 canonical slug (``{project with / -> _}_{name}``) came out
+    #: of ``_extract_wikilinks`` corrupted — ``m-agahi_yadgar_adr-0253`` became
+    #: ``m-agahi-yadgar-adr-0253``, matching no page. Both ``wiki_page.links``
+    #: and the ``wiki_crossref`` table are fed from here, so BOTH surfaces were
+    #: wrong and ``get_wiki_backlinks`` (exact ``to_slug`` match) never resolved.
+    #: The fix is local to extraction: ``slugify`` itself is the ADR-0170
+    #: single source of truth for title→slug MINTING and must keep hyphenating.
+    _SLUG_SHAPED = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
     def _extract_wikilinks(self, content: str) -> list[str]:
-        """Extract [[slug]] references from markdown content."""
+        """Extract ``[[slug]]`` references from markdown content.
+
+        A bracket body that is already slug-shaped is taken VERBATIM.  Anything
+        else — prose titles such as ``[[My Cool Page]]`` — keeps the legacy
+        slugify behaviour.
+
+        The 64-char cap is applied on BOTH paths.  Exempting the passthrough
+        looked like a free win (ADR-0211 allows 256) and is not: pages minted
+        from a long title live at the 64-char truncation, so a link body written
+        out at full length would stop resolving.  Measured on the live corpus
+        before shipping — 11 ``wiki_crossref`` rows resolve TODAY at a
+        64-truncated ``to_slug`` whose source content holds the full-length
+        slug-shaped body.  Canonical slugs are far shorter (~23 chars), so the
+        cap costs the defect nothing.
+        """
         raw = re.findall(r"\[\[([^\]]+)\]\]", content)
-        return list(dict.fromkeys(self._slugify(r) for r in raw))  # dedupe, preserve order
+        resolved = (
+            r[:_MAX_SLUG_LEN] if self._SLUG_SHAPED.match(r) else self._slugify(r) for r in raw
+        )
+        return list(dict.fromkeys(resolved))  # dedupe, preserve order
 
     @observe(tier="stage")
     def _compute_embedding(self, title: str, content: str) -> bytes | None:
