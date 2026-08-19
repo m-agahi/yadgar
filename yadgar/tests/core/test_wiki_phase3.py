@@ -45,9 +45,13 @@ def _add(*args, **kwargs):
 
 
 def _ingest(*args, **kwargs):
-    """``WikiStore.ingest`` with this file's project named — same reason."""
-    kwargs.setdefault("project_id", TEST_PROJECT_ID)
-    return _wiki().ingest(*args, **kwargs)
+    """``WikiStore.ingest`` with this file's project named — same reason.
+
+    W1 (task 220): ``ingest`` takes the ``WikiAddOptions`` bundle now, not a
+    bare ``project_id`` kwarg.
+    """
+    opts = kwargs.pop("opts", None) or WikiAddOptions()
+    return _wiki().ingest(*args, opts=replace(opts, project_id=TEST_PROJECT_ID), **kwargs)
 
 
 # ── A. Episodic query detection ───────────────────────────────────────────────
