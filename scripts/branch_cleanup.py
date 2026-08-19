@@ -171,6 +171,28 @@ def is_ancestor(repo: Path, branch_name: str, target: str) -> bool:
     return result.returncode == 0
 
 
+def has_unique_commits(repo: Path, branch_name: str, default_branch: str) -> bool:
+    """True if `branch_name` has at least one commit not reachable from
+    `default_branch`.
+
+    A branch with ZERO unique commits (freshly created off the default
+    branch, never committed to — e.g. a worktree harness stamps one at
+    creation before the agent inside it makes its first commit) is
+    trivially `is_ancestor(branch, default)` — but calling that "merged"
+    is a category error: nothing was ever contributed for master to have
+    integrated. See the EMPTY classification in `classify_branches`.
+    """
+    result = _run(["git", "rev-list", "--count", branch_name, f"^{default_branch}"], cwd=repo)
+    out = result.stdout.strip()
+    try:
+        return int(out) > 0
+    except ValueError:
+        # Unparseable output (e.g. default_branch unresolvable) — treat as
+        # "has commits" so this NEVER accidentally routes a real branch
+        # into the empty bucket and skips its merge classification.
+        return True
+
+
 def branch_last_commit_epoch(repo: Path, branch_name: str) -> int | None:
     result = _run(["git", "log", "-1", "--format=%ct", branch_name], cwd=repo)
     out = result.stdout.strip()
@@ -254,6 +276,7 @@ class ClassificationResult:
     merged: set[str] = field(default_factory=set)
     unmerged: set[str] = field(default_factory=set)
     preserved: set[str] = field(default_factory=set)
+    empty: set[str] = field(default_factory=set)
     reasons: dict[str, str] = field(default_factory=dict)
 
 
@@ -265,15 +288,35 @@ def classify_branches(
     preserve_glob: str = DEFAULT_PRESERVE_GLOB,
     skip: set[str] | None = None,
 ) -> ClassificationResult:
-    """Classify every branch as merged / unmerged / preserved.
+    """Classify every branch as merged / unmerged / preserved / empty.
 
     Layer 1 (direct): branch has its own PR — MERGED -> merged,
-    OPEN/CLOSED(unmerged) -> unmerged, trusted outright.
-    Layer 2 (transitive): no PR of its own — merged if it is an ancestor of
-    the default branch or of any branch already known merged (fixed-point
-    iteration, bounded rounds — catches multi-level car-branch chains).
-    Anything left unresolved after that stays unmerged (conservative
-    default — matches the old script's fail-safe direction).
+    OPEN/CLOSED(unmerged) -> unmerged, trusted outright regardless of
+    commit count (gh is the ground truth this design is built on).
+
+    EMPTY GATE (bug found in live review, 2026-08-19): a branch with ZERO
+    commits not already on the default branch is not "merged" — nothing
+    was ever contributed for the default branch to have integrated. This
+    matters concretely: `EnterWorktree` stamps every fresh worktree onto a
+    brand-new branch at the default branch's tip, and that branch is
+    trivially `is_ancestor(branch, default)` until the agent inside it
+    makes its first commit. Feeding that straight into layer 2 classified
+    every just-spawned, currently-in-use worktree branch as "merged" —
+    "ancestor of 'master' (no direct PR)" — with NO direct-PR record to
+    override it, so `delete_branches` was about to force-remove the
+    attached worktree of whichever car happened to be mid-run. The
+    emptier the branch, the more confidently the old code deleted it.
+    Branches with no direct PR AND zero unique commits are classified
+    `empty` here instead and take NO PART in layer 2's ancestor closure
+    (neither as a candidate nor as a transitive-merge target) — an empty
+    branch has no content to license classifying anything ELSE as merged
+    "because it descends from" the empty branch either.
+
+    Layer 2 (transitive): remaining branches with no PR of their own and
+    at least one unique commit — merged if ancestor of the default branch
+    or of any branch already known merged (fixed-point iteration, bounded
+    rounds — catches multi-level car-branch chains). Anything left
+    unresolved after that stays unmerged (conservative default).
     """
     import fnmatch
 
@@ -299,6 +342,20 @@ def classify_branches(
             result.reasons[b] = f"PR state {state}"
         else:
             undetermined.append(b)
+
+    # Empty gate: split off branches with zero unique commits BEFORE layer 2
+    # touches them — they are neither a valid merge-candidate nor a valid
+    # transitive-merge target.
+    real_undetermined: list[str] = []
+    for b in undetermined:
+        if has_unique_commits(repo, b, default_branch):
+            real_undetermined.append(b)
+        else:
+            result.empty.add(b)
+            result.reasons[b] = (
+                "zero commits ahead of default branch, no direct PR — not merged, just unused"
+            )
+    undetermined = real_undetermined
 
     # Layer 2: transitive ancestry, fixed-point over bounded rounds.
     known_merged_targets = {default_branch} | result.merged
@@ -342,56 +399,60 @@ def delete_branches(
     repo: Path,
     classification: ClassificationResult,
     dry_run: bool,
-    patches_dir: Path | None = None,
 ) -> tuple[int, int]:
-    """Delete merged branches (unlocking + removing any attached worktree first).
+    """Delete merged branches. NEVER touches a worktree, ever.
 
-    A worktree attached to a merged branch is force-removed just like the
-    age sweep does — which means it gets the SAME dirty-worktree protection:
-    a worktree with uncommitted changes (ignoring .venv) never gets force-
-    removed blind. Its diff + untracked files are saved to `patches_dir`
-    first. Without this, "the branch actually got classified merged" (this
-    car's whole point) makes force-removal reachable for the first time —
-    the old, permanently-broken classifier never got here.
+    Bug found in live review, 2026-08-19: this used to force-remove any
+    worktree attached to a merged branch, with dirty-worktree protection
+    added as a guard. That guard was not enough — a worktree can be
+    perfectly CLEAN and still be a running agent's live working directory
+    mid-task (most acutely: the moment right after `EnterWorktree` stamps
+    a brand-new, zero-commit branch, which the empty-branch gate in
+    `classify_branches` now also excludes from "merged" — see that
+    docstring). Yanking an active worktree out from under a running
+    process is destructive regardless of whether its diff survives
+    somewhere as a patch file.
+
+    Branch cleanup and worktree lifecycle are two different concerns now:
+    a branch with an attached worktree is ALWAYS skipped here, full stop,
+    independent of classification — managing whether/when to remove that
+    worktree is `sweep_worktree_age`'s job (piece 2), which is age-gated
+    and defaults to dry-run. This function only ever deletes a branch
+    that already has no worktree pointed at it.
 
     Returns (deleted_count, skipped_worktree_attached_count).
     """
-    patches_dir = patches_dir if patches_dir is not None else DEFAULT_PATCHES_DIR
     deleted = 0
+    skipped_attached = 0
     for branch in sorted(classification.merged):
         wt_paths = worktrees_for_branch(repo, branch)
-        for wt_path in wt_paths:
-            wt_path_obj = Path(wt_path)
-            dirty = False
-            if wt_path_obj.is_dir():
-                dirty, _ = is_worktree_dirty(wt_path_obj)
-            if dry_run:
-                if dirty:
-                    print(
-                        f"[cleanup] DRY-RUN: would save patch + remove dirty worktree "
-                        f"{wt_path} (for branch {branch})"
-                    )
-                else:
-                    print(
-                        f"[cleanup] DRY-RUN: worktree unlock+remove: {wt_path} "
-                        f"(for branch {branch})"
-                    )
-            else:
-                if dirty:
-                    patch_path = save_worktree_patch(wt_path_obj, branch, patches_dir)
-                    if patch_path:
-                        print(f"[cleanup] saved dirty-worktree patch: {patch_path}")
-                print(f"[cleanup] worktree unlock+remove: {wt_path} (for branch {branch})")
-                _run(["git", "worktree", "unlock", wt_path], cwd=repo)
-                _run(["git", "worktree", "remove", "--force", wt_path], cwd=repo)
+        if wt_paths:
+            print(
+                f"[cleanup] skip (worktree attached, not touching it): {branch} -> "
+                f"{', '.join(wt_paths)}"
+            )
+            skipped_attached += 1
+            continue
         reason = classification.reasons.get(branch, "")
         if dry_run:
             print(f"[cleanup] DRY-RUN: merged ({reason}) -> delete: {branch}")
+            deleted += 1
         else:
-            print(f"[cleanup] merged ({reason}) -> delete: {branch}")
-            _run(["git", "branch", "-D", branch], cwd=repo)
-        deleted += 1
-    return deleted, 0
+            result = _run(["git", "branch", "-D", branch], cwd=repo)
+            if result.returncode == 0:
+                print(f"[cleanup] merged ({reason}) -> delete: {branch}")
+                deleted += 1
+            else:
+                # git itself refused (e.g. checked out in a worktree our own
+                # `worktrees_for_branch` check missed, or a race with another
+                # process) — the branch survives; report accurately instead
+                # of silently counting a no-op as a success (ADR-driven
+                # house lesson: ok:true is not evidence).
+                print(
+                    f"[cleanup] WARNING: git refused to delete {branch}: {result.stderr.strip()!r}",
+                    file=sys.stderr,
+                )
+    return deleted, skipped_attached
 
 
 # ── phase 2: worktree-age sweep ──────────────────────────────────────────────
@@ -604,14 +665,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         for b in sorted(classification.unmerged):
             print(f"[cleanup] unmerged ({classification.reasons.get(b, '')}): {b}")
+        for b in sorted(classification.empty):
+            print(f"[cleanup] empty ({classification.reasons.get(b, '')}): {b}")
         for b in sorted(classification.preserved):
             print(f"[cleanup] preserved: {b}")
-        deleted, _ = delete_branches(
-            repo, classification, dry_run=branch_dry_run, patches_dir=Path(args.patches_dir)
-        )
+        deleted, skipped_attached = delete_branches(repo, classification, dry_run=branch_dry_run)
         print(
             f"[cleanup] summary: deleted={deleted} unmerged={len(classification.unmerged)} "
-            f"preserved={len(classification.preserved)} dry_run={int(branch_dry_run)}"
+            f"empty={len(classification.empty)} preserved={len(classification.preserved)} "
+            f"skipped_worktree_attached={skipped_attached} dry_run={int(branch_dry_run)}"
         )
 
     if not args.skip_worktree_sweep:
