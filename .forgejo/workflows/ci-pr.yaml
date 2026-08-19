@@ -381,6 +381,35 @@ jobs:
           path: pytest-engine2.txt
           retention-days: 1
 
+      - name: Resolve a PULLABLE backend image for the vacuum e2e suite
+        # Mirror of the .github/workflows/ci-pr.yml step — see its comment for
+        # the full reasoning. Short version: server.json holds the PENDING
+        # backend_version, images are published at RELEASE, so on a
+        # version-bumping PR the derived tag does not exist and the fixture
+        # SKIPS — which the gate below treats as a failure. Resolve a tag that
+        # can actually be pulled, warn loudly when falling back, and fail hard
+        # rather than skip when neither pulls.
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin master
+          PENDING=$(python3 -c "import json;print(json.load(open('server.json'))['backend_version'])")
+          BASE=$(git show origin/master:server.json \
+                   | python3 -c "import json,sys;print(json.load(sys.stdin)['backend_version'])")
+          REPO=docker.io/openfantasy/yadgar-backend
+          if docker manifest inspect "$REPO:$PENDING" >/dev/null 2>&1; then
+            IMG="$REPO:$PENDING"
+            echo "vacuum e2e: backend $PENDING is published — testing the pending image"
+          else
+            IMG="$REPO:$BASE"
+            echo "::warning::vacuum e2e: backend $PENDING is not published yet; falling back to master's $BASE"
+            echo "::warning::vacuum e2e: backend changes in THIS PR are NOT validated by this job"
+          fi
+          docker pull "$IMG" || {
+            echo "neither $REPO:$PENDING nor $REPO:$BASE could be pulled" >&2
+            exit 1
+          }
+          echo "YADGAR_TEST_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
+
       - name: Run the vacuum e2e integration suite (task 156 / car A3)
         # yadgar/tests/integration/test_vacuum_e2e.py and
         # yadgar/tests/integration/test_conftest_backend_pin.py were in NO CI

@@ -208,7 +208,14 @@ def _wait_for_yadgar_rw_auth(
         try:
             resp = httpx.post(
                 f"{backend_url}/sql",
-                content="SELECT 1;",
+                # Ledger task 203: this sent `SELECT 1;`, which is NOT valid
+                # SurrealQL (SELECT requires a FROM target) — the endpoint
+                # answers 400 regardless of credentials, so the 200 this loop
+                # waits for could never arrive and the wait always burned the
+                # full timeout before failing. The docstring above already said
+                # `INFO FOR DB;`; only the code disagreed. Invisible until car
+                # A3 put this suite into CI, because nothing ever ran it.
+                content="INFO FOR DB;",
                 headers=_sql_headers(user=rw_user, password=rw_pass),
                 timeout=5.0,
             )
@@ -357,7 +364,11 @@ def test_vacuum_e2e_happy_path(live_backend_container):
     # the user definitely existed; if it's gone now, B1 is broken.
     rw_resp = httpx.post(
         f"{backend_url}/sql",
-        content="SELECT 1;",
+        # Ledger task 203, same defect as the pre-vacuum probe above: `SELECT 1;`
+        # is invalid SurrealQL and answers 400 whatever the credentials, so this
+        # assertion could only ever fail — it could not distinguish "B1 is broken"
+        # from "the query is malformed", which is the exact thing it claims to test.
+        content="INFO FOR DB;",
         headers=_sql_headers(user="yadgar-rw", password=rw_pass),
         timeout=10.0,
     )
