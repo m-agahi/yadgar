@@ -588,7 +588,7 @@ class TestAdrDueSignal:
         actions: list = []
         with patch("yadgar.core.server.tools.project.get_settings") as ms:
             ms.return_value.ADR_DUE_WARN_HOURS = 12.0
-            _apply_adr_signal("/tmp/testproject", storage, actions)
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
         assert len(actions) == 1
         assert actions[0]["action"] == "capture_adr"
 
@@ -600,7 +600,7 @@ class TestAdrDueSignal:
         actions: list = []
         with patch("yadgar.core.server.tools.project.get_settings") as ms:
             ms.return_value.ADR_DUE_WARN_HOURS = 12.0
-            _apply_adr_signal("/tmp/testproject", storage, actions)
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
         assert [a for a in actions if a.get("action") == "capture_adr"] == []
 
     def test_adr_due_silent_when_no_activity(self):
@@ -611,7 +611,7 @@ class TestAdrDueSignal:
         actions: list = []
         with patch("yadgar.core.server.tools.project.get_settings") as ms:
             ms.return_value.ADR_DUE_WARN_HOURS = 12.0
-            _apply_adr_signal("/tmp/testproject", storage, actions)
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
         assert [a for a in actions if a.get("action") == "capture_adr"] == []
 
     def test_adr_due_suggested_call_names_adr_add(self):
@@ -622,8 +622,127 @@ class TestAdrDueSignal:
         actions: list = []
         with patch("yadgar.core.server.tools.project.get_settings") as ms:
             ms.return_value.ADR_DUE_WARN_HOURS = 12.0
-            _apply_adr_signal("/tmp/testproject", storage, actions)
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
         assert "adr_add" in actions[0].get("suggested_call", "")
+
+    # ── Car A5 (ledger task 199): key the lookup by the ADR ledger's own
+    # project_id, not a directory basename ──────────────────────────────────
+    #
+    # Before this fix, ``_apply_adr_signal`` looked the ADR ledger up by
+    # ``os.path.basename(resolved)`` — a bare directory name — while the
+    # ``adr`` table's ``project_id`` column stores the full ``owner/repo``
+    # key. The lookup key could never match, so the signal always saw "no
+    # rows" and fired ``capture_adr`` every session regardless of how many
+    # ADRs the project actually had.
+
+    def test_adr_due_absent_when_project_has_adr_rows(self):
+        """PRESENT-branch regression: a project with a recent ADR row must
+        stay silent. The mock only returns the real (recent) row for the
+        CORRECT ``project_id`` key — the pre-fix basename lookup key would
+        get back ``None`` and wrongly fire.
+        """
+        from yadgar.core.server.tools.project import _apply_adr_signal
+
+        now = time.time()
+        storage = MagicMock()
+
+        def _mock_max_adr(*, project_id):
+            if project_id == TEST_PROJECT_ID:
+                from datetime import UTC as _UTC
+                from datetime import datetime as _datetime
+
+                return _datetime.fromtimestamp(now - 1 * 3600, tz=_UTC)
+            return None
+
+        storage.max_adr_updated_at.side_effect = _mock_max_adr
+
+        def _mock_q(query, params=None):
+            if "_active_work" in query or "active_work" in query:
+                return [{"created_at": now - 0.5 * 3600}]
+            return []
+
+        storage._q.side_effect = _mock_q
+
+        actions: list = []
+        with patch("yadgar.core.server.tools.project.get_settings") as ms:
+            ms.return_value.ADR_DUE_WARN_HOURS = 12.0
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
+
+        assert [a for a in actions if a.get("action") == "capture_adr"] == [], (
+            f"capture_adr fired despite {TEST_PROJECT_ID} having a recent ADR row: {actions}"
+        )
+
+    def test_adr_due_present_when_project_has_zero_adr_rows(self):
+        """ABSENT-branch: a project resolved to a real project_id with
+        genuinely zero ADR rows must still fire — and must query the ledger
+        by the resolved project_id, not a basename guess.
+        """
+        from yadgar.core.server.tools.project import _apply_adr_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(adr_ts=None, active_work_ts=now - 0.5 * 3600)
+        actions: list = []
+        with patch("yadgar.core.server.tools.project.get_settings") as ms:
+            ms.return_value.ADR_DUE_WARN_HOURS = 12.0
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
+
+        assert len(actions) == 1
+        assert actions[0]["action"] == "capture_adr"
+        storage.max_adr_updated_at.assert_called_with(project_id=TEST_PROJECT_ID)
+
+    def test_adr_due_silent_when_project_id_unresolvable(self):
+        """No ``project=`` override and no session context to resolve one —
+        the signal cannot positively evidence "zero ADRs" for an unknown
+        project (ADR-0214), so it must fail CLOSED (stay silent) rather than
+        default to firing.
+        """
+        from yadgar.core.server.tools.project import _apply_adr_signal
+
+        now = time.time()
+        storage = self._make_mock_storage(adr_ts=None, active_work_ts=now - 0.5 * 3600)
+        actions: list = []
+        with (
+            patch("yadgar.core.server.tools.project.get_settings") as ms,
+            patch(
+                "yadgar._shared.runtime.session_project.get_current_session_project",
+                return_value=None,
+            ),
+            patch(
+                "yadgar._shared.runtime.session_map.lookup_project_for_directory",
+                return_value=None,
+            ),
+        ):
+            ms.return_value.ADR_DUE_WARN_HOURS = 12.0
+            _apply_adr_signal("/tmp/testproject-unregistered", storage, actions, project_id=None)
+
+        assert actions == []
+        storage.max_adr_updated_at.assert_not_called()
+
+    def test_adr_due_silent_when_ledger_read_fails(self):
+        """The ledger read itself failing (engine #2 absent, backend
+        unreachable) must NOT collapse into "zero rows" — that would fire a
+        false ``capture_adr`` nudge for a project that may well have ADRs.
+        Fail CLOSED: stay silent this cycle rather than guess.
+        """
+        from yadgar.core.server.tools.project import _apply_adr_signal
+
+        now = time.time()
+        storage = MagicMock()
+        storage.max_adr_updated_at.side_effect = RuntimeError("engine #2 not composed")
+
+        def _mock_q(query, params=None):
+            if "_active_work" in query or "active_work" in query:
+                return [{"created_at": now - 0.5 * 3600}]
+            return []
+
+        storage._q.side_effect = _mock_q
+
+        actions: list = []
+        with patch("yadgar.core.server.tools.project.get_settings") as ms:
+            ms.return_value.ADR_DUE_WARN_HOURS = 12.0
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
+
+        assert actions == []
 
 
 # ── 7. Monolith-parse helpers (migration source) ──────────────────────────────
