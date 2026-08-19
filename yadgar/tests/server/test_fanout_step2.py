@@ -20,6 +20,7 @@ from yadgar._shared.storage.directory import RecallScope
 
 _recall_module = sys.modules["yadgar.core.server.tools.recall"]
 
+import yadgar.backend.retrieval.recall_pipeline as _rp  # noqa: E402
 from yadgar.backend.retrieval.recall_pipeline import _fanout_recall  # noqa: E402
 
 recall_fn = _recall_module.recall
@@ -235,6 +236,70 @@ class TestFanoutRecall:
         results = self._call_fanout_tagged(_make_mock_retriever([tagged, content_only]), tags=None)
 
         assert sorted(r.get("id") for r in results) == [1, 2]
+
+    def test_kill_gate_strips_the_tag_from_BOTH_arms(self, monkeypatch):
+        """Flag-off must hand the SAME stripped tag list to both providers.
+
+        The S6 kill-gate used to run inside ``_build_provider_tasks``, where it
+        rebound that function's LOCAL ``tags`` — by then ``_fanout_recall`` had
+        already stamped ``Scope(opt_in_tags=tags)`` with the UNSTRIPPED list. So
+        with the flag OFF, WikiProvider was constructed with ``tags=None`` while
+        the memory arm still carried ``["agent-prompt"]``. That divergence was
+        inert only for as long as ``MemoryProvider`` ignored ``opt_in_tags``;
+        ledger task 82 made it read the field, which made the divergence live.
+
+        Both halves are asserted because either alone is satisfiable by the bug:
+
+        * WIKI ARM (the kill-gate itself, which must NOT weaken) — the provider
+          is constructed with ``tags=None``, so the include path cannot fire and
+          the default agent-prompt exclude turns back on.
+        * MEMORY ARM (the divergence) — a row NOT tagged ``agent-prompt`` still
+          comes back. Move the strip below the ``Scope`` construction again and
+          ``scope.opt_in_tags == ["agent-prompt"]``, so the memory guard filters
+          this row out and the assertion fails.
+        """
+        from yadgar._shared.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "AGENT_PROMPT_LIBRARY_ENABLED", False)
+
+        captured: dict = {}
+        real_wiki_provider = _rp.WikiProvider
+
+        def _spy_wiki_provider(store, *, tags=None, exclude_tags=None):
+            captured["wiki_tags"] = tags
+            captured["wiki_exclude"] = exclude_tags
+            return real_wiki_provider(store, tags=tags, exclude_tags=exclude_tags)
+
+        ordinary = _make_memory_dict(1, 0.9, content="an ordinary memory, not a prompt")
+        ordinary["tags"] = ["yadgar", "recall"]
+
+        with (
+            patch.object(_st, "_retriever", _make_mock_retriever([ordinary])),
+            patch.object(_st, "_wiki", _make_mock_wiki([])),
+            patch.object(_rp, "WikiProvider", _spy_wiki_provider),
+        ):
+            results = _fanout_recall(
+                query="audit this pull request for vulnerabilities",
+                max_results=5,
+                min_heat=0.0,
+                recall_scope=RecallScope(project_id="/tmp/test"),
+                type_filter="all",
+                tags=["agent-prompt"],
+            )
+
+        assert captured["wiki_tags"] is None, (
+            "kill-gate weakened: the agent-prompt include tag reached WikiProvider "
+            f"with the flag OFF (got {captured['wiki_tags']!r})"
+        )
+        assert captured["wiki_exclude"] == ["agent-prompt"], (
+            "the default agent-prompt exclude must turn back on once the include "
+            f"tag is stripped (got {captured['wiki_exclude']!r})"
+        )
+        assert 1 in [r.get("id") for r in results], (
+            "the memory arm filtered on 'agent-prompt' after the kill-gate stripped "
+            "it — the strip ran below the Scope construction, so scope.opt_in_tags "
+            "kept the unstripped list and the two arms disagreed"
+        )
 
     def test_pools_memory_and_wiki(self):
         """Fan-out with both retriever + wiki returns items from both sources."""
