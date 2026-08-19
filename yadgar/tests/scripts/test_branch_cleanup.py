@@ -260,9 +260,51 @@ class TestDeleteBranches:
         repo = _init_repo(tmp_path)
         _git(repo, "branch", "feat/gone")
         classification = bc.ClassificationResult(merged={"feat/gone"})
-        bc.delete_branches(repo, classification, dry_run=False)
+        bc.delete_branches(repo, classification, dry_run=False, patches_dir=tmp_path / "patches")
         branches = _git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/").stdout
         assert "feat/gone" not in branches
+
+    def test_dirty_worktree_attached_to_merged_branch_gets_patch_saved(self, tmp_path):
+        """The realistic reachable case now that the classifier can say
+        'merged': a worktree still checked out on a branch whose PR just
+        landed, holding uncommitted scratch. Must not be force-removed
+        blind — same protection sweep_worktree_age gives dirty worktrees."""
+        repo = _init_repo(tmp_path)
+        _git(repo, "checkout", "-b", "feat/just-merged")
+        _commit(repo, "x.py", "x\n", "change")
+        _git(repo, "checkout", "master")
+        wt_path = tmp_path / "wt-just-merged"
+        _git(repo, "worktree", "add", str(wt_path), "feat/just-merged")
+        (wt_path / "x.py").write_text("uncommitted scratch\n", encoding="utf-8")
+        (wt_path / "new_scratch.txt").write_text("new file\n", encoding="utf-8")
+
+        patches_dir = tmp_path / "patches"
+        classification = bc.ClassificationResult(merged={"feat/just-merged"})
+        bc.delete_branches(repo, classification, dry_run=False, patches_dir=patches_dir)
+
+        patch_matches = list(patches_dir.glob("feat_just-merged-*.patch"))
+        assert patch_matches, "dirty worktree's diff must be saved before force-removal"
+        assert "uncommitted scratch" in patch_matches[0].read_text(encoding="utf-8")
+        untracked_matches = list(patches_dir.glob("feat_just-merged-*-untracked/new_scratch.txt"))
+        assert untracked_matches, "untracked file content must be preserved"
+        assert not wt_path.exists()
+        branches = _git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/").stdout
+        assert "feat/just-merged" not in branches, "branch deletion itself is unaffected"
+
+    def test_clean_worktree_attached_to_merged_branch_removed_without_patch(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        _git(repo, "checkout", "-b", "feat/clean-merged")
+        _commit(repo, "y.py", "y\n", "change")
+        _git(repo, "checkout", "master")
+        wt_path = tmp_path / "wt-clean-merged"
+        _git(repo, "worktree", "add", str(wt_path), "feat/clean-merged")
+
+        patches_dir = tmp_path / "patches"
+        classification = bc.ClassificationResult(merged={"feat/clean-merged"})
+        bc.delete_branches(repo, classification, dry_run=False, patches_dir=patches_dir)
+
+        assert not wt_path.exists()
+        assert not patches_dir.exists() or not list(patches_dir.iterdir())
 
 
 # ── phase 2: worktree-age sweep ───────────────────────────────────────────────

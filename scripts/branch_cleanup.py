@@ -62,6 +62,24 @@ branch runs (i.e. the tool behaves exactly as safely-inert as the old, buggy
 script for anything not a true ancestor of default — but says why, instead
 of silently misreporting "tree differs").
 
+KNOWN LIMITATION — layer 2 trusts the integration branch's CURRENT tip
+------------------------------------------------------------------------
+Layer 2 checks `is-ancestor(sub_branch, integration_branch)` against
+whatever commit `integration_branch` currently points at, not the commit
+its PR actually merged. If a local branch keeps receiving commits AFTER
+its own PR lands (someone reuses an already-merged branch ref instead of
+starting a new one), a sub-branch merged into it post-landing would be
+misclassified as merged even though that content never reached the
+default branch. Validated 2026-08-19 against the six integration branches
+this repo's real corpus actually used as ancestor-check targets
+(`feat/spine-0047-train`, `train/2026-08-14-identity-corpus-rekey`,
+`fix/adr-seed-failure-visibility`, `feat/branch-scoping-removal`,
+`fix/fresh-install-engine2`, `docs/ettin-rust-investigation-2026-08-02`):
+zero commits landed on any of them after their PR's `mergedAt`. Not
+provably impossible in general — re-check this if a future sweep run
+classifies something as merged that looks wrong; the diagnostic is
+`git log <branch> --since=<pr_mergedAt>` returning anything.
+
 PIECE 2 — WORKTREE-AGE SWEEP (independent of piece 1)
 --------------------------------------------------------
 Reclaims disk without needing ANY merge classification: a worktree whose
@@ -321,19 +339,48 @@ def worktrees_for_branch(repo: Path, branch_name: str) -> list[str]:
 
 
 def delete_branches(
-    repo: Path, classification: ClassificationResult, dry_run: bool
+    repo: Path,
+    classification: ClassificationResult,
+    dry_run: bool,
+    patches_dir: Path | None = None,
 ) -> tuple[int, int]:
     """Delete merged branches (unlocking + removing any attached worktree first).
 
+    A worktree attached to a merged branch is force-removed just like the
+    age sweep does — which means it gets the SAME dirty-worktree protection:
+    a worktree with uncommitted changes (ignoring .venv) never gets force-
+    removed blind. Its diff + untracked files are saved to `patches_dir`
+    first. Without this, "the branch actually got classified merged" (this
+    car's whole point) makes force-removal reachable for the first time —
+    the old, permanently-broken classifier never got here.
+
     Returns (deleted_count, skipped_worktree_attached_count).
     """
+    patches_dir = patches_dir if patches_dir is not None else DEFAULT_PATCHES_DIR
     deleted = 0
     for branch in sorted(classification.merged):
         wt_paths = worktrees_for_branch(repo, branch)
         for wt_path in wt_paths:
+            wt_path_obj = Path(wt_path)
+            dirty = False
+            if not dry_run and wt_path_obj.is_dir():
+                dirty, _ = is_worktree_dirty(wt_path_obj)
             if dry_run:
-                print(f"[cleanup] DRY-RUN: worktree unlock+remove: {wt_path} (for branch {branch})")
+                if dirty:
+                    print(
+                        f"[cleanup] DRY-RUN: would save patch + remove dirty worktree "
+                        f"{wt_path} (for branch {branch})"
+                    )
+                else:
+                    print(
+                        f"[cleanup] DRY-RUN: worktree unlock+remove: {wt_path} "
+                        f"(for branch {branch})"
+                    )
             else:
+                if dirty:
+                    patch_path = save_worktree_patch(wt_path_obj, branch, patches_dir)
+                    if patch_path:
+                        print(f"[cleanup] saved dirty-worktree patch: {patch_path}")
                 print(f"[cleanup] worktree unlock+remove: {wt_path} (for branch {branch})")
                 _run(["git", "worktree", "unlock", wt_path], cwd=repo)
                 _run(["git", "worktree", "remove", "--force", wt_path], cwd=repo)
@@ -559,7 +606,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[cleanup] unmerged ({classification.reasons.get(b, '')}): {b}")
         for b in sorted(classification.preserved):
             print(f"[cleanup] preserved: {b}")
-        deleted, _ = delete_branches(repo, classification, dry_run=branch_dry_run)
+        deleted, _ = delete_branches(
+            repo, classification, dry_run=branch_dry_run, patches_dir=Path(args.patches_dir)
+        )
         print(
             f"[cleanup] summary: deleted={deleted} unmerged={len(classification.unmerged)} "
             f"preserved={len(classification.preserved)} dry_run={int(branch_dry_run)}"
