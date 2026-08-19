@@ -112,9 +112,21 @@ class _CapturingEngine:
 
 
 def _capture(coro_factory) -> tuple[str, dict]:
-    """Run one engine method against a capturing handle; return (sql, params)."""
+    """Run one engine method against a capturing handle; return (sql, params).
+
+    The ``_engine`` attribute is declared ``AsyncEngine`` on MariaStorageEngine,
+    and a capturing double is deliberately not one — it implements only the two
+    methods this test drives. ``object.__setattr__`` states that substitution
+    explicitly instead of widening the ignore to ``[assignment]``.
+
+    Worth knowing: the plain assignment typechecked in the car's own worktree and
+    only errored once merged, because mypy resolves ``AsyncEngine`` to ``Any``
+    when sqlalchemy is absent (it lives in the ``sql`` extra) and to a real type
+    when it is present. The type-ratchet result is therefore extras-dependent —
+    a file can be clean in a lean worktree venv and dirty on the assembled tree.
+    """
     engine = MariaStorageEngine.__new__(MariaStorageEngine)
-    engine._engine = _CapturingEngine()  # type: ignore[attr-defined]
+    object.__setattr__(engine, "_engine", _CapturingEngine())
     asyncio.run(coro_factory(engine))
     statements = engine._engine.statements  # type: ignore[attr-defined]
     assert len(statements) == 1, f"expected exactly one statement, got {statements!r}"
