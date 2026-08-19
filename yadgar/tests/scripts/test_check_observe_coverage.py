@@ -500,8 +500,19 @@ def test_warn_mode_exit_zero_despite_missing(tmp_path, capsys):
 
 
 def test_live_codebase_lint_runs():
-    """Smoke: the real repo scan runs and returns an int exit code in warn-mode."""
-    repo_root = Path(check_observe_coverage.__file__).resolve().parent.parent.parent
+    """Smoke: the real package scan runs and returns an int exit code in warn-mode.
+
+    Ledger task 222: this had one `.parent` too many. check_observe_coverage.py
+    lives in `<repo>/scripts/`, so `.parent.parent` IS the repo root and
+    `.parent.parent.parent` is the directory ABOVE the checkout — making
+    `repo_root / "yadgar"` resolve to the repo root itself rather than the
+    package. It looked correct only because this checkout is named `yadgar`, the
+    same as the package; a checkout named anything else would not even exist at
+    that path. The scan therefore walked the whole repo — `.venv`, `.venv-test`,
+    `.claude/worktrees` — and timed out at 300 s once those directories were
+    populated, which is what it did in CI and locally.
+    """
+    repo_root = Path(check_observe_coverage.__file__).resolve().parent.parent
     rc = check_observe_coverage.main(
         [
             "--warn",
