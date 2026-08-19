@@ -217,8 +217,19 @@ class TestIngestSlugResolutionInIsolation:
     the correct row, because ``add`` re-resolves ``opts.slug`` and merges
     there. (It lands with the WRONG content and the WRONG links, which is what
     the content/links assertions above catch — but the row id alone does not
-    isolate the defect.) These two assertions touch ``ingest`` directly, so
-    they red when and only when ``ingest``'s resolution breaks.
+    isolate the defect.)
+
+    THE ROW ID IS NOT ENOUGH HERE EITHER — measured, not assumed. This class was
+    added after the car's own mutation run and was mutation-checked afterwards by
+    the integrator, which is how the following was caught: asserting only
+    ``storage.updated == [SEEDED_PAGE_ID]`` PASSES under the mutation
+    ``slug = self._slugify(title)``, because ``ingest`` then misses at the title
+    slug, falls through to ``add``, and ``add`` re-resolves ``opts.slug`` and
+    merges at the correct row anyway. The row id is rescued; the SEMANTICS are
+    not. So each test below also asserts what only a real ``ingest`` merge
+    produces — the existing body is PRESERVED and appended to, where ``add``'s
+    rescue overwrites it with the bare fragment. That is the assertion which goes
+    red when ``ingest``'s own resolution breaks.
     """
 
     def test_ingest_merges_at_opts_slug_not_at_the_title_slug(self) -> None:
@@ -235,6 +246,12 @@ class TestIngestSlugResolutionInIsolation:
 
         assert [pid for pid, _ in storage.updated] == [SEEDED_PAGE_ID]
         assert storage.inserted == []
+        _, updates = storage.updated[0]
+        assert updates["content"].startswith("original body"), (
+            "ingest resolved the WRONG slug — add()'s fall-through rescued the row "
+            "id but replaced the body instead of appending to it. "
+            f"content={updates['content']!r}"
+        )
 
     def test_ingest_without_a_slug_still_derives_from_the_title(self) -> None:
         storage = _FakeWikiStorage({TITLE_SLUG: {**_seeded_page(), "slug": TITLE_SLUG}})
@@ -243,6 +260,11 @@ class TestIngestSlugResolutionInIsolation:
         store.ingest("appended body", TITLE, None, None, opts=WikiAddOptions(project_id=PROJECT_ID))
 
         assert [pid for pid, _ in storage.updated] == [SEEDED_PAGE_ID]
+        _, updates = storage.updated[0]
+        assert updates["content"].startswith("original body"), (
+            "the title-derived merge did not append to the existing body: "
+            f"content={updates['content']!r}"
+        )
 
 
 # ── create branch: nothing exists yet at the explicit slug ────────────────────
