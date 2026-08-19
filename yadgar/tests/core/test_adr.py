@@ -744,6 +744,117 @@ class TestAdrDueSignal:
 
         assert actions == []
 
+    # ── Forward-path coverage (the actual production path) ──────────────────
+    #
+    # Core's real StorageEngine (SurrealDB-backed, yadgar/_shared/storage/
+    # __init__.py) has NO ``max_adr_updated_at`` method — only
+    # MariaStorageEngine (yadgar/_shared/storage/sql/mariadb.py) does, reachable
+    # from core only via ``_forward_admin`` over HTTP (ADR-0078: core never
+    # touches the DB directly). So in production ``storage.max_adr_updated_at``
+    # ALWAYS raises ``AttributeError`` and ``_get_adr_log_updated_at_via_forward``
+    # is the only path that ever runs — a plain stub lacking the attribute
+    # (not a ``MagicMock``, which auto-creates it) is what exercises it.
+
+    class _StorageWithoutAdrLedger:
+        """Mirrors core's real StorageEngine: no ``max_adr_updated_at``.
+
+        Forces the ``AttributeError`` fallback in ``_get_adr_log_updated_at``
+        onto ``_get_adr_log_updated_at_via_forward`` (the ``_forward_admin``
+        HTTP path), same as every real production call.
+        """
+
+        def __init__(self, active_work_ts):
+            self._active_work_ts = active_work_ts
+
+        def _q(self, query, params=None):
+            if "_active_work" in query or "active_work" in query:
+                if self._active_work_ts is None:
+                    return []
+                return [{"created_at": self._active_work_ts}]
+            return []
+
+    def test_adr_due_silent_when_forward_backend_reports_failure(self):
+        """The production path: engine #2 absent / backend unreachable comes
+        back as ``{"ok": False, "error": ...}`` (see
+        ``backend/admin_exec/ledger.py:max_adr_updated_at``). That must fail
+        CLOSED — silent, not "zero rows" — same rule as the direct-storage
+        failure case, but exercised through the actual ``_forward_admin`` call
+        every real deployment makes.
+        """
+        from yadgar.core.server.tools.project import _apply_adr_signal
+
+        now = time.time()
+        storage = self._StorageWithoutAdrLedger(active_work_ts=now - 0.5 * 3600)
+
+        def _mock_forward(op, payload, **kwargs):
+            assert op == "max_adr_updated_at"
+            assert payload == {"project_id": TEST_PROJECT_ID}
+            return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+
+        actions: list = []
+        with (
+            patch("yadgar.core.server.tools.project.get_settings") as ms,
+            patch("yadgar.core.server.tools.project._forward_admin", side_effect=_mock_forward),
+        ):
+            ms.return_value.ADR_DUE_WARN_HOURS = 12.0
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
+
+        assert actions == []
+
+    def test_adr_due_present_when_forward_confirms_zero_rows(self):
+        """The production path: a genuinely empty ledger comes back over
+        ``_forward_admin`` as ``{"updated_at": None}`` with no ``ok`` key
+        (see ``backend/admin_exec/ledger.py:max_adr_updated_at`` — that shape
+        IS success, just an empty result). This must fire — the ABSENT
+        branch exercised through the real production call path.
+        """
+        from yadgar.core.server.tools.project import _apply_adr_signal
+
+        now = time.time()
+        storage = self._StorageWithoutAdrLedger(active_work_ts=now - 0.5 * 3600)
+
+        def _mock_forward(op, payload, **kwargs):
+            assert op == "max_adr_updated_at"
+            assert payload == {"project_id": TEST_PROJECT_ID}
+            return {"updated_at": None}
+
+        actions: list = []
+        with (
+            patch("yadgar.core.server.tools.project.get_settings") as ms,
+            patch("yadgar.core.server.tools.project._forward_admin", side_effect=_mock_forward),
+        ):
+            ms.return_value.ADR_DUE_WARN_HOURS = 12.0
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
+
+        assert len(actions) == 1
+        assert actions[0]["action"] == "capture_adr"
+
+    def test_adr_due_absent_when_forward_confirms_recent_row(self):
+        """The production path: a project WITH a recent ADR row comes back
+        over ``_forward_admin`` as ``{"updated_at": <recent ts>}``. This must
+        stay silent — the PRESENT-branch counterpart to the previous test,
+        exercised through the real production call path.
+        """
+        from yadgar.core.server.tools.project import _apply_adr_signal
+
+        now = time.time()
+        storage = self._StorageWithoutAdrLedger(active_work_ts=now - 0.5 * 3600)
+
+        def _mock_forward(op, payload, **kwargs):
+            assert op == "max_adr_updated_at"
+            assert payload == {"project_id": TEST_PROJECT_ID}
+            return {"updated_at": now - 1 * 3600}
+
+        actions: list = []
+        with (
+            patch("yadgar.core.server.tools.project.get_settings") as ms,
+            patch("yadgar.core.server.tools.project._forward_admin", side_effect=_mock_forward),
+        ):
+            ms.return_value.ADR_DUE_WARN_HOURS = 12.0
+            _apply_adr_signal("/tmp/testproject", storage, actions, project_id=TEST_PROJECT_ID)
+
+        assert [a for a in actions if a.get("action") == "capture_adr"] == []
+
 
 # ── 7. Monolith-parse helpers (migration source) ──────────────────────────────
 #
