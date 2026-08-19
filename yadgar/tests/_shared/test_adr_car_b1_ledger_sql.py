@@ -139,6 +139,17 @@ _FIXTURE_ROWS: tuple[dict[str, Any], ...] = (
     {"id": 27, "project_id": "m-agahi/yadgar", "status": "rejected", "tier": None},
 )
 
+#: NO ``status=None`` ROW APPEARS ABOVE, and that is a statement about the real
+#: schema rather than an omission. ``adr.status`` is ``nullable=False,
+#: server_default='open'`` (migration 002, ``002_ledger_tables.py:210``), so a
+#: NULL status cannot exist. It matters because the binding arm is
+#: ``status NOT IN (...)``, which evaluates to NULL — i.e. EXCLUDES — for a NULL
+#: status, and the historical arm's ``IN`` would exclude it too: a
+#: ``tier=NULL, status=NULL`` row would be invisible under BOTH filter values,
+#: which is this car's own defect one axis over. The fixture creates every
+#: column as nullable TEXT (SQLite), so it CAN represent a state MariaDB
+#: forbids; do not read the absence of such a row as "untested by accident".
+
 _YADGAR = "m-agahi/yadgar"
 _FLUX = "quinyx/flux"
 
@@ -176,6 +187,41 @@ def _run(sql: str, params: dict) -> list[int]:
 # ---------------------------------------------------------------------------
 # Task 188 — get_adr_row must be project-scoped
 # ---------------------------------------------------------------------------
+
+
+class TestHistoricalStatusSetsAgree:
+    """The read side and the write side must classify the same statuses.
+
+    ``lc.HISTORICAL_STATUSES`` (this car, read side) and
+    ``adr._HISTORICAL_STATUSES`` (Car A6, write side) are THREE separate copies
+    of D27 counting ``seed_adr_tier_subsystem``'s — deliberately duplicated,
+    because ``core`` imports neither ``backend`` nor ``_shared.storage.sql``
+    (each module's own comment records this).  A test can import all of them,
+    and it is the only thing standing between a one-sided edit and 191
+    silently returning: drift the read copy and NULL rows go back to being
+    unreachable through one of the two filter values.
+    """
+
+    def test_read_and_write_sides_agree(self) -> None:
+        from yadgar.core.server.tools.adr import _HISTORICAL_STATUSES as write_side
+
+        assert set(lc.HISTORICAL_STATUSES) == set(write_side), (
+            "D27 drift: read side (ledger_columns.HISTORICAL_STATUSES) "
+            f"{sorted(lc.HISTORICAL_STATUSES)} vs write side "
+            f"(adr._HISTORICAL_STATUSES) {sorted(write_side)}"
+        )
+
+    def test_seed_backfill_copy_agrees_too(self) -> None:
+        """The one-shot backfill stamps rows this filter then has to classify."""
+        from yadgar.backend.admin_exec.seed_adr_tier_subsystem import (
+            _HISTORICAL_STATUSES as seed_side,
+        )
+
+        assert set(lc.HISTORICAL_STATUSES) == set(seed_side), (
+            "D27 drift: read side (ledger_columns.HISTORICAL_STATUSES) "
+            f"{sorted(lc.HISTORICAL_STATUSES)} vs the one-shot backfill "
+            f"{sorted(seed_side)}"
+        )
 
 
 class TestGetAdrRowIsProjectScoped:
@@ -272,6 +318,50 @@ class TestListAdrRowsNullTier:
     def test_status_filter_still_composes_with_tier(self) -> None:
         sql, params = _list_sql(tier="historical", status="rejected")
         assert _run(sql, params) == [27]
+
+    @pytest.mark.parametrize(
+        ("status", "expected_tier"),
+        [
+            ("open", "binding"),
+            ("accepted", "binding"),
+            ("superseded", "historical"),
+            ("rejected", "historical"),
+            ("deprecated", "historical"),
+            # ``_flip_adr_status``'s own docstring: the sweep later flips a row
+            # to ``'archived'``. Unrecognised → binding, matching
+            # ``_tier_for_status``. Asserted rather than inherited.
+            ("archived", "binding"),
+        ],
+    )
+    def test_every_status_in_the_domain_lands_in_one_bucket(
+        self, status: str, expected_tier: str
+    ) -> None:
+        """A NULL-tier row of ANY status is reachable through exactly one filter.
+
+        Covers the full ``adr.status`` domain, not just the three the fixture
+        corpus happens to carry — the reachability property is what this car
+        exists to restore, and it must not have a hole for ``open``,
+        ``deprecated`` or ``archived``.
+        """
+        conn = _sqlite_corpus()
+        try:
+            columns = [c.strip() for c in lc.ADR_COLUMNS.split(",")]
+            row = dict.fromkeys(columns)
+            row.update({"id": 900, "project_id": _YADGAR, "status": status, "tier": None})
+            conn.execute(
+                f"INSERT INTO adr ({', '.join(columns)}) "  # noqa: S608
+                f"VALUES ({', '.join(':' + c for c in columns)})",
+                row,
+            )
+            hits: dict[str, list[int]] = {}
+            for filter_tier in ("binding", "historical"):
+                sql, params = _list_sql(tier=filter_tier)
+                hits[filter_tier] = [int(r["id"]) for r in conn.execute(sql, params).fetchall()]
+        finally:
+            conn.close()
+        assert 900 in hits[expected_tier], f"status={status!r} must land in {expected_tier!r}"
+        other = "historical" if expected_tier == "binding" else "binding"
+        assert 900 not in hits[other], f"status={status!r} must NOT also land in {other!r}"
 
     def test_unknown_tier_value_gets_plain_equality(self) -> None:
         """An out-of-enum ``tier`` must not acquire a NULL arm.
