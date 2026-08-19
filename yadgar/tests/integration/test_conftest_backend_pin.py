@@ -95,6 +95,43 @@ def test_backend_image_env_override_wins(monkeypatch):
     assert mod._backend_image() == f"openfantasy/yadgar-backend:{data['backend_version']}"
 
 
+def test_docker_endpoint_host_resolves_remote_and_local_daemons(monkeypatch):
+    """_docker_endpoint_host() must follow DOCKER_HOST, not assume 127.0.0.1.
+
+    The CI runner reaches a docker:dind SIDECAR over DOCKER_HOST=tcp://dind:2375,
+    so the daemon creating the container is in a different network namespace from
+    pytest. A port published by that daemon is NOT on the runner's loopback —
+    measured on the self-hosted runner 2026-08-19: runner 10.89.1.6, dind
+    10.89.1.2. Probing 127.0.0.1 there could only ever time out, which is exactly
+    what the health wait did on every CI run.
+
+    Pinned in BOTH directions: a remote daemon must NOT resolve to loopback, and
+    the ordinary local case must NOT regress to something else.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("conftest_mod4", _CONFTEST)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # Remote TCP daemon → its hostname, never loopback.
+    monkeypatch.setenv("DOCKER_HOST", "tcp://dind:2375")
+    assert mod._docker_endpoint_host() == "dind"
+
+    monkeypatch.setenv("DOCKER_HOST", "tcp://10.89.1.2:2375")
+    assert mod._docker_endpoint_host() == "10.89.1.2"
+
+    # Local daemon shapes → loopback (unset, unix socket, empty).
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    assert mod._docker_endpoint_host() == "127.0.0.1"
+
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    assert mod._docker_endpoint_host() == "127.0.0.1"
+
+    monkeypatch.setenv("DOCKER_HOST", "   ")
+    assert mod._docker_endpoint_host() == "127.0.0.1"
+
+
 def test_no_hardcoded_5_0_3_in_conftest():
     """Regression gate: 5.0.3 must not appear as a live value in conftest.py.
 
