@@ -33,10 +33,14 @@ class Scope:
             this from ``directory``: it is pushed into the stage-1 ``WHERE``
             clause (``project_id = $p OR 'global' IN tags``) rather than being
             applied as a Python post-filter after the query spent its LIMIT.
-        opt_in_tags: Tags the caller explicitly requested. Feeds the
-            ``POLICY_BY_TYPE``-derived ``page_type`` exclusion so
-            ``recall(type="wiki", tags=["agent-prompt"])`` still reaches the
-            agent-prompt library (ADR-0007).
+        opt_in_tags: Tags the caller explicitly requested. Two consumers, both
+            required. Wiki: feeds the ``POLICY_BY_TYPE``-derived ``page_type``
+            exclusion so ``recall(type="wiki", tags=["agent-prompt"])`` still
+            reaches the agent-prompt library (ADR-0007). Memory (ledger task
+            82): ``MemoryProvider`` drops rows that do not carry every listed
+            tag — the field was populated here from the start but the memory
+            provider never read it, so a tag-filtered memory recall returned
+            whatever the query's text scorers matched.
         min_heat: Minimum heat threshold forwarded to the memory provider.
             Wiki candidates have no heat; this field is ignored by WikiProvider.
         excluded_slugs: Car C8 (0047 §5 C8) — wiki slugs this read must not

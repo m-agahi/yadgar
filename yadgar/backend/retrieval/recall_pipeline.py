@@ -500,8 +500,12 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
             parameter is how the exclusion arm gets dropped by a caller that
             threads the project and forgets the rest).
         type_filter: One of {"all", "memory", "wiki"}. Selects provider subset.
-        tags: Tag include filter for wiki retrieval. When set, triggers SQL pre-filter
-              (search_wiki_vectors_tagged) and suppresses the default agent-prompt exclude.
+        tags: Tag include filter, honored by BOTH providers. Wiki: triggers the
+              SQL pre-filter (search_wiki_vectors_tagged) and suppresses the
+              default agent-prompt exclude. Memory: rides on ``Scope.opt_in_tags``
+              into ``MemoryProvider``'s row guard, which drops rows not carrying
+              every listed tag (ledger task 82 — the memory arm previously never
+              read it, so the token was scored as ordinary content text).
               None (default) = general recall with agent-prompt exclusion active.
         deadline: Monotonic deadline from the client's deadline_ms budget
               (ADR-0077): exceeded → remaining stages skipped, partial result.
