@@ -681,13 +681,21 @@ def _resolve_wiki_query_project(*, project: str | None, directory: str | None) -
 
 
 @observe(exempt="single resolve + ValueError mapping; no I/O — called at the wiki_read boundary")
-def _resolve_wiki_read_project(*, project: str | None, directory: str | None) -> str | None:
+def _resolve_wiki_read_project(*, project: str | None, directory: str | None) -> str:
     """Car M: resolve the effective project_id for ``wiki_read``.
 
     Raises ``ValueError`` on a malformed ``project=``; the caller wraps it
     in a dict-returning error envelope so the tool boundary stays clean.
     The error string is prefixed with ``"wiki_read: "`` so callers see the
     tool name in any traceback.
+
+    Car W2: the return type was ``str | None`` and never could be. C5 deleted
+    every tier that answered ``None``: ``resolve_effective_project`` returns a
+    non-empty ``str`` or raises ``UnresolvedProjectError``, which is NOT a
+    ``ValueError`` and so propagates past the caller's ``except``. The lie
+    mattered once the value became the LOOKUP key — it invites a ``None``
+    branch, and the only thing such a branch could do is widen to an unscoped
+    slug match, i.e. rebuild the fallback ADR-0227 exists to delete.
     """
     try:
         return resolve_effective_project(
@@ -870,19 +878,27 @@ def wiki_read(
     Car M (0047 §7, §16.6): the ``project=`` override lets a caller address
     another project's wiki namespace without leaving the current working
     tree. Precedence: ``project`` (override) > ``session_project`` >
-    ``directory``-derived > ``"global"``. The resolved project_id is folded
-    into the cache key so a stale read cannot leak across projects. When
-    BOTH ``project`` and ``directory`` are supplied, ``project`` wins and
-    ``directory`` is logged-and-ignored (§9 [VERIFY]).
+    the hook-authored directory map > raise (ADR-0227 — never guessed).
 
-    §25 Resolution order (directory-aware; ADR-0215 removed the branch axis):
-    1. directory=$caller_dir  (project-scoped)
-    2. directory='global'     (global fallback)
+    §25 Resolution order, keyed on the RESOLVED project_id (ADR-0233):
+    1. project_id = $resolved   (the caller's own project)
+    2. the Car C7 global reach tag   (the cross-project library)
     3. Not found → error dict.
 
+    Car W2 (ledger task 219) re-pointed rungs 1-2 off ``directory``. They used
+    to read ``directory_context = $caller_dir`` then ``= 'global'``, so
+    ``project=`` reached only the validation and the cache key and the LOOKUP
+    narrowed on the directory. Measured 2026-08-19: the SAME slug with the SAME
+    correct ``project="quinyx/flux"`` resolved with no directory and returned
+    "not found" with ``directory="/home/max/git/yadgar"`` — adding a correct
+    scoping argument made the read fail. ADR-0233 makes project_id the sole
+    scoping key; this shared read path had not been re-keyed, and every tool
+    passing both arguments inherited the defect (car A6 worked around it in
+    ``adr_get`` by dropping ``directory`` — a per-caller patch, not the fix).
 
-    When directory is not supplied, the slug is matched on its own
-    (backward-compat mode; WARNING logged).
+    ``directory`` is therefore no longer a lookup input at all: it is accepted,
+    logged-and-ignored when ``project`` also names an identity (§9 [VERIFY]),
+    and otherwise consulted only by the resolver's hook-authored map tier.
     """
     assert _st._wiki is not None, "WikiStore not initialized"
 
@@ -900,27 +916,31 @@ def wiki_read(
     except ValueError as exc:
         return {"error": str(exc)}
 
-    # Car 2: cache the resolved page by (slug, dir) + wiki epoch.
+    # Car 2: cache the resolved page by (slug, project_id) + wiki epoch.
     # A hit skips the WikiStore read. A wiki write to ANY page bumps the global
     # epoch → this key moves → a stale page can never be served (the
     # wiki-write-busts-read guarantee). Only found pages are cached; a not-found
     # result is cheap to recompute and a later create bumps the epoch anyway.
     # Car M: fold the resolved project_id into the cache key so a stale read
     # cannot leak across projects when the override path is exercised.
-    _caller_dir = directory.strip().rstrip("/") if directory is not None else None
-    _r_key = (slug, _caller_dir, _current_wiki_epoch(), _effective_project_id)
+    #
+    # Car W2 DROPPED ``_caller_dir`` from the key. It is no longer a lookup
+    # input, so keying on it could only manufacture misses — two calls that
+    # differ solely in ``directory=`` now resolve the same page and must share
+    # the entry. Safe precisely BECAUSE the lookup stopped depending on it: the
+    # cross-project guarantee rests on ``_effective_project_id``, which stays.
+    _r_key = (slug, _current_wiki_epoch(), _effective_project_id)
     _r_hit = _wiki_read_cache.get(_r_key)
     if _r_hit is not None:
         return _r_hit
 
-    if directory is None:
-        # Legacy fallback — no directory supplied; backward-compat mode.
-        logger.warning(
-            "wiki_read('%s'): no directory supplied — matching on slug alone. "
-            "Pass directory= for project-scoped results (v5.42.5).",
-            slug,
-        )
-    page = _st._wiki.read_by_directory(slug, _caller_dir or None)
+    # Car W2: the "no directory supplied — matching on slug alone" WARNING is
+    # GONE, not moved. Post-re-key it described behaviour that no longer exists
+    # (the lookup is project-keyed with or without a directory), and under
+    # ADR-0233 a directory-less call is the CORRECT shape — warning on it told
+    # callers to add the argument that caused the defect. It also fired once per
+    # ``adr_get`` after car A6 dropped ``directory`` from that path.
+    page = _st._wiki.read_by_project(slug, _effective_project_id)
 
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}

@@ -30,6 +30,7 @@ import logging
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
+from yadgar._shared.storage.directory import GLOBAL_REACH_TAG
 from yadgar._shared.storage.mutability_gate import enforce_mutability
 from yadgar._shared.storage.wiki_change_summary import compute_change_summary
 
@@ -439,6 +440,56 @@ class _WikiMixin:
         rows = self._q(
             "SELECT * FROM wiki_page WHERE slug = $slug AND directory_context = 'global' LIMIT 1",
             {"slug": slug},
+        )
+        return self._row_to_dict(rows[0]) if rows else None
+
+    @observe(tier="stage")
+    def get_wiki_page_by_slug_project(
+        self,
+        slug: str,
+        project_id: str,
+    ) -> dict | None:
+        """§25 slug resolution re-keyed onto ``project_id`` (ADR-0233).
+
+        The ladder is the SAME SHAPE ``get_wiki_page_by_slug_directory`` walks —
+        own scope first, shared scope as the fallback — with the key swapped for
+        the one ADR-0233 makes sole:
+
+        1. ``project_id = $pid``        (the caller's own project)
+        2. ``$reach IN tags``           (Car C7 global reach; ADR-0171's library)
+        3. Returns None if not found.
+
+        TWO QUERIES, NOT ONE ``OR``. ``build_project_scope_clause`` emits
+        ``(project_id = $p OR $reach IN tags)`` as a single clause, which is
+        right for a ranked SEARCH but wrong here: with ``LIMIT 1`` it would pick
+        arbitrarily between the caller's own page and a global-reach page
+        sharing the slug, and §25's precedence is own-project FIRST.
+
+        NO ``directory_context = 'global'`` RUNG. Car C7 moved reach off the
+        directory column and onto the tag; the last row still carrying only the
+        old shape (measured 2026-08-19: exactly one, ``quinyx/flux``-owned) is
+        reached by rung 1 from its own project, which is where it belongs.
+
+        A falsy ``project_id`` returns None rather than widening to a
+        whole-corpus slug match — ADR-0227: an unresolved identity never
+        produces MORE rows. The tool boundary raises before reaching here, so
+        this is a floor, not a path.
+        """
+        if not project_id:
+            return None
+
+        # Rung 1: the caller's own project.
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE slug = $slug AND project_id = $pid LIMIT 1",
+            {"slug": slug, "pid": project_id},
+        )
+        if rows:
+            return self._row_to_dict(rows[0])
+
+        # Rung 2: global reach (the cross-project library).
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE slug = $slug AND $reach IN tags LIMIT 1",
+            {"slug": slug, "reach": GLOBAL_REACH_TAG},
         )
         return self._row_to_dict(rows[0]) if rows else None
 

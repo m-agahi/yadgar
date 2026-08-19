@@ -887,6 +887,23 @@ class WikiStore:
         """
         return self._storage.get_wiki_page_by_slug_directory(slug, caller_directory)
 
+    def read_by_project(self, slug: str, project_id: str) -> dict | None:
+        """Read a wiki page with §25 resolution keyed on ``project_id``.
+
+        Car W2 (ledger task 219) — the ADR-0233 counterpart of
+        ``read_by_directory``: same two-rung shape, sole scoping key swapped.
+
+        1. project_id = $pid   (the caller's own project)
+        2. the Car C7 global reach tag   (the cross-project library)
+        3. Returns None if not found.
+
+        ``read_by_directory`` is KEPT, not replaced: ``adr_seed``, ``adr_retype``
+        and ``_resolve_page_id_by_slug`` still resolve on the stored
+        ``directory_context`` column, which ADR-0233 retires as a scoping KEY
+        without dropping the column.
+        """
+        return self._storage.get_wiki_page_by_slug_project(slug, project_id)
+
     @observe(tier="stage")
     def _collect_wiki_fts_scores(
         self,
