@@ -149,6 +149,14 @@ STATUS_SUPERSEDED = "superseded"
 # ``seed_adr_tier_subsystem`` would stamp — so running that backfill later
 # changes nothing observable.
 #
+# ``adr_tier_for_flip`` BELOW IS A FOURTH CLASSIFIER AND IS DELIBERATELY NOT
+# THE SAME SHAPE — do not "unify" them. The three copies named below are
+# TWO-way (anything unrecognised → binding), which is right for a CREATE. The
+# flip classifier is THREE-way: it declines to classify a status D27 does not
+# name, because ``_flip_adr_status``'s other caller writes ``'archived'`` over
+# rows that are already historical and a two-way rule would un-tier the whole
+# archived cohort on a cron (ledger task 197).
+#
 # THIRD COPY, ON PURPOSE. ``core.server.tools.adr._HISTORICAL_STATUSES`` and
 # ``backend.admin_exec.seed_adr_tier_subsystem`` already carry the same
 # frozenset, and the former's comment records why they are duplicated rather
@@ -161,6 +169,50 @@ TIER_HISTORICAL = "historical"
 
 #: Statuses whose ADRs are ``historical`` rather than ``binding`` (D27).
 HISTORICAL_STATUSES: tuple[str, ...] = ("superseded", "rejected", "deprecated")
+
+#: Statuses whose ADRs are ``binding`` (D27's other half). Enumerated rather
+#: than left as "everything not historical" — see ``adr_tier_for_flip``, whose
+#: whole point is that the complement is NOT a licence to write ``binding``.
+BINDING_STATUSES: tuple[str, ...] = ("open", "accepted")
+
+
+@observe(exempt="trivial status→tier mapping; no I/O, no error branch worth spanning")
+def adr_tier_for_flip(status: str | None) -> str | None:
+    """D27 tier for a status CHANGE, or ``None`` for "do not write the column".
+
+    Ledger task 197 (write side): ``_flip_adr_status`` flipped ``status`` and
+    left ``tier`` at whatever the row was CREATED with, so every supersede
+    wrote a self-contradicting row. Measured on the live corpus 2026-08-19:
+    ``adr_list(tier="historical")`` returned ZERO rows for ``m-agahi/yadgar``
+    against 20 historical-status rows, all stored ``tier='binding'``.
+    ``adr_tier_where`` above rescues the NULL-tier cohort by classifying on
+    status; it deliberately does not override an explicit stored value,
+    because a stored tier that disagrees with its status is a write bug — this
+    one.
+
+    THREE-WAY, AND THAT IS THE WHOLE POINT. The create-side twin
+    (``core.server.tools.adr._tier_for_status``) is two-way: anything
+    unrecognised → ``binding``. That default is right for a CREATE and
+    catastrophic for a FLIP, because ``nightly_sweep._sweep_project_adrs``
+    flips retired rows to ``'archived'`` — a status D27 does not classify —
+    and those rows are ALREADY superseded / rejected / deprecated. A two-way
+    rule would re-tier the entire archived cohort back to ``binding`` on a
+    cron, silently, every night. So an unclassified status returns ``None``
+    and the caller omits the column from its SET clause entirely, leaving
+    Car B1's status-classifying read arm in charge of it.
+
+    Args:
+        status: the status being written, or ``None``.
+
+    Returns:
+        ``TIER_HISTORICAL`` / ``TIER_BINDING`` for a D27-classified status;
+        ``None`` for anything else.
+    """
+    if status in HISTORICAL_STATUSES:
+        return TIER_HISTORICAL
+    if status in BINDING_STATUSES:
+        return TIER_BINDING
+    return None
 
 
 @observe(

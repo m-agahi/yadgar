@@ -69,6 +69,8 @@ from yadgar.core.server.tools.adr_render import (
     _build_adr_body,
     _canonical_adr_payload,
     _flip_superseded_target,
+    _fmt_superseded_by,
+    _fmt_supersedes,
     _parse_supersedes,
 )
 from yadgar.core.server.tools.project import _resolve_project_root
@@ -112,9 +114,12 @@ def _write_ok(result: dict) -> bool:
 # ``admin_exec/ledger.py``); schema per §3.5 of the master plan:
 #   {id, project_id, title, status, decided_on, subsystem, tier, body_slug,
 #    created_at, updated_at}
-# Car G populates the ``adr_supersedes`` join table during the seed; F emits
-# empty values for ``supersedes`` / ``superseded_by`` until that join is
-# readable (no ``list_adr_supersedes`` read method exists yet — out of F scope).
+# ``supersedes`` / ``superseded_by`` are NOT columns on ``adr`` (migration 002)
+# — they arrive as id LISTS attached by the backend read ops from the
+# ``adr_supersedes`` join table. Ledger task 195: that reader
+# (``MariaStorageEngine.list_adr_supersedes``) is Car B2's; Car F left the two
+# keys empty pending it and nothing picked it up for four cars, so every
+# supersede-bearing ADR rendered ``"none"`` / ``"-"`` (22/22, two corpora).
 
 
 @observe(tier="stage", metric="tools.adr._row_to_adr_list_entry")
@@ -132,8 +137,8 @@ def _row_to_adr_list_entry(row: dict) -> dict:
         "status": row.get("status") or "open",
         "date": row.get("decided_on") or "",
         "title": row.get("title") or "",
-        "supersedes": row.get("supersedes") or "none",
-        "superseded_by": row.get("superseded_by") or "-",
+        "supersedes": _fmt_supersedes(row.get("supersedes")),
+        "superseded_by": _fmt_superseded_by(row.get("superseded_by")),
         "slug": row.get("body_slug") or "",
     }
 
@@ -805,7 +810,11 @@ def _row_to_response_metadata(row: dict) -> dict[str, Any]:
         "rationale": "",  # prose lives on the body page (D4)
         "alternatives": "",  # ditto
         "revisit_trigger": "",  # ditto
-        "supersedes": row.get("supersedes") or "none",
+        "supersedes": _fmt_supersedes(row.get("supersedes")),
+        # Ledger task 195: NEW key. ``adr_get`` never emitted it, so the read
+        # of a superseded ADR could not say what replaced it. D5's merge is
+        # additive-only, which licenses the addition.
+        "superseded_by": _fmt_superseded_by(row.get("superseded_by")),
         "subsystem": row.get("subsystem") or "",
         "tier": row.get("tier") or "",
         "baseline_hash": row.get("baseline_hash") or "",
@@ -968,6 +977,8 @@ __all__ = [
     "_build_adr_body",
     "_canonical_adr_payload",
     "_flip_superseded_target",
+    "_fmt_supersedes",
+    "_fmt_superseded_by",
     "_parse_supersedes",
     # adr.py-local
     "_FATAL_WRITE_REASONS",
