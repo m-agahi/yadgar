@@ -5,16 +5,23 @@
 # Operates on the repo containing this script. Safe to run with no args.
 # Use --dry-run to see what would be removed without deleting anything.
 #
-# - git worktree prune --expire 1.day
-# - For each local branch != current default branch:
-#     skip if matches PROTECTED patterns below
-#     classify via `git diff --quiet <default>..<branch> -- . ':!*.md'`
-#       (tree-based; squash merges defeat `git cherry`, see Car H train 2026-08-14)
-#     if worktree attached to branch: unlock + worktree remove --force FIRST,
-#       then delete the branch
-#     delete merged local branches via `git branch -D`
-# - For each remote-tracking branch (refs/remotes/origin/*) that no longer
-#   exists upstream: `git fetch --prune` cleans automatically (one-shot).
+# CLASSIFIER (task 221 / ADR-0333): branch merge-state is no longer decided
+# by a git tree diff against the default branch — that approach (two-dot,
+# three-dot, merge-tree --write-tree, is-ancestor, content-equality,
+# patch-id) was tried and fails against this repo's squash-merge-heavy,
+# multi-car-train history (see scripts/branch_cleanup.py module docstring
+# for the full record of what was tried and why each failed). The working
+# classifier asks the code forge (`gh pr list`) which branches have a
+# MERGED PR, then closes the transitive `git merge-base --is-ancestor` set
+# for car sub-branches merged locally into a train-integration branch.
+# All of that logic lives in scripts/branch_cleanup.py — this file is now a
+# thin wrapper that also runs `git fetch --prune` / `git worktree prune`
+# first, and additionally drives the worktree-age sweep (task 221 piece 2,
+# ADR-0333): removes a worktree whose branch has had no commit in
+# --max-age-days, retaining the branch always. That phase defaults to
+# report-only (dry-run) regardless of this script's own --dry-run/no-flag
+# convention — pass --apply-worktree-sweep to let it actually remove
+# anything. See scripts/branch_cleanup.py --help for full flag semantics.
 #
 # DESIGN: read-only by default in protected paths. Active train branches
 # matching `feat/vX.Y-stage-*` or env YADGAR_CLEANUP_PRESERVE_GLOB stay.
@@ -22,20 +29,23 @@
 set -euo pipefail
 
 DRY_RUN=0
-case "${1:-}" in
-  --dry-run|-n) DRY_RUN=1 ;;
-  --help|-h)
-    sed -n '2,/^$/p' "$0" | sed 's/^# //; s/^#//'
-    exit 0 ;;
-esac
+EXTRA_ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run|-n) DRY_RUN=1 ;;
+    --apply-worktree-sweep) EXTRA_ARGS+=(--apply) ;;
+    --help|-h)
+      sed -n '2,/^$/p' "$0" | sed 's/^# //; s/^#//'
+      exit 0 ;;
+    *) EXTRA_ARGS+=("$arg") ;;
+  esac
+done
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
 DEFAULT_BRANCH="${DEFAULT_BRANCH:-master}"
-
-PRESERVE_GLOB="${YADGAR_CLEANUP_PRESERVE_GLOB:-feat/v?.?-stage-*}"
 
 log() { printf '[cleanup] %s\n' "$*"; }
 run() {
@@ -48,7 +58,6 @@ run() {
 
 log "repo: $REPO_ROOT"
 log "default branch: $DEFAULT_BRANCH"
-log "preserve glob: $PRESERVE_GLOB"
 log "dry-run: $DRY_RUN"
 
 # 1. Fetch + prune remote-tracking branches deleted upstream.
@@ -59,53 +68,17 @@ run "git fetch --prune --quiet"
 log "git worktree prune --expire 1.day"
 run "git worktree prune --expire 1.day"
 
-# 3. Walk local branches; delete merged ones.
-deleted=0
-skipped=0
-unmerged=0
-while IFS= read -r branch; do
-  branch="${branch## }"
-  [[ -z "$branch" ]] && continue
-  [[ "$branch" == "$DEFAULT_BRANCH" ]] && continue
-  # Skip current HEAD.
-  [[ "$branch" == "$(git symbolic-ref --short HEAD 2>/dev/null || true)" ]] && { : $((skipped++)); continue; }
-  # Skip preserved patterns.
-  # shellcheck disable=SC2053
-  if [[ $branch == $PRESERVE_GLOB ]]; then
-    log "preserved (matches glob): $branch"
-    : $((skipped++))
-    continue
-  fi
-  # Effectively-merged check via tree diff (squash merges defeat `git cherry`).
-  # "merged" = branch's source-tree content already matches default. We exclude
-  # *.md because plan/notes commits land on master via squash without a code
-  # delta; counting those as "unmerged" would strand car-trains.
-  diff_exit=0
-  git diff --quiet "$DEFAULT_BRANCH..$branch" -- . ':!*.md' 2>/dev/null || diff_exit=$?
-  # Exit 0 = no source diff (= effectively merged). Exit 1 = has source diff.
-  # Exit 2 = error (pathspec with new file vs HEAD, etc.) — treat as unmerged.
-  if [[ "$diff_exit" -eq 0 ]]; then
-    # Branch may still be referenced by a worktree — unlock + remove the worktree
-    # BEFORE deleting the branch (post-Car-H rule, worktree-aware sweep).
-    wt_paths="$(git worktree list --porcelain | awk -v b="$branch" '
-      /^worktree / { path=$2 }
-      /^branch /   { if ($2 == "refs/heads/"b) print path }
-    ')"
-    if [[ -n "$wt_paths" ]]; then
-      while IFS= read -r wt_path; do
-        [[ -z "$wt_path" ]] && continue
-        log "worktree unlock+remove: $wt_path (for branch $branch)"
-        run "git worktree unlock '$wt_path'"
-        run "git worktree remove --force '$wt_path'"
-      done <<< "$wt_paths"
-    fi
-    log "merged → delete: $branch"
-    run "git branch -D '$branch'"
-    : $((deleted++))
-  else
-    log "unmerged (source-tree ahead of $DEFAULT_BRANCH): $branch"
-    : $((unmerged++))
-  fi
-done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
+# 3. Branch classification + deletion, and worktree-age sweep — both handled
+#    by branch_cleanup.py (see its module docstring for the classifier design).
+PYTHON_BIN="${YADGAR_CLEANUP_PYTHON:-python3}"
+if [[ -x "$REPO_ROOT/.venv/bin/python3" ]]; then
+  PYTHON_BIN="$REPO_ROOT/.venv/bin/python3"
+fi
 
-log "summary: deleted=$deleted unmerged=$unmerged preserved/skipped=$skipped dry_run=$DRY_RUN"
+CLEANUP_PY_ARGS=(--repo "$REPO_ROOT")
+if [[ $DRY_RUN -eq 1 ]]; then
+  CLEANUP_PY_ARGS+=(--dry-run)
+fi
+CLEANUP_PY_ARGS+=("${EXTRA_ARGS[@]}")
+
+"$PYTHON_BIN" "$REPO_ROOT/scripts/branch_cleanup.py" "${CLEANUP_PY_ARGS[@]}"
