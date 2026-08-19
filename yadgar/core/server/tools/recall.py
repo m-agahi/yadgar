@@ -463,10 +463,23 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
             Use mode="landscape" for broad or exploratory queries where cross-domain
             breadth and diversity matter more than precise top-k ranking.
             Raises ValueError on unrecognised value.
-        tags: Tag include filter for wiki results. When set, triggers SQL pre-filter
-            in WikiStore.query() — brute-force cosine over pages tagged with tags[0].
-            Also suppresses the default agent-prompt exclude.
+        tags: Tag include filter, applied to BOTH result types (ledger task 82 —
+            before it, this reached wiki results ONLY and memory rows came back
+            unfiltered, with the tag token silently scored as ordinary text).
+            Wiki: triggers the SQL pre-filter in WikiStore.query() — brute-force
+            cosine over pages tagged with tags[0] — and suppresses the default
+            agent-prompt exclude. Memory: rows must carry EVERY listed tag on
+            their ``tags`` field (conjunctive); a row that merely mentions a tag
+            in its content does not match.
             None (default) = general recall with agent-prompt pages excluded.
+
+            NOT AN ENUMERATION. This filters the ranked candidate pool the query
+            produced; it does not scan the tag index. Which tagged rows enter
+            that pool is decided by the query and ``max_results``, so
+            ``tags=["_anchor"]`` returns the best-matching anchors, never
+            "every anchor in this project" — no ``max_results`` makes it
+            exhaustive. Use ``audit_anchors`` (own gather) or ``db_inspect``
+            (direct predicate) when completeness is what you need.
         max_chars: Per-row content cap, overriding the configured default for
             this call only. None (default) resolves per-directory config, then
             the RECALL_MAX_CONTENT_CHARS setting (1200). Raise it for a

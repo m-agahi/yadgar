@@ -382,6 +382,33 @@ def _gather_provider_candidates(
     return results
 
 
+@observe(tier="hot", metric="tools.recall._apply_library_kill_gate", span=False)
+def _apply_library_kill_gate(tags: list[str] | None) -> list[str] | None:
+    """S6 kill-gate: strip ``agent-prompt`` when the library is disabled.
+
+    When ``AGENT_PROMPT_LIBRARY_ENABLED`` is False the library is INERT. Removing
+    the include tag means the include path never fires, and the default exclude in
+    ``_build_provider_tasks`` then naturally turns back on (``tags`` becomes None)
+    → a tagged recall returns nothing. Read the flag via ``get_settings()`` fresh
+    at call time (NOT the module-level captured ``settings``): it is
+    runtime-flippable.
+
+    THIS RUNS IN ``_fanout_recall``, ABOVE THE ``Scope`` CONSTRUCTION, AND THAT
+    PLACEMENT IS THE POINT. It used to live inside ``_build_provider_tasks``,
+    which rebound only that function's LOCAL ``tags`` — by then
+    ``Scope(opt_in_tags=tags)`` had already been stamped with the UNSTRIPPED
+    list. That was inert while the memory arm ignored ``opt_in_tags``, and stopped
+    being inert the moment ``MemoryProvider`` began filtering on it (ledger task
+    82): with the flag off, WikiProvider saw ``None`` while MemoryProvider
+    filtered on ``["agent-prompt"]``. Two arms, two different answers, from one
+    caller's request. Stripping once, before the value is copied anywhere, is
+    what makes a second divergence unrepresentable rather than merely absent.
+    """
+    if not get_settings().AGENT_PROMPT_LIBRARY_ENABLED and tags:
+        return [t for t in tags if t != "agent-prompt"] or None
+    return tags
+
+
 @observe(tier="stage", metric="tools.recall._build_provider_tasks", span=False)
 def _build_provider_tasks(  # noqa: PLR0913 — mirrors _fanout_recall's threaded params
     query: str,
@@ -403,14 +430,12 @@ def _build_provider_tasks(  # noqa: PLR0913 — mirrors _fanout_recall's threade
     """
     tasks: list[tuple[str, Callable[[], list]]] = []
 
-    # S6 kill-gate: when AGENT_PROMPT_LIBRARY_ENABLED is False the library is INERT.
-    # Strip the agent-prompt include tag so the include path never fires; the exclude
-    # below then naturally turns back on (tags becomes None) → tagged recall returns
-    # nothing. Read the flag via get_settings() fresh at call time (NOT the
-    # module-level captured `settings`): the flag is runtime-flippable.
-    if not get_settings().AGENT_PROMPT_LIBRARY_ENABLED and tags:
-        tags = [t for t in tags if t != "agent-prompt"] or None
-
+    # S6 kill-gate: applied by the CALLER (``_apply_library_kill_gate``, above the
+    # ``Scope`` construction in ``_fanout_recall``), so ``tags`` arrives here
+    # already stripped and agrees with ``scope.opt_in_tags``. It is deliberately
+    # NOT re-applied here: a second copy is a second thing to drift, and the
+    # divergence it would paper over is the one that already happened.
+    #
     # S3 precedence: tags=["agent-prompt"] suppresses the default exclude. Without
     # tags, general recall excludes agent-prompt pages so tool-prompt fragments
     # don't pollute general wiki results (the every-project leak S3 exists to
@@ -500,8 +525,12 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
             parameter is how the exclusion arm gets dropped by a caller that
             threads the project and forgets the rest).
         type_filter: One of {"all", "memory", "wiki"}. Selects provider subset.
-        tags: Tag include filter for wiki retrieval. When set, triggers SQL pre-filter
-              (search_wiki_vectors_tagged) and suppresses the default agent-prompt exclude.
+        tags: Tag include filter, honored by BOTH providers. Wiki: triggers the
+              SQL pre-filter (search_wiki_vectors_tagged) and suppresses the
+              default agent-prompt exclude. Memory: rides on ``Scope.opt_in_tags``
+              into ``MemoryProvider``'s row guard, which drops rows not carrying
+              every listed tag (ledger task 82 — the memory arm previously never
+              read it, so the token was scored as ordinary content text).
               None (default) = general recall with agent-prompt exclusion active.
         deadline: Monotonic deadline from the client's deadline_ms budget
               (ADR-0077): exceeded → remaining stages skipped, partial result.
@@ -523,6 +552,7 @@ def _fanout_recall(  # noqa: PLR0913 — 8 params allowlisted (I30); Phase 2 wra
     # and runs in a worker thread, while ``asyncmy`` is async-only, so a lookup
     # here would need a private event loop per recall. See
     # ``backend/retrieval/superseded.py``: the hazard is closed by PLACEMENT.
+    tags = _apply_library_kill_gate(tags)  # BEFORE Scope — both arms take ONE list
     scope = Scope(
         project_id=recall_scope.project_id or "",
         min_heat=min_heat,
