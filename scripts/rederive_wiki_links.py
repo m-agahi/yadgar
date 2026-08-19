@@ -72,6 +72,11 @@ def _stored_crossrefs(storage, from_slug: str) -> list[str]:
     return sorted(r["to_slug"] for r in rows if r.get("to_slug"))
 
 
+def _all_page_slugs(storage) -> set[str]:
+    rows = storage._q("SELECT VALUE slug FROM wiki_page")
+    return {r for r in rows if isinstance(r, str)}
+
+
 def rederive(
     storage,
     wiki,
@@ -80,8 +85,20 @@ def rederive(
     slug_prefix: str | None = None,
     verbose: bool = False,
 ) -> dict[str, int]:
-    """Re-derive links + crossrefs for every wiki page.  Returns a tally."""
+    """Re-derive links + crossrefs for every wiki page.  Returns a tally.
+
+    The tally carries a RESOLUTION DELTA so a dry run answers the question that
+    actually matters before a corpus-wide write: does the new derivation point
+    at MORE real pages than the old one?
+
+      ``resolve_gained``  — link value changed, the old one named no page and
+                            the new one does.  The repair.
+      ``resolve_lost``    — link value changed, the old one named a real page
+                            and the new one does not.  A REGRESSION; a nonzero
+                            count means do not apply until it is explained.
+    """
     pages = storage.list_wiki_pages(slug_prefix=slug_prefix)
+    known_slugs = _all_page_slugs(storage)
     tally = {
         "scanned": 0,
         "links_stale": 0,
@@ -89,6 +106,9 @@ def rederive(
         "changed": 0,
         "repaired": 0,
         "failed": 0,
+        "skipped_no_content": 0,
+        "resolve_gained": 0,
+        "resolve_lost": 0,
     }
 
     for page in pages:
@@ -99,7 +119,17 @@ def rederive(
             logger.warning("skipping row with no slug/id: %r", page.get("id"))
             continue
 
-        derived = wiki._extract_wikilinks(page.get("content") or "")
+        # A row whose ``content`` is absent/None is indistinguishable from a
+        # page with no links, and the repair is irreversible (no version row),
+        # so refuse rather than wipe both surfaces on a failed load. An EMPTY
+        # but PRESENT string is a real page with no links — that one proceeds.
+        content = page.get("content")
+        if content is None:
+            tally["skipped_no_content"] += 1
+            logger.warning("skipping %s: content is absent/None", slug)
+            continue
+
+        derived = wiki._extract_wikilinks(content)
         stored_links = list(page.get("links") or [])
 
         links_stale = sorted(stored_links) != sorted(derived)
@@ -112,6 +142,13 @@ def rederive(
         if not (links_stale or crossrefs_stale):
             continue
         tally["changed"] += 1
+
+        gained = [x for x in derived if x not in stored_links and x in known_slugs]
+        lost = [x for x in stored_links if x not in derived and x in known_slugs]
+        tally["resolve_gained"] += len(gained)
+        tally["resolve_lost"] += len(lost)
+        if lost:
+            logger.warning("%s: link(s) that resolve today would be dropped: %r", slug, lost)
 
         if verbose or not apply_changes:
             logger.info(
@@ -199,7 +236,9 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     logger.info(
-        "%s scanned=%d changed=%d (links_stale=%d crossrefs_stale=%d) repaired=%d failed=%d",
+        "%s scanned=%d changed=%d (links_stale=%d crossrefs_stale=%d) "
+        "repaired=%d failed=%d skipped_no_content=%d "
+        "resolve_gained=%d resolve_lost=%d",
         "APPLIED" if args.apply else "DRY-RUN",
         tally["scanned"],
         tally["changed"],
@@ -207,7 +246,16 @@ def main(argv: list[str] | None = None) -> int:
         tally["crossrefs_stale"],
         tally["repaired"],
         tally["failed"],
+        tally["skipped_no_content"],
+        tally["resolve_gained"],
+        tally["resolve_lost"],
     )
+    if tally["resolve_lost"]:
+        logger.warning(
+            "resolve_lost=%d — links that resolve TODAY would stop resolving. "
+            "Explain each before applying.",
+            tally["resolve_lost"],
+        )
     if not args.apply and tally["changed"]:
         logger.info("re-run with --apply to write these repairs")
 

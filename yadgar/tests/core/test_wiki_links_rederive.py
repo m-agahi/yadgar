@@ -133,12 +133,19 @@ class TestWikilinkUnderscorePreservation:
         links = _wiki()._extract_wikilinks(f"[[{CANONICAL_SLUG}]]")
         assert "m-agahi-yadgar-adr-0253" not in links
 
-    def test_long_canonical_slug_not_truncated_at_64(self):
-        """Slug-shaped passthrough also escapes ``slugify``'s 64-char cap —
-        ADR-0211 permits 256."""
-        long_slug = "some-very-long-owner-name_some-very-long-repository-name_adr-0253"
+    def test_passthrough_still_applies_the_64_char_cap(self):
+        """The verbatim path must NOT escape ``slugify``'s 64-char cap.
+
+        Exempting it looks free (ADR-0211 allows 256) and is a regression:
+        pages minted from a long title live at the 64-char truncation, so a
+        full-length link body stops resolving. Measured on the live corpus
+        before shipping — 11 ``wiki_crossref`` rows resolve today at a
+        64-truncated ``to_slug`` whose source content holds the full-length
+        slug-shaped body. This test is the guard on that.
+        """
+        long_slug = "s3-bucket-q-vpcflowlogs-488021763009-us-east-1-vpc-079587b6663ec6277"
         assert len(long_slug) > 64
-        assert _wiki()._extract_wikilinks(f"[[{long_slug}]]") == [long_slug]
+        assert _wiki()._extract_wikilinks(f"[[{long_slug}]]") == [long_slug[:64]]
 
     def test_prose_title_still_slugified(self):
         """Non-slug-shaped bracket bodies keep the legacy slugify behaviour."""
@@ -355,6 +362,37 @@ class TestBulkRederive:
         assert tally["repaired"] >= 1
         assert _links(pid) == []
         assert _crossrefs("bulk-stale") == []
+
+    def test_resolution_delta_counts_gained_and_lost(self):
+        """The dry run must say whether the repair points at MORE real pages."""
+        _insert_page(CANONICAL_SLUG, "the real target page")  # makes the new value resolve
+        _insert_page("bulk-delta-old-target", "an existing page the OLD link named")
+        _insert_page(
+            "bulk-delta",
+            f"links [[{CANONICAL_SLUG}]]",
+            links=["bulk-delta-old-target"],
+        )
+        _wiki()._sync_crossrefs("bulk-delta", ["bulk-delta-old-target"])
+
+        tally = self._rederive(slug_prefix="bulk-delta")
+        assert tally["resolve_gained"] == 1  # CANONICAL_SLUG now names a real page
+        assert tally["resolve_lost"] == 1  # bulk-delta-old-target no longer named
+
+    def test_row_with_null_content_is_skipped_not_wiped(self):
+        """An absent ``content`` must not be read as "this page has no links"
+        — the repair is irreversible (no version row)."""
+        pid = _insert_page("bulk-nullcontent", "placeholder", links=["keep-me"])
+        _wiki()._sync_crossrefs("bulk-nullcontent", ["keep-me"])
+        _storage()._q(
+            "UPDATE type::record('wiki_page', $pid) SET content = NONE",
+            {"pid": int(pid)},
+        )
+
+        tally = self._rederive(slug_prefix="bulk-nullcontent", apply_changes=True)
+        assert tally["skipped_no_content"] == 1
+        assert tally["repaired"] == 0
+        assert _links(pid) == ["keep-me"]
+        assert _crossrefs("bulk-nullcontent") == ["keep-me"]
 
     def test_clean_page_is_not_touched(self):
         pid = _insert_page("bulk-clean", "links to [[already-right]]", links=["already-right"])

@@ -29,6 +29,7 @@ from yadgar._shared.wiki.contract import (
 from yadgar._shared.wiki.policy import MUTABILITY_VALUES
 from yadgar._shared.wiki.policy import get_policy as _get_wiki_policy
 from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
+from yadgar._shared.wiki.slug import MAX_SLUG_LEN as _MAX_SLUG_LEN
 from yadgar._shared.wiki.slug import slugify as _slugify_fn
 from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 
@@ -2561,13 +2562,23 @@ class WikiStore:
     def _extract_wikilinks(self, content: str) -> list[str]:
         """Extract ``[[slug]]`` references from markdown content.
 
-        A bracket body that is already slug-shaped is taken VERBATIM (which also
-        exempts it from ``slugify``'s 64-char cap — ADR-0211 allows 256).
-        Anything else — prose titles such as ``[[My Cool Page]]`` — keeps the
-        legacy slugify behaviour.
+        A bracket body that is already slug-shaped is taken VERBATIM.  Anything
+        else — prose titles such as ``[[My Cool Page]]`` — keeps the legacy
+        slugify behaviour.
+
+        The 64-char cap is applied on BOTH paths.  Exempting the passthrough
+        looked like a free win (ADR-0211 allows 256) and is not: pages minted
+        from a long title live at the 64-char truncation, so a link body written
+        out at full length would stop resolving.  Measured on the live corpus
+        before shipping — 11 ``wiki_crossref`` rows resolve TODAY at a
+        64-truncated ``to_slug`` whose source content holds the full-length
+        slug-shaped body.  Canonical slugs are far shorter (~23 chars), so the
+        cap costs the defect nothing.
         """
         raw = re.findall(r"\[\[([^\]]+)\]\]", content)
-        resolved = (r if self._SLUG_SHAPED.match(r) else self._slugify(r) for r in raw)
+        resolved = (
+            r[:_MAX_SLUG_LEN] if self._SLUG_SHAPED.match(r) else self._slugify(r) for r in raw
+        )
         return list(dict.fromkeys(resolved))  # dedupe, preserve order
 
     @observe(tier="stage")
