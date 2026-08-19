@@ -9,6 +9,7 @@ is re-exported from yadgar.core.server.tools.adr for backward compatibility.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 from yadgar._shared.contracts.models import ADR
 from yadgar._shared.observability.observe import observe
@@ -101,6 +102,48 @@ def _parse_supersedes(supersedes: str) -> list[str]:
         return []
     ids = re.findall(r"ADR-(\d{4})", supersedes)
     return [f"ADR-{n}" for n in ids]
+
+
+@observe(exempt="pure list→string formatting; no I/O, no error branch worth spanning")
+def _fmt_supersedes(value: Iterable[int] | str | None) -> str:
+    """Render attached supersede-target ids as ``adr_add``'s own input format.
+
+    Ledger task 195: the backend read ops now attach ``supersedes`` to every
+    ``adr`` row as a LIST OF IDS (the relation lives in the ``adr_supersedes``
+    join table — ``adr`` has no such column). The 7-key consumer shape is
+    strings, and ``row.get("supersedes") or "none"`` would hand a raw list
+    straight through.
+
+    ``"ADR-0023, ADR-0024"`` is chosen because it ROUND-TRIPS through
+    ``_parse_supersedes`` above, which is what ``adr_add(supersedes=...)``
+    accepts — so a value read out of ``adr_list`` can be fed straight back in.
+    A non-list value (a string already on the row, from a caller or a backend
+    that formats its own) is passed through rather than iterated character by
+    character.
+    """
+    if isinstance(value, str):
+        return value or "none"
+    if not value:
+        return "none"
+    return ", ".join(f"ADR-{int(v):04d}" for v in value)
+
+
+@observe(exempt="pure list→string formatting; no I/O, no error branch worth spanning")
+def _fmt_superseded_by(value: Iterable[int] | str | None) -> str:
+    """Render attached superseder ids the way the field's only writer does.
+
+    Ledger task 195, reverse direction. Bare zero-padded numbers joined by a
+    comma with NO space — that is verbatim what ``_flip_superseded_target``'s
+    caller builds (``f"{prev},{nnnn}"`` in ``_assemble_index_rows``), and it is
+    the only code that has ever written this field. Deliberately NOT symmetric
+    with ``_fmt_supersedes``: each half matches its own established producer,
+    which is the conservative choice when both formats already exist in-tree.
+    """
+    if isinstance(value, str):
+        return value or "-"
+    if not value:
+        return "-"
+    return ",".join(f"{int(v):04d}" for v in value)
 
 
 @observe(tier="stage", metric="tools.adr._flip_superseded_target")

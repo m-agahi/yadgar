@@ -818,6 +818,58 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         async with self._engine.begin() as conn:
             await conn.execute(sql, {"adr_id": adr_id, "supersedes_id": supersedes_id})
 
+    @observe(tier="boundary", metric="backend.sql.adr.list_supersedes")
+    async def list_adr_supersedes(self, *, project_id: str) -> dict[int, dict[str, list[int]]]:
+        """Every ``adr_supersedes`` edge touching *project_id*, both directions.
+
+        Ledger task 195: ``add_adr_supersedes`` has written this join table
+        since Car F and NOTHING has ever read it. ``adr`` carries no
+        ``supersedes`` / ``superseded_by`` COLUMN (migration 002) — the
+        relation lives here and only here — so ``_row_to_adr_list_entry`` and
+        ``_row_to_response_metadata`` fell straight through
+        ``row.get("supersedes")`` to their ``"none"`` / ``"-"`` placeholders,
+        in 22/22 supersede-bearing ADRs across two corpora. This is the missing
+        reader ``adr.py:115`` recorded as out-of-scope for Car F.
+
+        SCOPED BY PROJECT, NOT BY ID LIST. ``adr.id`` is one global
+        ``AUTO_INCREMENT`` (ledger task 188), so an unscoped join hands one
+        project's ``adr_list`` another project's supersede. Scoping on the
+        JOINED rows rather than on an ``IN`` list of ids also keeps the
+        statement free of an expanding bindparam — the L10 row-constructor trap
+        ``list_task_edges`` documents — and it is one query per list read
+        either way. An edge with ONE end in the project is included on
+        purpose: a cross-project link (possible in pre-Car-B1 data) is
+        something the reader must surface, not hide.
+
+        Returns:
+            ``{adr_id: {"supersedes": [...], "superseded_by": [...]}}``, SPARSE
+            — only ids that appear on some edge. Unlike ``list_task_edges``
+            there is no caller-supplied id set to pre-populate, so "asked and
+            has none" is expressed by the CALLER (the admin op fills empty
+            lists per row it returns), not here.
+        """
+        from sqlalchemy import text  # noqa: PLC0415
+
+        sql = text(
+            "SELECT e.adr_id AS adr_id, e.supersedes_id AS supersedes_id "
+            "FROM adr_supersedes e "
+            "JOIN adr a ON a.id = e.adr_id "
+            "JOIN adr t ON t.id = e.supersedes_id "
+            "WHERE a.project_id = :project_id OR t.project_id = :project_id "
+            "ORDER BY e.adr_id ASC, e.supersedes_id ASC"
+        )
+        edges: dict[int, dict[str, list[int]]] = {}
+
+        def _slot(adr_id: int) -> dict[str, list[int]]:
+            return edges.setdefault(adr_id, {"supersedes": [], "superseded_by": []})
+
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"project_id": project_id})
+            for superseder, target in result:
+                _slot(int(superseder))["supersedes"].append(int(target))
+                _slot(int(target))["superseded_by"].append(int(superseder))
+        return edges
+
     @observe(tier="boundary", metric="backend.sql.adr.flip_status")
     async def _flip_adr_status(self, adr_id: int, status: str) -> None:
         """Flip one ``adr`` row's ``status`` column. Car F's supersede path.
@@ -830,13 +882,28 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         C15a — THE SUPERSESSION STAMP. Flipping TO ``'superseded'`` also
         stamps ``superseded_at``, and ONLY that flip does (this same method
         later flips the row to ``'archived'``). Rationale: ``ledger_columns``.
+
+        Ledger task 197 (write side) — THE TIER RE-DERIVATION. ``status`` and
+        ``tier`` are two spellings of one D27 fact, and this method used to
+        write only the first, so every supersede left the row claiming
+        ``status='superseded', tier='binding'``. ``tier`` is therefore
+        re-derived here through ``lc.adr_tier_for_flip``, which declines to
+        classify a status D27 does not name (``'archived'``) — the column is
+        then LEFT OUT of the SET clause rather than written, because the other
+        caller archives rows that are already historical and a two-way
+        "everything else is binding" rule would un-tier the whole cohort on a
+        cron. See that function for the full argument.
         """
         from sqlalchemy import text  # noqa: PLC0415
 
         params: dict[str, Any] = {"id": adr_id, "status": status}
         set_extra = ""
+        tier = lc.adr_tier_for_flip(status)
+        if tier is not None:
+            set_extra += ", tier = :tier"
+            params["tier"] = tier
         if status == lc.STATUS_SUPERSEDED:
-            set_extra = ", superseded_at = :superseded_at"
+            set_extra += ", superseded_at = :superseded_at"
             params["superseded_at"] = lc.now_utc()
         sql = text(f"UPDATE adr SET status = :status{set_extra} WHERE id = :id")  # noqa: S608
         async with self._engine.begin() as conn:
