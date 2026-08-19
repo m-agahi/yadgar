@@ -1,5 +1,10 @@
 # Procedure — re-land a project's ADR corpus so every slug equals its row id
 
+> **EXECUTED for `m-agahi/yadgar` on 2026-08-19 — 230/230, zero failures.**
+> Old 0001–0230 → ledger ids 23–252. Audit: `~/.yadgar/adr-migration/RESULTS-2026-08-19.md`.
+> Recorded as ADR-0253. The corrections below are from that run; they are not
+> speculative. Anything still phrased as a prediction has been marked.
+
 **Human-invoked, one project per run. Nothing here runs automatically. It DELETES pages.**
 
 This REPLACES `backfill-adrs-to-ledger.md` for `m-agahi/yadgar`. That procedure preserved the
@@ -95,6 +100,27 @@ S5  done
 `body_slug` cannot be supplied at INSERT because the id does not exist yet. `adr_add` already uses
 exactly this row → page → `set_adr_body_slug` shape.
 
+### CORRECTION (2026-08-19) — call `adr_add`, do NOT hand-build S0→S3
+
+The run did **not** drive `create_adr_row` / page-create / `set_adr_body_slug` separately.
+It called **`adr_add` once per ADR**, which performs all three internally and returns
+`{"adr_id": "ADR-NNNN", "slug": ...}` — the new id and the new slug in one response. The
+five-state machine above is then the *internal* shape, and S0→S3 collapse into one call
+with no crash window between them. Only S3→S4→S5 (map line, then delete) are driven here.
+
+**`wiki_add` cannot be used for the page, and this is not a preference.** ADR pages are
+`page_type='adr'` → effective mutability `locked`, and `wiki_add` carries no `_sanctioned`
+token, so `insert_wiki_page` rejects it. Observed live 2026-08-18: `wiki_add(page_type='adr')`
+returns `wait_timeout` and the drainer logs
+`wiki page mutability='locked' forbids insert_wiki_page (page_id=None slug=None page_type='adr')`
+— `page_id=None` proving a fresh INSERT, not an update. The identical call *without*
+`page_type` commits instantly. `adr_add` works because it writes through
+`_write_adr_body_page`'s `_sanctioned=True` canonical path (`adr.py:429-458`).
+
+Consequence for the resume table: the S1 and S2 rows cannot occur when driving via
+`adr_add`. S3 (linked, no map line) and S4 (map line, old page alive) remain live and their
+repairs are unchanged.
+
 **Leave the `# ADR-0042:` H1 alone in pass 1.** This is the keystone of the resume design: while
 pass 2 has not run, old-number → new-id is independently recoverable from the database as
 `(slug ⇒ id) × (H1 ⇒ old number)`. The map is therefore *verifiable against the DB* rather than
@@ -120,6 +146,27 @@ Two rules that make the table hold:
   write still lands. Re-read the target slug before concluding step 2 failed, or the retry
   double-creates.
 
+## Ordering — supersede-bearing ADRs go LAST (added 2026-08-19)
+
+The procedure above says nothing about ordering, and the reference section treats the 14
+`- supersedes:` bullets as narrative. **That is wrong for `adr_add`**, which parses the
+`supersedes` argument into a real FK and flips the target row's status to `superseded`
+(D23). The target row must therefore already exist.
+
+Split the corpus in two and run it in this order:
+
+1. **Plain ADRs** (no `- supersedes:` bullet) — 216 on `m-agahi/yadgar`.
+2. **Supersede-bearing ADRs** — 14, migrated LAST.
+
+Every one of the 14 edges points at a **lower old number**, verified before the run, so
+last-place ordering guarantees each FK target already has a known new id. Resolve the
+target through the map and pass the **new** id as `supersedes="ADR-00NN"` — correct under
+ADR-0197, where the id IS the number. Never pass the old number from the prose.
+
+This means ids are NOT monotonic in old-number order: on `m-agahi/yadgar` old 0030 landed
+at id 239 while old 0031 landed at 55. That is expected and harmless — the map is the only
+link that matters.
+
 ## Pass 2 — references
 
 Walks the completed map. Rewrites the H1 on all 230 and the inline `[[yadgar-adr-NNNN]]` links on
@@ -129,6 +176,31 @@ the 3 pages that have them. Reuses `reslug.py`'s `_INLINE_LINK_RE` (`:190`) and 
 
 Measured reference surface: **3** pages with inline links, 14 with a `- supersedes:` bullet, 7
 crossref rows. Per the decision above, only the inline links and the H1 are rewritten.
+
+### CORRECTION (2026-08-19) — pass 2 is NOT optional, and the H1 half is already done
+
+Two things the run changed:
+
+- **The H1 needs no pass-2 rewrite.** `adr_add` generates the body from fields, so the H1
+  comes out as `# ADR-{new_id}: {title}` immediately. The "leave the old H1 for
+  recoverability" design above does not apply when driving via `adr_add` — but that also
+  means the `(slug ⇒ id) × (H1 ⇒ old number)` cross-check is **unavailable**, so the map is
+  a lone artifact and its fsync-before-delete ordering is the only protection. Do not skip it.
+- **The inline links DO need rewriting, and skipping it breaks live pages.** This run
+  skipped pass 2 and left 6 dangling `[[yadgar-adr-NNNN]]` links pointing at deleted slugs.
+  Repaired same day via `wiki_replace_text` (surgical, one call per link, no page rewritten
+  from memory) and verified to zero.
+
+The 3 pages were **not ADR bodies** — they were ordinary wiki pages citing ADRs:
+
+| Page | Links |
+|---|---|
+| `yadgar-install-surface-generators` | 0185→0196, 0186→0197, 0187→0198 |
+| `storage-layer-map-shared-storage-mixin-composition-execution-ent` | 0195→0205, 0196→0206, 0183→0194 |
+| `yadgar-roadmap-future-improvements` | `[[yadgar-adr-log]]` — the pre-2026-07-15 monolith slug, dangling since then. **Predates this migration; not repaired here.** |
+
+So the reference sweep must query the WHOLE wiki for `[[{LEGACY_PREFIX}` — not just the ADR
+corpus — and it must run AFTER the map is complete, since the new id is only known then.
 
 ## Post-condition — exact equality, no `>=`
 
@@ -141,6 +213,43 @@ crossref rows. Per the decision above, only the inline links and the H1 are rewr
 7. Zero rows with NULL `body_slug` for this project.
 8. `adr_list(project_id)` with DEFAULT arguments returns 230. If it returns fewer, the tier stamp
    was missed.
+
+### CORRECTIONS to the post-conditions (2026-08-19, from the executed run)
+
+**8 is wrong — the count is 232, not 230.** `adr_list` returns migrated rows PLUS any rows
+that already existed for the project. On `m-agahi/yadgar` two canonical rows predate the run
+(ids 5 and 6), so a complete run ends at **230 + 2 = 232**. Reconcile explicitly rather than
+asserting a bare number:
+
+| Set | Expected | Composition |
+|---|---|---|
+| pages at `{SLUG_PREFIX}_adr-*` | 236 | 230 migrated + 6 canonical pre-existing |
+| ledger rows, all tiers | 232 | 230 migrated + 2 canonical (ids 5, 6) |
+| rows with NO page | **0** | — |
+| pages with NO row | 4 | 0001/0007/0008/0009 — pre-existing, NOT created by the run |
+
+**Add post-condition 6b, and treat it as the one that matters most.** Clause 3 as written
+checks the row's `body_slug` field against a computed pattern — that proves the field is
+internally consistent, **not that a page exists at that slug**. Because the write is
+row-first and the legacy page is then deleted, a silent page-write failure loses the body
+to everything except the export. Diff `wiki_list(slug_prefix=...)` against every `new_slug`
+in the map and require zero missing. Measured 0/230 on this run.
+
+**6 does not hold byte-exactly if any field text was escaped.** Angle brackets passed as
+`&lt;`/`&gt;` are stored as those entities, so 64 of 230 bodies differ from the legacy text
+and their `content_sha256` will not validate. Cosmetic (`->` arrows are unaffected), and the
+legacy text survives in the export — but either escape nothing, or state the deviation
+rather than reporting clause 6 as passed. Filed as ledger task 196.
+
+**Also assert tier explicitly.** Clause 2 requires `tier == "binding"`, and the run honoured
+it — but D27 says superseded/rejected/deprecated ADRs are `historical`, so stamping every
+row `binding` leaves the 14 superseded + 6 rejected polluting the default `adr_list`. On the
+next run, stamp `tier` from `status`. Filed as ledger task 197.
+
+**Do not expect the supersedes edge to be readable.** All 14 target statuses flipped, but
+the superseder's own `supersedes` column reads `none` and `adr_list` shows `superseded_by: -`.
+Unverifiable locally (`adr_supersedes` is engine #2; `db_inspect` is SurrealQL-only). Filed
+as ledger task 195. The edges are rebuildable from the map.
 
 Do **not** route through `cmd_backfill` or the D35c gate. `_exact_equality_gate` reconciles
 `index_rows == pages_seen == page_type_adr_rows`; `pages_seen` changes *during* this run as pages are
@@ -191,8 +300,20 @@ Verify the page-create path **errors** rather than silently upserting if a targe
 - **192** ADR pages are locked; `wiki_delete` / `update_wiki_page` reject them; `yadgar backfill
   --reslug-adr-pages --apply` has therefore never been runnable, and its tests use a fake storage
   that never reaches the gate.
+  **ROOT CAUSE FOUND AND FIXED 2026-08-19 (PR #54, ledger task 193).** The blocker was wider
+  than 192 recorded: `wiki_set_mutability` — the escape hatch the gate names in its own error
+  text — was never registered in `_ADMIN_OPS`, so `run_admin_op` raised `KeyError` and the
+  route returned a bare HTTP 400 with no logged reason. That made `page_type='adr'` pages
+  uncreatable, uneditable AND undeletable by every unsanctioned caller. One line registered
+  it; proven by ~230 successful calls during the run. A bare 400 reads as "broken", not
+  "unwired" — which is why it survived four PRs.
 - **188** `adr_get` returns a cross-project chimera — `get_adr_row` discards the `project_id`.
-- **190** `adr_add` uses the prose number as an FK, on every new ADR.
+- **190** `adr_add` uses the prose number as an FK, on every new ADR. Harmless for THIS
+  procedure — under ADR-0197 the id IS the number, so passing the resolved new id as
+  `ADR-00NN` is correct under both the buggy and the intended reading.
+- **195** (new, from this run) `adr_add`'s supersedes edge does not surface on the row.
+- **196** (new) 64 migrated bodies carry `&lt;`/`&gt;` where the legacy text had angle brackets.
+- **197** (new) all 230 rows stamped `tier=binding`; 20 of them should be `historical` per D27.
 - `admin_exec/wiki.py:61` `wiki_delete` has no try/except, contradicting the never-raise model; a
   locked-page rejection likely surfaces as **"not found"** for a page that exists. Confirm on one
   throwaway page before trusting the loop's error handling.
