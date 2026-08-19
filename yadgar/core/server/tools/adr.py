@@ -249,8 +249,12 @@ def adr_add(
         consequences: Known / expected consequences.
         revisit_trigger: Condition that would trigger revisiting this decision.
         supersedes: "none" or a comma-separated list of superseded ADR IDs (e.g. "ADR-0002").
-        tier: D27 tier — ``"binding"`` (default if None; inferred from status
-            when None) or ``"historical"``.
+        tier: D27 tier — ``"binding"`` or ``"historical"``. OMIT IT and the
+            value is derived from ``status`` (ledger task 213):
+            ``superseded``/``rejected``/``deprecated`` → ``"historical"``,
+            ``open``/``accepted`` → ``"binding"``. An explicit value wins.
+            Never left NULL — a NULL-tier row is invisible to every
+            ``adr_list`` filter value.
         subsystem: D28 explicit subsystem value. Normalized to lowercase + trim
             (§10 Q2); empty after normalize → None (no rollup regen fires).
 
@@ -343,6 +347,39 @@ def adr_add(
 # ── Car H helpers (extracted for I13 fn_loc + testability) ──────────────────
 
 
+# D27 statuses whose ADRs are ``historical`` rather than ``binding``.
+# TWIN IMPLEMENTATION: ``yadgar.backend.admin_exec.seed_adr_tier_subsystem``
+# carries the same frozenset + mapping for the one-shot backfill. It is
+# duplicated rather than shared because ``core`` does not import ``backend``
+# (the layering rule ``_trigger_subsystem_rollup_regen`` names); D27 in
+# ``docs/plans/task-table-refactor-2026-07-29.md:295`` is the shared source of
+# truth for both copies.
+_HISTORICAL_STATUSES: frozenset[str] = frozenset({"superseded", "rejected", "deprecated"})
+
+
+@observe(exempt="trivial status→tier mapping; no I/O, no error branch worth spanning")
+def _tier_for_status(status: str | None) -> str:
+    """Derive a D27 ``tier`` from an ADR ``status`` (ledger task 213).
+
+    ``superseded`` | ``rejected`` | ``deprecated`` → ``"historical"``;
+    ``open`` | ``accepted`` (and anything unrecognised) → ``"binding"``.
+
+    This is the DEFAULT ``adr_add``'s docstring has promised since Car H and
+    never applied: ``tier`` was forwarded verbatim, so a caller that omitted
+    it wrote a row with ``tier=NULL``. ``adr_list`` defaults its filter to
+    ``"binding"`` and forwards it verbatim, so a NULL-tier row matches NEITHER
+    ``"binding"`` NOR ``"historical"`` — it is unreachable through every
+    argument value the tool accepts.
+
+    A blanket ``"binding"`` default would be WRONG for the three historical
+    statuses: it puts superseded/rejected/deprecated ADRs into the default
+    list, which is exactly what D27 excludes them from.
+    """
+    if status and status in _HISTORICAL_STATUSES:
+        return "historical"
+    return "binding"
+
+
 @observe(exempt="trivial string normalisation; no I/O, no error branch worth spanning")
 def _normalize_subsystem(value: str | None) -> str | None:
     """§10 Q2 subsystem normalizer: lowercase + trim; empty → None.
@@ -402,6 +439,12 @@ def _allocate_adr_ledger_row(
     in the caller) onto the row at INSERT time — both columns are inert on
     rows created before Car H landed, so the seed op (``seed_adr_tier_subsystem``)
     backfills them in place afterward.
+
+    Ledger task 213: an OMITTED ``tier`` is derived from ``status`` via
+    ``_tier_for_status`` rather than forwarded as ``None``. A NULL tier is
+    unreachable through every ``adr_list`` argument value. An explicitly
+    supplied ``tier`` still wins — the derivation is a DEFAULT, not an
+    override.
     """
     try:
         result = _forward_admin(
@@ -411,7 +454,7 @@ def _allocate_adr_ledger_row(
                 "title": title,
                 "status": status,
                 "decided_on": date,
-                "tier": tier,
+                "tier": tier or _tier_for_status(status),
                 "subsystem": subsystem,
             },
         )
@@ -548,7 +591,6 @@ def adr_get(directory: str, adr_id: str, *, project: str | None = None) -> dict:
     m = re.search(r"(\d+)", adr_id or "")
     if not m:
         return {"error": f"invalid adr_id {adr_id!r}; expected 'ADR-NNNN'"}
-    normalized = f"ADR-{int(m.group(1)):04d}"
     adr_id_int = int(m.group(1))
 
     # C5 (0047 PR#40 §5): ``derive_project_id(cwd=resolved)`` deleted. The
@@ -568,33 +610,75 @@ def adr_get(directory: str, adr_id: str, *, project: str | None = None) -> dict:
     except InvalidProjectOverrideError as exc:
         return {"error": f"adr_get: {exc}"}
 
-    body = _fetch_adr_body_page(resolved, project_id, normalized, adr_id_int)
+    # Ledger task 214: the ROW is fetched FIRST so the body read can use the
+    # row's authoritative ``body_slug`` instead of deriving one.
     row_result = _fetch_adr_ledger_row(adr_id, adr_id_int, project_id=project_id)
+    body = _fetch_adr_body_page(project_id, adr_id_int, row_result)
     return _build_adr_get_response(body, row_result)
 
 
 @observe(tier="stage", metric="tools.adr._fetch_adr_body_page")
 def _fetch_adr_body_page(
-    resolved: str,
     project_id: str,
-    normalized: str,
     adr_id_int: int,
+    row_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """D4 body fetch (Car F: unchanged). Try the new D32 ③ slug first, then
-    fall back to the legacy `<project>-adr-NNNN` for the 194 pages Car L
-    has not yet re-slugged. Extracted from ``adr_get`` for I13 cyclomatic.
+    """D4 body fetch — keyed on the PROJECT, never on the working directory.
 
-    C5 (0047 PR#40 §5): both ``wiki_read`` calls now thread ``project=``. They
-    passed ``directory=`` alone, which worked only because ``wiki_read``'s
-    resolver would derive an identity from that directory — a tool-to-tool call
-    dropping a value the CALLER already holds. With the derivation tier deleted
-    the omission is a raise, which is exactly the class of forgotten caller §2's
-    ordering was designed to surface."""
-    new_slug = f"{project_id.replace('/', '_')}_adr-{adr_id_int:04d}"
-    legacy_slug = adr_page_slug(resolved, normalized)
-    body: dict[str, Any] = wiki_read(new_slug, directory=resolved, project=project_id)
-    if "error" in body:
-        body = wiki_read(legacy_slug, directory=resolved, project=project_id)
+    Ledger task 214: this used to take the caller's ``resolved`` directory and
+    (a) pass it as ``wiki_read(directory=...)`` and (b) derive the legacy
+    fallback slug from ``os.path.basename(resolved)``. Both are directory-keyed
+    where they must be project-keyed, so a cross-project read was structurally
+    impossible:
+
+      * ``wiki_read`` scopes its lookup on ``directory`` and NOT on
+        ``project=`` (``wiki.py`` → ``read_by_directory(slug, _caller_dir)``;
+        ``project=`` reaches only the validation + the cache key). Narrowing to
+        the caller's tree therefore hides every page whose
+        ``directory_context`` belongs to the project being read. Measured
+        2026-08-19: the correct slug ``quinyx_flux_adr-0016`` resolves with
+        ``project=`` alone and NOT found with ``directory=`` pointing at the
+        yadgar tree.
+      * the legacy slug came out ``yadgar-adr-0016`` while reading a
+        ``quinyx/flux`` ADR — the caller's basename, which is the misleading
+        error the symptom surfaced.
+
+    ``directory`` is now dropped entirely (ADR-0233 retires it as a scoping
+    key) and the candidate slugs come from the resolved ``project_id``. The
+    D32 ③ slug is project-qualified and opaque/immutable (ADR-0211), so a
+    slug-alone match cannot cross projects.
+
+    Candidate order:
+      1. the ROW's stored ``body_slug`` — authoritative — but ONLY when it is
+         consistent with the resolved project_id. ``get_adr_row`` discards
+         ``project_id`` (ledger task 188, out of scope here), so an
+         inconsistent slug means a foreign row leaked; honouring it would
+         serve another project's PROSE, not merely its metadata.
+      2. the derived D32 ③ slug ``{project_id with / → _}_adr-NNNN``.
+      3. the legacy ``{basename(project_id)}-adr-NNNN`` for the pages Car L
+         has not re-slugged. Residual risk (pre-existing, unchanged by this
+         car): this shape is basename-derived, so two projects sharing a repo
+         name can collide on it. It is the LAST rung and fires only when both
+         project-qualified candidates miss.
+    """
+    prefix = project_id.replace("/", "_")
+    derived_slug = f"{prefix}_adr-{adr_id_int:04d}"
+    legacy_slug = f"{project_id.rsplit('/', 1)[-1]}-adr-{adr_id_int:04d}"
+
+    candidates: list[str] = []
+    row = row_result.get("row") if isinstance(row_result, dict) else None
+    row_slug = str(row.get("body_slug") or "") if isinstance(row, dict) else ""
+    if row_slug and row_slug.startswith(prefix):
+        candidates.append(row_slug)
+    for slug in (derived_slug, legacy_slug):
+        if slug not in candidates:
+            candidates.append(slug)
+
+    body: dict[str, Any] = {"error": f"Wiki page '{derived_slug}' not found"}
+    for slug in candidates:
+        body = wiki_read(slug, project=project_id)
+        if "error" not in body:
+            return body
     return body
 
 
@@ -823,8 +907,10 @@ __all__ = [
     "_parse_supersedes",
     # adr.py-local
     "_FATAL_WRITE_REASONS",
+    "_HISTORICAL_STATUSES",
     "_normalize_subsystem",
     "_row_to_adr_list_entry",
+    "_tier_for_status",
     "_trigger_subsystem_rollup_regen",
     "_write_ok",
 ]

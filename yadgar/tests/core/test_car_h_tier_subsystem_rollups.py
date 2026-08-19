@@ -418,8 +418,17 @@ class TestAdrAddTierSubsystem:
             f"empty subsystem must become None (got {create_payload.get('subsystem')!r})"
         )
 
-    def test_adr_add_default_tier_and_subsystem_are_none(self, tmp_path):
-        """No tier/subsystem arg → None forwarded (no D27/D28 stamp)."""
+    def test_adr_add_default_tier_derived_subsystem_none(self, tmp_path):
+        """No tier/subsystem arg → tier DERIVED from status (D27), subsystem None.
+
+        Car A6 / ledger task 213 amended this test. It used to assert
+        ``tier is None`` — i.e. it PINNED the defect: a NULL-tier row matches
+        neither ``adr_list(tier="binding")`` nor ``adr_list(tier="historical")``
+        and is unreachable through every argument value. ``adr_add``'s own
+        docstring had promised the derived default since Car H; only the
+        assertion had encoded the unimplemented behaviour. ``subsystem`` is
+        genuinely explicit (D28) and stays ``None``.
+        """
         from yadgar.core.server.tools.adr import adr_add
 
         project_dir = str(tmp_path / "addnone")
@@ -464,7 +473,9 @@ class TestAdrAddTierSubsystem:
             adr_add(**valid_params)
 
         create_payload = next(c["payload"] for c in captured if c["op"] == "create_adr_row")
-        assert create_payload.get("tier") is None
+        assert create_payload.get("tier") == "binding", (
+            f"status='accepted' derives tier='binding' (D27); got {create_payload.get('tier')!r}"
+        )
         assert create_payload.get("subsystem") is None
 
 
