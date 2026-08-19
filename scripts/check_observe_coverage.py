@@ -28,6 +28,7 @@ import argparse
 import ast
 import fnmatch
 import json
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -243,6 +244,89 @@ def _rel_posix(path: Path, repo_root: Path) -> str:
         return path.as_posix()
 
 
+def _dirty_tracked_files(repo_root: Path) -> frozenset[str] | None:
+    """Repo-relative POSIX paths of tracked files with an UNSTAGED diff.
+
+    One `git diff --name-only` call, used to make `_git_index_content` cheap
+    at whole-tree scale. Every file NOT in this set has working-tree content
+    byte-identical to the git index (nothing to stash, nothing pre-commit's
+    stash would change), so a plain disk read already gives the answer
+    `git show :<rel>` would — no need to shell out per file for the common
+    case. Untracked files are deliberately absent from `git diff`'s output
+    too, which is exactly the fallback-to-disk behaviour `_git_index_content`
+    already wants for them (pre-commit's stash never touches untracked
+    paths). Returns None (caller must probe per-file) when git is
+    unavailable or `repo_root` isn't a git repo.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):  # fmt: skip
+        return None
+    if result.returncode != 0:
+        return None
+    return frozenset(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+
+def _git_index_content(
+    path: Path,
+    repo_root: Path,
+    dirty_files: frozenset[str] | None = None,
+) -> str | None:
+    """Return `path`'s content as it sits in the git INDEX (staged), or None.
+
+    Ledger task 158: pre-commit stashes unstaged changes before running a
+    `language: system` hook, so `git commit` evaluates the STAGED tree, not
+    whatever a developer happens to have on disk. A checker that
+    `path.read_text()`s straight off disk instead reports on the WORKING
+    TREE — staged + unstaged combined — so it can go green on a fix that was
+    only ever written to disk and never `git add`ed, while the real
+    pre-commit hook (seeing the staged-only tree after its stash) fails on
+    the same commit. `git show :<rel>` reads exactly the tree pre-commit's
+    stash exposes to the hook, closing that gap.
+
+    `dirty_files` (from `_dirty_tracked_files`), when supplied: skip the
+    `git show` subprocess for any file NOT in the set — its disk content is
+    already known to match the index, so the caller's own disk-read fallback
+    returns the identical bytes for free. Measured on this repo's ~800-file
+    scan: 5.3s with a `git show` per file vs 1.9s with this short-circuit
+    (0-5 files actually dirty on a normal commit).
+
+    Returns None (caller falls back to a disk read) when: `path` is not
+    inside `repo_root`, `repo_root` is not a git repo, `git` is unavailable,
+    the file isn't tracked/staged (e.g. a brand-new untracked file, or a
+    `tmp_path` test fixture with no git repo at all), or `dirty_files` says
+    this file has no unstaged diff — in every one of those cases the
+    working-tree copy IS the correct thing to scan.
+    """
+    try:
+        rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return None
+    if dirty_files is not None and rel not in dirty_files:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "show", f":{rel}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):  # fmt: skip
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
 def _matches_glob(rel: str, glob: str) -> bool:
     """True if repo-relative POSIX path `rel` matches `glob`.
 
@@ -270,16 +354,28 @@ def scan_file(
     allowlist: dict,
     exempt_globs: dict | None = None,
     repo_root: Path | None = None,
+    use_git_index: bool = False,
+    dirty_files: frozenset[str] | None = None,
 ) -> list[Finding]:
     """Classify every function in a file. `allowlist` maps 'module:qualname' -> entry.
 
     `exempt_globs` maps a repo-relative POSIX glob (e.g. 'yadgar/seed/**') -> entry;
     a function whose file path matches an exempt glob is EXEMPT_GLOB.
+
+    `use_git_index=True` (ledger task 158) reads the file's STAGED content via
+    `git show` instead of the raw working-tree copy, so this scan matches what
+    the pre-commit hook actually evaluates (see `_git_index_content`). Falls
+    back to a disk read whenever the index lookup can't resolve (untracked
+    file, not a git repo, git unavailable). `dirty_files`, when supplied,
+    short-circuits that lookup to a disk read for any file with no unstaged
+    diff — see `_git_index_content`'s docstring for the measured win.
     """
     exempt_globs = exempt_globs or {}
     repo_root = repo_root or _REPO_ROOT
+    source = _git_index_content(path, repo_root, dirty_files) if use_git_index else None
     try:
-        source = path.read_text(encoding="utf-8")
+        if source is None:
+            source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
     except (SyntaxError, OSError) as exc:  # pragma: no cover
         print(f"WARNING: could not parse {path}: {exc}", file=sys.stderr)
@@ -316,6 +412,8 @@ def scan_file_span_v2(
     path: Path,
     span_budget: dict,
     repo_root: Path | None = None,
+    use_git_index: bool = False,
+    dirty_files: frozenset[str] | None = None,
 ) -> tuple[list[str], set[str], list[str]]:
     """Scan one file for the I33 v2 hard rules + advisory report.
 
@@ -325,10 +423,16 @@ def scan_file_span_v2(
       * seen_span_budget_fqs — every ``module:qualname`` seen (for the caller's
         stale-entry check on ``span_budget``).
       * advisory_lines — non-failing loop-heuristic report lines (stdout only).
+
+    `use_git_index` / `dirty_files` mirror `scan_file` (ledger task 158) —
+    see its docstring.
     """
     repo_root = repo_root or _REPO_ROOT
+    source = _git_index_content(path, repo_root, dirty_files) if use_git_index else None
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        if source is None:
+            source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
     except (SyntaxError, OSError) as _exc:  # pragma: no cover  # noqa: F841
         return [], set(), []
 
@@ -484,9 +588,58 @@ def validate_glob_entry(glob: str, entry: dict) -> list[str]:
     return errs
 
 
-def _iter_py_files(root: Path, area: str | None) -> list[Path]:
+def _tracked_py_files(root: Path, repo_root: Path) -> list[Path] | None:
+    """`git ls-files` for `*.py` under `root`, rooted at `repo_root`, or None.
+
+    Ledger task 158's deletion axis: `Path.rglob` only sees what's currently
+    on disk, so a file `rm`'d from the working tree but never `git rm`'d
+    (deletion left unstaged) is invisible to a manual scan even though it
+    still carries whatever MISSING functions its last-staged content had —
+    but pre-commit's stash restores exactly that staged content to disk
+    before running the hook, so the hook DOES scan it. Enumerating from the
+    git index instead of the filesystem sees the same file set the hook
+    does. As a side effect, only TRACKED files are ever listed — a
+    gitignored `.py` straggler physically present under `root` (which
+    `rglob` would pick up) is correctly out of scope, since it is never what
+    gets committed either.
+
+    Returns None (caller falls back to `Path.rglob`) when git is
+    unavailable, `repo_root` isn't a git repo, or `root` isn't inside
+    `repo_root`.
+    """
+    try:
+        rel_root = root.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--", f"{rel_root}/*.py"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):  # fmt: skip
+        return None
+    if result.returncode != 0:
+        return None
+    return sorted(repo_root / line for line in result.stdout.splitlines() if line.strip())
+
+
+def _iter_py_files(
+    root: Path,
+    area: str | None,
+    repo_root: Path | None = None,
+    use_git_index: bool = False,
+) -> list[Path]:
+    candidates = None
+    if use_git_index:
+        candidates = _tracked_py_files(root, repo_root or _REPO_ROOT)
+    if candidates is None:
+        candidates = sorted(root.rglob("*.py"))
     files = []
-    for p in sorted(root.rglob("*.py")):
+    for p in candidates:
         rel = str(p)
         if "/tests/" in rel or rel.endswith("_test.py") or p.name.startswith("test_"):
             continue
@@ -503,6 +656,7 @@ def run(
     exempt_globs: dict | None = None,
     repo_root: Path | None = None,
     span_budget: dict | None = None,
+    use_git_index: bool = False,
 ) -> tuple[list[Finding], set[str], list[str], list[str]]:
     """Return (all_findings, seen_fqs, integrity_errors, advisory_lines).
 
@@ -515,31 +669,41 @@ def run(
     I33 v2 (ADR-0085 / P-SB): also runs the `_span_budget` hard rule, the ADR-0041
     logging-handler hard rule, and collects the advisory loop-heuristic report.
     `span_budget` maps `module:qualname -> {rationale}`.
+
+    `use_git_index`: scan the git-staged content of each file rather than the
+    raw working-tree copy (ledger task 158 — see `_git_index_content`), and
+    enumerate the file set from the git index rather than `Path.rglob` (see
+    `_tracked_py_files`). The dirty-file set that makes the content lookup
+    cheap at whole-tree scale (`_dirty_tracked_files`) is computed ONCE here,
+    not per file.
     """
     exempt_globs = exempt_globs or {}
     span_budget = span_budget or {}
     repo_root = repo_root or _REPO_ROOT
+    dirty_files = _dirty_tracked_files(repo_root) if use_git_index else None
     all_findings: list[Finding] = []
     seen_fqs: set[str] = set()
     seen_span_v2_fqs: set[str] = set()
     glob_hits: set[str] = set()  # globs that matched >=1 in-scope function file
     span_v2_integrity: list[str] = []
     advisory_lines: list[str] = []
-    for path in _iter_py_files(root, area):
+    for path in _iter_py_files(root, area, repo_root, use_git_index):
         module = path.stem
         rel = _rel_posix(path, repo_root)
         file_glob = next((g for g in exempt_globs if _matches_glob(rel, g)), None)
         for g in exempt_globs:
             if _matches_glob(rel, g):
                 glob_hits.add(g)
-        for f in scan_file(path, allowlist, exempt_globs, repo_root):
+        for f in scan_file(path, allowlist, exempt_globs, repo_root, use_git_index, dirty_files):
             if f.status == "EXEMPT_GLOB":
                 f.module = module
                 f.glob = file_glob
             all_findings.append(f)
             seen_fqs.add(f"{module}:{f.qualname}")
         # I33 v2 pass (span-budget hard rule + ADR-0041 + advisory loop heuristic).
-        v2_errs, v2_seen, v2_advisory = scan_file_span_v2(path, span_budget, repo_root)
+        v2_errs, v2_seen, v2_advisory = scan_file_span_v2(
+            path, span_budget, repo_root, use_git_index, dirty_files
+        )
         span_v2_integrity.extend(v2_errs)
         seen_span_v2_fqs.update(v2_seen)
         advisory_lines.extend(v2_advisory)
@@ -608,18 +772,39 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to .observe-allowlist.json.",
     )
     p.add_argument("--list-all", action="store_true", help="Print every function + status, exit 0.")
+    p.add_argument(
+        "--no-git-index",
+        action="store_true",
+        help=(
+            "Scan the raw working-tree copy of every file instead of the git-staged "
+            "content (default). Ledger task 158: pre-commit stashes unstaged changes "
+            "before running this hook, so it evaluates the STAGED tree — a plain "
+            "working-tree scan can go green on a fix that was never `git add`ed while "
+            "the real hook still fails. Pass this flag only to deliberately lint your "
+            "raw working tree (e.g. mid-edit, before staging anything)."
+        ),
+    )
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     root = Path(args.root)
+    use_git_index = not args.no_git_index
+
+    # Globs are keyed repo-relative (e.g. 'yadgar/seed/**'); derive the repo root
+    # from the scan root so both live-repo runs and tmp-dir test runs resolve the
+    # same POSIX form. Scan root is '.../yadgar' → repo root is its parent.
+    repo_root = root.resolve().parent if root.name == "yadgar" else _REPO_ROOT
 
     allowlist: dict = {}
     alf = Path(args.allowlist_file)
-    if alf.exists():
+    alf_source = _git_index_content(alf, repo_root) if use_git_index else None
+    if alf_source is None:
+        alf_source = alf.read_text(encoding="utf-8") if alf.exists() else None
+    if alf_source is not None:
         try:
-            allowlist = json.loads(alf.read_text(encoding="utf-8"))
+            allowlist = json.loads(alf_source)
         except json.JSONDecodeError as exc:
             print(f"ERROR: {alf} is not valid JSON: {exc}", file=sys.stderr)
             return 1
@@ -637,13 +822,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    # Globs are keyed repo-relative (e.g. 'yadgar/seed/**'); derive the repo root
-    # from the scan root so both live-repo runs and tmp-dir test runs resolve the
-    # same POSIX form. Scan root is '.../yadgar' → repo root is its parent.
-    repo_root = root.resolve().parent if root.name == "yadgar" else _REPO_ROOT
-
     findings, _seen, integrity, advisory_lines = run(
-        root, allowlist, args.area, exempt_globs, repo_root, span_budget
+        root, allowlist, args.area, exempt_globs, repo_root, span_budget, use_git_index
     )
 
     if args.list_all:

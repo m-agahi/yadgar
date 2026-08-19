@@ -13,6 +13,7 @@ missing rationale, bad category) is ALWAYS hard-fail, even in warn-mode.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -559,3 +560,200 @@ def test_stale_allowlist_entry_hard_fails(tmp_path):
         ]
     )
     assert rc == 1  # stale entry is always hard
+
+
+# ── ledger task 158: manual run must match what the pre-commit hook sees ─────
+
+
+def _init_git_repo(repo: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.example"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
+
+
+_MISSING_FN_SRC = """
+    def do_real_work():
+        conn = open("/dev/null", "w")
+        conn.write("x")
+        conn.close()
+        return 1
+    """
+
+_FIXED_FN_SRC = """
+    from yadgar._shared.observability.observe import observe
+
+
+    @observe()
+    def do_real_work():
+        conn = open("/dev/null", "w")
+        conn.write("x")
+        conn.close()
+        return 1
+    """
+
+
+def test_git_index_sees_staged_content_not_unstaged_working_tree(tmp_path):
+    """Task 158 repro: a MISSING fn is staged; its @observe fix is written to
+    disk but never `git add`ed. pre-commit stashes that unstaged fix before
+    running the hook, so the hook still sees the MISSING version. A scanner
+    that reads straight off disk would report SATISFIED here — false green —
+    because the working tree looks fixed even though nothing was staged.
+    `use_git_index=True` must classify this MISSING, matching the hook.
+    """
+    _init_git_repo(tmp_path)
+    f = _write(tmp_path, "mod.py", _MISSING_FN_SRC)
+    subprocess.run(["git", "add", "mod.py"], cwd=tmp_path, check=True)
+    # Unstaged working-tree edit: "fixes" the file on disk without staging it.
+    f.write_text(textwrap.dedent(_FIXED_FN_SRC), encoding="utf-8")
+
+    findings = check_observe_coverage.scan_file(
+        f, allowlist={}, repo_root=tmp_path, use_git_index=True
+    )
+    assert [x.status for x in findings] == ["MISSING"]
+
+
+def test_disk_read_is_the_false_green_this_fix_closes(tmp_path):
+    """Same fixture as above with `use_git_index` left at its old default
+    (False) — demonstrates the exact bug: reading the working tree reports
+    SATISFIED even though nothing was ever staged.
+    """
+    _init_git_repo(tmp_path)
+    f = _write(tmp_path, "mod.py", _MISSING_FN_SRC)
+    subprocess.run(["git", "add", "mod.py"], cwd=tmp_path, check=True)
+    f.write_text(textwrap.dedent(_FIXED_FN_SRC), encoding="utf-8")
+
+    findings = check_observe_coverage.scan_file(f, allowlist={}, repo_root=tmp_path)
+    assert [x.status for x in findings] == ["SATISFIED"]  # the false green
+
+
+def test_git_index_falls_back_to_disk_outside_a_git_repo(tmp_path):
+    """`use_git_index=True` against a non-git tmp_path (every other test's
+    fixture shape) must fall back to a disk read rather than erroring, so
+    existing --warn/--list-all callers are unaffected.
+    """
+    f = _write(tmp_path, "mod.py", _MISSING_FN_SRC)
+    findings = check_observe_coverage.scan_file(
+        f, allowlist={}, repo_root=tmp_path, use_git_index=True
+    )
+    assert [x.status for x in findings] == ["MISSING"]
+
+
+def test_git_index_falls_back_to_disk_for_untracked_file(tmp_path):
+    """A brand-new file that was never `git add`ed isn't in the index at all.
+    pre-commit's stash never touches untracked files, so both a manual scan
+    and the hook see its disk content — the fallback must match that.
+    """
+    _init_git_repo(tmp_path)
+    f = _write(tmp_path, "mod.py", _MISSING_FN_SRC)  # never staged
+    findings = check_observe_coverage.scan_file(
+        f, allowlist={}, repo_root=tmp_path, use_git_index=True
+    )
+    assert [x.status for x in findings] == ["MISSING"]
+
+
+def test_main_no_git_index_flag_opts_back_into_disk_scan(tmp_path):
+    """`--no-git-index` is the documented escape hatch back to the pre-fix
+    working-tree scan, for deliberately linting mid-edit / unstaged work.
+
+    `root` must be named `yadgar` (matching the real `--root <repo>/yadgar`
+    invocation) so `main()`'s repo-root derivation resolves to `tmp_path` —
+    the same convention the existing glob tests use.
+    """
+    _init_git_repo(tmp_path)
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    f = _write(root, "mod.py", _MISSING_FN_SRC)
+    subprocess.run(["git", "add", "yadgar/mod.py"], cwd=tmp_path, check=True)
+    f.write_text(textwrap.dedent(_FIXED_FN_SRC), encoding="utf-8")  # unstaged fix
+
+    rc_default = check_observe_coverage.main(
+        ["--root", str(root), "--allowlist-file", str(tmp_path / ".observe-allowlist.json")]
+    )
+    rc_no_index = check_observe_coverage.main(
+        [
+            "--no-git-index",
+            "--root",
+            str(root),
+            "--allowlist-file",
+            str(tmp_path / ".observe-allowlist.json"),
+        ]
+    )
+    assert rc_default == 1  # git-index default: sees the staged (unfixed) content
+    assert rc_no_index == 0  # opt-out: sees the working tree (fixed on disk)
+
+
+def test_main_git_index_covers_the_allowlist_file_too(tmp_path):
+    """The allowlist itself is a tracked file (`.observe-allowlist.json`); an
+    exemption written to disk but not staged must not launder a staged
+    MISSING finding, the same way an unstaged code fix must not.
+    """
+    _init_git_repo(tmp_path)
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    _write(root, "mod.py", _MISSING_FN_SRC)
+    alf = tmp_path / ".observe-allowlist.json"
+    alf.write_text(json.dumps({}), encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "yadgar/mod.py", ".observe-allowlist.json"], cwd=tmp_path, check=True
+    )
+    # Unstaged: exempt the fn in the allowlist, but never `git add` it.
+    alf.write_text(
+        json.dumps(
+            {
+                "mod:do_real_work": {
+                    "category": "pre-existing",
+                    "rationale": "unstaged exemption — must not launder the staged MISSING finding",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = check_observe_coverage.main(["--root", str(root), "--allowlist-file", str(alf)])
+    assert rc == 1  # staged allowlist (empty) still applies; MISSING is not exempted
+
+
+def test_git_index_scans_a_file_deleted_unstaged_from_disk(tmp_path):
+    """Deletion axis of task 158: `rm`ing a tracked file without `git rm`
+    leaves it staged (in the index) but absent from the working tree.
+    `Path.rglob` can't see a file that isn't on disk, so a plain manual scan
+    silently drops whatever MISSING functions it carried — but pre-commit's
+    stash restores exactly that staged content before running the hook, so
+    the hook still scans it. `use_git_index=True` must enumerate + read the
+    file from the git index, not the (now-empty) working tree.
+    """
+    _init_git_repo(tmp_path)
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    f = _write(root, "mod.py", _MISSING_FN_SRC)
+    subprocess.run(["git", "add", "yadgar/mod.py"], cwd=tmp_path, check=True)
+    f.unlink()  # unstaged working-tree deletion — never `git rm`'d
+
+    rc = check_observe_coverage.main(
+        ["--root", str(root), "--allowlist-file", str(tmp_path / ".observe-allowlist.json")]
+    )
+    assert rc == 1  # do_real_work is still MISSING per the staged content
+
+
+def test_no_git_index_misses_the_unstaged_deletion(tmp_path):
+    """Same fixture with `--no-git-index`: `Path.rglob` can't find the
+    deleted file, so the MISSING function it carried goes unreported — the
+    false green this fix closes on the deletion axis.
+    """
+    _init_git_repo(tmp_path)
+    root = tmp_path / "yadgar"
+    root.mkdir()
+    f = _write(root, "mod.py", _MISSING_FN_SRC)
+    subprocess.run(["git", "add", "yadgar/mod.py"], cwd=tmp_path, check=True)
+    f.unlink()
+
+    rc = check_observe_coverage.main(
+        [
+            "--no-git-index",
+            "--root",
+            str(root),
+            "--allowlist-file",
+            str(tmp_path / ".observe-allowlist.json"),
+        ]
+    )
+    assert rc == 0  # the false green: the deleted file is simply never scanned
