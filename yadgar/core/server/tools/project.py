@@ -23,6 +23,7 @@ from pathlib import Path
 
 import yadgar._shared.paths as _paths
 from yadgar._shared.config import get_settings
+from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.security.secrets import gate_or_reject
@@ -1354,36 +1355,49 @@ def _apply_rejection_signal(resolved: str, actions: list) -> int:
 # ── v5.84.0 car #12: ADR nudge signal ─────────────────────────────────────────
 
 
+class _AdrLedgerUnavailable(Exception):
+    """The ADR ledger could not be queried — a failure, not an empty result.
+
+    Car A5 (ledger task 199): distinguishes "the read failed" (engine #2
+    absent, backend unreachable, malformed response) from "the read
+    succeeded and the project genuinely has zero rows". The two must never
+    collapse into the same ``None`` — ADR-0214 requires absence to be
+    positively evidenced, not defaulted from a failure. Callers of
+    ``_get_adr_log_updated_at`` MUST catch this separately from a real
+    ``None`` and fail closed (no ``capture_adr`` action) rather than treat
+    it as "0 ADRs captured yet".
+    """
+
+
 @observe(tier="stage", metric="tools.project._get_adr_log_updated_at")
-def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
-    """Return the ADR ledger's most-recent ``updated_at`` for this project.
+def _get_adr_log_updated_at(storage, project_id: str) -> float | None:
+    """Return the ADR ledger's most-recent ``updated_at`` for *project_id*.
 
     Car G (0047 §7): re-pointed off the deleted ``<project>-adr-index`` wiki
     page onto the ``adr`` SQL ledger (D35a — the seed lifted the per-ADR
     PAGES into rows). The storage engine exposes ``max_adr_updated_at`` for
     this purpose; ``storage`` is passed in so the call does not import the
-    engine directly. Returns ``None`` when the table has no rows for the
-    project, or the timestamp is unparseable.
-    """
-    import os as _os  # noqa: PLC0415
+    engine directly.
 
-    project_name = _os.path.basename(resolved)
+    Car A5 (ledger task 199): takes the caller's RESOLVED ``project_id``
+    (the ``owner/repo`` key the ``adr.project_id`` column actually stores)
+    instead of a directory-basename guess. The basename never matched that
+    column's format, so the lookup always returned "no rows" regardless of
+    the real ADR count — this fixed the false-positive ``capture_adr``
+    nudge that fired every session even with hundreds of ADRs on file.
+
+    Returns ``None`` when the table genuinely has no rows for the project.
+    Raises ``_AdrLedgerUnavailable`` when the read itself could not be
+    completed — see that class for why callers must not conflate the two.
+    """
     try:
-        # C5 (0047 PR#40 §5): the ``derive_project_id`` call and its
-        # basename fallback are DELETED. This is the ADR-due NUDGE — a
-        # best-effort staleness hint on the session-start brief, not a write —
-        # so it keys on the directory basename it already computed and says so.
-        # It must not raise into ``project_brief`` (an unresolvable identity is
-        # not a reason to fail the whole brief) and it must not invent a
-        # project_id either; the basename is a LOOKUP KEY here, never stamped
-        # onto a row. C6 re-points the nudge at the registry.
-        max_dt = storage.max_adr_updated_at(project_id=project_name)
+        max_dt = storage.max_adr_updated_at(project_id=project_id)
     except AttributeError:
         # The storage engine surface is partial — fall back to the live
         # forward path (preserves the legacy test stubs).
-        max_dt = _get_adr_log_updated_at_via_forward(resolved)
-    except Exception:  # noqa: BLE001
-        return None
+        return _get_adr_log_updated_at_via_forward(project_id)
+    except Exception as exc:  # noqa: BLE001
+        raise _AdrLedgerUnavailable(str(exc)) from exc
     if max_dt is None:
         return None
     if isinstance(max_dt, (int, float)):
@@ -1397,39 +1411,43 @@ def _get_adr_log_updated_at(storage, resolved: str) -> float | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return dt.timestamp()
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:  # noqa: BLE001
+        raise _AdrLedgerUnavailable(str(exc)) from exc
 
 
 @observe(tier="stage", metric="tools.project._get_adr_log_updated_at_fwd")
-def _get_adr_log_updated_at_via_forward(resolved: str) -> datetime | None:
+def _get_adr_log_updated_at_via_forward(project_id: str) -> float | None:
     """Forward path for ``_get_adr_log_updated_at`` — covers the test seam.
 
     Production callers reach ``storage.max_adr_updated_at`` directly. When
     the storage surface is a stub (unit-test path) the ``AttributeError``
     fallback above routes through here, which talks to the backend over
     the canonical PTC chain.
+
+    Raises ``_AdrLedgerUnavailable`` on any transport/backend failure
+    (including an explicit ``{"ok": False, ...}`` envelope) — see that
+    class's docstring for why a failed read must not read as "zero rows".
     """
-    import os as _os  # noqa: PLC0415
-
-    # C5 (0047 PR#40 §5): ``derive_project_id`` + basename fallback deleted;
-    # same reasoning as the storage-surface arm above — a nudge lookup key, not
-    # a stamped identity.
-    project_name = _os.path.basename(resolved)
-
     try:
-        result = _forward_admin("max_adr_updated_at", {"project_id": project_name})
-    except Exception:  # noqa: BLE001
-        return None
+        result = _forward_admin("max_adr_updated_at", {"project_id": project_id})
+    except Exception as exc:  # noqa: BLE001
+        raise _AdrLedgerUnavailable(str(exc)) from exc
     if not isinstance(result, dict):
-        return None
-    raw = result.get("updated_at") or result.get("timestamp")
+        raise _AdrLedgerUnavailable(f"unexpected max_adr_updated_at response: {result!r}")
+    if result.get("ok") is False:
+        raise _AdrLedgerUnavailable(str(result.get("error", "backend reported ok:false")))
+    raw = result.get("updated_at")
     if raw is None:
         return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
     try:
-        return datetime.fromisoformat(str(raw).rstrip("Z").replace("Z", "+00:00"))
-    except Exception:  # noqa: BLE001
-        return None
+        dt = datetime.fromisoformat(str(raw).rstrip("Z").replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    except Exception as exc:  # noqa: BLE001
+        raise _AdrLedgerUnavailable(str(exc)) from exc
 
 
 @observe(tier="stage", metric="tools.project._get_active_work_updated_at")
@@ -1461,13 +1479,27 @@ def _get_active_work_updated_at(storage, resolved: str) -> float | None:
 
 
 @observe(tier="stage", metric="tools.project._apply_adr_signal")
-def _apply_adr_signal(resolved: str, storage, actions: list) -> None:
+def _apply_adr_signal(resolved: str, storage, actions: list, project_id: str | None = None) -> None:
     """Append capture_adr action when decisions are likely uncaptured.
 
     Heuristic: active_work was updated more recently than the ADR log by
-    > ADR_DUE_WARN_HOURS.  Fires only when there is evidence of session activity
-    (active_work present).  Silent when active_work absent or ADR log is fresh.
-    Never raises.
+    > ADR_DUE_WARN_HOURS.  Fires only when there is evidence of session
+    activity (active_work present) AND the caller's project_id resolves AND
+    the ADR ledger read succeeds.  Silent when active_work is absent, ADR
+    log is fresh, the project_id cannot be resolved, or the ledger read
+    fails — a check this tool cannot verify must never present as
+    "confirmed absent" (ADR-0214: absence must be positively evidenced, not
+    defaulted from an unknown). Never raises.
+
+    Car A5 (ledger task 199): the lookup key used to be
+    ``os.path.basename(resolved)`` — never matches the ``adr`` ledger's
+    ``owner/repo`` ``project_id`` column, so this signal fired
+    unconditionally every session regardless of the real ADR count.
+    ``project_id`` (the caller-supplied override, or ``None``) is now
+    resolved through the same ``resolve_effective_project`` tiers every
+    other project-scoped tool uses (override > session context >
+    directory-registered mapping); unresolvable resolves to silence rather
+    than a guess.
 
     Same structural pattern as _apply_roadmap_signal / _apply_rejection_signal.
     """
@@ -1482,7 +1514,25 @@ def _apply_adr_signal(resolved: str, storage, actions: list) -> None:
             # No session activity detected — silent.
             return
 
-        adr_ts = _get_adr_log_updated_at(storage, resolved)
+        try:
+            effective_project_id = resolve_effective_project(
+                project=project_id,
+                directory=resolved,
+                session_project=None,
+                tool="project_brief._apply_adr_signal",
+            )
+        except UnresolvedProjectError:
+            # No identity to query the ledger by — cannot positively
+            # evidence "zero ADRs" for an unknown project (ADR-0214).
+            # Fail CLOSED: stay silent rather than guess.
+            return
+
+        try:
+            adr_ts = _get_adr_log_updated_at(storage, effective_project_id)
+        except _AdrLedgerUnavailable:
+            # The ledger read itself failed — same fail-CLOSED rule as
+            # above; "cannot tell" must not collapse into "no ADRs".
+            return
         now = time.time()
 
         if adr_ts is None:
@@ -1818,7 +1868,7 @@ def _project_brief_signals(  # noqa: PLR0913 — internal payload builder; every
     pending_rejections_count = _apply_rejection_signal(resolved, recommended_actions)
 
     # v5.84.0 car #12: ADR nudge signal — capture_adr action when decisions uncaptured.
-    _apply_adr_signal(resolved, storage, recommended_actions)
+    _apply_adr_signal(resolved, storage, recommended_actions, project_id=project_id)
 
     # ADR-0007 capture loop: agent-prompt nudge — capture_agent_prompt action when the
     # prompt library is stale (gated on AGENT_PROMPT_LIBRARY_ENABLED; silent when off).

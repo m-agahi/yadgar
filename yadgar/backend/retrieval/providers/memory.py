@@ -13,6 +13,11 @@ those. It differs from the retired ``is_directory_eligible`` in the way that
 matters: it reads ``project_id`` + the ``global`` reach tag — the same two arms
 the SQL uses, with the same treatment of unstamped rows — instead of a wider
 ``{'global', '', None}`` sentinel set that admitted every unattributed row.
+
+Ledger task 82: the caller's ``recall(tags=[...])`` include filter is applied
+here too, for the same reason and at the same place. It used to reach
+``WikiProvider`` alone, which left the memory arm running an UNFILTERED search
+with the tag token scored as ordinary text.
 """
 
 from __future__ import annotations
@@ -62,17 +67,41 @@ class MemoryProvider(SourceProvider):
 
         Args:
             query: Search query.
-            scope: Scope carrying project_id and min_heat.
+            scope: Scope carrying project_id, min_heat and opt_in_tags.
             limit: Maximum candidates to return.
 
         Returns:
             List of Candidate(type="memory", ...) in the retriever's NATIVE order
             (Retriever.recall owns ranking: WRRF + rerank pipeline + optional
             rule/metacognition reordering — NOT necessarily native_score-descending),
-            scoped to scope.project_id.
+            scoped to scope.project_id and to scope.opt_in_tags when set.
             Order is preserved verbatim so callers must not assume a score sort.
         """
         caller_project = scope.project_id or None
+        # Ledger task 82: the caller's ``recall(tags=[...])`` filter, applied to
+        # MEMORY rows. It was reaching WikiProvider ONLY (recall_pipeline.py
+        # hands `tags` to that constructor and nowhere else), so the memory arm
+        # ran an unfiltered search and the tag token was left to be matched as
+        # ORDINARY TEXT by the FTS/semantic scorers. Measured 2026-08-19 on
+        # `m-agahi/yadgar`: recall(tags=["_anchor"], type="memory") returned
+        # rows tagged ["semantic", "auto-abstracted"] whose auto-abstracted
+        # CONTENT happened to contain the substring "[tags: _anchor]".
+        #
+        # CONJUNCTIVE by construction: every requested tag must be on the row.
+        # Stated rather than implied because a later reader would otherwise be
+        # free to assume any-of, and the two disagree the moment a caller passes
+        # two tags. A row with no ``tags`` at all satisfies no non-empty filter.
+        #
+        # A ROW guard, deliberately, not a stage-1 SQL predicate: the scope
+        # clause reaches only the FTS and vector arms (see Retriever.recall's
+        # SCOPE LIMIT note), while PPR and spreading activation hand back ids
+        # that clause never saw — the same argument that keeps
+        # ``is_project_eligible`` below. Pushing the tag arm into SQL as well
+        # would ADD depth (the candidate budget would be spent on tagged rows)
+        # but could not replace this check. See the completeness note in the
+        # ``tags`` docstring on ``recall``: a tag-filtered recall is still a
+        # ranked search over a pool, never an enumeration of every tagged row.
+        required_tags = set(scope.opt_in_tags or ())
         results = self._retriever.recall(
             query,
             max_results=limit,
@@ -98,6 +127,8 @@ class MemoryProvider(SourceProvider):
         for m in results:
             mid = m.get("id")
             if mid is None:
+                continue
+            if required_tags and not required_tags.issubset(set(m.get("tags") or ())):
                 continue
             if not scope.unscoped and not is_project_eligible(
                 m.get("project_id"), m.get("tags"), caller_project

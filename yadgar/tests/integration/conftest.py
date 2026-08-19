@@ -20,7 +20,24 @@ _SERVER_JSON = Path(__file__).resolve().parents[3] / "server.json"
 
 
 def _backend_image() -> str:
-    """Return current backend image tag from server.json (single source of truth)."""
+    """Return current backend image tag from server.json (single source of truth).
+
+    ``YADGAR_TEST_BACKEND_IMAGE`` overrides the lookup. This exists because
+    server.json carries the PENDING version, and backend images are published at
+    RELEASE — i.e. after merge. So on any PR that bumps ``backend_version`` the
+    derived tag does not exist yet and the container start fails, which this
+    fixture reports as a SKIP. Car A3 (task 156) wired this suite into CI for the
+    first time and its skip-is-not-a-pass gate caught exactly that on the very
+    first run: ``openfantasy/yadgar-backend:5.76.4: not found``.
+
+    The CI job therefore resolves a PULLABLE tag itself (pending if published,
+    else master's released one) and passes it here. It fails loudly rather than
+    skipping when neither can be pulled — a skip in that job is treated as a
+    failure, so this override must never become a silent fallback.
+    """
+    override = os.environ.get("YADGAR_TEST_BACKEND_IMAGE", "").strip()
+    if override:
+        return override
     try:
         data = json.loads(_SERVER_JSON.read_text())
         version = data["backend_version"]

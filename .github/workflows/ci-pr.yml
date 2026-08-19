@@ -515,6 +515,103 @@ jobs:
           path: pytest-engine2.txt
           retention-days: 1
 
+      - name: Resolve a PULLABLE backend image for the vacuum e2e suite
+        # server.json carries the PENDING backend_version; backend images are
+        # published at RELEASE, i.e. AFTER merge. So on every PR that bumps
+        # backend_version the derived tag does not exist and the container start
+        # fails, which conftest reports as a SKIP — and the gate below (rightly)
+        # treats a skip as a failure. Car A3 wired this suite into CI for the
+        # first time and hit exactly that on run #1:
+        #   docker.io/openfantasy/yadgar-backend:5.76.4: not found
+        #
+        # So resolve the tag here instead of letting the fixture derive it:
+        # prefer the PENDING image when it is actually published (true on
+        # master and post-release), else fall back to master's released one.
+        # NEVER silently: the fallback prints a warning saying backend changes
+        # in this PR are not validated by this job, and an unpullable image is
+        # a hard failure rather than a skip.
+        #
+        # `git fetch --depth=1 origin master` is required — actions/checkout
+        # fetches only the PR merge ref at depth 1, so origin/master is absent.
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin master
+          PENDING=$(python3 -c "import json;print(json.load(open('server.json'))['backend_version'])")
+          BASE=$(git show origin/master:server.json \
+                   | python3 -c "import json,sys;print(json.load(sys.stdin)['backend_version'])")
+          REPO=docker.io/openfantasy/yadgar-backend
+          if docker manifest inspect "$REPO:$PENDING" >/dev/null 2>&1; then
+            IMG="$REPO:$PENDING"
+            echo "vacuum e2e: backend $PENDING is published — testing the pending image"
+          else
+            IMG="$REPO:$BASE"
+            echo "::warning::vacuum e2e: backend $PENDING is not published yet; falling back to master's $BASE"
+            echo "::warning::vacuum e2e: backend changes in THIS PR are NOT validated by this job"
+          fi
+          docker pull "$IMG" || {
+            echo "neither $REPO:$PENDING nor $REPO:$BASE could be pulled" >&2
+            exit 1
+          }
+          echo "YADGAR_TEST_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
+
+      - name: Run the vacuum e2e integration suite (task 156 / car A3)
+        # yadgar/tests/integration/test_vacuum_e2e.py and
+        # yadgar/tests/integration/test_conftest_backend_pin.py were in NO CI
+        # job at all — unlike the engine-#2 files above (excluded only by
+        # every OTHER job's marker filter, and covered here), the whole
+        # `yadgar/tests/integration/` directory is absent from the `tests`
+        # matrix's `paths:` entries, so nothing ever passed either file to
+        # pytest, marker or no marker. This job already asserted a WORKING
+        # container runtime above, which is exactly what
+        # `live_backend_container` (test_vacuum_e2e.py's fixture) needs;
+        # test_conftest_backend_pin.py needs no container but lives beside it.
+        #
+        # `-o addopts='-n 0'` REPLACES pyproject's default addopts (which
+        # excludes the integration and e2e marks) instead of appending to it,
+        # so test_vacuum_e2e.py's `integration` marker does not deselect it —
+        # deliberately no `-m` flag on this line at all: a quoted marker
+        # string anywhere in this job's text would make
+        # scripts/check_ci_local_parity.py's shape-based stray-job scan
+        # misfile this job as an uncovered subsystem leg (see the comment
+        # above `test-engine2-integration:` — same landmine, same reason it
+        # writes no quoted marker either). `-n 0` because
+        # `live_backend_container` is module-scoped and does docker
+        # stop/start; xdist workers would race the same container.
+        run: |
+          set -o pipefail
+          uv run --python 3.14 --extra sql --extra test python -m pytest \
+            yadgar/tests/integration/test_vacuum_e2e.py \
+            yadgar/tests/integration/test_conftest_backend_pin.py \
+            -o addopts='-n 0' \
+            -q -ra --tb=short \
+            2>&1 | tee pytest-vacuum-e2e.txt
+
+      - name: Gate on vacuum e2e tests having actually RUN
+        # Same discipline as the engine-#2 gate above: a full skip (e.g. the
+        # container runtime assertion above passed but the backend image
+        # itself failed to pull/start) exits 0 and looks green. A real test
+        # failure already fails the step above via pipefail; this step only
+        # exists to catch the skip case that wouldn't.
+        run: |
+          set -euo pipefail
+          if grep -qE '[0-9]+ skipped' pytest-vacuum-e2e.txt; then
+            echo "the vacuum e2e suite skipped tests — a skip here is not a pass:" >&2
+            grep -E '[0-9]+ skipped' pytest-vacuum-e2e.txt >&2
+            exit 1
+          fi
+          grep -qE '[1-9][0-9]* (passed|failed)' pytest-vacuum-e2e.txt || {
+            echo "the vacuum e2e suite collected nothing" >&2
+            exit 1
+          }
+
+      - name: Upload vacuum e2e output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: pytest-vacuum-e2e
+          path: pytest-vacuum-e2e.txt
+          retention-days: 1
+
   check-skip-inventory:
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","yadgar"]') }}
     # Validates every test group's pytest -rs skip summary WITHOUT re-running

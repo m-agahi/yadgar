@@ -336,3 +336,104 @@ class TestWikiProvider:
         provider = WikiProvider(wiki)
         results = provider.candidates("q", default_scope, limit=5)
         assert results[0].id == 42
+
+
+# ---------------------------------------------------------------------------
+# 6. MemoryProvider tag filter (ledger task 82)
+# ---------------------------------------------------------------------------
+
+
+def _tagged_memory(mid: int, tags: list[str], content: str) -> dict:
+    """A memory row eligible for ``default_scope`` carrying explicit *tags*."""
+    return {
+        "id": mid,
+        "content": content,
+        "heat": 0.6,
+        "_retrieval_score": 0.9,
+        "project_id": "/home/user/project",
+        "tags": tags,
+    }
+
+
+class TestMemoryProviderTagFilter:
+    """``recall(tags=[...])`` must filter MEMORY rows by their ``tags`` field.
+
+    The live defect (2026-08-19, ``m-agahi/yadgar``): the anchor-audit gather
+    calls ``recall(..., tags=["_anchor"], type="memory")`` and got back rows
+    tagged ``["semantic", "auto-abstracted"]``, NOT ``_anchor``. They matched
+    because their auto-abstracted CONTENT carries the literal substring
+    ``[tags: _anchor]``, so the token reached the text and semantic scorers
+    while the tag list itself was never applied to the memory arm at all
+    (``recall_pipeline.py`` hands ``tags`` to ``WikiProvider`` only, and
+    ``MemoryProvider`` never read ``scope.opt_in_tags``).
+
+    Both directions are asserted in ONE call on purpose: an absence-only test
+    passes just as well on an empty result set, which is this repo's recurring
+    false-green shape.
+    """
+
+    # The two live row shapes, verbatim: A genuinely carries the tag, B only
+    # mentions it inside its content.
+    _ROW_A = _tagged_memory(531268, ["yadgar", "recall", "_anchor"], "RECALL FEATURE IS COMPLETE")
+    _ROW_B = _tagged_memory(
+        531379,
+        ["semantic", "auto-abstracted"],
+        "Recurring pattern across 5 observations: recall hook audit [tags: _anchor]",
+    )
+
+    def test_content_only_tag_mention_rejected_and_tagged_row_survives(self):
+        retriever = MagicMock()
+        retriever.recall.return_value = [self._ROW_A, self._ROW_B]
+        scope = Scope(project_id="/home/user/project", opt_in_tags=["_anchor"])
+
+        results = MemoryProvider(retriever).candidates("anchor hygiene", scope, limit=25)
+
+        returned = [c.id for c in results]
+        # Direction 1 — the genuinely tagged row IS returned (non-vacuity).
+        assert 531268 in returned, (
+            "the row genuinely tagged _anchor was dropped — the filter is over-broad"
+        )
+        # Direction 2 — the content-only match is NOT returned (the defect).
+        assert 531379 not in returned, (
+            "a row whose CONTENT mentions '[tags: _anchor]' but whose tags field "
+            "is ['semantic', 'auto-abstracted'] was returned — the tag filter is "
+            "inert on the memory path"
+        )
+
+    def test_untagged_scope_is_unfiltered(self):
+        """``opt_in_tags=None`` (general recall) must not filter anything out."""
+        retriever = MagicMock()
+        retriever.recall.return_value = [self._ROW_A, self._ROW_B]
+        scope = Scope(project_id="/home/user/project", opt_in_tags=None)
+
+        results = MemoryProvider(retriever).candidates("anchor hygiene", scope, limit=25)
+
+        assert [c.id for c in results] == [531268, 531379]
+
+    def test_multiple_tags_are_conjunctive(self):
+        """Every requested tag must be present — not any-of."""
+        both = _tagged_memory(1, ["_anchor", "v5.58"], "carries both")
+        one = _tagged_memory(2, ["_anchor"], "carries only one")
+        retriever = MagicMock()
+        retriever.recall.return_value = [both, one]
+        scope = Scope(project_id="/home/user/project", opt_in_tags=["_anchor", "v5.58"])
+
+        results = MemoryProvider(retriever).candidates("q", scope, limit=25)
+
+        assert [c.id for c in results] == [1]
+
+    def test_row_with_no_tags_field_rejected_when_tags_requested(self):
+        """A row carrying no ``tags`` at all cannot satisfy a tag filter."""
+        untagged = {
+            "id": 7,
+            "content": "no tags key at all",
+            "heat": 0.5,
+            "project_id": "/home/user/project",
+        }
+        retriever = MagicMock()
+        retriever.recall.return_value = [untagged, self._ROW_A]
+        scope = Scope(project_id="/home/user/project", opt_in_tags=["_anchor"])
+
+        results = MemoryProvider(retriever).candidates("q", scope, limit=25)
+
+        assert [c.id for c in results] == [531268]
