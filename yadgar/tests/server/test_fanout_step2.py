@@ -176,6 +176,66 @@ class TestFanoutRecall:
                 **kw,
             )
 
+    def _call_fanout_tagged(self, retriever, tags):
+        """``_call_fanout`` with a tag filter, memory-only (the live call shape)."""
+        with (
+            patch.object(_st, "_retriever", retriever),
+            patch.object(_st, "_wiki", None),
+        ):
+            return _fanout_recall(
+                query="anchor hygiene",
+                max_results=25,
+                min_heat=0.0,
+                recall_scope=RecallScope(project_id="/tmp/test"),
+                type_filter="memory",
+                tags=tags,
+            )
+
+    def test_tags_reach_the_memory_arm(self):
+        """``tags=`` must reach MemoryProvider, not WikiProvider alone (task 82).
+
+        THIS IS THE SEAM THAT BROKE, and it is not the provider's own logic:
+        ``_build_provider_tasks`` handed the tag list to the ``WikiProvider``
+        constructor and built ``MemoryProvider`` without it, while
+        ``_fanout_recall`` stamped ``Scope(opt_in_tags=tags)`` that nothing on
+        the memory side read. Under ``type_filter="memory"`` the wiki provider
+        is not constructed at all, so the filter was wholly inert — measured
+        live 2026-08-19: ``recall(tags=["_anchor"], type="memory")`` returned
+        rows tagged ``["semantic", "auto-abstracted"]`` whose auto-abstracted
+        CONTENT merely contains the substring ``[tags: _anchor]``.
+
+        A unit test on ``MemoryProvider.candidates`` alone cannot pin this:
+        drop ``opt_in_tags=tags`` at the ``Scope`` construction and the
+        provider tests stay green while the feature dies exactly as it did.
+        """
+        tagged = _make_memory_dict(1, 0.9, content="genuinely anchored")
+        tagged["tags"] = ["_anchor"]
+        content_only = _make_memory_dict(2, 0.8, content="recall audit [tags: _anchor]")
+        content_only["tags"] = ["semantic", "auto-abstracted"]
+
+        results = self._call_fanout_tagged(
+            _make_mock_retriever([tagged, content_only]), tags=["_anchor"]
+        )
+
+        ids = [r.get("id") for r in results]
+        assert 1 in ids, "the row genuinely tagged _anchor was dropped — filter is over-broad"
+        assert 2 not in ids, (
+            "a row whose CONTENT mentions '[tags: _anchor]' but whose tags field is "
+            "['semantic', 'auto-abstracted'] survived the fan-out — tags= is not "
+            "reaching the memory provider"
+        )
+
+    def test_no_tags_leaves_the_memory_arm_unfiltered(self):
+        """Control: ``tags=None`` is general recall and must filter nothing out."""
+        tagged = _make_memory_dict(1, 0.9, content="genuinely anchored")
+        tagged["tags"] = ["_anchor"]
+        content_only = _make_memory_dict(2, 0.8, content="recall audit [tags: _anchor]")
+        content_only["tags"] = ["semantic", "auto-abstracted"]
+
+        results = self._call_fanout_tagged(_make_mock_retriever([tagged, content_only]), tags=None)
+
+        assert sorted(r.get("id") for r in results) == [1, 2]
+
     def test_pools_memory_and_wiki(self):
         """Fan-out with both retriever + wiki returns items from both sources."""
         mem = _make_memory_dict(1, 0.9)
