@@ -28,6 +28,14 @@ Safety:
     silently-swallowed result dict would defeat that. NOTE that the gate is
     computed AFTER the writes commit, so its exit code is a post-mortem: the
     pre-write check is the dry run.
+  - ``reslug`` joins that gate too (ledger task 13 defect 2, 2026-08-20): it
+    returns no ``ok`` key at all, and a non-empty ``collisions`` list on
+    ``--apply`` now makes the CLI exit 1 — a collision means the op
+    deliberately left that page un-reslugged (the occupant is never
+    overwritten, so data is safe), but the operator previously got no signal
+    beyond a stderr line. Dry-run collisions stay exit 0: the operator is
+    reading the preview by definition, whereas ``--apply`` is the unread
+    path an unattended script exercises.
   - ``--skip-adr`` states which ADR numbers to leave un-inserted (ADR-0006:
     the ids they need are already spent). Repeatable and comma-separated.
     Without it the governing ADR had no mechanism at all.
@@ -147,6 +155,17 @@ def cmd_backfill(args: argparse.Namespace) -> int:
         result = _forward_admin("reslug", {"project_id": project_id, "dry_run": dry_run})
         _print_reslug_report(result, dry_run=dry_run)
         print(json.dumps(result))
+        # ``reslug`` returns no ``ok`` key at all — a collision means a page
+        # was deliberately left un-reslugged (the occupant is never
+        # overwritten, so data is safe), but the operator previously got no
+        # signal beyond a stderr line (ledger task 13 defect 2). Gated on
+        # --apply only: a dry run's collisions are informational (the
+        # operator is reading the report by definition — that's why they
+        # ran a preview instead of --apply), whereas --apply is the unread
+        # path — a script running --apply has nobody reading stderr, which
+        # is exactly the harm a silent exit 0 caused.
+        if not dry_run and result.get("collisions"):
+            return 1
         return 0
 
     if getattr(args, "adr_rows", False):

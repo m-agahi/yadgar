@@ -287,6 +287,38 @@ class TestCmdProjectSeed:
             cmd_project_seed(argparse.Namespace(map=str(tmp_path / "nope.tsv")))
         assert ei.value.code == 2
 
+    def test_genuine_row_failure_exits_nonzero(self, tmp_path: Path) -> None:
+        """Ledger task 13 defect 1: a genuine (non-duplicate) per-row backend
+        failure must fail the whole run's exit code — not just print a FAIL
+        line to stderr and return 0. Before the fix this returned 0 even
+        though ``counts["failed"] == 1``, which is exactly the shape that
+        let a real DataError-1406 truncation bug get reported as
+        "transient" on 2026-08-20."""
+        from yadgar.core.cli.project import cmd_project_seed
+
+        map_path = self._good_map(tmp_path)
+        with self._patched_backend(
+            [
+                {"ok": True, "row": {}},
+                {"ok": False, "error": "engine #2 not composed"},
+            ]
+        ):
+            rc = cmd_project_seed(self._make_args(map_path))
+        assert rc == 1
+
+    def test_all_duplicate_rows_still_exit_zero(self, tmp_path: Path) -> None:
+        """Pin: duplicates (idempotent re-run) are ``skipped``, not
+        ``failed`` — they must NOT trip the new failure gate."""
+        from yadgar.core.cli.project import cmd_project_seed
+
+        map_path = self._good_map(tmp_path)
+        dup = {"ok": False, "error": str(DuplicateProjectError("m-agahi/yadgar"))}
+        with self._patched_backend(
+            [dup, {"ok": False, "error": str(DuplicateProjectError("local/max"))}]
+        ):
+            rc = cmd_project_seed(self._make_args(map_path))
+        assert rc == 0
+
 
 # ── register() — parser wiring ───────────────────────────────────────────────
 
@@ -368,6 +400,35 @@ class TestProjectSeedMcpTool:
         assert first["counts"]["skipped"] == 0
         assert second["counts"]["created"] == 0
         assert second["counts"]["skipped"] == 1
+        # Pin: an all-duplicate re-run is a clean idempotent no-op — ``ok``
+        # must stay True. Only a GENUINE failure should flip it.
+        assert second["ok"] is True
+
+    def test_tool_ok_false_on_genuine_row_failure(self, tmp_path: Path) -> None:
+        """Ledger task 13 defect 1: ``ok`` was a LITERAL ``True`` regardless
+        of ``counts["failed"]`` — a caller reading ``ok`` first (the field a
+        model checks first) saw success while a row silently failed. This
+        pins the fix: ``ok`` reflects ``counts["failed"] == 0``, and the
+        counts payload stays intact either way."""
+        from yadgar.core.server.tools.misc import project_seed
+
+        f = tmp_path / "map.tsv"
+        f.write_text("/home/x\towner/x\t1\t0\tnote\n/home/y\towner/y\t1\t0\tnote\n")
+
+        with patch(
+            "yadgar.core.forward._forward_admin",
+            side_effect=[
+                {"ok": True, "row": {"key": "owner/x"}},
+                {"ok": False, "error": "engine #2 not composed"},
+            ],
+        ):
+            result = project_seed(map_path=str(f))
+
+        assert result["ok"] is False
+        assert result["counts"]["failed"] == 1
+        assert result["counts"]["created"] == 1
+        assert result["counts"]["seed"] == 2
+        assert result["map_path"] == str(f)
 
     def test_tool_rejects_unknown_id_via_existing_guard(self, tmp_path: Path) -> None:
         """§2 test bullet: ``_ensure_project_exists_sync`` STILL refuses
