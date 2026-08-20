@@ -553,6 +553,82 @@ jobs:
             exit 1
           }
           echo "YADGAR_TEST_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
+          # ...and the SAME tag for the phase-3 side build. `launcher.backend_image()`
+          # resolves DOCKERHUB_BACKEND_IMAGE from server.json's backend_version — the
+          # PENDING one, which on any PR that bumps it is not published, so it is not
+          # in the local store either. `backend_image_present()` then answers no and
+          # the vacuum SKIPs its side build before doing anything, which the tests
+          # read as a failed vacuum. The resolution above already picked the tag that
+          # can actually be run; the side build has to use that same one, or this job
+          # tests the fixture's image and the vacuum's image separately.
+          echo "YADGAR_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
+
+      - name: Cross the dind namespace split for the vacuum e2e suite (task 228)
+        # THREE of the four layers of one bug. The daemon this job talks to is a
+        # docker:dind SIDECAR (DOCKER_HOST=tcp://dind:2375), so it lives in a
+        # different network namespace AND a different filesystem namespace from
+        # this shell. Every string this job hands the daemon is resolved THERE:
+        #
+        #   port   — a container port published on 127.0.0.1 lands on the
+        #            SIDECAR's loopback. Fixed for the backend container in
+        #            7d88c8eb (conftest `_docker_endpoint_host`); fixed for the
+        #            phase-3 side-build container by YADGAR_VACUUM_SIDE_HOST below.
+        #   mount  — `-v {data_dir}:/data` resolves in the SIDECAR's filesystem,
+        #            so with a /tmp path the backend wrote its whole DB somewhere
+        #            invisible here and the vacuum's own preflight then reported
+        #            `DB dir not found`. That is what YADGAR_TEST_SHARED_DATA_ROOT
+        #            fixes, for the backend container and for the side-build
+        #            container that mounts the very same directory.
+        #
+        # The mount fix rests on a property of THIS runner's compose file, not of
+        # dind in general: the runner container and its sidecar both bind-mount
+        # the host's runner-work dir at the same absolute path, so a dir under
+        # the workspace is one directory with one name on both sides. That is an
+        # assumption about infrastructure this repo does not own, so it is
+        # PROVEN here rather than assumed — same discipline as the working-runtime
+        # assertion at the top of this job. A silent regression in the compose
+        # file would otherwise resurface as the same baffling `DB dir not found`.
+        # Measured 2026-08-20 on this runner: workFolder is /runner/work, the
+        # checkout is /runner/work/<repo>/<repo>, and both containers bind-mount
+        # /runner/work — so github.workspace IS under the share. The fixture
+        # mkdtemps a per-module subdir BENEATH the root exported here; that rides
+        # the same mount, so proving the root is enough.
+        run: |
+          set -euo pipefail
+          case "${DOCKER_HOST:-}" in
+            tcp://*)
+              hostport=${DOCKER_HOST#tcp://}
+              side_host=${hostport%:*}
+              ;;
+            *)
+              echo "DOCKER_HOST is not a TCP daemon — no namespace split to cross."
+              echo "Leaving both knobs at their local-dev defaults."
+              exit 0
+              ;;
+          esac
+
+          shared_root="${{ github.workspace }}/.vacuum-e2e-data"
+          mkdir -p "$shared_root"
+          marker="$shared_root/.dind-visibility-probe"
+          token="probe-$$-$(date +%s)"
+          echo "$token" > "$marker"
+          seen=$(docker run --rm -v "$shared_root:/probe" docker.io/library/alpine:3 \
+            cat /probe/.dind-visibility-probe 2>/dev/null || true)
+          rm -f "$marker"
+          if [ "$seen" != "$token" ]; then
+            echo "the workspace is NOT visible to the $side_host daemon at the same path." >&2
+            echo "  probed path : $shared_root" >&2
+            echo "  wrote       : $token" >&2
+            echo "  read back   : ${seen:-<nothing>}" >&2
+            echo "The vacuum e2e suite needs one directory that both this shell and the" >&2
+            echo "daemon resolve to the same bytes — the vacuum renames and copytrees it" >&2
+            echo "in-process, so it cannot be proxied. Check that the runner container and" >&2
+            echo "its dind sidecar still share the runner-work bind mount at one path." >&2
+            exit 1
+          fi
+          echo "workspace is dind-visible at $shared_root; side-build host is $side_host"
+          echo "YADGAR_TEST_SHARED_DATA_ROOT=$shared_root" >> "$GITHUB_ENV"
+          echo "YADGAR_VACUUM_SIDE_HOST=$side_host" >> "$GITHUB_ENV"
 
       - name: Run the vacuum e2e integration suite (task 156 / car A3)
         # yadgar/tests/integration/test_vacuum_e2e.py and
