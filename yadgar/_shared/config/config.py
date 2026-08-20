@@ -223,21 +223,42 @@ class Settings(BaseSettings):
     FAST_PROFILE_CANDIDATE_MULTIPLIER: int = 3
 
     # v5.54.1: Precomputed graph prior weight (I25 three-way registered).
-    # Additive boost applied to fused scores in ALL profiles (including fast).
+    # MULTIPLICATIVE boost applied to fused scores in ALL profiles (including fast):
+    # `fused * (1 + WEIGHT * graph_prior)`, priors normalized to [0, 1].
     # The prior is a precomputed scalar stored on each memory row during consolidation
     # — O(1) read at fusion time, no per-query graph traversal (I8/I9 safe).
-    # Weight 0.2 is a secondary nudge; must not dominate vector(1.0)/fts(0.5).
+    #
+    # Car 8 (task 283) DERIVATION — the previous comment here read "Weight 0.2 is a
+    # secondary nudge; must not dominate vector(1.0)/fts(0.5)". That was FALSE: the
+    # boost was additive against the FUSED score, while vector(1.0)/fts(0.5) are
+    # per-signal weights applied to scores normalized to [0, 1] and then summed — a
+    # different scale entirely. Measured 2026-08-20 on the live corpus, a +0.1140
+    # additive boost sat on a convex-fused scale whose maximum is
+    # (1.0 + 0.5) / 2.3 = 0.652, i.e. 17% of the whole range handed out with no
+    # reference to the query at all.
+    #
+    # Multiplicative removes the scale question: the uplift is a FRACTION of the
+    # row's own query score. The weights are now derived from the reorder window
+    # they permit — a prior can lift row B past row A only when B's query score is
+    # within the combined uplift of A's:
+    #     max combined uplift = (1 + 0.06) * (1 + 0.04) = 1.1024
+    #     => reorder window = 1 - 1/1.1024 = 9.3%
+    # 9.3% is a tie-break-sized window: the priors reorder near-equals, which is
+    # what "secondary nudge" was always supposed to mean, and cannot overturn a
+    # materially better match. (At the old 0.2/0.15 the window would be 27.5%.)
     # Set to 0.0 to disable entirely; memories with graph_prior=NULL are unaffected.
-    WRRF_GRAPH_PRIOR_WEIGHT: float = 0.2
+    WRRF_GRAPH_PRIOR_WEIGHT: float = 0.06
 
     # v5.54.2: Precomputed co-recall (transition-edge) prior weight (I25 three-way registered).
-    # Additive boost applied to fused scores in ALL profiles (including fast).
+    # MULTIPLICATIVE boost in ALL profiles (including fast), composed with the
+    # graph_prior boost above: `fused * (1 + GRAPH_W * gp) * (1 + COFIRE_W * cf)`.
     # The prior is computed from memory_transition table co-recall frequency during
     # consolidation — O(1) read at fusion time, NO transition-table traversal on request path.
-    # "Recalled together before" = learned association. Weight 0.15 is smaller than
-    # graph_prior (0.2) — co-recall is a weaker structural signal than entity centrality.
+    # "Recalled together before" = learned association. Weight 0.04 is smaller than
+    # graph_prior (0.06) — co-recall is a weaker structural signal than entity centrality.
+    # See the Car 8 derivation above for where 0.06/0.04 comes from.
     # Set to 0.0 to disable entirely; memories with cofire_prior=NULL are unaffected.
-    WRRF_COFIRE_PRIOR_WEIGHT: float = 0.15
+    WRRF_COFIRE_PRIOR_WEIGHT: float = 0.04
 
     # v16: Query expansion (pseudo-HyDE) settings
     QUERY_EXPANSION_ENABLED: bool = True
