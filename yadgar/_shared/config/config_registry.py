@@ -432,9 +432,9 @@ _REGISTRY: list[ConfigEntry] = [
     # v5.53.1: stale wiki count cache TTL
     ConfigEntry("YADGAR_STALE_COUNT_CACHE_TTL_S", "300", "int"),
     # v5.54.1: precomputed graph prior weight (additive boost in all profiles)
-    ConfigEntry("YADGAR_WRRF_GRAPH_PRIOR_WEIGHT", "0.2", "float"),
+    ConfigEntry("YADGAR_WRRF_GRAPH_PRIOR_WEIGHT", "0.06", "float"),
     # v5.54.2: precomputed co-recall (transition-edge) prior weight (additive boost in all profiles)
-    ConfigEntry("YADGAR_WRRF_COFIRE_PRIOR_WEIGHT", "0.15", "float"),
+    ConfigEntry("YADGAR_WRRF_COFIRE_PRIOR_WEIGHT", "0.04", "float"),
     # ── v6 T6 unified-scoped-recall fusion settings ─────────────────────────
     # v6 T6 Step 4: cross-type fusion per-type quotas and prior weights.
     ConfigEntry("YADGAR_RECALL_MEMORY_QUOTA", "5", "int"),

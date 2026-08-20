@@ -206,6 +206,9 @@ class TestFastProfileCofirePriorBoost:
 
         fuser = _TestFuser()
 
+        # NOTE (Car 8 / task 283): IDENTICAL query scores on purpose — the claim
+        # under test is "among comparable matches the higher prior wins", not
+        # "a prior beats the query". Do not widen the gap.
         scores = {
             1: {"vector": 0.8, "fts": 0.6, "ppr": 0.0, "spread": 0.0},
             2: {"vector": 0.8, "fts": 0.6, "ppr": 0.0, "spread": 0.0},
@@ -604,12 +607,16 @@ class TestCofirePriorConfigRegistered:
     """WRRF_COFIRE_PRIOR_WEIGHT is three-way registered (config.py + registry + yaml)."""
 
     def test_settings_has_wrrf_cofire_prior_weight(self):
-        """Settings must have WRRF_COFIRE_PRIOR_WEIGHT with default 0.15."""
+        """Settings must have WRRF_COFIRE_PRIOR_WEIGHT with default 0.04.
+
+        Car 8 (task 283) re-derived this from 0.15 when the boost became
+        multiplicative — see the derivation comment in config.py.
+        """
         from yadgar._shared.config import Settings
 
         default_val = Settings.model_fields["WRRF_COFIRE_PRIOR_WEIGHT"].default
-        assert default_val == 0.15, (
-            f"WRRF_COFIRE_PRIOR_WEIGHT default must be 0.15, got {default_val}"
+        assert default_val == 0.04, (
+            f"WRRF_COFIRE_PRIOR_WEIGHT default must be 0.04, got {default_val}"
         )
 
     def test_registry_has_wrrf_cofire_prior_weight(self):

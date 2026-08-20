@@ -121,8 +121,8 @@ The YAML file is optional. If it doesn't exist, all defaults apply. Values you d
 | `wrrf_fts_weight` | `YADGAR_WRRF_FTS_WEIGHT` | float | `0.5` | Weight of full-text search signal in WRRF fusion. |
 | `wrrf_ppr_weight` | `YADGAR_WRRF_PPR_WEIGHT` | float | `0.5` | Weight of personalized PageRank signal. |
 | `wrrf_spreading_weight` | `YADGAR_WRRF_SPREADING_WEIGHT` | float | `0.3` | Weight of spreading activation signal. |
-| `wrrf_graph_prior_weight` | `YADGAR_WRRF_GRAPH_PRIOR_WEIGHT` | float | `0.2` | v5.54.1: weight of the precomputed entity-graph prior in fusion. Additive boost applied in ALL profiles including fast (O(1) field read). `0.0` = disable. |
-| `wrrf_cofire_prior_weight` | `YADGAR_WRRF_COFIRE_PRIOR_WEIGHT` | float | `0.15` | v5.54.2: weight of the precomputed co-recall (transition-edge) prior in fusion. Additive boost in ALL profiles. `0.0` = disable. |
+| `wrrf_graph_prior_weight` | `YADGAR_WRRF_GRAPH_PRIOR_WEIGHT` | float | `0.06` | v5.54.1: weight of the precomputed entity-graph prior in fusion. MULTIPLICATIVE boost `fused * (1 + w * prior)` in ALL profiles including fast (O(1) field read). Car 8 re-derived 0.2 -> 0.06 with the shape change. `0.0` = disable. |
+| `wrrf_cofire_prior_weight` | `YADGAR_WRRF_COFIRE_PRIOR_WEIGHT` | float | `0.04` | v5.54.2: weight of the precomputed co-recall (transition-edge) prior in fusion. MULTIPLICATIVE boost in ALL profiles, composed with the graph prior. Car 8 re-derived 0.15 -> 0.04. `0.0` = disable. |
 | `fusion_method` | `YADGAR_FUSION_METHOD` | str | `convex` | Fusion method: `convex` or other. |
 | `fusion_norm` | `YADGAR_FUSION_NORM` | str | `zscore` | Score normalization before fusion: `zscore`, `minmax`, or `raw`. |
 | `combmnz_enabled` | `YADGAR_COMBMNZ_ENABLED` | bool | `false` | Multiply fused score by the number of signals that contributed. |

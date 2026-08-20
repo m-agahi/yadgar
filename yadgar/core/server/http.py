@@ -1739,6 +1739,58 @@ def _filter_prompt_recall_results(results: list[dict], project_id: str | None) -
     ]
 
 
+#: Rows prompt-recall INJECTS into the prompt (unchanged — the 3000-char budget
+#: below is sized for this many).
+_PROMPT_RECALL_INJECTED = 5
+#: Rows prompt-recall ASKS the backend for. Car 8 (task 283): the anchor filter
+#: below removes rows AFTER retrieval, so a 5-row page would frequently collapse
+#: to an empty injection (measured: all 5 top rows were anchors). Over-fetching
+#: is cheap here — the backend's `rerank_pool` is already
+#: `max(max_results, RERANKER_TOP_K=50, CROSS_ENCODER_TOP_K)`, so the extra rows
+#: cost a longer trim, not extra hydration, and profile="fast" runs no CE/NLI.
+_PROMPT_RECALL_CANDIDATES = 15
+
+
+@observe(tier="stage")
+def _drop_anchor_rows(results: list[dict]) -> list[dict]:
+    """Drop anchored memories from a PROMPT-RECALL result page.
+
+    Car 8 (task 283). Anchors are ALREADY in the context window on BOTH
+    injection paths: ``hook_session_context`` renders ``project_brief`` in
+    ``catalog`` mode, whose ``_render`` prints ``top_anchors_global`` +
+    ``top_anchors_project`` (``tools/project.py:158``), and the post-compact
+    path calls ``restore()``, which emits the same ``_anchor`` bucket.
+    Re-surfacing them here spends the hook's entire 3000-char budget restating
+    context the model already has — measured 2026-08-20, all five rows a live
+    prompt-recall returned were ``_anchor`` tagged, ``is_protected``, heat 1.0.
+
+    ``project_brief``'s own hot-memories query already excludes this bucket
+    (``_get_hot_memories``: ``'anchor' NOTINSIDE tags AND '_anchor' NOTINSIDE
+    tags``) for the same reason — anchors are surfaced once, deliberately, and
+    every other surface skips them. prompt-recall was the outlier.
+
+    Scoped to THIS hook on purpose. An explicit ``recall("what did we decide
+    about X")`` must still return anchors: there the model asked for them and
+    they are not duplicated. Nothing else calls this.
+
+    Both anchor markings are honoured — the ``_anchor`` tag ``anchor()`` writes,
+    and bare ``is_protected`` (legacy anchors and ``memorize(is_protected=True)``
+    predate the tag).
+    """
+    kept: list[dict] = []
+    for r in results:
+        tags = r.get("tags") or []
+        if r.get("is_protected") or (isinstance(tags, list | tuple) and "_anchor" in tags):
+            continue
+        kept.append(r)
+    if len(kept) != len(results):
+        logger.debug(
+            "prompt-recall: dropped %d anchored row(s) — already injected by SessionStart",
+            len(results) - len(kept),
+        )
+    return kept
+
+
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
 @trace_span()
 async def hook_prompt_recall(request: Request) -> JSONResponse:
@@ -1811,7 +1863,8 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
                 _HookRecallForwarder(directory or "", _hook_project),
                 "prompt-recall",
                 query,
-                max_results=5,
+                # Car 8: over-fetch so _drop_anchor_rows below has headroom.
+                max_results=_PROMPT_RECALL_CANDIDATES,
                 min_heat=0.0,
                 profile="fast",
             )
@@ -1833,6 +1886,10 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         except Exception:  # noqa: BLE001 — hook must never raise into the prompt
             _scoped = None
         results = _filter_prompt_recall_results(results, _scoped)
+        # Car 8 (task 283): anchors are already in the window via SessionStart —
+        # drop them, THEN trim to the injected page size. Order matters: trimming
+        # first would throw away the non-anchor rows the filter exists to keep.
+        results = _drop_anchor_rows(results)[:_PROMPT_RECALL_INJECTED]
 
         if not results:
             return JSONResponse({"text": ""})

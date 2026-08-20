@@ -181,17 +181,18 @@ FIELD_META: dict[str, dict[str, object]] = {
     "wrrf_graph_prior_weight": {
         "desc": (
             "Weight of precomputed entity-graph prior in fusion (v5.54.1). "
-            "Additive boost applied in ALL profiles including fast — O(1) field read, "
-            "no per-query traversal. Set 0.0 to disable. Default 0.2."
+            "MULTIPLICATIVE boost `fused * (1 + w * prior)` in ALL profiles including "
+            "fast — O(1) field read, no per-query traversal. Set 0.0 to disable. "
+            "Default 0.06."
         ),
         "section": "retrieval_fusion",
     },
     "wrrf_cofire_prior_weight": {
         "desc": (
             "Weight of precomputed co-recall (transition-edge) prior in fusion (v5.54.2). "
-            "Additive boost applied in ALL profiles including fast — O(1) field read, "
+            "MULTIPLICATIVE boost in ALL profiles including fast — O(1) field read, "
             "no transition-table traversal on request path. 'Recalled together before' = "
-            "learned association. Set 0.0 to disable. Default 0.15."
+            "learned association. Set 0.0 to disable. Default 0.04."
         ),
         "section": "retrieval_fusion",
     },
