@@ -203,15 +203,44 @@ def build_allowlist_index(
     return idx
 
 
-def is_allowlisted(
+def get_allowlist_entry(
     rel_path: str,
     function: str,
     metric: str,
     index: dict[tuple[str, str, str], AllowlistEntry],
+) -> AllowlistEntry | None:
+    """Return the allowlist entry for (rel_path, function, metric), or None."""
+    return index.get((rel_path, function, metric))
+
+
+def is_allowlisted(
+    rel_path: str,
+    function: str,
+    metric: str,
+    actual: int,
+    index: dict[tuple[str, str, str], AllowlistEntry],
     min_rationale_len: int = 1,
 ) -> bool:
-    """Return True iff (rel_path, function, metric) is in the allowlist with non-empty rationale."""
+    """Return True iff (rel_path, function, metric) is allowlisted AND `actual`
+    is still within the recorded ceiling for that metric.
+
+    RATCHET, not blanket pass: a HARD allowlist entry records a metric value at
+    the time it was reviewed (e.g. {"file_loc": 3300}). That number is a
+    CEILING, not documentation — an entity may not grow past it silently.
+    ``actual <= recorded`` passes; ``actual > recorded`` fails even though the
+    (path, function, metric) triple is present in the allowlist, so callers
+    must not treat "in the allowlist" and "passes" as the same thing anymore.
+    Growth past the ceiling requires either reducing the metric back under it,
+    or re-baselining the entry (bumping ``metrics[metric]``) with an updated
+    rationale — the same discipline the mypy ratchet (check_type_ratchet.py)
+    applies to touched files.
+    """
     entry = index.get((rel_path, function, metric))
     if entry is None:
         return False
-    return len(entry.rationale.strip()) >= min_rationale_len
+    if len(entry.rationale.strip()) < min_rationale_len:
+        return False
+    recorded = entry.metrics.get(metric)
+    if recorded is None:
+        return False
+    return actual <= recorded
