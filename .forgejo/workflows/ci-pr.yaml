@@ -478,6 +478,17 @@ jobs:
           echo "workspace is dind-visible at $shared_root; side-build host is $side_host"
           echo "YADGAR_TEST_SHARED_DATA_ROOT=$shared_root" >> "$GITHUB_ENV"
           echo "YADGAR_VACUUM_SIDE_HOST=$side_host" >> "$GITHUB_ENV"
+          # LAYER 6: pin the container runtime to docker. `_get_runtime()`
+          # (yadgar/core/daemon/runtime.py) probes `podman --version` FIRST and
+          # returns podman when it answers 0. On this runner podman IS on PATH
+          # and answers --version fine, but cannot DO anything — nested rootless
+          # podman fails "cannot re-exec process" (car G5, confirmed live). So
+          # `backend_image_present()` ran `podman image inspect` against a store
+          # that is not the one dind uses, answered no, and phase 3 SKIPped with
+          # "no usable surreal" even though the image was pullable. That is the
+          # presence-not-function trap this job's own header warns about; the
+          # test fixtures probe FUNCTION and pick docker, the vacuum code did not.
+          echo "YADGAR_CONTAINER_RUNTIME=docker" >> "$GITHUB_ENV"
 
       - name: Run the vacuum e2e integration suite (task 156 / car A3)
         # yadgar/tests/integration/test_vacuum_e2e.py and
