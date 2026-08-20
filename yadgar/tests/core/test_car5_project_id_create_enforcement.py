@@ -98,20 +98,75 @@ class TestSentinelsRejectedAtResolution:
         assert sentinel in str(exc.value)
 
     @pytest.mark.parametrize("sentinel", ["global", "unresolved", "system"])
-    def test_session_sentinel_is_rejected_too(self, sentinel: str) -> None:
-        """A sentinel is not an identity whichever tier produced it."""
-        from yadgar.core.server.tools._project_param import (
-            InvalidProjectOverrideError,
-            resolve_effective_project,
-        )
+    def test_ambient_sentinel_is_skipped_not_raised(self, sentinel: str) -> None:
+        """An AMBIENT sentinel means the tier has no identity — it must NOT be
+        honoured, and must NOT become a hard failure either.
 
-        with pytest.raises(InvalidProjectOverrideError):
+        The three ambient tiers are a client request header
+        (``X-Yadgar-Project-Id``), a legacy keyword, and a hook-authored
+        directory map on disk. None is a caller argument, so raising would turn
+        one stale entry into a hard failure on every call in that directory —
+        reads included. Falling through to ``UnresolvedProjectError`` is both
+        the safe answer and the semantically exact one.
+        """
+        from yadgar._shared.errors import UnresolvedProjectError
+        from yadgar.core.server.tools._project_param import resolve_effective_project
+
+        with pytest.raises(UnresolvedProjectError):
             resolve_effective_project(
                 project=None,
                 directory=None,
                 session_project=sentinel,
                 tool="test",
             )
+
+    @pytest.mark.parametrize("sentinel", ["global", "unresolved", "system"])
+    def test_directory_map_sentinel_is_skipped(self, sentinel: str) -> None:
+        """A stale hook-authored map entry falls through rather than resolving."""
+        from yadgar._shared.errors import UnresolvedProjectError
+        from yadgar.core.server.tools._project_param import resolve_effective_project
+
+        with patch(
+            "yadgar._shared.runtime.session_map.lookup_project_for_directory",
+            return_value=sentinel,
+        ):
+            with pytest.raises(UnresolvedProjectError):
+                resolve_effective_project(
+                    project=None,
+                    directory="/some/dir",
+                    session_project=None,
+                    tool="test",
+                )
+
+    def test_directory_map_real_value_still_resolves(self) -> None:
+        from yadgar.core.server.tools._project_param import resolve_effective_project
+
+        with patch(
+            "yadgar._shared.runtime.session_map.lookup_project_for_directory",
+            return_value=_REGISTERED,
+        ):
+            assert (
+                resolve_effective_project(
+                    project=None,
+                    directory="/some/dir",
+                    session_project=None,
+                    tool="test",
+                )
+                == _REGISTERED
+            )
+
+    @pytest.mark.parametrize("sentinel", ["global", "unresolved", "system"])
+    def test_the_map_WRITER_refuses_a_sentinel(self, sentinel: str) -> None:
+        """New entries cannot carry a sentinel; the reader-skip covers old ones."""
+        from yadgar._shared.runtime.session_map import (
+            lookup_project_for_directory,
+            register_session_project,
+        )
+
+        assert register_session_project("/tmp/car5-probe", sentinel) is False
+        assert lookup_project_for_directory("/tmp/car5-probe") is None
+        assert register_session_project("/tmp/car5-probe", _REGISTERED) is True
+        assert lookup_project_for_directory("/tmp/car5-probe") == _REGISTERED
 
     def test_a_real_project_id_still_resolves(self) -> None:
         from yadgar.core.server.tools._project_param import resolve_effective_project
@@ -331,6 +386,60 @@ class TestWikiAddCreatePath:
         )
         assert len(queued) == 1
         assert queued[0]["payload"]["project_id"] == "quinyx/aws2slack"
+
+
+# ── 5b. the canonical wiki path enqueues directly — it needs its own gate ───
+
+
+class TestCanonicalWikiWritePath:
+    """``_wiki_write_canonical`` (adr_add / wiki_write_task_list) bypasses
+    ``wiki_add`` entirely, so the gate wired there does not cover it."""
+
+    def _canonical(self, tmp_path: Path, project_id: str, registry):
+        from yadgar.core.server.tools.wiki import _wiki_write_canonical
+
+        fq = _fake_queue(tmp_path)
+        payload = {
+            "slug": "car5-probe-task-list",
+            "title": "Car 5 probe",
+            "content": "body",
+            "page_type": "task_list",
+            "directory_context": "/home/max/git/yadgar",
+            "project_id": project_id,
+        }
+        with (
+            patch("yadgar.core.server.tools.wiki._get_file_queue", return_value=fq),
+            patch("yadgar.core.forward._forward_admin", **registry),
+        ):
+            try:
+                _wiki_write_canonical(payload, wait=False)
+            except Exception as exc:  # noqa: BLE001 — the rejection IS the assertion
+                return exc, _queued_payloads(fq.queue_dir)
+        return None, _queued_payloads(fq.queue_dir)
+
+    def test_unregistered_project_writes_nothing(self, tmp_path: Path) -> None:
+        from yadgar._shared.storage.sql.errors import UnknownProjectError
+
+        exc, queued = self._canonical(
+            tmp_path, _UNREGISTERED, {"return_value": dict(_REGISTRY_ROWS)}
+        )
+        assert isinstance(exc, UnknownProjectError)
+        assert queued == []
+
+    def test_registered_project_reaches_the_queue(self, tmp_path: Path) -> None:
+        exc, queued = self._canonical(tmp_path, _REGISTERED, {"return_value": dict(_REGISTRY_ROWS)})
+        assert exc is None
+        assert len(queued) == 1
+        assert queued[0]["payload"]["project_id"] == _REGISTERED
+
+    def test_engine_two_absent_still_writes(self, tmp_path: Path) -> None:
+        exc, queued = self._canonical(
+            tmp_path,
+            "quinyx/aws2slack",
+            {"side_effect": RuntimeError("YADGAR_EMBED_URL is not set")},
+        )
+        assert exc is None
+        assert len(queued) == 1
 
 
 # ── 6. the drainer's private sentinel set must not drift ────────────────────

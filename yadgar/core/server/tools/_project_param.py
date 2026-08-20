@@ -15,10 +15,16 @@ PREVALENCE RULE — **two tiers, and no third (C5 / ADR-0227):**
     3. Neither → ``UnresolvedProjectError``.
 
 Whichever tier answers, the value is checked against
-``_NON_IDENTIFYING_PROJECT_IDS`` (Car 5, ``_reject_sentinel``): the ADR-0227
-manufactured identities are refused HERE, with no database, so creation is at
-least as strict as the ``memory_update`` / ``wiki_set_metadata`` correction
-path. **That is a shape gate, not the registry check.** Membership in the
+``_NON_IDENTIFYING_PROJECT_IDS`` (Car 5) — the ADR-0227 manufactured
+identities never leave this function as an identity, so creation is at least
+as strict as the ``memory_update`` / ``wiki_set_metadata`` correction path.
+The two tiers fail DIFFERENTLY, on purpose: a caller-supplied ``project=``
+sentinel RAISES (``_reject_sentinel`` — the caller named it and can fix it),
+while an AMBIENT sentinel (request header, legacy keyword, hook-authored
+directory map) is SKIPPED with a WARNING (``_identity_or_skip``) so a stale
+map entry cannot turn every read in that directory into a hard failure.
+
+**That is a shape gate, not the registry check.** Membership in the
 ``project`` registry is enforced on the CREATE path by
 ``_project_registry.assert_project_registered_for_create`` (Car 5), which
 forwards ``list_project_rows`` to the backend — read its module docstring for
@@ -82,18 +88,16 @@ class InvalidProjectOverrideError(ValueError):
 def _reject_sentinel(value: str, *, tool: str) -> None:
     """Raise unless *value* names a project. Car 5 (2026-08-20 train).
 
-    The MINIMUM BAR of this car, and applied at EVERY tier rather than only to
-    the caller-supplied override: a sentinel is not an identity whichever tier
-    produced it, and a session binding or a hook-authored map entry carrying
-    ``'global'`` mints exactly the phantom namespace an explicit
-    ``project='global'`` would.
+    The MINIMUM BAR of this car, applied to the CALLER-SUPPLIED override.
+    Before Car 5 this function validated non-empty-string and nothing else, so
+    ``memorize(project='global')`` STAMPED the ADR-0227 sentinel — while
+    ``memory_update`` (ledger task 262) and ``wiki_set_metadata`` (task 246)
+    REJECTED it on the correction path. Correction stricter than creation is
+    the asymmetry task 246 argued against, pointed the other way.
 
-    Why this closes a real asymmetry: before Car 5 this function validated
-    non-empty-string and nothing else, so ``memorize(project='global')``
-    STAMPED the ADR-0227 sentinel — while ``memory_update`` (ledger task 262)
-    and ``wiki_set_metadata`` (task 246) REJECTED it on the correction path.
-    Correction stricter than creation is the asymmetry task 246 argued against,
-    pointed the other way.
+    RAISE is right HERE and only here: the caller named this value in this
+    call, so it is a caller defect and the caller is the one who can fix it.
+    The ambient tiers get ``_identity_or_skip`` instead — see there.
 
     Shares ``project_id_value_error``'s authority (one ``_NON_IDENTIFYING_PROJECT_IDS``
     frozenset) so the create gate and the restamp gate cannot drift apart.
@@ -101,6 +105,39 @@ def _reject_sentinel(value: str, *, tool: str) -> None:
     message = project_id_value_error(value)
     if message is not None:
         raise InvalidProjectOverrideError(f"{tool}: {message}")
+
+
+@observe(exempt="pure single-value shape predicate on one string; no I/O, no storage access")
+def _identity_or_skip(value: str, *, tier: str, tool: str) -> str | None:
+    """Return *value* if it names a project, else ``None`` (tier did not resolve).
+
+    Car 5. The AMBIENT counterpart of ``_reject_sentinel``, and deliberately
+    non-raising. Tiers 2/3/3b are not caller arguments — they are a request
+    header (``X-Yadgar-Project-Id``, set once in the client's ``mcpServers``
+    entry), a legacy keyword, and a hook-authored ``directory -> project_id``
+    file. None of the three is validated against the sentinel set at its
+    writer for entries already on disk, and the reader of the error is an
+    agent that cannot edit any of them mid-call.
+
+    So raising here would convert a stale map entry or a mistyped client
+    header into a hard failure on EVERY call in that directory — reads
+    included — which is a regression this car's create-path mandate does not
+    licence. Skipping is also the semantically exact answer: a sentinel names
+    no project, therefore the tier HAS no identity to offer, therefore the
+    chain falls through to ``UnresolvedProjectError``, whose message already
+    tells the caller to pass ``project=``. The WARNING names the tier so the
+    misconfiguration is findable.
+    """
+    if project_id_value_error(value) is None:
+        return value
+    logger.warning(
+        "project_param: %s tier %s carries %r, which names no project "
+        "(ADR-0227 sentinel) — tier skipped, not honoured",
+        tool,
+        tier,
+        value,
+    )
+    return None
 
 
 @observe(tier="hot", span=False)
@@ -170,8 +207,9 @@ def resolve_effective_project(
 
     _ctx_session_project = get_current_session_project()
     if _ctx_session_project:
-        _reject_sentinel(_ctx_session_project, tool=tool)
-        return _ctx_session_project
+        _resolved = _identity_or_skip(_ctx_session_project, tier="contextvar", tool=tool)
+        if _resolved:
+            return _resolved
 
     # ── 3. SessionStart legacy parameter (fallback when ContextVar unbound) ──
     # Plan §3.4: "If unbound, fall back to explicit ``project=``" — re-read
@@ -182,8 +220,9 @@ def resolve_effective_project(
     # already done in tier 1; the one line that flips the fallback is
     # the ``return session_project`` below.
     if session_project is not None and session_project:
-        _reject_sentinel(session_project, tool=tool)
-        return session_project
+        _resolved = _identity_or_skip(session_project, tier="session_project", tool=tool)
+        if _resolved:
+            return _resolved
 
     # ── 3b. Hook-authored directory map (the global-config tier) ───────────
     # With ONE global ``mcpServers`` entry — the common setup — every request
@@ -203,8 +242,9 @@ def resolve_effective_project(
 
     _mapped = lookup_project_for_directory(directory)
     if _mapped:
-        _reject_sentinel(_mapped, tool=tool)
-        return _mapped
+        _resolved = _identity_or_skip(_mapped, tier="directory_map", tool=tool)
+        if _resolved:
+            return _resolved
 
     # ── 4. Nothing named an identity — FAIL LOUD (C5 / ADR-0227) ───────────
     #

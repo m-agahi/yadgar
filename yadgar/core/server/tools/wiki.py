@@ -166,6 +166,13 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
                 "project_id — this process cannot derive one)"
             ),
         )
+    # Car 5 (2026-08-20 train): the canonical path enqueues DIRECTLY (see the
+    # ``_get_file_queue().enqueue`` below) — it does not pass through
+    # ``wiki_add``, so the gate wired there does not cover it. Leaving it out
+    # would make ``wiki_add``'s new docstring claim over-broad for exactly the
+    # two page types (``adr``, ``task_list``) whose whole point is being
+    # canonical, and an over-broad claim is the defect class this car deletes.
+    assert_project_registered_for_create(payload["project_id"], tool="_wiki_write_canonical")
     # Canonical writes are server-side sanctioned (adr_add + wiki_write_task_list
     # are the SOLE writers of their page_types). Car J (0047 §7 D25/D26) marks
     # ``adr`` as mutability='locked' (decisions are immutable, Car G supersede
@@ -438,7 +445,9 @@ def wiki_add(
     ``list_project_rows`` to the backend and caches the key set in-process.
     When the registry cannot be consulted (engine #2 absent, backend
     unreachable) it WARNs and falls through to the shape guard rather than
-    refusing the write — see that module's docstring.
+    refusing the write — see that module's docstring. The claim covers the
+    canonical writers too: ``_wiki_write_canonical`` enqueues directly rather
+    than through this tool, so it carries its own call to the same gate.
 
     append=False (default): create a new page or overwrite an existing one.
     append=True: merge content into an existing page (appends with timestamp,
