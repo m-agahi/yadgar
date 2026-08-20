@@ -8,6 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install /app
+# License artifacts, at a conventional path in the image. This image bundles no
+# third-party binary of its own (apt packages carry their own
+# /usr/share/doc/<pkg>/copyright), but it is still a distributed copy of an
+# Apache-2.0 work, so LICENSE and NOTICE travel with it.
+# Enforced by scripts/check_third_party_licenses.py.
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES /usr/share/doc/yadgar/
+COPY third-party /usr/share/doc/yadgar/third-party
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 EXPOSE 8765

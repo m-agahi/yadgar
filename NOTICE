@@ -1,0 +1,27 @@
+Yadgar
+Copyright 2026 maxagahi
+
+This product is licensed under the Apache License, Version 2.0. The full text
+of that license is in the file LICENSE, distributed with this product.
+
+This product includes third-party software. The container images published from
+this repository bundle third-party binaries that are NOT covered by the Apache
+License, Version 2.0 and are NOT all Open Source licensed. Every such component,
+the exact version bundled, the image it is bundled into, and the verbatim text
+of its license are recorded in THIRD-PARTY-LICENSES and in the third-party/
+directory distributed alongside this file.
+
+In particular:
+
+  SurrealDB 3.1.5 — Business Source License 1.1 (BUSL-1.1).
+  Verbatim text: third-party/surrealdb-3.1.5.LICENSE
+  That text states:
+
+--- BEGIN VERBATIM QUOTE: third-party/surrealdb-3.1.5.LICENSE ---
+The Business Source License (this document, or the "License") is not an Open
+Source license. However, the Licensed Work will eventually be made available
+under an Open Source License, as stated in this License.
+--- END VERBATIM QUOTE ---
+
+  gitleaks 8.30.1 — MIT License.
+  Verbatim text: third-party/gitleaks-8.30.1.LICENSE

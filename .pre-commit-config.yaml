@@ -2,9 +2,21 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # third-party/ holds VERBATIM upstream license texts whose SHA-256 is
+      # pinned in .third-party-manifest.json — a normalised verbatim license is
+      # no longer verbatim. PROPHYLACTIC, not corrective: measured 2026-08-20,
+      # both current texts are already hook-clean (no trailing whitespace, final
+      # newline present, no CRLF), so these excludes change nothing today. They
+      # are here for the next text added — a CRLF upstream file, or one without
+      # a final newline, would be rewritten on the commit that adds it.
+      # check_third_party_licenses.py rule 2 re-checks the SHA-256 on every
+      # commit, so dropping an exclude is caught rather than silently absorbed.
       - id: end-of-file-fixer
+        exclude: "^third-party/"
       - id: trailing-whitespace
+        exclude: "^third-party/"
       - id: mixed-line-ending
+        exclude: "^third-party/"
       - id: check-added-large-files
         args: [--maxkb=2048]
       # PARSE GATES (0047 C1). scripts/check_versions.py reads
@@ -269,6 +281,20 @@ repos:
         # the other two. A files: filter narrower than that is blind by
         # construction — a Dockerfile bake-list edit with no config change is
         # exactly the input that must fail. Measured ~0.3s on this tree.
+        always_run: true
+
+      - id: check-third-party-licenses
+        name: Check every bundled third-party binary is catalogued and shipped (task 69)
+        language: system
+        entry: python scripts/check_third_party_licenses.py
+        pass_filenames: false
+        # always_run: the read set is every root Dockerfile PLUS the manifest,
+        # the verbatim texts and THIRD-PARTY-LICENSES — and the guard's whole
+        # point is to fail on inputs that stage NONE of them. A formatter
+        # rewriting a verbatim license, or a `.pre-commit-config.yaml` edit
+        # dropping the third-party/ exclude, changes the verdict without
+        # touching a Dockerfile. Same gate-blindness class as check-versions
+        # and check-backend-bump above (ADR-0080). Sub-second on this tree.
         always_run: true
 
       - id: check-roadmap-links

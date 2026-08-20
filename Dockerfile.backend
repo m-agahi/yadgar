@@ -35,6 +35,15 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install "/app[ml,sql]" uvicorn
 # SurrealDB v3
 COPY --from=surrealdb/surrealdb:v3.1.5 /surreal /usr/local/bin/surreal
+# License artifacts, at a conventional path in the image. NOT redundant with the
+# `COPY . /app` above: the surreal binary on the line above arrives WITHOUT its
+# license (a bare-binary COPY --from carries nothing else, and the source image
+# ships no license file at all), and SurrealDB is BUSL-1.1 — not an Open Source
+# license. The image is the copy that gets distributed, so the text has to be in
+# it. Kept before `USER yadgar` below because /usr/share/doc needs root.
+# Enforced by scripts/check_third_party_licenses.py.
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES /usr/share/doc/yadgar/
+COPY third-party /usr/share/doc/yadgar/third-party
 COPY entrypoint-backend.sh /entrypoint-backend.sh
 RUN chmod +x /entrypoint-backend.sh
 EXPOSE 8001

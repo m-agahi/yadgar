@@ -158,4 +158,16 @@ ARG RUFF_VERSION=0.15.10
 RUN pip install --no-cache-dir "ruff==${RUFF_VERSION}" && \
     rm -rf /root/.cache/pip
 
+# License artifacts, at a conventional path in the image. This image is the
+# WORST of the four for this: it has no `COPY . /app` (only pyproject.toml +
+# uv.lock above), yet it bakes the surreal binary (BUSL-1.1, NOT an Open Source
+# license) and gitleaks (MIT) from release tarballs — neither of which carries a
+# license into the image. It is pulled from docker.io by every CI job, i.e. it
+# is distributed. Placed LAST, next to the ruff bake and for the same reason:
+# these files change only on a dependency bump, and putting them earlier would
+# invalidate the 1GB+ HF model layers above on every touch.
+# Enforced by scripts/check_third_party_licenses.py.
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES /usr/share/doc/yadgar/
+COPY third-party /usr/share/doc/yadgar/third-party
+
 ENV PYTHONUNBUFFERED=1
