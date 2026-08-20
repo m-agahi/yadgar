@@ -27,32 +27,35 @@ _TOKEN = "test-maint-tok"
 # Helpers
 # ---------------------------------------------------------------------------
 
-# NOTE this is a HAND-COPY of the payload built in
-# ``yadgar/core/server/_app.py::_instrumented._maintenance`` — the real one is a
-# closure inside a decorator factory and cannot be imported.  The gate tests
-# below re-implement the wrapper, so nothing here would notice the real message
-# drifting; ``test_real_gate_payload_matches_this_copy`` is what keeps the copy
-# honest.  Message wording: task:0111 / ADR-0188 dropped "nightly" because a
-# CLI- or timer-triggered vacuum engages this gate too.
-_MAINTENANCE_RESPONSE = {
-    "error": "maintenance",
-    "message": "yadgar maintenance in progress (vacuum); retry shortly",
-}
+# This used to be a HAND-COPY of a two-key literal built inside a closure in a
+# decorator factory, guarded by GREPPING ``_app.py`` for each exact string.  Car 1
+# (2026-08-20 train) enriched the payload into a composed, interpolated message —
+# which the grep mechanism cannot express at all, not merely a copy that drifted.
+# So the MECHANISM changed with it: the payload now has a name
+# (``build_maintenance_envelope``) and this file calls it instead of transcribing
+# it.  There is no copy left to keep honest.
+_MAINTENANCE_RESPONSE = {"error": "maintenance"}
 
 
 def test_real_gate_payload_matches_this_copy():
-    """Guard the hand-copy: the real ``_app.py`` gate must build this payload."""
-    from pathlib import Path
+    """The real gate must build the importable envelope — no source grep left."""
+    import yadgar._shared.runtime.state as _st_mod
+    from yadgar._shared.runtime.maintenance import (
+        build_maintenance_envelope,
+        reset_maintenance_state,
+    )
 
-    import yadgar.core.server._app as _app_mod
-
-    src = Path(_app_mod.__file__).read_text(encoding="utf-8")
-    for value in _MAINTENANCE_RESPONSE.values():
-        assert f'"{value}"' in src, (
-            f"_app.py's maintenance gate no longer builds {value!r} — the "
-            f"_MAINTENANCE_RESPONSE copy in this file has drifted from the real "
-            f"payload, so every gate assertion below is testing a stale string."
+    _st_mod._maintenance_mode = True
+    try:
+        envelope = build_maintenance_envelope()
+    finally:
+        reset_maintenance_state()
+    for key, value in _MAINTENANCE_RESPONSE.items():
+        assert envelope[key] == value, (
+            f"the maintenance envelope's {key!r} drifted from {value!r} — every "
+            f"gate assertion below keys off it."
         )
+    assert envelope["message"], "the gate must still carry human-readable prose"
 
 
 def _make_maintenance_app(monkeypatch):

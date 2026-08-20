@@ -363,7 +363,9 @@ class TestMaintenanceHelpers:
         monkeypatch.setattr(httpx, "post", _post)
         assert _v._maintenance_enter(1234.0) is True
         assert seen["url"] == "http://127.0.0.1:9999/api/control/maintenance/enter"
-        assert seen["json"] == {"ttl_seconds": 1234.0}
+        # Car 1 (2026-08-20 train): the enter body now NAMES the window so the
+        # gate envelope stops hardcoding "(vacuum)" for nightly and backup too.
+        assert seen["json"] == {"ttl_seconds": 1234.0, "operation": "vacuum"}
         assert seen["headers"]["Authorization"] == "Bearer tok"
 
     def test_enter_raises_on_non_2xx(self, monkeypatch) -> None:

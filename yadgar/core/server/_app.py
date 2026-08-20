@@ -633,17 +633,26 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
         during a vacuum, so a clear-on-start reset would never fire — an expired
         deadline is the only backstop that does.  Expiry is LOUD: it means a
         vacuum died without cleanup.
+
+        Car 1 (2026-08-20 train) — the payload itself moved to
+        ``yadgar._shared.runtime.maintenance`` so ``/health`` can reuse it and so
+        it can be TESTED by import rather than by grepping this file's source.
         """
         import yadgar._shared.runtime.state as _st_ref  # noqa: PLC0415 — read live attr
+        from yadgar._shared.runtime.maintenance import (  # noqa: PLC0415
+            build_maintenance_envelope,
+            maintenance_expired,
+            reset_maintenance_state,
+        )
 
         if not _st_ref._maintenance_mode:
             return None
-        _deadline = _st_ref._maintenance_deadline
-        if _deadline is not None and _time.monotonic() >= _deadline:
+        if maintenance_expired():
+            _deadline = _st_ref._maintenance_deadline
             _held = _time.monotonic() - (_st_ref._maintenance_entered_at or _deadline)
-            _st_ref._maintenance_mode = False
-            _st_ref._maintenance_deadline = None
-            _st_ref._maintenance_entered_at = None
+            # Clears operation/phase too — a stale label surviving the self-heal
+            # would mislabel the NEXT window's envelope.
+            reset_maintenance_state()
             _maint_logger.warning(
                 "maintenance TTL expired after %.0fs — clearing the write-gate. "
                 "The job that engaged it (vacuum or nightly) did not release it: "
@@ -652,10 +661,7 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
                 extra={"component": "app", "action": "maintenance_ttl_expired"},
             )
             return None
-        return {
-            "error": "maintenance",
-            "message": "yadgar maintenance in progress (vacuum); retry shortly",
-        }
+        return build_maintenance_envelope()
 
     @functools.wraps(func)
     def _instrumented(*args, **kwargs):
@@ -679,7 +685,16 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
     async def _instrumented_async(*args, **kwargs):
         _maint = _maintenance()
         if _maint is not None:
-            return _maint
+            # RAISE on the MCP-registered path, where the SYNC wrapper RETURNS
+            # (Car 1, 2026-08-20 train): the SDK validates a returned value
+            # against a model derived from this tool's RETURN ANNOTATION, and no
+            # single value satisfies every annotation in the registry. Full
+            # argument in ``MaintenanceGateError``'s docstring.
+            from yadgar._shared.runtime.maintenance import (  # noqa: PLC0415
+                MaintenanceGateError,
+            )
+
+            raise MaintenanceGateError(_maint)
         # ── Car B (0047 §3.3): extract the Mcp-Session-Id binding BEFORE
         # run_offloaded forwards **kwargs. The offload call carries
         # **kwargs into the executor thread; if we left ``ctx`` inside
