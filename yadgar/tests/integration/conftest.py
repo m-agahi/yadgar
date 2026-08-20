@@ -52,6 +52,30 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
+def _docker_endpoint_host() -> str:
+    """Host to reach a published container port on — NOT always 127.0.0.1.
+
+    The CI runner talks to a docker:dind SIDECAR (``DOCKER_HOST=tcp://dind:2375``),
+    so the daemon that creates the container lives in a DIFFERENT network
+    namespace from the pytest process. A port published by that daemon appears on
+    the dind container's address, not on the runner's loopback. Measured on the
+    self-hosted runner 2026-08-19: runner 10.89.1.6, dind 10.89.1.2, one shared
+    network. So probing 127.0.0.1 from the runner reaches the runner's own
+    loopback, where nothing listens — the health wait below could only ever burn
+    its full 60 s and skip. That is exactly what CI did on every run.
+
+    Returns the ``DOCKER_HOST`` hostname when it is a TCP URL, else 127.0.0.1
+    (unix socket or unset — daemon and caller share the namespace, the ordinary
+    local/dev case).
+    """
+    raw = os.environ.get("DOCKER_HOST", "").strip()
+    if not raw.startswith("tcp://"):
+        return "127.0.0.1"
+    hostport = raw[len("tcp://") :]
+    host = hostport.rsplit(":", 1)[0] if ":" in hostport else hostport
+    return host.strip("[]") or "127.0.0.1"
+
+
 def _wait_http_200(url: str, timeout: float = 60.0, interval: float = 1.0) -> bool:
     import urllib.request
 
@@ -93,6 +117,8 @@ def live_backend_container(tmp_path_factory):
     port_db = _find_free_port()
     port_embed = _find_free_port()
     container_name = f"yadgar-vacuum-itest-{os.getpid()}"
+    endpoint_host = _docker_endpoint_host()
+    _bind_prefix = "127.0.0.1:" if endpoint_host == "127.0.0.1" else ""
 
     cmd = [
         docker_cmd,
@@ -106,10 +132,14 @@ def live_backend_container(tmp_path_factory):
         # and can be read/copied by the vacuum code (shutil.copytree in phase 2).
         "--user",
         "root",
+        # Bind host: loopback-only when the daemon is local (keeps a dev box from
+        # exposing a test backend on its LAN), but ALL interfaces when the daemon
+        # is a remote dind — binding to dind's loopback publishes the port
+        # somewhere this process cannot reach. See _docker_endpoint_host().
         "-p",
-        f"127.0.0.1:{port_db}:8000",
+        f"{_bind_prefix}{port_db}:8000",
         "-p",
-        f"127.0.0.1:{port_embed}:8001",
+        f"{_bind_prefix}{port_embed}:8001",
         "-v",
         f"{data_dir}:/data",
         "-e",
@@ -133,12 +163,33 @@ def live_backend_container(tmp_path_factory):
     if result.returncode != 0:
         pytest.skip(f"Failed to start yadgar-backend container: {result.stderr.strip()}")
 
-    backend_url = f"http://127.0.0.1:{port_db}"
-    embed_url = f"http://127.0.0.1:{port_embed}"
+    backend_url = f"http://{endpoint_host}:{port_db}"
+    embed_url = f"http://{endpoint_host}:{port_embed}"
 
     if not _wait_http_200(f"{backend_url}/health", timeout=60.0):
+        # FAIL, do not skip. The container STARTED — `docker run` returned 0 just
+        # above — so this is a broken fixture, not an absent capability, and the
+        # same rule already applies further down ("If the user never appears the
+        # fixture is broken — fail loudly, don't skip"). Skipping here cost three
+        # CI rounds: the gate reported only "2 skipped", which is indistinguishable
+        # from "no docker on this host", and the container logs that explain it
+        # were thrown away with the container.
+        logs = subprocess.run(
+            [docker_cmd, "logs", "--tail", "50", container_name],
+            capture_output=True,
+            text=True,
+        )
         subprocess.run([docker_cmd, "stop", container_name], capture_output=True)
-        pytest.skip("yadgar-backend container did not become healthy within 60 s")
+        subprocess.run([docker_cmd, "rm", "-f", container_name], capture_output=True)
+        pytest.fail(
+            f"yadgar-backend container did not become healthy within 60 s.\n"
+            f"  probed      : {backend_url}/health\n"
+            f"  DOCKER_HOST : {os.environ.get('DOCKER_HOST', '(unset)')}\n"
+            f"  published as: {_bind_prefix}{port_db}:8000\n"
+            f"If DOCKER_HOST names a remote daemon, the port must be published on "
+            f"all interfaces and probed at that daemon's host — not 127.0.0.1.\n"
+            f"--- container logs (last 50) ---\n{logs.stdout}\n{logs.stderr}"
+        )
 
     yield {
         "backend_url": backend_url,

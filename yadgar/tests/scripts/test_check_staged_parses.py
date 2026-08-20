@@ -21,6 +21,7 @@ assertion masquerading as a language fact.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -155,20 +156,26 @@ class TestTheRealTree:
         commit-time check under 3.13; it only proves the hook is not red on
         arrival for the tree as it stands.
         """
-        skip = {
-            ".git",
-            ".venv",
-            "node_modules",
-            "__pycache__",
-            "build",
-            "dist",
-            ".mypy_cache",
-            ".ruff_cache",
-            ".pytest_cache",
-            ".claude",
-        }
-        files = [
-            p for p in REPO_ROOT.rglob("*.py") if not skip & set(p.relative_to(REPO_ROOT).parts)
-        ]
-        assert files, "found no Python files — the walk itself is broken"
+        # Ledger task 222: this used rglob + a hand-maintained skip set of exact
+        # directory names. That set listed `.venv` but not `.venv-test`, so the
+        # walk descended into a gitignored virtualenv and hit
+        # joblib/test/test_func_inspect_special_encoding.py — a deliberately
+        # non-UTF-8 fixture — reporting UNDECODABLE for a file that is not ours.
+        #
+        # Enumerating tracked files instead removes the whole CLASS: anything
+        # gitignored is out of scope by construction, and the set cannot rot as
+        # new build/tool directories appear. It also matches what this check is
+        # FOR — the hook guards files being committed, and a file git does not
+        # track is never committed.
+        proc = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "-z", "--", "*.py"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        files = [REPO_ROOT / rel for rel in proc.stdout.split("\0") if rel]
+        # Deleted-but-still-indexed paths would break the parse call on a dirty
+        # tree; keep only what is actually on disk.
+        files = [p for p in files if p.is_file()]
+        assert files, "found no tracked Python files — the enumeration itself is broken"
         assert C.main([str(p) for p in files]) == 0

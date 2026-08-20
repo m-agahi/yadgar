@@ -381,12 +381,16 @@ class TestAdrGetCrossProjectBody:
     def test_body_slug_from_a_foreign_project_is_ignored(self, tmp_path):
         """Task-188 blast-radius guard.
 
-        ``get_adr_row`` discards ``project_id`` (ledger task 188, OUT OF SCOPE
-        here), so a row for the WRONG project can come back.  Coupling the body
-        read to ``row["body_slug"]`` would then serve another project's PROSE,
-        not merely its metadata.  A ``body_slug`` inconsistent with the
-        resolved project_id must be ignored in favour of the derived D32 ③
-        slug.
+        ``get_adr_row`` used to discard ``project_id`` (ledger task 188, fixed
+        in Car B1), so a row for the WRONG project could come back.  Coupling
+        the body read to ``row["body_slug"]`` would then serve another
+        project's PROSE, not merely its metadata.  A ``body_slug`` inconsistent
+        with the resolved project_id must be ignored in favour of the derived
+        D32 ③ slug.
+
+        KEPT AFTER THE B1 FIX, deliberately: the guard is now defence in depth
+        rather than the only line, and it is the half that survives a future
+        caller reaching the row by some other path.  It costs one comparison.
         """
         from yadgar.core.server.tools.adr import adr_get
 
