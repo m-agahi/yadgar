@@ -192,7 +192,13 @@ def _maintenance_enter(ttl_seconds: float) -> dict:
     ``deadline_seconds`` is the EFFECTIVE deadline after nesting resolves, or
     None when the window has no expiry (car E / ADR-0211).
     """
-    return _maintenance_post(_MAINTENANCE_ENTER_PATH, {"ttl_seconds": ttl_seconds})
+    # Car 1 (2026-08-20 train): ``operation`` labels the window for the gate
+    # envelope, and is honoured only when THIS call opens it — nested under
+    # nightly (steps 1-7) the outer label stands, which is correct: the window
+    # an instance is waiting on is nightly's, not this driver's.
+    return _maintenance_post(
+        _MAINTENANCE_ENTER_PATH, {"ttl_seconds": ttl_seconds, "operation": "backup"}
+    )
 
 
 @observe(tier="stage")

@@ -188,6 +188,25 @@ _maintenance_mode: bool = False
 _maintenance_deadline: float | None = None
 
 # Monotonic timestamp of the enter that opened the current window (task:0113).
-# Only used to say HOW LONG the gate was held in the TTL-expiry WARN — a fired
-# TTL means a vacuum died without cleanup and the operator needs that number.
+# Says HOW LONG the gate has been held: the TTL-expiry WARN needs it (a fired TTL
+# means a vacuum died without cleanup), and Car 1 of the 2026-08-20 train derives
+# the envelope's ``elapsed_seconds`` / ``started_at`` / ``looks_stuck`` from it.
+#
+# Set ONLY by the OUTER enter — a nested enter (nightly holds the gate across
+# steps 1-7 and runs the vacuum at step 4) deliberately leaves it alone, so
+# elapsed measures the WHOLE window rather than restarting at each nesting.
+# That is correct and intentional: the caller is gated for the whole window.
 _maintenance_entered_at: float | None = None
+
+# What the window is FOR, and where inside it we are (Car 1, 2026-08-20 train).
+# Both optional and both supplied on the maintenance/enter body: the pre-car
+# envelope hardcoded "(vacuum)" in its message, which was a guess — a nightly or
+# a backup quiesce engages the same gate. ``None`` renders as the neutral
+# "maintenance" rather than a fabricated label.
+#
+# ``_maintenance_phase`` is the channel a future car drives from the vacuum's own
+# phase transitions; today only callers that pass it on enter populate it, and it
+# stays None otherwise. A nested enter advances the phase without disturbing the
+# operation — that re-enter IS the phase channel (no extra route).
+_maintenance_operation: str | None = None
+_maintenance_phase: str | None = None

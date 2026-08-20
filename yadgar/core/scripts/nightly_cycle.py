@@ -138,7 +138,10 @@ _NIGHTLY_MAINTENANCE_TTL_SEC = 21600.0
 
 
 def _maintenance_http(
-    action: str, core_url: str | None = None, ttl_seconds: float | None = None
+    action: str,
+    core_url: str | None = None,
+    ttl_seconds: float | None = None,
+    operation: str | None = None,
 ) -> None:
     """POST /api/control/maintenance/{action} to the running core.
 
@@ -153,6 +156,12 @@ def _maintenance_http(
     Raises on HTTP error or connection failure — caller converts to exit codes.
     Auth token from YADGAR_MCP_AUTH_TOKEN if set (same as MCP clients use).
 
+    ``operation`` (Car 1, 2026-08-20 train) labels the window for the gate
+    envelope so a tool call landing in it reads "nightly" rather than the
+    hardcoded "vacuum" the old copy always claimed.  Honoured only when this
+    enter OPENS the window; the step-4 vacuum's own label is ignored underneath
+    it, which is right — the window the caller is waiting on is this one.
+
     ``core_url=None`` resolves ``_core_url()`` per call — see its docstring for
     why a module-constant default argument made the test guard ineffective.
 
@@ -160,7 +169,12 @@ def _maintenance_http(
     """
     core_url = core_url or _core_url()
     url = f"{core_url}/api/control/maintenance/{action}"
-    data = json.dumps({"ttl_seconds": ttl_seconds} if ttl_seconds else {}).encode()
+    body: dict[str, object] = {}
+    if ttl_seconds:
+        body["ttl_seconds"] = ttl_seconds
+    if operation:
+        body["operation"] = operation
+    data = json.dumps(body).encode()
     headers: dict[str, str] = {"Content-Type": "application/json"}
     # Car 9: route through the ONE sanctioned bearer-token resolver (env var,
     # else secrets.env) — nightly_cycle runs as a host systemd timer where
@@ -303,7 +317,12 @@ def _step_stop_core(core_url: str | None = None) -> int:
     _log_start("stop_core")
     t0 = time.monotonic()
     try:
-        _maintenance_http("enter", core_url, ttl_seconds=_NIGHTLY_MAINTENANCE_TTL_SEC)
+        _maintenance_http(
+            "enter",
+            core_url,
+            ttl_seconds=_NIGHTLY_MAINTENANCE_TTL_SEC,
+            operation="nightly",
+        )
         _log_step("stop_core", "ok", (time.monotonic() - t0) * 1000)
     except Exception as exc:
         record_exception("nightly_cycle.stop_core", exc)

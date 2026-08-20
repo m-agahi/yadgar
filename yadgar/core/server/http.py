@@ -32,6 +32,7 @@ from yadgar import __version__
 from yadgar._shared.config import resolve_knob
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.runtime.maintenance import apply_maintenance_health
 from yadgar._shared.server_helpers import _push_event  # F2: re-stamp relayed backend events
 from yadgar.core.forward import _forward_viz  # F2: poll backend /viz events op
 from yadgar.core.sanitize import sanitize_log_field
@@ -689,6 +690,11 @@ async def _build_health_payload() -> dict:
     # Fix A O2 GATE (daemon-offload-A): degrade (→ 503) on tool-pool saturation.
     _apply_tool_pool_health(payload)
 
+    # Car 1 (2026-08-20 train): report the MCP write-gate. /health read `ok`
+    # throughout a live vacuum, so the one signal an operator reaches for
+    # contradicted every gated tool. ADDITIVE — it never touches `status`.
+    apply_maintenance_health(payload)
+
     # #74 fix #1 — readiness anti-flap. Only degrade on dependency outage after N
     # CONSECUTIVE probe misses; a single success resets. A transiently-busy backend
     # (one 2s embed-probe miss) stays 200, so it can never cascade into a 503 that
@@ -785,6 +791,11 @@ async def health_check(request: Request) -> JSONResponse:
                 "active_sessions": 0,
                 "error": "health probe timed out",
             }
+            # Car 1 (2026-08-20 train): the fallback payload is built from
+            # scratch, so it misses the block _build_health_payload adds. This
+            # path is MORE likely during a window, not less — the backend is
+            # stopped, so a dependency probe is exactly what exhausts the budget.
+            apply_maintenance_health(payload)
 
         # C1 (obs-train): 503 on any non-ok status so monitoring detects db/embed
         # outages instead of reading them healthy. #74 fix #1 REVERSES the prior

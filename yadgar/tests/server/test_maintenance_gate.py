@@ -30,14 +30,17 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_maintenance_state():
-    """The flag + deadline are process-global — reset around every test."""
-    import yadgar._shared.runtime.state as _st
+    """Every gate var is process-global — reset around each test.
 
-    _st._maintenance_mode = False
-    _st._maintenance_deadline = None
+    Delegates to the shared resetter so a var added to the window (Car 1 added
+    ``operation`` / ``phase``) cannot leak across tests just because this fixture
+    was not updated alongside it.
+    """
+    from yadgar._shared.runtime.maintenance import reset_maintenance_state
+
+    reset_maintenance_state()
     yield
-    _st._maintenance_mode = False
-    _st._maintenance_deadline = None
+    reset_maintenance_state()
 
 
 def _request(body: dict | None = None):
