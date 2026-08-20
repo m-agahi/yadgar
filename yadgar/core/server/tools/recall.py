@@ -429,9 +429,13 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
     and-ignored. The resolved project_id is forwarded to the backend
     (``payload["project_id"]``) so post-Car-L scoping lands cleanly; pre-L
     the parameter is just carried through. The non-string / empty guards are
-    enforced at the type level (raise ``InvalidProjectOverrideError``); the
-    deep "is this project_id in the registry?" check lives at the backend
-    write path (Car A0 `_ensure_project_exists_sync`, §15 / ADR-0078).
+    enforced at the type level, together with Car 5's sentinel guard (both
+    raise ``InvalidProjectOverrideError``). NO registry check runs on this
+    path, and that is deliberate rather than an omission: ``recall`` is a
+    READ, so an unregistered project_id simply matches no rows. The fail-loud
+    registry check lives on the WRITE paths — ``memorize`` / ``wiki_add`` via
+    ``_project_registry.assert_project_registered_for_create``, and the
+    engine-#2 ledger via ``MariaStorageEngine.assert_project_registered``.
 
     Args:
         query: Search text. Combined semantic (embedding) + keyword scoring.

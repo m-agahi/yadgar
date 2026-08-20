@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import _NON_IDENTIFYING_PROJECT_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,17 @@ class _DLQMixin:
     #: removes ``GLOBAL_FALLBACK`` and ``_project_id_writer``'s ``return
     #: "global"`` branch adds it to the sentinel set. Doing one without the other
     #: in either order is a live breakage.
-    _SENTINEL_PROJECT_IDS: frozenset[str] = frozenset({"", "global", "unresolved"})
+    #: Car 5 (2026-08-20 train): this WAS a private literal
+    #: ``frozenset({"", "global", "unresolved"})`` — a copy that had already
+    #: drifted, omitting ``"system"`` (the pre-v5.64 mis-stamp sink) which
+    #: ``_NON_IDENTIFYING_PROJECT_IDS`` carries. The comment above claiming the
+    #: sentinel set "cannot drift" was describing an intent, not a mechanism,
+    #: while a second copy sat two lines below it. Bound to the one frozenset,
+    #: which is what makes the claim true: the create gate
+    #: (``_project_param._reject_sentinel``), the restamp gate
+    #: (``project_id_value_error``) and this un-bypassable drainer gate now read
+    #: the same object.
+    _SENTINEL_PROJECT_IDS: frozenset[str] = _NON_IDENTIFYING_PROJECT_IDS
 
     @observe(tier="stage", metric="drainer.dlq.validate_project_id")
     def _validate_project_id(self, payload: dict, op_type: str = "wiki_add") -> str | None:

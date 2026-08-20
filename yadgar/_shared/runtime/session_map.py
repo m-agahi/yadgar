@@ -119,6 +119,19 @@ def register_session_project(directory: str, project_id: str) -> bool:
         return False
     if not project_id or not str(project_id).strip():
         return False
+    # Car 5 (2026-08-20 train): refuse to record a value that names no project.
+    # ``_NON_IDENTIFYING_PROJECT_IDS`` is the one authority the create gate and
+    # the restamp gates read; a map entry holding ``'global'`` would hand every
+    # unqualified call in that directory a manufactured identity ADR-0227
+    # deletes. The READER (``resolve_effective_project``) also skips such a
+    # value, because entries written before this guard are still on disk — this
+    # stops NEW ones, the reader survives the OLD ones.
+    from yadgar._shared.storage._project_id_writer import (  # noqa: PLC0415
+        _NON_IDENTIFYING_PROJECT_IDS,
+    )
+
+    if str(project_id).strip() in _NON_IDENTIFYING_PROJECT_IDS:
+        return False
     key = str(directory).rstrip("/") or "/"
     value = str(project_id).strip()
 
