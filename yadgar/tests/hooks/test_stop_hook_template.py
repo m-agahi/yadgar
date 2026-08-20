@@ -118,6 +118,11 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      adr_add assigns the ADR-NNNN id and formats the entry.
      ALL fields mandatory — write "none" if truly empty (keeps it machine-parseable).
      A decision still unresolved this session → status: open, revisit_trigger = pending question.
+     Same when YOU have settled it but the user has not ruled on it: `accepted`
+     means chosen AND ratified, so a decision whose own text says proposed /
+     pending / recommended takes status: open. Never file a status that
+     disagrees with the text under it — both statuses are binding tier, so
+     the status is all that tells a later reader whether anyone agreed.
 
 2. STRUCTURAL WRITE-BACK (always consider). Durable repo-structure / convention /
    module-purpose findings from THIS session → the EXISTING wiki page that owns
@@ -363,6 +368,45 @@ def test_template_has_substitution_header():
     assert "YADGAR CHECKPOINT PROTOCOL" in content
     assert "Substitute these placeholders" in content
     assert "basename of {directory}" in content
+
+
+def test_adr_status_must_agree_with_its_own_text():
+    """Step 1's status rule covers the UNAPPROVED case, not only the unresolved one.
+
+    Car D1 (task 215). The step-1 KEEP clause is defined largely by negation, so
+    "a conclusion we commit to" reads as licence to file anything concluded —
+    including a recommendation the user has not ruled on. Measured on the live
+    corpus 2026-08-20: ADR-0033 is status=`accepted` while its own decision text
+    reads "PROPOSED, pending user go-ahead" and its revisit_trigger is "User
+    confirms the gate fix to implement". `accepted` and `open` are BOTH binding
+    tier (seed_adr_tier_subsystem: accepted|open -> binding), so the status is
+    the only thing separating a ratified decision from a pending proposal in the
+    default adr_list.
+
+    The pre-existing clause only named the epistemic case ("still unresolved this
+    session"), which does not describe an instance that HAS worked the answer out
+    and is waiting on permission. This pins the permission case alongside it.
+
+    NOTE ON SCOPE: this is a structural guard only — it asserts the criterion is
+    present in the template and reachable inside step 1. A prompt's effect on
+    model behaviour is not unit-testable, and this test claims no such assurance.
+    """
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    # The pre-existing epistemic case survives — the new clause extends it,
+    # it does not replace it.
+    assert "A decision still unresolved this session → status: open" in content
+    # The permission case: settled by you, not ruled on by the user.
+    assert "user has not ruled on it" in content
+    # `accepted` carries ratification, not merely choice.
+    assert "means chosen AND ratified" in content
+    # The concrete tripwire — the wording that must force status: open.
+    assert "pending / recommended takes status: open" in content
+    # Why status is load-bearing here: `open` is not a lesser tier.
+    assert "both statuses are binding tier" in content
+    # Reachable inside step 1 (ADR CAPTURE), not stranded after a later step.
+    step1 = content.index("1. ADR CAPTURE")
+    step2 = content.index("2. STRUCTURAL WRITE-BACK")
+    assert step1 < content.index("means chosen AND ratified") < step2
 
 
 def test_agent_prompt_step_is_read_first():

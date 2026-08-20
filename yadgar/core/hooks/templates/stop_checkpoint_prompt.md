@@ -72,6 +72,11 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      adr_add assigns the ADR-NNNN id and formats the entry.
      ALL fields mandatory — write "none" if truly empty (keeps it machine-parseable).
      A decision still unresolved this session → status: open, revisit_trigger = pending question.
+     Same when YOU have settled it but the user has not ruled on it: `accepted`
+     means chosen AND ratified, so a decision whose own text says proposed /
+     pending / recommended takes status: open. Never file a status that
+     disagrees with the text under it — both statuses are binding tier, so
+     the status is all that tells a later reader whether anyone agreed.
 
 2. STRUCTURAL WRITE-BACK (always consider). Durable repo-structure / convention /
    module-purpose findings from THIS session → the EXISTING wiki page that owns
