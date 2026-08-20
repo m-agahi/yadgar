@@ -815,11 +815,13 @@ def project_seed(
             pass it here.
 
     Returns:
-        ``{"ok": True, "counts": {seed, drop, review, created, skipped,
-        failed}, "map_path": <path>}`` on completion. Backend errors on
-        individual rows are reported in ``counts["failed"]``; structural
-        map errors (file not found, malformed row) return
-        ``{"ok": False, "error": ...}``.
+        ``{"ok": counts["failed"] == 0, "counts": {seed, drop, review,
+        created, skipped, failed}, "map_path": <path>}`` on completion —
+        ``ok`` is False whenever at least one row genuinely failed
+        (duplicates are ``skipped``, not ``failed``, so an idempotent
+        re-run of an already-seeded map still reports ``ok: True``).
+        Structural map errors (file not found, malformed row) return
+        ``{"ok": False, "error": ...}`` before any row is processed.
     """
     from yadgar.core.cli.project import (
         DEFAULT_MAP_PATH,
@@ -865,4 +867,10 @@ def project_seed(
         outcome = seed_row(row, auth_token=auth_token)
         counts[outcome] += 1
 
-    return {"ok": True, "counts": counts, "map_path": str(resolved_map)}
+    # ``ok`` used to be a literal True — it reflected only whether the TSV
+    # map parsed, never per-row outcome, so a caller reading ``ok`` first
+    # (the field a model checks first) saw success while counts["failed"]
+    # > 0 (ledger task 13 defect 1). Duplicates are classified "skipped",
+    # not "failed" (see ``is_duplicate_project_error``), so an idempotent
+    # re-run of an already-seeded map still reports ok: True here.
+    return {"ok": counts["failed"] == 0, "counts": counts, "map_path": str(resolved_map)}

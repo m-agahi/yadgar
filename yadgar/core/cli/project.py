@@ -228,10 +228,16 @@ def cmd_project_seed(args: argparse.Namespace) -> int:
     """``yadgar project seed`` handler.
 
     Walks the map file, calls ``create_project_row`` per seed-eligible
-    row, prints a per-row outcome, and exits 0 unless the map was
-    structurally malformed. Backend errors on individual rows do NOT
-    cause a non-zero exit (the migration is best-effort per row — a
-    single typo'd project_id is not a reason to abandon the rest).
+    row, and prints a per-row outcome. A backend error on one row does
+    NOT abort the rest of the migration — the loop is still best-effort
+    per row (a single typo'd project_id must not stop the others from
+    seeding), and ``seed_row`` never raises. What DOES change is the
+    final exit code: a genuine (non-duplicate) per-row failure now makes
+    the run exit 1 (ledger task 13 defect 1 — this used to always return
+    0 unless the map file itself was structurally malformed, so an
+    operator reading the exit code alone never learned a row failed).
+    Duplicates (idempotent re-run) are classified "skipped", not
+    "failed", and do not trip this gate.
     """
     map_path = Path(args.map) if args.map else DEFAULT_MAP_PATH
     rows = parse_map(map_path)
@@ -269,6 +275,8 @@ def cmd_project_seed(args: argparse.Namespace) -> int:
         )
 
     print(json.dumps(counts))
+    if counts["failed"] > 0:
+        return 1
     return 0
 
 

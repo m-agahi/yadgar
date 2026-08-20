@@ -191,6 +191,57 @@ class TestCmdBackfillReslug:
             with pytest.raises(RuntimeError, match="YADGAR_EMBED_URL"):
                 cmd_backfill(_make_args(reslug_adr_pages=True))
 
+    def test_apply_with_collisions_exits_nonzero(self):
+        """Ledger task 13 defect 2: ``reslug`` has no ``ok`` key at all —
+        ``_print_reslug_report`` only PRINTS collisions to stderr, and the
+        branch returned 0 unconditionally. A collision on ``--apply`` means
+        a page was deliberately left un-reslugged (data is safe, but the
+        operator got no signal at all). This is the unread path: an
+        operator running ``--apply`` in a script has nobody reading
+        stderr, which is exactly the harm."""
+        result = {
+            "rewrites": [{"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1}],
+            "dry_run": False,
+            "collisions": [
+                {"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1, "occupant_id": 2}
+            ],
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(reslug_adr_pages=True, apply=True))
+        assert rc != 0
+
+    def test_apply_without_collisions_exits_zero(self):
+        """Pin: a clean apply (no collisions) must stay exit 0."""
+        result = {
+            "rewrites": [{"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1}],
+            "dry_run": False,
+            "collisions": [],
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(reslug_adr_pages=True, apply=True))
+        assert rc == 0
+
+    def test_dry_run_with_collisions_still_exits_zero(self):
+        """Pin, not an oversight: a dry run that REPORTS collisions is doing
+        its job — the operator is reading the report by definition (that is
+        why they ran a dry run instead of --apply). The exit code is the
+        only channel on --apply (nobody scripts a dry run and then ignores
+        its stdout the way an unattended --apply run can); gating dry-run
+        too would make every preview with a pre-existing collision fail the
+        same way a real apply-time failure does, which teaches an operator
+        to stop trusting the exit code on the run that matters. Mirrors
+        ``TestAdrRowsDryRunByDefault.test_dry_run_exits_zero_despite_a_mismatched_gate``."""
+        result = {
+            "rewrites": [{"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1}],
+            "dry_run": True,
+            "collisions": [
+                {"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1, "occupant_id": 2}
+            ],
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(reslug_adr_pages=True))
+        assert rc == 0
+
 
 # ---------------------------------------------------------------------------
 # cmd_backfill — --adr-rows
