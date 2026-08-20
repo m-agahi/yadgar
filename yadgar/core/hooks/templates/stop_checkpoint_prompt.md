@@ -72,6 +72,11 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
      adr_add assigns the ADR-NNNN id and formats the entry.
      ALL fields mandatory — write "none" if truly empty (keeps it machine-parseable).
      A decision still unresolved this session → status: open, revisit_trigger = pending question.
+     Same when YOU have settled it but the user has not ruled on it: `accepted`
+     means chosen AND ratified, so a decision whose own text says proposed /
+     pending / recommended takes status: open. Never file a status that
+     disagrees with the text under it — both statuses are binding tier, so
+     the status is all that tells a later reader whether anyone agreed.
 
 2. STRUCTURAL WRITE-BACK (always consider). Durable repo-structure / convention /
    module-purpose findings from THIS session → the EXISTING wiki page that owns
@@ -127,7 +132,10 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    source of truth (0047 spine train Car E); the legacy wiki task-list page
    is read-only marker-only.
    - Step 5a — RECONCILE YOUR OWN LIST FIRST. Call TaskList. TaskUpdate anything
-     completed or blocked this session; TaskCreate any follow-ups you discovered.
+     completed or blocked this session. Do NOT TaskCreate a follow-up you
+     discovered — TaskCreate cannot be told which id to use, so a harness-first
+     create never reconciles with its ledger row; new work is created in the
+     ledger instead, at item 4 below.
      This is the every-checkpoint "update your task list" pass — do it before you
      mirror, so the ledger reflects reality.
    - Step 5b — WRITE BACK ONLY WHAT YOU TOUCHED. Other instances may be working
@@ -147,10 +155,19 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
         backend — do NOT read or re-send state, active_form, plan_path or
         body_slug to "preserve" them. project_id is a caller parameter
         (ADR-0202) — the same {project} on every call this step.
-     4. For EACH task you CREATED in the harness this session:
+     4. For EACH follow-up you discovered this session that is NOT already in
+        the list you read at item 1, create it in the LEDGER ONLY — never
+        TaskCreate it first:
           task_write(project_id="{project}", title=<title>, status="pending")
         No id — the id it RETURNS is the ledger id, and the task comes back
-        under that id next session.
+        under that id next session. Harness-first is what this replaces:
+        TaskCreate mints its own number, a subject cannot carry a ledger id that
+        does not exist yet, and next checkpoint the row still reads as newly
+        created and gets mirrored AGAIN — a duplicate ledger row per checkpoint
+        unless you dedup by title, which nothing here tells you to do. COST,
+        plainly: a task created here does NOT show in your harness list until
+        the next session opens; you carry it in context until then. That is the
+        price of the two ids agreeing.
      5. A row that changed in the ledger but NOT in your harness list is another
         instance's work. LEAVE IT ALONE.
    - Step 5c — TASK CONTEXT MAINTENANCE, same rule: only tasks YOU worked on.
