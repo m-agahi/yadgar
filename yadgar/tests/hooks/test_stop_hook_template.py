@@ -178,7 +178,10 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    source of truth (0047 spine train Car E); the legacy wiki task-list page
    is read-only marker-only.
    - Step 5a — RECONCILE YOUR OWN LIST FIRST. Call TaskList. TaskUpdate anything
-     completed or blocked this session; TaskCreate any follow-ups you discovered.
+     completed or blocked this session. Do NOT TaskCreate a follow-up you
+     discovered — TaskCreate cannot be told which id to use, so a harness-first
+     create never reconciles with its ledger row; new work is created in the
+     ledger instead, at item 4 below.
      This is the every-checkpoint "update your task list" pass — do it before you
      mirror, so the ledger reflects reality.
    - Step 5b — WRITE BACK ONLY WHAT YOU TOUCHED. Other instances may be working
@@ -198,10 +201,19 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
         backend — do NOT read or re-send state, active_form, plan_path or
         body_slug to "preserve" them. project_id is a caller parameter
         (ADR-0202) — the same {project} on every call this step.
-     4. For EACH task you CREATED in the harness this session:
+     4. For EACH follow-up you discovered this session that is NOT already in
+        the list you read at item 1, create it in the LEDGER ONLY — never
+        TaskCreate it first:
           task_write(project_id="{project}", title=<title>, status="pending")
         No id — the id it RETURNS is the ledger id, and the task comes back
-        under that id next session.
+        under that id next session. Harness-first is what this replaces:
+        TaskCreate mints its own number, a subject cannot carry a ledger id that
+        does not exist yet, and next checkpoint the row still reads as newly
+        created and gets mirrored AGAIN — a duplicate ledger row per checkpoint
+        unless you dedup by title, which nothing here tells you to do. COST,
+        plainly: a task created here does NOT show in your harness list until
+        the next session opens; you carry it in context until then. That is the
+        price of the two ids agreeing.
      5. A row that changed in the ledger but NOT in your harness list is another
         instance's work. LEAVE IT ALONE.
    - Step 5c — TASK CONTEXT MAINTENANCE, same rule: only tasks YOU worked on.
@@ -508,6 +520,67 @@ def test_task_list_mirror_step_present():
     # calls wiki_append_section on per-task BODY pages, which are current, so
     # the tool-name assertion no longer separates legacy from live; the slug
     # assertions do.
+
+
+def test_new_tasks_are_created_in_the_ledger_not_the_harness():
+    """Step 5 creates new work in the LEDGER only — never harness-first.
+
+    Car D1 (task 227). Step 5a used to say "TaskCreate any follow-ups you
+    discovered" and 5b item 4 then mirrored "EACH task you CREATED in the
+    harness". That order guarantees divergence: TaskCreate allocates the harness
+    id and cannot be told which one to use, the ledger then allocates a
+    different one, and the harness subject cannot carry a ledger id that did not
+    exist at TaskCreate time. Observed 2026-08-20: harness #107 against ledger
+    row 215, one piece of work.
+
+    Worse than mismatched numbers, item 4's old predicate stayed TRUE for the
+    rest of the session, so the same row was eligible to be mirrored again at
+    every later checkpoint — a duplicate ledger row per checkpoint unless the
+    model dedups by title unprompted. The new predicate is keyed to the item-1
+    ledger read, which closes that.
+
+    Only the SessionStart seeder can choose an id (it writes
+    ~/.claude/tasks/<session>/<N>.json directly), and ADR-0007 verified that is
+    safe: allocation is max(file ids, .highwatermark)+1 and never reuses gaps.
+    ADR-0007 also fixes the direction split this relies on — downstream
+    mechanical, upstream model-mediated — so the fix belongs in this template
+    and not in a hook.
+
+    NOTE ON SCOPE: structural guard only. It pins that both halves of the rule
+    are present and land in step 5. A prompt's effect on model behaviour is not
+    unit-testable, and this test claims no such assurance.
+    """
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    flat = " ".join(content.split())
+
+    # --- Site 1: step 5a carries the prohibition AND its reason locally.
+    assert "Do NOT TaskCreate a follow-up you" in content
+    assert "TaskCreate cannot be told which id to use" in flat
+    # The old harness-first mandate is gone from 5a.
+    assert "TaskCreate any follow-ups you discovered" not in flat
+
+    # --- Site 2: 5b item 4 creates in the ledger and states the cost.
+    assert "create it in the LEDGER ONLY — never" in content
+    # Predicate is keyed to the item-1 read, so it cannot re-fire next checkpoint
+    # on a row this session already created.
+    assert "that is NOT already in the list you read at item 1" in flat
+    # The duplicate-per-checkpoint failure is named, hedged on the dedup caveat.
+    assert "a duplicate ledger row per checkpoint" in flat
+    assert "unless you dedup by title" in flat
+    # The downside is stated, not hidden.
+    assert "does NOT show in your harness list until the next session" in flat
+    # The old harness-first predicate is gone from item 4.
+    assert "For EACH task you CREATED in the harness this session" not in flat
+
+    # --- Both sites live inside step 5, not stranded in a neighbouring step.
+    step5 = content.index("5. TASK-LIST MIRROR")
+    step6 = content.index("6. Call project_brief(")
+    assert step5 < content.index("Do NOT TaskCreate a follow-up you") < step6
+    assert step5 < content.index("create it in the LEDGER ONLY — never") < step6
+
+    # 5d still adopts EXISTING ledger rows via TaskCreate — those ids are
+    # already known, so that path is untouched by this rule.
+    assert "harness via TaskCreate" in content
 
 
 def test_subagent_findings_curation_step_present():
