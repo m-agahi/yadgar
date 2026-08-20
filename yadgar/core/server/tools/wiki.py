@@ -1490,18 +1490,44 @@ def wiki_set_metadata(
     *,
     project: str | None = None,  # noqa: ARG001 — kept for API back-compat
 ) -> dict:
-    """Set directory_context on ALL rows sharing a slug (BC-G10 fix).
+    """Set ``project_id`` / ``directory_context`` on ALL rows sharing a slug.
 
     Reaches every row for the slug — including 'global' stragglers — not just
-    the single row returned by §25 resolution. This fixes the bug where
+    the single row returned by §25 resolution (BC-G10). This fixes the bug where
     wiki_set_metadata reported changed=False even though straggler rows were
     never touched (only one row was resolved via LIMIT 1 resolution).
 
-    field must be 'directory_context'. Other fields are rejected. ADR-0215
-    removed branch scoping, so 'branch' is no longer a settable field.
+    ``field`` is one of:
 
-    Validation: directory_context must be 'global' or an absolute path
-    (starts with '/').
+    * ``"project_id"`` — CURRENT. ADR-0233 made it the sole scoping key, and
+      this is the ONLY path that restamps it on an existing page: ``wiki_add``
+      with ``replace_slug`` / ``force`` / ``upsert`` all update the row WITHOUT
+      restamping ``project_id`` (measured live on ``wiki_page:7710``,
+      2026-08-19), which used to leave delete-and-recreate as the only option
+      for a mis-stamped page.
+    * ``"directory_context"`` — LEGACY, retained for back-compat. It is not a
+      scoping key any more (ADR-0233) but it is still the field a wrongly-keyed
+      directory is corrected through.
+
+    ADR-0215 removed branch scoping, so 'branch' is not settable; any other
+    field is rejected.
+
+    Validation:
+    - ``project_id``: non-empty string, and NOT one of the manufactured
+      identities ADR-0227 deletes (``global`` / ``unresolved`` / ``system`` /
+      empty). Global REACH travels as the Car C7 tag, never as a project_id.
+      ``None`` is rejected too — nulling the column makes the page unreachable
+      from every project-scoped read.
+    - ``directory_context``: ``'global'`` or an absolute path (starts with '/').
+
+    NO REGISTRY CHECK (ADR-0078 ``_ensure_project_exists_sync``) runs here, on
+    purpose: no writer of ``wiki_page.project_id`` performs one. The create path
+    (``_resolve_project_id_for_write``) takes the caller's value unvalidated,
+    and ``assert_project_registered`` fires only on the engine-#2 ledger tables
+    (``task`` / ``adr``), which ``wiki_page`` — a SurrealDB row with no FK to
+    ``project`` — is not. Gating the CORRECTION more tightly than the CREATION
+    would also make a SurrealDB-only write hard-fail with
+    ``ProjectRegistryUnavailableError`` wherever engine #2 is not composed.
 
     Idempotent per row: no version row created when the value already matches.
     On real change per row: creates a wiki_page_version row (v5.41 versioning).
@@ -1511,8 +1537,9 @@ def wiki_set_metadata(
 
     Args:
         slug: Wiki page slug.
-        field: Metadata field to set. Must be 'directory_context'.
-        value: New value.
+        field: ``'project_id'`` (current) or ``'directory_context'`` (legacy).
+        value: New value. This is what stamps the page — the ``project``
+            keyword below is an ignored back-compat parameter, not the stamp.
         directory: Kept for API back-compat (unused — all-rows path needs no §25 resolution).
 
     Returns: {ok, slug, rows_updated, page_ids} or {ok: False, error}.
@@ -1525,10 +1552,22 @@ def wiki_set_metadata(
     # scoping. Rejected here at the MCP boundary; Car 9 also removed it from
     # WikiStore._METADATA_FIELDS, which closes the privileged POST /admin path
     # that reaches set_metadata_by_slug without passing through this shell.
-    if field != "directory_context":
+    #
+    # The message is composed here rather than rendered from the allowlist:
+    # ``sorted(_METADATA_FIELDS)`` cannot say which member is current and which
+    # is retained legacy, and this is the message a caller actually reads (the
+    # shell returns before forwarding). The old text read
+    # ``allowed: ['directory_context']`` — so a caller who asked for the
+    # ADR-0233 scoping key was told by the tool to use the concept ADR-0233
+    # retired. Naming the retired key as THE allowed one is the defect.
+    if field not in ("project_id", "directory_context"):
         return {
             "ok": False,
-            "error": f"invalid field '{field}' — allowed: ['directory_context']",
+            "error": (
+                f"invalid field '{field}' — allowed: 'project_id' (current scoping "
+                "key, ADR-0233) and 'directory_context' (legacy, retained for "
+                "back-compat)"
+            ),
         }
     # R3 Car 3c: slug-keyed all-rows metadata write forwards to backend /admin.
     # No §25 page_id resolution needed (impl reaches every row for the slug).

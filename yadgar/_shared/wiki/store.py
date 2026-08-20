@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage._project_id_writer import _NON_IDENTIFYING_PROJECT_IDS
 from yadgar._shared.storage.directory import GLOBAL_REACH_TAG, RecallScope
 from yadgar._shared.wiki.contract import (
     CATEGORIES as _CONTRACT_CATEGORIES,
@@ -67,6 +68,45 @@ def _apply_storage_scope(
     if GLOBAL_REACH_TAG not in tags:
         tags = [*tags, GLOBAL_REACH_TAG]
     return "global", tags
+
+
+@observe(exempt="pure per-field value validation on two string fields; no I/O, no storage access")
+def _metadata_value_error(field: str, value: str | None) -> str | None:
+    """Return the rejection message for *value* under *field*, or ``None``.
+
+    ONE validator for both ``set_metadata`` (per row) and
+    ``set_metadata_by_slug`` (all rows). The two used to carry a verbatim copy
+    of the ``directory_context`` rule each; ledger task 246 added a second field
+    and a divergence between the copies has a silent failure mode — the all-rows
+    loop counts only rows whose write reported ``changed``, so a value the
+    front gate admitted and the per-row gate rejected returns
+    ``{ok: True, rows_updated: 0}``: success-shaped, zero writes.
+
+    ``project_id`` (ADR-0233, the sole scoping key) must be a non-empty string
+    and must not be one of the manufactured identities ADR-0227 deletes. Global
+    REACH is the Car C7 tag, NOT ``project_id='global'`` — writing the sentinel
+    here would mint the phantom namespace the registry exists to prevent, and
+    ``None`` would null the column, making the page unreachable from
+    ``get_wiki_page_by_slug_project``'s ``project_id = $pid`` lookup.
+    """
+    if field == "directory_context":
+        if not value or (value != "global" and not value.startswith("/")):
+            return (
+                "directory_context must be 'global' or an absolute path "
+                f"(starts with '/'); got {value!r}"
+            )
+        return None
+    if field == "project_id":
+        if not isinstance(value, str) or not value:
+            return f"project_id must be a non-empty string; got {value!r}"
+        if value in _NON_IDENTIFYING_PROJECT_IDS:
+            return (
+                f"project_id {value!r} names no project — it is a manufactured "
+                "identity ADR-0227 deletes. Global reach is carried by the "
+                f"{GLOBAL_REACH_TAG!r} tag, not by project_id"
+            )
+        return None
+    return None
 
 
 @observe(exempt="pure string membership predicate; no I/O")
@@ -1919,7 +1959,13 @@ class WikiStore:
     #: but the tables are SCHEMALESS — a surviving ``set_metadata(field="branch")``
     #: would silently re-create it as an untyped field on rows the migration just
     #: nulled, with no reader left to honour it.
-    _METADATA_FIELDS: frozenset[str] = frozenset({"directory_context"})
+    #:
+    #: Ledger task 246: ``"project_id"`` was ADDED. ADR-0233 made it the sole
+    #: scoping key, and this allowlist admitted only the concept that ADR retired
+    #: — so a page stamped with the wrong ``project_id`` had NO restamp path at
+    #: all (``wiki_add`` with ``replace_slug`` / ``force`` / ``upsert`` updates the
+    #: row without restamping it), leaving delete-and-recreate as the only option.
+    _METADATA_FIELDS: frozenset[str] = frozenset({"directory_context", "project_id"})
 
     @observe(tier="stage")
     def set_metadata(
@@ -1928,7 +1974,7 @@ class WikiStore:
         field: str,
         value: str | None,
     ) -> dict:
-        """Set directory_context on a wiki page.
+        """Set ``project_id`` (ADR-0233) or ``directory_context`` on a wiki page.
 
         Idempotent: no-op when current value already matches.
         Creates a wiki_page_version row on real change.
@@ -1941,16 +1987,9 @@ class WikiStore:
                 "error": f"invalid field '{field}' — allowed: {sorted(self._METADATA_FIELDS)}",
             }
 
-        # Validate value per field.
-        if field == "directory_context":
-            if not value or (value != "global" and not value.startswith("/")):
-                return {
-                    "ok": False,
-                    "error": (
-                        "directory_context must be 'global' or an absolute path "
-                        f"(starts with '/'); got {value!r}"
-                    ),
-                }
+        value_error = _metadata_value_error(field, value)
+        if value_error is not None:
+            return {"ok": False, "error": value_error}
 
         page = self._storage.get_wiki_page(page_id)
         if page is None:
@@ -1994,7 +2033,7 @@ class WikiStore:
         field: str,
         value: str | None,
     ) -> dict:
-        """Set directory_context on ALL rows sharing a slug.
+        """Set ``project_id`` / ``directory_context`` on ALL rows sharing a slug.
 
         Unlike set_metadata(page_id, ...) which targets one row, this method
         fetches EVERY page_id for the slug (including 'global' stragglers) via
@@ -2015,15 +2054,13 @@ class WikiStore:
                 "ok": False,
                 "error": f"invalid field '{field}' — allowed: {sorted(self._METADATA_FIELDS)}",
             }
-        if field == "directory_context":
-            if not value or (value != "global" and not value.startswith("/")):
-                return {
-                    "ok": False,
-                    "error": (
-                        "directory_context must be 'global' or an absolute path "
-                        f"(starts with '/'); got {value!r}"
-                    ),
-                }
+        # Same helper the per-row path uses. Sharing it is load-bearing: the loop
+        # below counts only rows whose write returned ``changed``, so a value this
+        # method admitted and ``set_metadata`` then rejected per row would return
+        # ``{ok: True, rows_updated: 0}`` — success-shaped with zero writes.
+        value_error = _metadata_value_error(field, value)
+        if value_error is not None:
+            return {"ok": False, "error": value_error}
 
         page_ids = self._storage.get_wiki_page_ids_by_slug(slug)
         if not page_ids:
