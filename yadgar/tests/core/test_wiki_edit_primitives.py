@@ -106,6 +106,32 @@ def _insert_page(
     )
 
 
+def _insert_page_owned(slug, project_id, directory_context="global"):
+    """Insert a page under an EXPLICIT ``project_id``. Returns page_id.
+
+    ``_insert_page`` stamps the module constant, which is right for every test
+    whose subject is not ownership. Task 246's subject IS ownership: the
+    all-rows restamp has to prove it reaches rows that disagree about who owns
+    them, so those rows must be seedable with different ``project_id`` values.
+    A separate 3-arg helper rather than a ninth parameter on ``_insert_page``
+    (the I13 arg cap its docstring names).
+    """
+    return _storage().insert_wiki_page(
+        {
+            "slug": slug,
+            "title": f"Test page {slug}",
+            "content": f"content for {slug} owned by {project_id}",
+            "category": "reference",
+            "tags": [],
+            "confidence": "medium",
+            "source_memory_ids": [],
+            "links": [],
+            "project_id": project_id,
+            "directory_context": directory_context,
+        }
+    )
+
+
 def _version_count(page_id):
     rows = _storage()._q(
         "SELECT * FROM wiki_page_version WHERE page_id = $p",
@@ -179,6 +205,178 @@ class TestWikiSetMetadata:
         assert result.get("ok") is True
         page = _storage().get_wiki_page(pid)
         assert page["directory_context"] == "global"
+
+
+# ── Layer 4: wiki_set_metadata(field="project_id") — ledger task 246 ──────────
+
+
+class TestWikiSetMetadataProjectId:
+    """``project_id`` is settable — ADR-0233 made it the sole scoping key.
+
+    Before task 246 the tool accepted ``directory_context`` ALONE, so there was
+    no MCP path of any kind to correct a mis-stamped ``project_id`` on an
+    existing page (``wiki_add`` with ``replace_slug`` / ``force`` / ``upsert``
+    all update the row without restamping it). The only remaining option was
+    delete-and-recreate.
+    """
+
+    def test_set_project_id_happy_path(self):
+        """Setting project_id to a real owner/repo key succeeds and is stored."""
+        pid = _insert_page_owned("set-pid-page", "wrong-owner/wrong-repo")
+        result = server.wiki_set_metadata("set-pid-page", "project_id", "m-agahi/yadgar")
+        assert result.get("ok") is True
+        assert _storage().get_wiki_page(pid)["project_id"] == "m-agahi/yadgar"
+
+    def test_set_project_id_updates_all_rows_for_slug(self):
+        """ONE call restamps EVERY row sharing the slug, straggler included.
+
+        The discriminating test. Two rows, same slug, DIFFERENT owners and
+        different directory_context (one of them the 'global' straggler the
+        BC-G10 all-rows path exists for). Reds if the write reaches only the
+        row §25 resolution would have returned.
+        """
+        slug = "task246-allrows-pid"
+        pid_straggler = _insert_page_owned(slug, "wrong-owner/wrong-repo", "global")
+        pid_scoped = _insert_page_owned(slug, "other-owner/other-repo", "/home/max/project")
+        assert pid_straggler != pid_scoped
+
+        result = server.wiki_set_metadata(slug, "project_id", "m-agahi/yadgar")
+
+        assert result.get("ok") is True
+        assert sorted(result.get("page_ids", [])) == sorted([pid_straggler, pid_scoped])
+        # Success-shaped-but-zero-writes is the failure mode this pins: the
+        # all-rows loop only counts rows whose per-row write returned changed.
+        assert result.get("rows_updated") == 2
+        for pid in (pid_straggler, pid_scoped):
+            assert _storage().get_wiki_page(pid)["project_id"] == "m-agahi/yadgar", (
+                f"row page_id={pid} was not restamped"
+            )
+
+    def test_idempotent_noop_project_id(self):
+        """Same project_id twice → ok:True, changed:False, no second version row."""
+        pid = _insert_page_owned("idempotent-pid", "m-agahi/yadgar")
+        before = _version_count(pid)
+        result = server.wiki_set_metadata("idempotent-pid", "project_id", "m-agahi/yadgar")
+        assert result.get("ok") is True
+        assert result.get("changed") is False
+        assert _version_count(pid) == before
+
+    def test_version_row_created_on_real_project_id_change(self):
+        """A real project_id change mints a wiki_page_version row."""
+        pid = _insert_page_owned("version-check-pid", "wrong-owner/wrong-repo")
+        before = _version_count(pid)
+        server.wiki_set_metadata("version-check-pid", "project_id", "m-agahi/yadgar")
+        assert _version_count(pid) == before + 1
+
+    def test_project_id_empty_rejects(self):
+        """Empty string names no project → ok:False."""
+        _insert_page_owned("empty-pid-page", "m-agahi/yadgar")
+        result = server.wiki_set_metadata("empty-pid-page", "project_id", "")
+        assert result.get("ok") is False
+        assert "project_id" in result.get("error", "")
+
+    def test_project_id_none_rejects(self):
+        """None would null the column and make the page unreachable → ok:False."""
+        pid = _insert_page_owned("none-pid-page", "m-agahi/yadgar")
+        result = server.wiki_set_metadata("none-pid-page", "project_id", None)
+        assert result.get("ok") is False
+        assert _storage().get_wiki_page(pid)["project_id"] == "m-agahi/yadgar"
+
+    def test_project_id_non_string_rejects(self):
+        """A non-string value is rejected rather than coerced."""
+        _insert_page_owned("nonstr-pid-page", "m-agahi/yadgar")
+        result = server.wiki_set_metadata("nonstr-pid-page", "project_id", 42)  # type: ignore[arg-type]
+        assert result.get("ok") is False
+
+    @pytest.mark.parametrize("sentinel", ["global", "unresolved", "system"])
+    def test_project_id_sentinel_rejects(self, sentinel):
+        """The ADR-0227 manufactured identities are not settable values.
+
+        Global REACH is the Car C7 tag, not ``project_id='global'`` — writing
+        the sentinel here mints exactly the phantom identity ADR-0227 deletes.
+        """
+        pid = _insert_page_owned(f"sentinel-pid-{sentinel}", "m-agahi/yadgar")
+        result = server.wiki_set_metadata(f"sentinel-pid-{sentinel}", "project_id", sentinel)
+        assert result.get("ok") is False
+        assert _storage().get_wiki_page(pid)["project_id"] == "m-agahi/yadgar"
+
+    def test_invalid_field_message_names_current_key_and_marks_legacy(self):
+        """The rejection message must not steer a caller onto the retired key.
+
+        The original message read ``allowed: ['directory_context']`` — so a
+        caller who asked for ``project_id`` (the ADR-0233 scoping key) was told
+        by the tool itself to use the concept ADR-0233 retired. Asserting on
+        the message text because the message IS the defect.
+        """
+        _insert_page_owned("bad-field-page", "m-agahi/yadgar")
+        error = server.wiki_set_metadata("bad-field-page", "content", "hack").get("error", "")
+        assert "project_id" in error
+        assert "directory_context" in error
+        assert "legacy" in error.lower()
+
+    def test_locked_adr_page_is_restampable(self):
+        """A ``page_type='adr'`` page restamps — the re-key's main cohort.
+
+        ADR body pages resolve to effective mutability ``locked``, so Car J's
+        gate refuses ``insert_wiki_page`` / ``update_wiki_page`` /
+        ``delete_wiki_page`` for every unsanctioned caller. The metadata write
+        does NOT go through those: ``set_wiki_page_metadata`` issues its own
+        ``UPDATE type::record('wiki_page', $pid)``, so it never reaches
+        ``enforce_mutability``. Pinned as a test rather than left as an
+        accident, because ledger task 41's corpus is mostly ADR pages and
+        "does the restamp path work on a locked page" is the question that
+        decides whether this fix unblocks it at all.
+        """
+        pid = _storage().insert_wiki_page(
+            {
+                "slug": "locked-adr-restamp",
+                "title": "Locked ADR page",
+                "content": "adr body",
+                "category": "decision",
+                "tags": [],
+                "confidence": "high",
+                "source_memory_ids": [],
+                "links": [],
+                "project_id": "wrong-owner/wrong-repo",
+                "directory_context": "global",
+                "page_type": "adr",
+                # Seeding only — insert_wiki_page IS gated, the metadata write is not.
+                "_sanctioned": True,
+            }
+        )
+        result = server.wiki_set_metadata("locked-adr-restamp", "project_id", "m-agahi/yadgar")
+        assert result.get("ok") is True, f"locked ADR page refused the restamp: {result}"
+        assert _storage().get_wiki_page(pid)["project_id"] == "m-agahi/yadgar"
+
+    def test_mcp_gate_matches_the_store_allowlist(self):
+        """The MCP field gate and ``WikiStore._METADATA_FIELDS`` name one set.
+
+        The shell rejects before forwarding, so its accepted set is hand-written
+        there (the store's ``sorted(frozenset)`` cannot say which member is
+        current and which is legacy). Two hand-maintained copies drift: adding a
+        third field to the frozenset alone would leave it silently rejected at
+        the MCP boundary, by a message that does not mention it.
+        """
+        from yadgar._shared.wiki.store import WikiStore
+
+        accepted = {
+            f
+            for f in ("project_id", "directory_context", "branch", "content")
+            if "invalid field"
+            not in server.wiki_set_metadata("no-such-page", f, "x").get("error", "")
+        }
+        assert accepted == set(WikiStore._METADATA_FIELDS)
+
+    def test_directory_context_still_settable(self):
+        """Regression guard: widening the allowlist is ADDITIVE."""
+        pid = _insert_page_owned("regression-dir-page", "m-agahi/yadgar", "global")
+        result = server.wiki_set_metadata(
+            "regression-dir-page", "directory_context", "/home/max/projects/myapp"
+        )
+        assert result.get("ok") is True
+        page = _storage().get_wiki_page(pid)
+        assert page["directory_context"] == "/home/max/projects/myapp"
+        assert page["project_id"] == "m-agahi/yadgar"
 
 
 # ── Layer 1: anchor-text primitives ───────────────────────────────────────────
