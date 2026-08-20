@@ -409,6 +409,86 @@ jobs:
             exit 1
           }
           echo "YADGAR_TEST_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
+          # ...and the SAME tag for the phase-3 side build. `launcher.backend_image()`
+          # resolves DOCKERHUB_BACKEND_IMAGE from server.json's backend_version — the
+          # PENDING one, which on any PR that bumps it is not published, so it is not
+          # in the local store either. `backend_image_present()` then answers no and
+          # the vacuum SKIPs its side build before doing anything, which the tests
+          # read as a failed vacuum. The resolution above already picked the tag that
+          # can actually be run; the side build has to use that same one, or this job
+          # tests the fixture's image and the vacuum's image separately.
+          echo "YADGAR_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
+
+      - name: Cross the dind namespace split for the vacuum e2e suite (task 228)
+        # Mirrors .github's step of the same name; see it for the full four-layer
+        # account. Short version: this job's daemon is a docker:dind SIDECAR, so
+        # every port and every bind-mount path it is handed is resolved in the
+        # SIDECAR's namespaces, not this shell's — which is how the backend
+        # container came to write its DB somewhere invisible here and the vacuum's
+        # own preflight then reported `DB dir not found`.
+        #
+        # THIS MIRROR IS NOT KNOWN TO BE SUFFICIENT. The fix rests on the runner
+        # and its sidecar sharing a workspace path, which was verified on the
+        # GitHub runner's compose file and NOT on this one — measured 2026-08-20,
+        # this mirror's runner bind-mounts a data dir its sidecar does not mount at
+        # all. If that is still true when this job runs bare, the probe below fails
+        # LOUDLY and names the missing share, which is the point: an honest,
+        # specific failure beats the same job going red on `DB dir not found` with
+        # no indication of why. The two workflow files are kept identical
+        # deliberately — divergence between them is its own recurring bug class.
+        # Nor is it known whether this mirror's job runs bare or inside a
+        # dind-created container: in the latter case DOCKER_HOST is typically
+        # unset in the job and the case below takes its exit-0 branch, leaving
+        # everything at local-dev defaults. Both outcomes are safe; neither is
+        # verified. The fixture mkdtemps a per-module subdir BENEATH the root
+        # exported here, riding the same mount, so proving the root is enough.
+        run: |
+          set -euo pipefail
+          case "${DOCKER_HOST:-}" in
+            tcp://*)
+              hostport=${DOCKER_HOST#tcp://}
+              side_host=${hostport%:*}
+              ;;
+            *)
+              echo "DOCKER_HOST is not a TCP daemon — no namespace split to cross."
+              echo "Leaving both knobs at their local-dev defaults."
+              exit 0
+              ;;
+          esac
+
+          shared_root="${{ github.workspace }}/.vacuum-e2e-data"
+          mkdir -p "$shared_root"
+          marker="$shared_root/.dind-visibility-probe"
+          token="probe-$$-$(date +%s)"
+          echo "$token" > "$marker"
+          seen=$(docker run --rm -v "$shared_root:/probe" docker.io/library/alpine:3 \
+            cat /probe/.dind-visibility-probe 2>/dev/null || true)
+          rm -f "$marker"
+          if [ "$seen" != "$token" ]; then
+            echo "the workspace is NOT visible to the $side_host daemon at the same path." >&2
+            echo "  probed path : $shared_root" >&2
+            echo "  wrote       : $token" >&2
+            echo "  read back   : ${seen:-<nothing>}" >&2
+            echo "The vacuum e2e suite needs one directory that both this shell and the" >&2
+            echo "daemon resolve to the same bytes — the vacuum renames and copytrees it" >&2
+            echo "in-process, so it cannot be proxied. Check that this runner container and" >&2
+            echo "its dind sidecar share a bind mount at one path." >&2
+            exit 1
+          fi
+          echo "workspace is dind-visible at $shared_root; side-build host is $side_host"
+          echo "YADGAR_TEST_SHARED_DATA_ROOT=$shared_root" >> "$GITHUB_ENV"
+          echo "YADGAR_VACUUM_SIDE_HOST=$side_host" >> "$GITHUB_ENV"
+          # LAYER 6: pin the container runtime to docker. `_get_runtime()`
+          # (yadgar/core/daemon/runtime.py) probes `podman --version` FIRST and
+          # returns podman when it answers 0. On this runner podman IS on PATH
+          # and answers --version fine, but cannot DO anything — nested rootless
+          # podman fails "cannot re-exec process" (car G5, confirmed live). So
+          # `backend_image_present()` ran `podman image inspect` against a store
+          # that is not the one dind uses, answered no, and phase 3 SKIPped with
+          # "no usable surreal" even though the image was pullable. That is the
+          # presence-not-function trap this job's own header warns about; the
+          # test fixtures probe FUNCTION and pick docker, the vacuum code did not.
+          echo "YADGAR_CONTAINER_RUNTIME=docker" >> "$GITHUB_ENV"
 
       - name: Run the vacuum e2e integration suite (task 156 / car A3)
         # yadgar/tests/integration/test_vacuum_e2e.py and
