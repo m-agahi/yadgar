@@ -626,6 +626,16 @@ jobs:
         # whose CROSS_ENCODER_MODEL made two readers name the wrong reranker.
         run: python scripts/check_model_id_liveness.py
 
+      - name: Check every bundled third-party binary is catalogued and shipped
+        # SurrealDB (BUSL-1.1 — its own text says "not an Open Source license")
+        # shipped in openfantasy/yadgar-backend and openfantasy/yadgar-ci for
+        # many releases with no license anywhere in the image, because a
+        # bare-binary `COPY --from` carries nothing but the binary and the
+        # source image ships no license file at all. This gate keeps that from
+        # recurring. Note the real gate is on the PUBLISH path in ci-release —
+        # this step is the earlier, cheaper mirror of it.
+        run: python scripts/check_third_party_licenses.py
+
       - name: Check internal route literals resolve to registered routes
         # core/vacuum POSTed /api/check_invariants for months with no route behind
         # it, and six tests mocked that URL to 200 — the mocks agreed with the

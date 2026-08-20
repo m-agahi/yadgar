@@ -1,0 +1,56 @@
+{
+  "_README": "Manifest for scripts/check_third_party_licenses.py. `components` is the inventory of third-party software BUNDLED into published images by a mechanism that does not carry the upstream license with it. `allowlist` governs every OTHER external reference a Dockerfile makes (base images, package indexes, setup scripts) — each needs a rationale saying why no license text is reproduced here. `ship_paths` are the artifacts every Dockerfile must COPY into its image, directly or via an intra-repo parent declared with `built_from`. Both tables are stale-checked: an entry matching nothing in any Dockerfile is a HARD ERROR, so this file cannot rot the way a hand-maintained list does.",
+  "ship_paths": [
+    "LICENSE",
+    "NOTICE",
+    "THIRD-PARTY-LICENSES",
+    "third-party"
+  ],
+  "components": {
+    "surrealdb": {
+      "version": "3.1.5",
+      "license": "BUSL-1.1",
+      "license_file": "third-party/surrealdb-3.1.5.LICENSE",
+      "license_sha256": "98a94ac615f88370865016487b436fa404560910bd329794ed7502277a94b805",
+      "upstream": "https://github.com/surrealdb/surrealdb",
+      "match": [
+        "surrealdb/surrealdb"
+      ],
+      "rationale": "Bundled TWICE at the same pin: Dockerfile.backend copies the bare /surreal binary out of surrealdb/surrealdb:v3.1.5, and Dockerfile.ci curls the v3.1.5 release tarball. Neither mechanism carries a license: a whole-filesystem listing of surrealdb/surrealdb:v3.1.5 (Wolfi/apko) returns zero paths matching license/copyright/notice, so even a full-image copy would not have brought one. BUSL-1.1 is not an Open Source license and its text must be reproduced. Verbatim text taken from the upstream repo at tag v3.1.5."
+    },
+    "gitleaks": {
+      "version": "8.30.1",
+      "license": "MIT",
+      "license_file": "third-party/gitleaks-8.30.1.LICENSE",
+      "license_sha256": "e3884b252b3bfc045e55be43a34d1e80da070bc6f804ac95bf4660e97d62ebc6",
+      "upstream": "https://github.com/gitleaks/gitleaks",
+      "match": [
+        "gitleaks/gitleaks"
+      ],
+      "rationale": "Dockerfile.ci curls the v8.30.1 release tarball and unpacks the bare gitleaks binary to /usr/local/bin. A release tarball carries no license into the image, and MIT requires the copyright notice and permission notice travel with every copy, so the text is reproduced verbatim from the upstream repo at tag v8.30.1."
+    }
+  },
+  "allowlist": {
+    "python:3.14-slim-trixie": {
+      "kind": "base-image",
+      "rationale": "Official Debian-trixie-based Python base image for Dockerfile and Dockerfile.backend. Debian packages install their own license into the image at /usr/share/doc/<pkg>/copyright and `rm -rf /var/lib/apt/lists/*` does not remove them — VERIFIED 2026-08-20 on the published openfantasy/yadgar-backend:5.76.3, where /usr/share/doc/mariadb-server/copyright (35900 bytes) and /usr/share/doc/curl/copyright (22132 bytes) are both present. This is the crux distinguishing an apt install from a bare-binary COPY --from: the apt path needs no entry in THIRD-PARTY-LICENSES, the COPY path does."
+    },
+    "python:3.14-slim": {
+      "kind": "base-image",
+      "rationale": "Official Debian-based Python base image for Dockerfile.ci. Same reasoning as python:3.14-slim-trixie above — apt-installed packages (make, git, curl, ca-certificates, build-essential, gpg, bsdmainutils, graphviz, nodejs, chromium and its libs) land their own /usr/share/doc/<pkg>/copyright inside the image, so no license text is reproduced in this repository for them."
+    },
+    "openfantasy/yadgar-ci": {
+      "kind": "intra-repo-image",
+      "built_from": "Dockerfile.ci",
+      "rationale": "Dockerfile.ci-viz builds FROM this repository's own yadgar-ci image, so surrealdb and gitleaks arrive by layer INHERITANCE rather than by a COPY or a curl this repo's ci-viz Dockerfile performs. It therefore adds no component of its own, and the ship_paths artifacts copied into yadgar-ci persist into the child image — which is why check_third_party_licenses.py resolves this parent instead of demanding a redundant COPY in Dockerfile.ci-viz."
+    },
+    "https://download.pytorch.org/whl/cpu": {
+      "kind": "package-index",
+      "rationale": "PyPI-compatible wheel index used to install CPU-only torch in Dockerfile.backend. This is a pip package index, not a bundled binary: each installed distribution carries its own license metadata in its .dist-info directory inside the image, which is the same self-carrying property that puts apt packages out of scope."
+    },
+    "https://deb.nodesource.com/setup_22.x": {
+      "kind": "apt-repo-setup",
+      "rationale": "NodeSource repository setup script run in Dockerfile.ci; it configures an apt source and installs nothing itself. The nodejs package it enables is then installed via apt-get and lands its own /usr/share/doc/nodejs/copyright in the image, so no license text is reproduced here."
+    }
+  }
+}

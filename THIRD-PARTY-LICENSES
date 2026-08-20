@@ -1,0 +1,134 @@
+THIRD-PARTY LICENSES
+====================
+
+Yadgar itself is licensed under the Apache License, Version 2.0 (see LICENSE).
+This file is the inventory of THIRD-PARTY SOFTWARE BUNDLED INTO THE CONTAINER
+IMAGES published from this repository, together with the version bundled and a
+pointer to the verbatim text of each component's license.
+
+Verbatim license texts live in third-party/ next to this file. They are
+byte-identical copies of the upstream text at the pinned version, are excluded
+from this repository's whitespace-normalising pre-commit hooks, and their
+SHA-256 digests are pinned in .third-party-manifest.json and re-checked on every
+commit by scripts/check_third_party_licenses.py.
+
+This file, LICENSE, NOTICE and third-party/ are copied into every published
+image at /usr/share/doc/yadgar/ (see "Where each component is bundled" below).
+
+
+SCOPE — what this file does and does not cover
+----------------------------------------------
+COVERED: third-party software bundled into the images by a mechanism that does
+NOT bring the upstream license along with it — a bare-binary `COPY --from=` out
+of another image, or a release tarball unpacked with curl + tar. Nothing else
+from the source image or archive travels with the binary, so its license does
+not travel either, and it must be reproduced here.
+
+NOT COVERED, deliberately: Debian packages installed with `apt-get install`.
+Those land their license in the image themselves, at
+/usr/share/doc/<package>/copyright, and `rm -rf /var/lib/apt/lists/*` does not
+remove them. Verified 2026-08-20 by read-only inspection of the PUBLISHED image
+openfantasy/yadgar-backend:5.76.3:
+
+    /usr/share/doc/mariadb-server/copyright   35900 bytes   present
+    /usr/share/doc/curl/copyright             22132 bytes   present
+    /usr/share/doc/surreal*/copyright         -             ABSENT
+
+The same inspection is why this file exists: the `surreal` binary had no license
+anywhere in the image, because the image it is copied out of
+(surrealdb/surrealdb:v3.1.5, a Wolfi/apko image) ships no license file at all —
+a whole-filesystem listing of that image returns zero paths matching
+license/copyright/notice.
+
+NOT COVERED, deliberately: Python distributions installed by pip/uv. Their
+license metadata is carried in each installed distribution's .dist-info.
+
+NOT COVERED: machine-learning model weights downloaded at build time into the
+HuggingFace cache (all-MiniLM-L6-v2, the Ettin and GTE cross-encoders,
+doc2query, COMET-BART). Each carries its own upstream model licence; they are
+data, not linked or bundled binaries, and cataloguing them is a separate piece
+of work that has not been done.
+
+
+Where each component is bundled
+-------------------------------
+Image                       Built from        Bundles
+--------------------------  ----------------  ------------------------------
+openfantasy/yadgar          Dockerfile        (none — apt only)
+openfantasy/yadgar-backend  Dockerfile.backend surrealdb 3.1.5
+openfantasy/yadgar-ci       Dockerfile.ci     surrealdb 3.1.5, gitleaks 8.30.1
+openfantasy/yadgar-ci-viz   Dockerfile.ci-viz (inherits from yadgar-ci)
+
+
+================================================================================
+SurrealDB
+================================================================================
+Version bundled:  3.1.5
+License:          Business Source License 1.1 (BUSL-1.1)
+Upstream:         https://github.com/surrealdb/surrealdb
+Verbatim text:    third-party/surrealdb-3.1.5.LICENSE
+Retrieved from:   the upstream repository at tag v3.1.5
+SHA-256:          98a94ac615f88370865016487b436fa404560910bd329794ed7502277a94b805
+
+Bundled by:
+  Dockerfile.backend   COPY --from=surrealdb/surrealdb:v3.1.5 /surreal
+                       /usr/local/bin/surreal
+  Dockerfile.ci        curl of the v3.1.5 release tarball from
+                       github.com/surrealdb/surrealdb/releases, unpacked to
+                       /usr/local/bin/surreal
+
+Parameters. Every line between the markers below is reproduced unaltered from
+third-party/surrealdb-3.1.5.LICENSE; the markers are this document's, the text
+between them is not. The Additional Use Grant continues in the source with a
+longer definition of "Database Service" that is NOT reproduced here — read the
+file for it.
+
+--- BEGIN VERBATIM QUOTE: third-party/surrealdb-3.1.5.LICENSE ---
+Licensor:             SurrealDB Ltd.
+Licensed Work:        SurrealDB 3.0
+                      The Licensed Work is (c) 2025 SurrealDB Limited
+Additional Use Grant: You may make use of the Licensed Work, provided that
+                      you may not use the Licensed Work as a Database
+                      Service.
+
+Change Date:          2030-01-01
+
+Change License:       Apache License, Version 2.0
+--- END VERBATIM QUOTE ---
+
+The "Licensed Work: SurrealDB 3.0" line is the upstream text's own label and is
+reproduced unaltered; the artifact actually bundled is version 3.1.5, taken from
+the image tag surrealdb/surrealdb:v3.1.5 and from the v3.1.5 release tarball.
+
+The license text further states:
+
+--- BEGIN VERBATIM QUOTE: third-party/surrealdb-3.1.5.LICENSE ---
+The Business Source License (this document, or the "License") is not an Open
+Source license. However, the Licensed Work will eventually be made available
+under an Open Source License, as stated in this License.
+
+License text copyright (c) 2017 MariaDB Corporation Ab, All Rights Reserved.
+"Business Source License" is a trademark of MariaDB Corporation Ab.
+--- END VERBATIM QUOTE ---
+
+Read third-party/surrealdb-3.1.5.LICENSE for the complete terms, including the
+full definition of "Database Service" in the Additional Use Grant, which is
+longer than the excerpt above.
+
+
+================================================================================
+gitleaks
+================================================================================
+Version bundled:  8.30.1
+License:          MIT License
+Upstream:         https://github.com/gitleaks/gitleaks
+Verbatim text:    third-party/gitleaks-8.30.1.LICENSE
+Retrieved from:   the upstream repository at tag v8.30.1
+SHA-256:          e3884b252b3bfc045e55be43a34d1e80da070bc6f804ac95bf4660e97d62ebc6
+
+Bundled by:
+  Dockerfile.ci        curl of the v8.30.1 release tarball from
+                       github.com/gitleaks/gitleaks/releases, unpacked to
+                       /usr/local/bin/gitleaks
+
+Copyright (c) 2019 Zachary Rice.
