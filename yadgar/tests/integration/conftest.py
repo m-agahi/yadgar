@@ -11,6 +11,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -76,6 +77,55 @@ def _docker_endpoint_host() -> str:
     return host.strip("[]") or "127.0.0.1"
 
 
+#: Absolute path visible at the SAME absolute path to BOTH this process and the
+#: container runtime's daemon.  Set by CI; unset everywhere else.
+SHARED_DATA_ROOT_ENV = "YADGAR_TEST_SHARED_DATA_ROOT"
+
+
+def _provision_data_dir(tmp_path_factory) -> tuple[Path, bool]:
+    """Return ``(data_dir, is_shared)`` — where the backend's ``/data`` lives.
+
+    THE BIND-MOUNT HALF OF THE NAMESPACE SPLIT.  ``docker run -v {data_dir}:/data``
+    is a string the DAEMON resolves, not this process.  When the daemon is a
+    ``docker:dind`` sidecar it resolves ``/tmp/pytest-of-root/pytest-N/...`` inside
+    the SIDECAR's filesystem, creates it empty there, and the backend writes its
+    whole DB somewhere this process cannot see — while the dir here stays empty and
+    ``cmd_vacuum_impl``'s preflight reports ``DB dir not found``.  That is the same
+    split :func:`_docker_endpoint_host` fixes for the published port, one layer
+    down.  ``docker cp`` is not an answer: the vacuum does ``os.rename`` /
+    ``shutil.copytree`` / ``shutil.rmtree`` in-process and its crash-mid-swap
+    recovery rests on POSIX rename atomicity, so proxying the filesystem would
+    leave the invariant untested while looking tested.
+
+    The fix is a path that means the SAME DIRECTORY on both sides.  CI names one in
+    ``YADGAR_TEST_SHARED_DATA_ROOT`` — on the GitHub self-hosted runner the runner
+    container and its dind sidecar both bind-mount the host's runner-work dir at
+    ``/runner/work``, so anything beneath it is already namespace-invariant, for
+    free.  This also closes phase 3's side-build container (``launcher.py``:
+    ``-v {side_path.parent}:/data``), which mounts the very same directory.
+
+    Unset → ``tmp_path_factory``, i.e. exactly today's behaviour.  An env var
+    rather than sniffing ``DOCKER_HOST``: the coupling to CI's layout is then
+    greppable and declared at the call site instead of guessed inside test code,
+    and ordinary local dev cannot accidentally take the shared branch.
+
+    ISOLATION — read before "simplifying" this to a fixed directory.  Both vacuum
+    e2e tests assert on the ABSENCE of ``surreal_db.old-*`` / ``surreal_db.new-*``
+    / ``*.tmp``, so residue from an earlier module (or an earlier CI run on a
+    runner whose workspace persists) would fail a later test for a reason that has
+    nothing to do with the code under test.  ``mkdtemp`` therefore gives every
+    fixture instantiation its own subdirectory — the same one-dir-per-module
+    lifetime ``tmp_path_factory.mktemp`` already provided — and the caller removes
+    it on teardown, because nothing else will.
+    """
+    root = os.environ.get(SHARED_DATA_ROOT_ENV, "").strip()
+    if not root:
+        return tmp_path_factory.mktemp("yadgar_itest_data"), False
+    base = Path(root)
+    base.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="yadgar_itest_data", dir=base)), True
+
+
 def _wait_http_200(url: str, timeout: float = 60.0, interval: float = 1.0) -> bool:
     import urllib.request
 
@@ -110,7 +160,7 @@ def live_backend_container(tmp_path_factory):
     if docker_cmd is None:
         pytest.skip("docker/podman not available on this host")
 
-    data_dir = tmp_path_factory.mktemp("yadgar_itest_data")
+    data_dir, data_dir_is_shared = _provision_data_dir(tmp_path_factory)
     # The container runs as user 'yadgar' (non-root); make the data dir world-writable
     # so SurrealKV can create its data files inside the bind-mounted volume.
     data_dir.chmod(0o777)
@@ -219,3 +269,12 @@ def live_backend_container(tmp_path_factory):
             capture_output=True,
             timeout=15,
         )
+
+    # A shared-root dir is OURS to remove — pytest's tmp-path retention policy does
+    # not reach outside its own base dir, and the CI runner's workspace survives
+    # the job, so leaving it would accumulate whole SurrealDB copies run over run
+    # AND leak `surreal_db.old-*` residue into the absence assertions of whatever
+    # runs next.  Best-effort: a leftover that cannot be removed must not turn a
+    # passing suite red during teardown.
+    if data_dir_is_shared:
+        shutil.rmtree(data_dir, ignore_errors=True)

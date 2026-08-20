@@ -498,6 +498,25 @@ class TestContainerInvocationContract:
             "binding 127.0.0.1 INSIDE the container makes the published port connect-refuse"
         )
 
+    def test_non_loopback_side_host_publishes_on_all_daemon_interfaces(self, monkeypatch):
+        """A REMOTE daemon's loopback is not ours — publishing there is unreachable.
+
+        ``docker:dind`` sidecar case (task 228): the runtime that executes the
+        ``-p`` lives in a different network namespace, so ``127.0.0.1:<port>``
+        binds THAT namespace's loopback and the caller can never connect. When the
+        side host is not loopback the port must go on all of the daemon's
+        interfaces instead, and be reached at that host.
+        """
+        monkeypatch.setenv("YADGAR_VACUUM_SIDE_HOST", "dind")
+        with tempfile.TemporaryDirectory() as td:
+            run, _side = self._start(td, monkeypatch)
+        assert "-p 54321:8000" in run, (
+            f"a non-loopback side host must publish on all daemon interfaces; argv:\n{run}"
+        )
+        assert "-p 127.0.0.1:54321:8000" not in run, (
+            "the loopback bind is exactly what is unreachable across the namespace split"
+        )
+
     def test_entrypoint_is_surreal_not_the_backend_script(self, monkeypatch):
         """PID 1 must BE surreal, or `stop`'s SIGTERM lands on a bash trap instead."""
         with tempfile.TemporaryDirectory() as td:
@@ -620,6 +639,45 @@ class TestBackendImageProbe:
 
         monkeypatch.setenv("YADGAR_BACKEND_IMAGE", "example.invalid/custom:9")
         assert backend_image() == "example.invalid/custom:9"
+
+
+class TestSideBuildHost:
+    """The publish host and the connect host must be the SAME resolved value.
+
+    Layer 4 of the dind namespace split (task 228): ``launcher.py`` published the
+    side port and ``vacuum/__init__.py`` built ``side_url`` from two independent
+    hardcoded ``127.0.0.1`` literals. They agreed only by coincidence, and stopped
+    agreeing the moment the runtime moved into another namespace.
+    """
+
+    def test_default_is_loopback(self, monkeypatch):
+        """Production behaviour is unchanged — a wider default would leak the corpus."""
+        from yadgar.core.vacuum.launcher import SIDE_HOST_DEFAULT, side_build_host
+
+        monkeypatch.delenv("YADGAR_VACUUM_SIDE_HOST", raising=False)
+        assert side_build_host() == "127.0.0.1"
+        assert SIDE_HOST_DEFAULT == "127.0.0.1"
+
+    def test_override_is_honoured_and_trimmed(self, monkeypatch):
+        from yadgar.core.vacuum.launcher import side_build_host
+
+        monkeypatch.setenv("YADGAR_VACUUM_SIDE_HOST", "  dind  ")
+        assert side_build_host() == "dind"
+
+    def test_blank_override_falls_back_to_loopback(self, monkeypatch):
+        """An empty string must not produce ``http://:1234``."""
+        from yadgar.core.vacuum.launcher import side_build_host
+
+        monkeypatch.setenv("YADGAR_VACUUM_SIDE_HOST", "   ")
+        assert side_build_host() == "127.0.0.1"
+
+    def test_publish_spec_matches_the_host_it_will_be_reached_at(self, monkeypatch):
+        from yadgar.core.vacuum.launcher import side_publish_spec
+
+        monkeypatch.delenv("YADGAR_VACUUM_SIDE_HOST", raising=False)
+        assert side_publish_spec(9999) == "127.0.0.1:9999:8000"
+        monkeypatch.setenv("YADGAR_VACUUM_SIDE_HOST", "dind")
+        assert side_publish_spec(9999) == "9999:8000"
 
 
 def test_no_stray_side_container_name_collision():
