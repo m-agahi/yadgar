@@ -40,4 +40,4 @@ except PackageNotFoundError:
 # v5.182 bug train: scoped restore reads, live hooks, honest write results.
 # Keep this assignment on ONE line — scripts/sync_version.py matches
 # `^BACKEND_VERSION\s*=\s*"` and a wrapped form silently breaks the sync hook.
-BACKEND_VERSION = "5.78.1"
+BACKEND_VERSION = "5.79.0"
