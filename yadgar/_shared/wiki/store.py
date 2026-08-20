@@ -12,6 +12,7 @@ import difflib
 import logging
 import re
 import time as _time
+from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 
 from yadgar._shared.observability.observe import observe
@@ -29,6 +30,7 @@ from yadgar._shared.wiki.contract import (
 from yadgar._shared.wiki.policy import MUTABILITY_VALUES
 from yadgar._shared.wiki.policy import get_policy as _get_wiki_policy
 from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
+from yadgar._shared.wiki.slug import MAX_SLUG_LEN as _MAX_SLUG_LEN
 from yadgar._shared.wiki.slug import slugify as _slugify_fn
 from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 
@@ -885,6 +887,28 @@ class WikiStore:
         """
         return self._storage.get_wiki_page_by_slug_directory(slug, caller_directory)
 
+    def read_by_project(self, slug: str, project_id: str) -> dict | None:
+        """Read a wiki page with §25 resolution keyed on ``project_id``.
+
+        Car W2 (ledger task 219) — the ADR-0233 counterpart of
+        ``read_by_directory``: same two-rung shape, sole scoping key swapped.
+
+        1. project_id = $pid   (the caller's own project)
+        2. the Car C7 global reach tag   (the cross-project library)
+        3. Returns None if not found.
+
+        ``read_by_directory`` is KEPT, not replaced: ``adr_seed`` and
+        ``adr_retype`` still resolve on the stored ``directory_context`` column,
+        which ADR-0233 retires as a scoping KEY without dropping the column.
+
+        Car W4 removed ``_resolve_page_id_by_slug`` from that list. It now
+        prefers this method and falls back to ``read_by_directory`` only when no
+        identity was resolved — the back-compat floor the four
+        ``http_wiki_versioning`` endpoints stand on (they pass a slug and
+        nothing else).
+        """
+        return self._storage.get_wiki_page_by_slug_project(slug, project_id)
+
     @observe(tier="stage")
     def _collect_wiki_fts_scores(
         self,
@@ -1291,19 +1315,48 @@ class WikiStore:
         tags: list[str] | None = None,
         source_memory_ids: list[int] | None = None,
         *,
-        project_id: str | None = None,
+        category: str = "reference",
+        opts: WikiAddOptions | None = None,
     ) -> dict:
-        """Ingest content. If title matches existing page, append with timestamp.
+        """Ingest content. Appends with a timestamp when the slug already exists.
 
-        C13 (0047 PR#40 §5): ``project_id`` is threaded through to the create
-        branch. The append branch does not need it — it UPDATEs a row whose
-        owner was stamped by whoever inserted it, and re-stamping on append
-        would let a second writer rename an existing page's owner. The create
-        branch is a real insert, and after C5 an unstamped insert raises.
+        W1 (ledger task 220): the target slug is ``opts.slug`` when the caller
+        supplies one, and only falls back to ``self._slugify(title)`` when it
+        does not. Before W1 this method had no slug parameter at all, so the
+        ``wiki_add(append=True)`` path — its only production caller — silently
+        re-derived the slug from the TITLE and wrote a SHADOW page at
+        ``slugify(title)`` while reporting the caller's slug back. Invisible
+        whenever ``slug == slugify(title)``; always wrong for the project-
+        prefixed ``{project}_{name}`` scheme (ADR-0211), whose slug never
+        equals its title's.
+
+        ``opts`` replaces the former ``project_id`` keyword rather than sitting
+        beside it: the caller now has six values to hand over (slug,
+        directory_context, page_type, confidence, source_memory_ids,
+        project_id) and ``WikiAddOptions`` is already the bundle ``add()``
+        takes them in. Passing them individually would put this signature at
+        eleven params, over I13's ``params_hard=8``. ``category`` stays a named
+        param because it is a positional of ``add()``, not a member of the
+        bundle.
+
+        The two branches carry the bundle DIFFERENTLY, on purpose:
+
+        * **create** forwards it whole. That branch is a real insert, and it is
+          the one that manufactured the ``directory_context="global"``,
+          ``category="reference"`` shadow rows — an insert that drops the
+          caller's scope invents a page nobody asked for.
+        * **merge** writes CONTENT and content-derived fields only, exactly as
+          it did before W1. C13 already argued this for ``project_id``:
+          re-stamping an existing page on append lets a second writer rename a
+          page it did not create. The same argument covers scope and category —
+          and ``category`` would be worse, because its ``"reference"`` default
+          is always non-None on the drainer payload, so carrying it would
+          downgrade a ``decision`` page on every append.
         """
+        o = opts or WikiAddOptions()
         if title is None:
             title = "Untitled"
-        slug = self._slugify(title)
+        slug = o.slug if o.slug is not None else self._slugify(title)
         existing = self._storage.get_wiki_page_by_slug(slug)
 
         if existing:
@@ -1328,14 +1381,22 @@ class WikiStore:
             self._link_memories(slug, source_memory_ids or [])
             return {**existing, **updates}
 
+        # W1: forward the bundle WHOLE — slug, directory_context, category,
+        # confidence, page_type, upsert, sanctioned, project_id. ``add`` resolves
+        # ``opts.slug`` the same way this method just did, so the created page
+        # lands at the caller's slug and not at ``slugify(title)``.
+        # ``source_memory_ids`` stays the positional param (the pre-W1 contract).
+        # A caller who states one there OVERRIDES the bundle's copy, so passing
+        # both is unambiguous; omitting it (``None``) falls through to the
+        # bundle, which is what a caller who only fills ``opts`` expects.
         return self.add(
             title=title,
             content=content,
+            category=category,
             tags=tags,
-            opts=WikiAddOptions(
-                source_memory_ids=source_memory_ids,
-                project_id=project_id,
-            ),
+            opts=o
+            if source_memory_ids is None
+            else _dc_replace(o, source_memory_ids=source_memory_ids),
         )
 
     @observe(tier="boundary")
@@ -1834,10 +1895,13 @@ class WikiStore:
         size_before = len(page_content.encode())
         size_after = len(new_content.encode())
 
-        self._storage.update_wiki_page(page_id, {"content": new_content})
+        # Car W3 (ledger task 216): ``append_section`` already synced crossrefs
+        # but wrote ``content`` alone, so the table was right while the
+        # denormalised ``links`` array rotted — the pair was inconsistent.
+        links = self._extract_wikilinks(new_content)
+        self._storage.update_wiki_page(page_id, {"content": new_content, "links": links})
         new_version = self._storage.get_max_version_for_page(page_id)
 
-        links = self._extract_wikilinks(new_content)
         self._sync_crossrefs(page.get("slug", ""), links)
 
         return {
@@ -2152,7 +2216,17 @@ class WikiStore:
         rejected = self._reject_if_discipline_weakening(page_id, old_content, new_content)
         if rejected is not None:
             return rejected
-        self._storage.update_wiki_page(page_id, {"content": new_content})
+        # Car W3 (ledger task 216): re-derive links from the POST-edit content
+        # and write both surfaces, mirroring ``ingest``'s merge branch. Writing
+        # only ``content`` left the denormalised ``links`` array stale and never
+        # touched ``wiki_crossref`` at all — a link ADDED or REMOVED by a
+        # surgical edit was invisible in both. Full re-derive (not append) is
+        # what makes the removal direction work.
+        links = self._extract_wikilinks(new_content)
+        self._storage.update_wiki_page(page_id, {"content": new_content, "links": links})
+        page = self._storage.get_wiki_page(page_id)
+        if page:
+            self._sync_crossrefs(page.get("slug", ""), links)
         new_version = self._storage.get_max_version_for_page(page_id)
         return {
             "ok": True,
@@ -2534,10 +2608,38 @@ class WikiStore:
         """
         return _slugify_fn(title)
 
+    #: A bracket body that is ALREADY a slug: lowercase alnum plus ``-``/``_``.
+    #: Car W3 (ledger task 218): ``slugify`` collapses ``_`` to ``-``, so every
+    #: post-ADR-0211 canonical slug (``{project with / -> _}_{name}``) came out
+    #: of ``_extract_wikilinks`` corrupted — ``m-agahi_yadgar_adr-0253`` became
+    #: ``m-agahi-yadgar-adr-0253``, matching no page. Both ``wiki_page.links``
+    #: and the ``wiki_crossref`` table are fed from here, so BOTH surfaces were
+    #: wrong and ``get_wiki_backlinks`` (exact ``to_slug`` match) never resolved.
+    #: The fix is local to extraction: ``slugify`` itself is the ADR-0170
+    #: single source of truth for title→slug MINTING and must keep hyphenating.
+    _SLUG_SHAPED = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
     def _extract_wikilinks(self, content: str) -> list[str]:
-        """Extract [[slug]] references from markdown content."""
+        """Extract ``[[slug]]`` references from markdown content.
+
+        A bracket body that is already slug-shaped is taken VERBATIM.  Anything
+        else — prose titles such as ``[[My Cool Page]]`` — keeps the legacy
+        slugify behaviour.
+
+        The 64-char cap is applied on BOTH paths.  Exempting the passthrough
+        looked like a free win (ADR-0211 allows 256) and is not: pages minted
+        from a long title live at the 64-char truncation, so a link body written
+        out at full length would stop resolving.  Measured on the live corpus
+        before shipping — 11 ``wiki_crossref`` rows resolve TODAY at a
+        64-truncated ``to_slug`` whose source content holds the full-length
+        slug-shaped body.  Canonical slugs are far shorter (~23 chars), so the
+        cap costs the defect nothing.
+        """
         raw = re.findall(r"\[\[([^\]]+)\]\]", content)
-        return list(dict.fromkeys(self._slugify(r) for r in raw))  # dedupe, preserve order
+        resolved = (
+            r[:_MAX_SLUG_LEN] if self._SLUG_SHAPED.match(r) else self._slugify(r) for r in raw
+        )
+        return list(dict.fromkeys(resolved))  # dedupe, preserve order
 
     @observe(tier="stage")
     def _compute_embedding(self, title: str, content: str) -> bytes | None:

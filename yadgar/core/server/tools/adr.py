@@ -69,6 +69,8 @@ from yadgar.core.server.tools.adr_render import (
     _build_adr_body,
     _canonical_adr_payload,
     _flip_superseded_target,
+    _fmt_superseded_by,
+    _fmt_supersedes,
     _parse_supersedes,
 )
 from yadgar.core.server.tools.project import _resolve_project_root
@@ -112,9 +114,12 @@ def _write_ok(result: dict) -> bool:
 # ``admin_exec/ledger.py``); schema per §3.5 of the master plan:
 #   {id, project_id, title, status, decided_on, subsystem, tier, body_slug,
 #    created_at, updated_at}
-# Car G populates the ``adr_supersedes`` join table during the seed; F emits
-# empty values for ``supersedes`` / ``superseded_by`` until that join is
-# readable (no ``list_adr_supersedes`` read method exists yet — out of F scope).
+# ``supersedes`` / ``superseded_by`` are NOT columns on ``adr`` (migration 002)
+# — they arrive as id LISTS attached by the backend read ops from the
+# ``adr_supersedes`` join table. Ledger task 195: that reader
+# (``MariaStorageEngine.list_adr_supersedes``) is Car B2's; Car F left the two
+# keys empty pending it and nothing picked it up for four cars, so every
+# supersede-bearing ADR rendered ``"none"`` / ``"-"`` (22/22, two corpora).
 
 
 @observe(tier="stage", metric="tools.adr._row_to_adr_list_entry")
@@ -132,8 +137,8 @@ def _row_to_adr_list_entry(row: dict) -> dict:
         "status": row.get("status") or "open",
         "date": row.get("decided_on") or "",
         "title": row.get("title") or "",
-        "supersedes": row.get("supersedes") or "none",
-        "superseded_by": row.get("superseded_by") or "-",
+        "supersedes": _fmt_supersedes(row.get("supersedes")),
+        "superseded_by": _fmt_superseded_by(row.get("superseded_by")),
         "slug": row.get("body_slug") or "",
     }
 
@@ -333,7 +338,8 @@ def adr_add(
         return step3
 
     # Step 4: supersede-link rows + flip target status (D23 status flip).
-    _link_adr_supersede_targets(adr_id_int, supersedes)
+    # ``project_id`` scopes the target resolution — ledger task 190.
+    _link_adr_supersede_targets(adr_id_int, supersedes, project_id)
 
     # Step 5: §10 Q1 on-write rollup regen — only when subsystem is set
     # (a rollup keyed on ``None`` is meaningless; the page-by-subsystem
@@ -528,23 +534,85 @@ def _link_adr_body_slug(adr_id_int: int, adr_id: str, page_slug: str) -> dict | 
     return None
 
 
+@observe(tier="stage", metric="tools.adr._resolve_supersede_target")
+def _resolve_supersede_target(target_int: int, project_id: str) -> int | None:
+    """Return ``target_int`` when it names a row in ``project_id``, else None.
+
+    Ledger task 190: the prose number was previously forwarded verbatim as the
+    ``adr_supersedes.supersedes_id`` FK. ``adr.id`` is ONE GLOBAL
+    ``AUTO_INCREMENT`` shared across projects, so that number routinely names
+    ANOTHER project's ADR — and the backend ``add_adr_supersedes`` op flips the
+    target row's status to ``'superseded'`` (Car F, D23), so an unvalidated FK
+    retires a live decision in someone else's namespace.
+
+    The check is a project-scoped ``get_adr_row`` — the same rule the seed path
+    already applies ("a wrong FK is unrepairable; a gap is not",
+    ``adr_seed``) and the same defensive shape ``_fetch_adr_body_page`` uses on
+    the body half. The row's own ``project_id`` is re-compared here rather than
+    trusted from the scoped lookup alone: it costs one comparison and it is the
+    half that survives a backend that stops scoping.
+
+    WHAT THIS DOES NOT DO: recover a LEGACY (pre-re-landing) ADR number. That
+    numbering is not recoverable from any stored data — ``body_slug`` carries
+    the post-re-landing number, which is the row id. A legacy number therefore
+    resolves to whichever same-project row now wears it, or to nothing.
+    """
+    envelope = _forward_admin(
+        "get_adr_row",
+        {"id": target_int, "project_id": project_id},
+    )
+    row = envelope.get("row") if isinstance(envelope, dict) else None
+    if not isinstance(row, dict):
+        return None
+    if str(row.get("project_id") or "") != project_id:
+        return None
+    return target_int
+
+
 @observe(tier="stage", metric="tools.adr._link_adr_supersede_targets")
-def _link_adr_supersede_targets(adr_id_int: int, supersedes: str) -> None:
+def _link_adr_supersede_targets(adr_id_int: int, supersedes: str, project_id: str) -> None:
     """Step 4 of ``adr_add``: forward ``add_adr_supersedes`` for each target.
     Best-effort — failure logs and continues so the row + body link survive.
-    Extracted from ``adr_add`` (I13 fn_loc)."""
+    Extracted from ``adr_add`` (I13 fn_loc).
+
+    Ledger task 190: each target is resolved against ``project_id`` first (see
+    ``_resolve_supersede_target``). An unresolved target is SKIPPED and logged
+    rather than linked — a link that never happened must not look identical to
+    one that did."""
     import logging  # noqa: PLC0415
 
+    logger = logging.getLogger(__name__)
     target_ids = _parse_supersedes(supersedes)
     for tid in target_ids:
         target_int = int(tid.split("-")[1])
         try:
+            resolved = _resolve_supersede_target(target_int, project_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "adr_add supersede target resolve failed: adr_id=%s target=%s "
+                "project_id=%s err=%s — link NOT written",
+                f"ADR-{adr_id_int:04d}",
+                tid,
+                project_id,
+                exc,
+            )
+            continue
+        if resolved is None:
+            logger.warning(
+                "adr_add supersede target %s has no row in project_id=%s — "
+                "link NOT written (adr.id is a global AUTO_INCREMENT; linking "
+                "it would flip another project's row to 'superseded')",
+                tid,
+                project_id,
+            )
+            continue
+        try:
             _forward_admin(
                 "add_adr_supersedes",
-                {"adr_id": adr_id_int, "supersedes_id": target_int},
+                {"adr_id": adr_id_int, "supersedes_id": resolved},
             )
         except Exception as exc:  # noqa: BLE001
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "adr_add supersede link failed: adr_id=%s target=%s err=%s",
                 f"ADR-{adr_id_int:04d}",
                 tid,
@@ -650,10 +718,11 @@ def _fetch_adr_body_page(
 
     Candidate order:
       1. the ROW's stored ``body_slug`` — authoritative — but ONLY when it is
-         consistent with the resolved project_id. ``get_adr_row`` discards
-         ``project_id`` (ledger task 188, out of scope here), so an
-         inconsistent slug means a foreign row leaked; honouring it would
-         serve another project's PROSE, not merely its metadata.
+         consistent with the resolved project_id. ``get_adr_row`` used to
+         discard ``project_id`` (ledger task 188, fixed in Car B1), so an
+         inconsistent slug meant a foreign row had leaked; honouring it would
+         serve another project's PROSE, not merely its metadata. The check
+         stays as defence in depth now that the row lookup is scoped.
       2. the derived D32 ③ slug ``{project_id with / → _}_adr-NNNN``.
       3. the legacy ``{basename(project_id)}-adr-NNNN`` for the pages Car L
          has not re-slugged. Residual risk (pre-existing, unchanged by this
@@ -741,7 +810,11 @@ def _row_to_response_metadata(row: dict) -> dict[str, Any]:
         "rationale": "",  # prose lives on the body page (D4)
         "alternatives": "",  # ditto
         "revisit_trigger": "",  # ditto
-        "supersedes": row.get("supersedes") or "none",
+        "supersedes": _fmt_supersedes(row.get("supersedes")),
+        # Ledger task 195: NEW key. ``adr_get`` never emitted it, so the read
+        # of a superseded ADR could not say what replaced it. D5's merge is
+        # additive-only, which licenses the addition.
+        "superseded_by": _fmt_superseded_by(row.get("superseded_by")),
         "subsystem": row.get("subsystem") or "",
         "tier": row.get("tier") or "",
         "baseline_hash": row.get("baseline_hash") or "",
@@ -904,6 +977,8 @@ __all__ = [
     "_build_adr_body",
     "_canonical_adr_payload",
     "_flip_superseded_target",
+    "_fmt_supersedes",
+    "_fmt_superseded_by",
     "_parse_supersedes",
     # adr.py-local
     "_FATAL_WRITE_REASONS",

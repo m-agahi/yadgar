@@ -8,7 +8,34 @@ name: Mutation sweep (weekly health signal — non-blocking)
 # Triage findings manually after each weekly run.
 #
 # Target: yadgar/backend/retrieval/ + yadgar/_shared/cognitive_map.py —
-# high-value fusion/retrieval logic, small enough to fit the time-box.
+# high-value fusion/retrieval logic, small enough to fit the time-box. The
+# --runner below is scoped to exactly the test files that exercise those two
+# targets (not the whole yadgar/tests/ tree) — the full suite takes ~57 min
+# wall-clock even with -n auto, which cannot fit a single baseline check
+# inside the 600s box, let alone leave any of it for actual mutants. That
+# six-file list is HAND-MAINTAINED (task-#77's exact class of drift, see the
+# guards-and-tooling wiki page): if a test moves, is renamed, or a new test
+# file is added for either target area without this list being updated, the
+# sweep's oracle silently narrows and nothing here will say so.
+#
+# THROUGHPUT (measured 2026-08-19, this repo's scoped 6-file/~141-test set,
+# test-extra-only — no ml extra, so not a clean baseline, but real numbers
+# for the shapes that matter): a full pass of the 6-file set takes ~80-125s
+# depending on xdist worker startup; a single test that fails fast under -x
+# resolves in ~12-14s. Baseline + survivor checks always pay the full-suite
+# cost; only a KILLED mutant gets the fast exit -x provides. At roughly
+# 80-125s for baseline + full-suite survivor checks, the 600s box has room
+# for on the order of low tens of mutants per run when most are killed
+# quickly, far fewer if several survive — this is an estimate (not measured
+# end-to-end: no yadgar-ci pull, no ml extra, no live mutmut run against the
+# full target areas in this environment), not a guarantee. The mutation
+# CACHE below is what makes a weekly cadence at that throughput worthwhile:
+# without it, an unbounded population gets re-tested from the same starting
+# point every week, forever, and never converges — WITH it, each week
+# resumes from the last, so overall coverage of the two target areas grows
+# monotonically. If it turns out even that never converges in practice,
+# the numbers above are the basis for shortening --paths-to-mutate rather
+# than the cadence itself (the cache makes cadence not the bottleneck).
 #
 # How to run manually:
 #   GitHub UI → Actions → "Mutation sweep (...)" → Run workflow
@@ -16,6 +43,50 @@ name: Mutation sweep (weekly health signal — non-blocking)
 #
 # NOTE: scheduled (`schedule:`) workflows only trigger from the workflow file
 # committed on the repo's DEFAULT branch on GitHub Actions.
+#
+# LEDGER TASK 167 — this workflow was red every scheduled run for 4+ weeks
+# (2026-07-27 .. 2026-08-17) and nobody noticed. Root cause was THREE stacked
+# environment bugs, each hiding the next:
+#   1. `container: image: docker.io/library/python:3.14-slim` has no `git` —
+#      the very next step (`git config --global --add safe.directory`)
+#      failed with "git: not found" (exit 127) in 14-18s, every single run,
+#      before `mutmut` was ever installed or invoked.
+#   2. `pip install ... mutmut` was UNPINNED. PyPI's current `mutmut` is
+#      3.7.0, a from-scratch config-file-driven rewrite with NO
+#      `--paths-to-mutate` / `--runner` CLI flags at all — the exact
+#      invocation below only works on the 2.x line (verified against 2.5.1,
+#      the last 2.x release). Fixing bug 1 alone would have traded one crash
+#      for another.
+#   3. mutmut 2.x's baseline-test discovery hardcodes "run pytest against a
+#      folder literally named `tests` or `test` in the CWD" unless
+#      `--tests-dir` is given — this repo's tests live at `yadgar/tests/`,
+#      not `tests/` at the repo root, so `mutmut run` failed immediately with
+#      "No test folders found" even once bugs 1+2 were fixed.
+#   4. The old `pip install -e ".[test]" mutmut` (test extra only, no `ml`)
+#      cannot pass `yadgar/tests/backend/test_cognitive_map.py` or
+#      `yadgar/tests/_shared/test_retrieval.py` cleanly — both call the real
+#      embedding engine, which needs the `ml` extra (sentence-transformers);
+#      without it every embedding call returns None and 7 of the very tests
+#      this sweep would use as its correctness baseline fail outright, which
+#      mutmut treats as fatal ("tests don't run cleanly without mutations").
+#      `docker.io/openfantasy/yadgar-ci` — the image every other job in this
+#      repo's CI already runs in — bakes in git, uv, AND the test+ml+sql
+#      extras (`Dockerfile.ci`) for exactly this reason; switching to it below
+#      fixes bugs 1 and 4 in one move instead of re-deriving them ad hoc.
+#
+# On top of the environment fixes: `continue-on-error: true` PLUS a trailing
+# `|| true` on the run step meant NONE of the above could ever fail the job —
+# it always reported green regardless of what happened inside, so even a
+# human who did check the Actions tab had no reason to click in. The run step
+# below instead inspects `mutmut run`'s own exit code and only swallows the
+# ONE code that is a genuinely expected outcome for a deliberately time-boxed
+# job (124 — SIGTERM from `timeout 600`, i.e. it was still finding mutants
+# when the box closed); anything else is a real failure and is now reported
+# as one. The summary step also writes to $GITHUB_STEP_SUMMARY (this repo's
+# other workflows never had — plain stdout requires opening the raw log) and
+# says so explicitly when `.mutmut-cache` never got created at all, i.e. the
+# sweep produced no signal whatsoever — the exact failure mode that went
+# unnoticed for a month.
 
 on:
   schedule:
@@ -31,39 +102,81 @@ env:
 
 jobs:
   mutation-sweep:
-    # TODO: consider a self-hosted/larger runner — this is a heavy, time-boxed job.
     runs-on: [self-hosted, linux, x64, yadgar]
     container:
-      image: docker.io/library/python:3.14-slim
+      image: docker.io/openfantasy/yadgar-ci:${{ vars.YADGAR_VERSION }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
 
-      - name: Cache pip
+      - name: Restore mutation-testing progress cache
+        # Without this, `.mutmut-cache` starts empty every run and mutmut
+        # re-tests the SAME early mutants every single week forever — at the
+        # measured throughput (below) that is a low-tens-of-mutants subset of
+        # what is likely a much larger population in the two target areas,
+        # so an un-cached weekly run never converges on real coverage. The
+        # `${{ github.run_id }}` suffix on `key` guarantees THIS run always
+        # saves a new entry at job end (an exact-key hit never saves); the
+        # `restore-keys` prefix (same content hash, no run id) restores the
+        # latest prior run's progress. A source change in either target area
+        # changes the hash and starts fresh — correct, since mutant IDs are
+        # keyed to source content and stale ones would be meaningless.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
-          path: /root/.cache/pip
-          key: pip-mutation-${{ hashFiles('pyproject.toml') }}
-          restore-keys: pip-mutation-
+          path: .mutmut-cache
+          key: mutmut-cache-${{ hashFiles('yadgar/backend/retrieval/**', 'yadgar/_shared/cognitive_map.py') }}-${{ github.run_id }}
+          restore-keys: |
+            mutmut-cache-${{ hashFiles('yadgar/backend/retrieval/**', 'yadgar/_shared/cognitive_map.py') }}-
 
-      - name: Install dependencies
-        run: pip install -e ".[test]" mutmut
+      - name: Install package (deps baked into yadgar-ci) + pinned mutmut
+        # `mutmut>=3` is a from-scratch CLI/config rewrite (see header) —
+        # pinned to the last 2.x release the `--paths-to-mutate` / `--runner`
+        # / `--tests-dir` invocation below was actually verified against.
+        run: |
+          uv pip install --system --no-deps -e .
+          uv pip install --system "mutmut==2.5.1"
 
       - name: Run mutation sweep (time-boxed ~10 min)
-        continue-on-error: true
         run: |
+          set +e
           timeout 600 mutmut run \
             --paths-to-mutate yadgar/backend/retrieval/,yadgar/_shared/cognitive_map.py \
-            --runner "python -m pytest yadgar/tests/ -x -q --timeout=30 2>/dev/null" \
-            || true
+            --tests-dir yadgar/tests \
+            --CI \
+            --runner "python -m pytest yadgar/tests/_shared/test_retrieval.py yadgar/tests/_shared/test_retrieval_pipeline.py yadgar/tests/backend/test_cognitive_map.py yadgar/tests/backend/test_retrieval_tier_promotions_psb.py yadgar/tests/core/test_retrieval_core_characterization.py yadgar/tests/core/test_retrieval_settings_coupling.py -x -q --timeout=30 2>/dev/null"
+          rc=$?
+          echo "mutmut run exited $rc"
+          # 124 = SIGTERM from `timeout 600` — the sweep was still working
+          # when the time-box closed. Expected for a deliberately time-boxed
+          # job, not a failure. Any OTHER nonzero exit (fatal setup error,
+          # baseline tests not passing cleanly, mutmut crashing outright) is
+          # a real failure and must surface as one — ledger task 167: the
+          # previous `continue-on-error: true` + `|| true` swallowed every
+          # exit code here for 4+ weeks, which is why nobody saw it.
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+            echo "::error::mutmut run exited $rc (not the expected time-box hit 124) — the sweep did not complete; see the log above"
+            exit 1
+          fi
 
       - name: Print surviving mutants summary
         if: always()
         run: |
-          echo "=== Mutation sweep results ==="
-          mutmut results || true
+          {
+            echo "## Mutation sweep results"
+            echo ""
+            if [ -f .mutmut-cache ]; then
+              echo '```'
+              mutmut results || echo "(mutmut results errored — see the run step above)"
+              echo '```'
+            else
+              echo "**No \`.mutmut-cache\` found — the sweep produced ZERO results.**"
+              echo ""
+              echo "This means mutmut crashed or was interrupted before testing a single"
+              echo "mutant (ledger task 167's exact failure mode). See the run step above."
+            fi
+          } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
           echo ""
           echo "=== Surviving mutants (bugs your tests may miss) ==="
           mutmut show || true

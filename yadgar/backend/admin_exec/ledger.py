@@ -51,9 +51,20 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
 
     list_adr_rows(payload) -> {"rows": list[dict]}
         payload: {"project_id": str, "status"?: str, "tier"?: str, "subsystem"?: str}
+        Every row ALWAYS carries ``supersedes`` / ``superseded_by`` — lists of
+        ``adr.id``, read from the ``adr_supersedes`` join table (ledger task
+        195). They are NOT columns on ``adr``. Always-on rather than
+        ``with_edges``-gated like ``list_task_rows``, because the 7-key ADR
+        consumer shape always emits both keys.
 
     get_adr_row(payload) -> {"row": dict | None}
-        payload: {"id": int}
+        payload: {"id": int, "project_id": str}
+        ``project_id`` is REQUIRED (ledger task 188) — ``adr.id`` is one
+        global AUTO_INCREMENT shared across projects, so an unscoped by-id
+        lookup returns foreign rows. Absent → ``{"ok": False, "error": ...}``.
+        The row carries ``supersedes`` / ``superseded_by`` as above; a
+        ``None`` row stays ``None`` (the attach never resurrects a row the
+        scoped lookup refused).
 
     list_agent_prompt_rows(payload) -> {"rows": list[dict]}
         payload: {}   # no parameters today
@@ -343,6 +354,61 @@ async def update_task_row(payload: dict) -> dict:
     return {"id": task_id, **column_payload}
 
 
+@observe(tier="stage", metric="backend.admin.ledger.attach_adr_supersedes")
+async def _attach_supersedes(storage: Any, project_id: str, rows: list[dict]) -> list[dict]:
+    """Add ``supersedes`` / ``superseded_by`` id lists to each ``adr`` row.
+
+    Ledger task 195: ``adr`` carries no such COLUMN (migration 002) — the
+    relation lives only in ``adr_supersedes``, which ``add_adr_supersedes`` has
+    written since Car F and which nothing has ever read. Both consumers of the
+    7-key ADR shape therefore rendered ``"none"`` / ``"-"`` unconditionally, in
+    22/22 supersede-bearing ADRs across two corpora.
+
+    THE ATTACH IS HERE, NOT IN CORE'S ``adr_list``. Three call sites forward
+    these ops (``adr_list``, ``adr_get``, and the dormant
+    ``adr_render._assemble_index_rows``); enriching in core would fix two and
+    leave the third quietly wrong. Same placement as ``_attach_edges`` for
+    ``task_blocked_by``, and one bulk read for the whole page rather than a
+    lookup per row.
+
+    ALWAYS-ON, unlike ``list_task_rows``' ``with_edges``: that flag exists
+    because the lean task projection OMITS those keys, whereas the ADR shape
+    always emits these two, so an opt-in would leave every existing caller
+    wrong. One extra query against a ~237-row corpus.
+
+    BEST-EFFORT: an enrichment that can take out ``adr_list`` is a worse defect
+    than the one it fixes, so a failed edge read logs and degrades to the empty
+    lists — i.e. to exactly the pre-fix rendering.
+
+    Rows with no ``id`` pass through untouched (they cannot be keyed), and rows
+    the reader's SPARSE map does not mention get empty lists — "has none" must
+    not be indistinguishable from "never looked up".
+    """
+    try:
+        edges = await storage.list_adr_supersedes(project_id=project_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "adr supersede attach failed project_id=%s: %s — rows keep empty edge lists",
+            project_id,
+            exc,
+        )
+        edges = {}
+    out: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("id") is None:
+            out.append(row)
+            continue
+        entry = edges.get(int(row["id"])) or {}
+        out.append(
+            {
+                **row,
+                "supersedes": list(entry.get("supersedes", [])),
+                "superseded_by": list(entry.get("superseded_by", [])),
+            }
+        )
+    return out
+
+
 @observe(tier="boundary", metric="backend.admin.ledger.list_adr_rows")
 async def list_adr_rows(payload: dict) -> dict:
     """Project-scoped ``adr`` read.
@@ -368,21 +434,42 @@ async def list_adr_rows(payload: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_adr_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
-    return {"rows": rows}
+    return {"rows": await _attach_supersedes(storage, str(payload["project_id"]), rows)}
 
 
 @observe(tier="boundary", metric="backend.admin.ledger.get_adr_row")
 async def get_adr_row(payload: dict) -> dict:
-    """Single ``adr`` lookup by id. payload: {id}."""
+    """Single ``adr`` lookup by id, SCOPED to a project. payload: {id, project_id}.
+
+    Ledger task 188: ``project_id`` is REQUIRED. ``adr.id`` is one global
+    ``AUTO_INCREMENT`` shared across every project, so an unscoped by-id lookup
+    returns foreign rows routinely and ``adr_get`` merges their metadata onto
+    this project's body page. Refusing beats defaulting to ``None``: a silent
+    degrade to a corpus-wide lookup is the defect itself, and core's
+    ``adr_get`` — the only caller — always holds a project_id post-ADR-0227.
+    """
+    project_id = payload.get("project_id")
+    if not project_id:
+        return {
+            "ok": False,
+            "error": (
+                "get_adr_row requires project_id — adr.id is a global "
+                "AUTO_INCREMENT shared across projects, so an unscoped lookup "
+                "can return another project's row (ledger task 188)"
+            ),
+        }
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
-        row = await storage.get_adr_row(int(payload["id"]))
+        row = await storage.get_adr_row(int(payload["id"]), project_id=str(project_id))
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_adr_row error id=%s: %s", payload.get("id"), exc)
         return {"ok": False, "error": str(exc)}
-    return {"row": row}
+    if row is None:
+        return {"row": None}
+    attached = await _attach_supersedes(storage, str(project_id), [row])
+    return {"row": attached[0]}
 
 
 @observe(tier="boundary", metric="backend.admin.ledger.list_agent_prompt_rows")

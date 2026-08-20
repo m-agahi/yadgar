@@ -27,7 +27,11 @@ import html as _html
 import re as _re
 
 _NON_ALNUM = _re.compile(r"[^a-z0-9]+")
-_MAX_SLUG_LEN = 64
+#: Exported for ``WikiStore._extract_wikilinks`` (Car W3), which must apply the
+#: SAME cap on its verbatim-passthrough path — pages minted from long titles
+#: live at the truncation, so a link left at full length stops resolving.
+MAX_SLUG_LEN = 64
+_MAX_SLUG_LEN = MAX_SLUG_LEN
 
 
 def slugify(title: str) -> str:
