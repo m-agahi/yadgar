@@ -397,9 +397,13 @@ def task_write(
     the ``project_id`` arg for the lifetime of this call. Precedence:
     ``project`` (override) > ``session_project`` > ``project_id`` arg >
     directory-derived (Car A0) > ``"global"``. The override is the namespace
-    stamp on the ledger row. The deep registry check is backend-side
-    (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
-    type-level guard. Passing BOTH ``project`` and ``project_id`` is
+    stamp on the ledger row. Core enforces the shape guard (non-empty string,
+    and NOT an ADR-0227 sentinel — Car 5). The registry check is real and
+    un-bypassable, but it runs INSIDE the ledger write: ``create_task_row`` →
+    ``MariaStorageEngine.assert_project_registered``, which raises
+    ``UnknownProjectError`` before the INSERT. It is NOT the standalone
+    backend guard earlier revisions of this docstring named — that function
+    has never had a call site (Car 5). Passing BOTH ``project`` and ``project_id`` is
     allowed but ``project`` wins — a caller that supplies a stale
     ``project_id`` from another project still gets the override.
 
@@ -439,9 +443,9 @@ def task_write(
 
     # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
     # explicit ``project_id`` arg (precedence: project > project_id arg).
-    # The override is the namespace stamp on the ledger row. The deep
-    # registry check is backend-side (`_ensure_project_exists_sync`, §15 /
-    # ADR-0078); core enforces the type-level guard.
+    # The override is the namespace stamp on the ledger row. Car 5: core
+    # enforces the shape guard (sentinels included); the registry check runs
+    # inside ``create_task_row`` → ``assert_project_registered``.
     if project is not None:
         try:
             project_id = resolve_effective_project(

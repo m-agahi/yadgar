@@ -64,6 +64,40 @@ The IN-ENGINE half of the guard —
 ``MariaStorageEngine.assert_project_registered`` — cannot reach this
 case at all: it is dispatched through ``self``, so an engine that does
 not exist cannot call it.
+
+STILL ZERO CALL SITES, AND WHY THAT IS STRUCTURAL (Car 5, 2026-08-20)
+---------------------------------------------------------------------
+C6 noted "this function had ZERO call sites before C6" as a reason
+flipping its engine-absent branch broke nothing. Car 5 measured the same
+thing afterwards and found the count unchanged — and the reason is not
+that nobody got round to it. **Both halves of this module are unusable
+from every process that would want them:**
+
+  * ``_ensure_project_exists_sync`` runs ``asyncio.run``. Its only
+    plausible callers are the sync write paths — chiefly
+    ``QueueDrainer``, a bare ``threading.Thread``. ``MariaStorageEngine``
+    builds its ``AsyncEngine`` with the default
+    ``AsyncAdaptedQueuePool``, so a private loop per call would cache
+    connections bound to a loop that dies with the thread. That hazard is
+    written down three times in this repo
+    (``backend/retrieval/superseded.py`` — *"Do not move this call
+    downstream"*; ``admin_exec/invariants_cross_engine.py``;
+    ``embed_service/embed_service_lifecycle.py``).
+  * ``_ensure_project_exists_async`` needs a loop AND an engine handle.
+    The core process has neither: ``init_engines(sql_storage=False)`` is
+    the default and only ``embed_service._ensure_recall_engines`` passes
+    ``True``, so ``_st._sql_storage`` is always ``None`` core-side.
+
+Meanwhile ~12 docstrings across ``core/server/tools/`` asserted that this
+function enforced the registry "at the backend write path". It did not,
+and ``memory.project_id`` / ``wiki_page.project_id`` had no registry
+check on ANY writer. Car 5 corrected those docstrings and wired the real
+check where it can run: ``core/server/tools/_project_registry.py``, which
+forwards ``list_project_rows`` to the backend ``/admin`` route (the query
+executes on the backend's own event loop) and caches the key set. This
+module is kept — it is the correct shape for a caller that already holds
+an engine handle and a loop, e.g. a future async admin op — but it must
+not be cited as the thing that guards a write until something calls it.
 """
 
 from __future__ import annotations

@@ -23,9 +23,13 @@ as a project-scoping concept; the column is kept here because it
 documents where the row was first written from, but the registry payload
 keys on ``project_id`` alone.
 
-The guard at ``_ensure_project_exists_sync`` is NOT relaxed by this
-module: it still refuses unknown project_ids on the WRITE path. This
-module is the SEED that lets the guard ever succeed.
+The registry guard is NOT relaxed by this module: unknown project_ids
+are still refused on the WRITE path — by
+``MariaStorageEngine.assert_project_registered`` inside
+``create_task_row`` / ``create_adr_row``, and (Car 5, 2026-08-20) by
+``assert_project_registered_for_create`` on the ``memorize`` /
+``wiki_add`` create path. This module is the SEED that lets those
+succeed.
 """
 
 from __future__ import annotations

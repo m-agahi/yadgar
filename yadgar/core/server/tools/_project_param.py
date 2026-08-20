@@ -10,12 +10,22 @@ Override = the registry-validated caller-supplied ``project``.
 
 PREVALENCE RULE — **two tiers, and no third (C5 / ADR-0227):**
 
-    1. ``project`` supplied → use it (override). Non-empty string only;
-       backends reject unknown keys (FAIL-LOUD per ADR-0202 amendment,
-       backend-side via ``_ensure_project_exists_sync``; core NEVER
-       touches the DB — §15).
+    1. ``project`` supplied → use it (override).
     2. ``session_project`` (SessionStart context) → use it.
     3. Neither → ``UnresolvedProjectError``.
+
+Whichever tier answers, the value is checked against
+``_NON_IDENTIFYING_PROJECT_IDS`` (Car 5, ``_reject_sentinel``): the ADR-0227
+manufactured identities are refused HERE, with no database, so creation is at
+least as strict as the ``memory_update`` / ``wiki_set_metadata`` correction
+path. **That is a shape gate, not the registry check.** Membership in the
+``project`` registry is enforced on the CREATE path by
+``_project_registry.assert_project_registered_for_create`` (Car 5), which
+forwards ``list_project_rows`` to the backend — read its module docstring for
+why the check cannot live in ``_shared`` or in the drainer. On the engine-#2
+ledger tables it is additionally enforced un-bypassably inside
+``MariaStorageEngine.assert_project_registered``, which
+``create_task_row`` / ``create_adr_row`` call.
 
 C5 deleted the two tiers that used to sit under those: a ``directory``
 derivation through ``derive_project_id``, and a final ``return "global"``.
@@ -33,11 +43,10 @@ scoping — the parameter that ACTUALLY identifies the project takes
 precedence. The warning is logged at INFO so a misuse is observable
 without raising.
 
-§15 / ADR-0078 — core NEVER touches the DB. Car M does NOT register a
-``project_exists`` admin op here; the cheap path (string-level guard +
-backend-side FAIL-LOUD at write time) matches Car D's task-tool pattern
-(see ``task.py:_validate_project_id`` + ADR-0202). The PTC-cached
-read-side validation is §15.1's scope (not yet built).
+§15 / ADR-0078 — core NEVER touches the DB, and Car 5 does not change that:
+the registry lookup is a ``_forward_admin("list_project_rows")`` call over the
+sanctioned core→backend seam, cached in-process, so the query still executes
+inside the backend on the backend's own event loop.
 """
 
 from __future__ import annotations
@@ -53,14 +62,45 @@ logger = logging.getLogger(__name__)
 
 
 class InvalidProjectOverrideError(ValueError):
-    """The supplied ``project=`` is malformed at the type level.
+    """The supplied ``project=`` cannot name a project.
 
-    Car M performs the cheap type-level guard (non-empty string) here in
-    core. The deep "project_id exists in the registry?" check is delegated
-    to the backend's ``_ensure_project_exists_sync`` (Car A0, §16.5) so
-    core stays free of DB calls (§15). This exception is ONLY for caller
-    errors that prevent the request from reaching the wire at all.
+    Two things raise it, both cheap and both local: the type-level guard
+    (non-empty string) Car M added, and Car 5's sentinel guard
+    (``_reject_sentinel`` — the ADR-0227 manufactured identities). Neither
+    touches a database.
+
+    NOT raised for "this project_id is not in the registry" — that is
+    ``UnknownProjectError``, raised by
+    ``_project_registry.assert_project_registered_for_create`` on the create
+    path and by ``MariaStorageEngine.assert_project_registered`` inside the
+    ledger chokepoints. The two are kept apart because the fixes differ:
+    correct the call vs register the project.
     """
+
+
+@observe(exempt="pure single-value shape predicate on one string; no I/O, no storage access")
+def _reject_sentinel(value: str, *, tool: str) -> None:
+    """Raise unless *value* names a project. Car 5 (2026-08-20 train).
+
+    The MINIMUM BAR of this car, and applied at EVERY tier rather than only to
+    the caller-supplied override: a sentinel is not an identity whichever tier
+    produced it, and a session binding or a hook-authored map entry carrying
+    ``'global'`` mints exactly the phantom namespace an explicit
+    ``project='global'`` would.
+
+    Why this closes a real asymmetry: before Car 5 this function validated
+    non-empty-string and nothing else, so ``memorize(project='global')``
+    STAMPED the ADR-0227 sentinel — while ``memory_update`` (ledger task 262)
+    and ``wiki_set_metadata`` (task 246) REJECTED it on the correction path.
+    Correction stricter than creation is the asymmetry task 246 argued against,
+    pointed the other way.
+
+    Shares ``project_id_value_error``'s authority (one ``_NON_IDENTIFYING_PROJECT_IDS``
+    frozenset) so the create gate and the restamp gate cannot drift apart.
+    """
+    message = project_id_value_error(value)
+    if message is not None:
+        raise InvalidProjectOverrideError(f"{tool}: {message}")
 
 
 @observe(tier="hot", span=False)
@@ -105,6 +145,7 @@ def resolve_effective_project(
             )
         if not project:
             raise InvalidProjectOverrideError("project must be non-empty when supplied")
+        _reject_sentinel(project, tool=tool)
         # Plan §9 [VERIFY]: "project wins, directory ignored with a warning".
         # Defensive: a caller that supplies BOTH clearly intended the project
         # to win (it is the newer, more-precise key). The directory is logged
@@ -129,6 +170,7 @@ def resolve_effective_project(
 
     _ctx_session_project = get_current_session_project()
     if _ctx_session_project:
+        _reject_sentinel(_ctx_session_project, tool=tool)
         return _ctx_session_project
 
     # ── 3. SessionStart legacy parameter (fallback when ContextVar unbound) ──
@@ -140,6 +182,7 @@ def resolve_effective_project(
     # already done in tier 1; the one line that flips the fallback is
     # the ``return session_project`` below.
     if session_project is not None and session_project:
+        _reject_sentinel(session_project, tool=tool)
         return session_project
 
     # ── 3b. Hook-authored directory map (the global-config tier) ───────────
@@ -160,6 +203,7 @@ def resolve_effective_project(
 
     _mapped = lookup_project_for_directory(directory)
     if _mapped:
+        _reject_sentinel(_mapped, tool=tool)
         return _mapped
 
     # ── 4. Nothing named an identity — FAIL LOUD (C5 / ADR-0227) ───────────
@@ -249,15 +293,18 @@ def project_id_value_error(value: object) -> str | None:
     halves read the one ``_NON_IDENTIFYING_PROJECT_IDS`` frozenset (Car C4, on
     master), so the sentinel set cannot drift.
 
-    NO REGISTRY CHECK (ADR-0078 ``_ensure_project_exists_sync``), deliberately,
-    and for a stronger reason than the wiki half had: that function has ZERO
-    production call sites (definition + ``__all__`` + docstrings that claim it
-    enforces something it never runs for), and the CREATE paths are LOOSER
-    than this gate — ``resolve_effective_project`` validates non-empty-string
-    and nothing else, so it would happily stamp ``'global'`` on a new row.
-    The correction being stricter than the creation is therefore the OPPOSITE
-    of the asymmetry task 246 argued against; a real registry check belongs on
-    the create path first.
+    NO REGISTRY CHECK here, still — but the reason has changed, and so has the
+    asymmetry. Task 262 recorded that the CREATE paths were LOOSER than this
+    gate: ``resolve_effective_project`` validated non-empty-string and nothing
+    else, so it would happily stamp ``'global'`` on a new row while this
+    function rejected it. **Car 5 closed that**: ``_reject_sentinel`` applies
+    this same authority at every resolution tier, and
+    ``_project_registry.assert_project_registered_for_create`` adds real
+    registry membership on the memory/wiki create path. What stays absent here
+    is the registry lookup on the RESTAMP path — a correction addressed at a
+    single known row, whose caller has just been told which project it belongs
+    to; adding a forwarded round-trip to it buys nothing the create gate has
+    not already bought.
 
     What is rejected, and why each matters:
       * non-string / empty — ``update_memory_fields`` writes the bare ``NONE``

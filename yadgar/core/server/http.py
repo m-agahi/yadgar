@@ -397,9 +397,9 @@ def _sentinel_memorize(content: str, project_id: str | None) -> dict:
 
     KNOWN RESIDUAL — the async rejection window. ``memorize`` defaults to
     ``wait=False``, so ``queued`` means the job reached the file queue, not that
-    it was stored: the backend re-validates the stamp at INSERT time
-    (``_ensure_project_exists_sync``) and can DLQ a job this function already
-    reported as accepted. F9 is what makes that window reachable — before it,
+    it was stored: the drainer re-validates the stamp — shape only, in
+    ``QueueDrainer._validate_project_id`` (Car 5: the guard this used to name
+    never ran) — and can DLQ an accepted job. F9 makes that window reachable — before it,
     every sentinel write was refused SYNCHRONOUSLY. It is deliberately not
     closed here: ``wait=True`` would block the SessionStart handler for up to
     ``WIKI_WRITE_WAIT_TIMEOUT_SECONDS`` (5s) behind a hook whose ``urlopen``

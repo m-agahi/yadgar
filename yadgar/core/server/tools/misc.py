@@ -787,8 +787,9 @@ def project_seed(
 
     Car A (2026-08-14 identity train, plan §2). Closes the gap where
     ``backend.admin_exec.ledger.create_project_row`` is registered but
-    had no MCP / CLI path; engine-#2 ledger writes were blocked by
-    ADR-0078's ``_ensure_project_exists_sync`` guard with no way to
+    had no MCP / CLI path; engine-#2 ledger writes were blocked by the
+    registry guard inside ``create_task_row`` / ``create_adr_row``
+    (``MariaStorageEngine.assert_project_registered``) with no way to
     prime the registry first.
 
     Reads the TSV at ``map_path`` (default: ``<cwd>/.yadgar/
@@ -799,9 +800,11 @@ def project_seed(
     ``DuplicateProjectError`` → returns ``skipped``). Drop / review
     rows are skipped (not registry rows — operator decisions).
 
-    The guard at ``_ensure_project_exists_sync`` is NOT relaxed by
-    this tool. This is the SEED that lets the guard ever succeed;
-    subsequent writes still hit the registry check.
+    The registry guard is NOT relaxed by this tool. This is the SEED
+    that lets it ever succeed; subsequent writes still hit the check —
+    ``assert_project_registered`` on the engine-#2 ledger tables, and
+    (Car 5) ``assert_project_registered_for_create`` on the ``memorize``
+    / ``wiki_add`` create path.
 
     ADR-0225: this tool takes NO ``directory`` parameter. The TSV's
     first column (``source_directory``) is a host-side origin hint
