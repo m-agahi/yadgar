@@ -58,6 +58,16 @@ def _make_fake_sql_storage(
     storage.list_task_edges = AsyncMock(return_value={})
     storage.list_adr_rows = AsyncMock(return_value=adr_rows or [])
     storage.get_adr_row = AsyncMock(return_value=adr_row)
+    # Car B2 (ledger task 195): both ADR read ops now attach `supersedes` /
+    # `superseded_by` from the `adr_supersedes` join, ALWAYS-ON — the 7-key ADR
+    # shape always emits those keys, so an opt-in would leave every existing
+    # caller wrong. Exactly the reason Car E had to declare the task-edge
+    # readers above: a bare MagicMock returns a non-awaitable, the attach's
+    # best-effort `except` swallows it, and the rows come back with EMPTY edge
+    # lists plus a warning. That degrade is correct in production and useless in
+    # a test — it would silently assert the pre-fix rendering. Declaring the
+    # reader makes these tests exercise the real attach path.
+    storage.list_adr_supersedes = AsyncMock(return_value={})
     storage.list_agent_prompt_rows = AsyncMock(return_value=agent_prompt_rows or [])
     return storage
 
@@ -209,7 +219,14 @@ class TestLedgerAsyncOps:
         result = await admin_exec.run_admin_op_async(
             "list_adr_rows", {"project_id": "m-agahi/yadgar"}
         )
-        assert result == {"rows": rows}
+        # Car B2 (task 195): the op enriches each row with the join-derived edge
+        # lists. Asserted as the FULL expected dict rather than a subset check,
+        # so an unexpected third key would still fail. Empty lists here mean
+        # "looked up, has none" — the fake's reader returns an empty map.
+        assert result == {
+            "rows": [{"id": 11, "title": "a1", "supersedes": [], "superseded_by": []}]
+        }
+        sql_storage.list_adr_supersedes.assert_awaited_once_with(project_id="m-agahi/yadgar")
         # Car H (0047 §7 D27/D28): ``list_adr_rows`` forwards the optional
         # ``tier`` and ``subsystem`` filters; both default to ``None`` when
         # absent from the payload (no WHERE-clause narrowing).
@@ -231,8 +248,10 @@ class TestLedgerAsyncOps:
         result = await admin_exec.run_admin_op_async(
             "get_adr_row", {"id": 22, "project_id": "m-agahi/yadgar"}
         )
-        assert result == {"row": {"id": 22, "title": "a22"}}
+        # Car B2 (task 195): enriched with the join-derived edge lists, as above.
+        assert result == {"row": {"id": 22, "title": "a22", "supersedes": [], "superseded_by": []}}
         sql_storage.get_adr_row.assert_awaited_once_with(22, project_id="m-agahi/yadgar")
+        sql_storage.list_adr_supersedes.assert_awaited_once_with(project_id="m-agahi/yadgar")
 
     async def test_list_agent_prompt_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         rows = [{"name": "dispatch-fix-bug"}]
