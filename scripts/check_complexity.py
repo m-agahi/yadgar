@@ -66,6 +66,7 @@ from complexity_audit import (  # noqa: E402
 )
 from complexity_config import (  # noqa: E402
     build_allowlist_index,
+    get_allowlist_entry,
     is_allowlisted,
     load_allowlist,
     load_caps,
@@ -178,9 +179,20 @@ class Violation:
     pre_existing: bool = False
     suppressed: bool = False  # true if a cohesive noqa annotation silences this soft violation
     allowlisted: bool = False  # true if a HARD violation is in the allowlist
+    recorded: int | None = None  # allowlist's recorded ceiling, set only on a ratchet failure
 
     def message(self) -> str:
         tag = f"{self.filepath}:{self.lineno}"
+        if self.recorded is not None and self.severity == ViolationSeverity.HARD:
+            # Ratchet failure: (path, function, metric) IS in the allowlist, but
+            # `actual` has drifted past the recorded ceiling. Name both numbers —
+            # this is the whole point of the ratchet (a bare "exceeds limit"
+            # message can't be told apart from "never allowlisted at all").
+            return (
+                f"{tag}: {self.entity}: {self.cap}={self.actual} exceeds allowlisted "
+                f"ceiling {self.recorded} (+{self.actual - self.recorded}) (HARD, allowlist-drift). "
+                f"Re-baseline .complexity-allowlist.json with an updated rationale, or reduce."
+            )
         severity = self.severity.value
         if self.suppressed:
             severity = "suppressed"
@@ -351,10 +363,12 @@ def _check_function(  # noqa: C901 - cohesive: dispatch function; each branch = 
         severity = ViolationSeverity.HARD if is_hard else ViolationSeverity.SOFT
         limit = hard_limit if is_hard else (soft_limit or hard_limit)
 
-        # HARD → check allowlist first (bypasses baseline ratchet for HARD)
+        # HARD → check allowlist first (bypasses baseline ratchet for HARD).
+        # is_allowlisted() is itself a ratchet: present-but-drifted-past-recorded
+        # fails, it does not fall through to an unconditional pass.
         if is_hard:
             allowlist_metric = _CAP_TO_ALLOWLIST_METRIC.get(cap_label, cap_label)
-            if is_allowlisted(rel, r.name, allowlist_metric, allowlist_index):
+            if is_allowlisted(rel, r.name, allowlist_metric, actual, allowlist_index):
                 return Violation(
                     filepath=r.filepath,
                     lineno=r.lineno,
@@ -365,7 +379,10 @@ def _check_function(  # noqa: C901 - cohesive: dispatch function; each branch = 
                     limit=limit,
                     allowlisted=True,
                 )
-            # Not allowlisted → hard error (no baseline ratchet for HARD)
+            # Not allowlisted, or allowlisted but drifted past its recorded
+            # ceiling — either way, hard error (no baseline ratchet for HARD).
+            entry = get_allowlist_entry(rel, r.name, allowlist_metric, allowlist_index)
+            recorded = entry.metrics.get(allowlist_metric) if entry is not None else None
             return Violation(
                 filepath=r.filepath,
                 lineno=r.lineno,
@@ -374,6 +391,7 @@ def _check_function(  # noqa: C901 - cohesive: dispatch function; each branch = 
                 severity=ViolationSeverity.HARD,
                 actual=actual,
                 limit=limit,
+                recorded=recorded,
             )
 
         # SOFT → baseline ratchet
@@ -488,7 +506,7 @@ def _check_class(  # noqa: C901 - cohesive: dispatch function; each branch = one
 
         if is_hard:
             allowlist_metric = _CAP_TO_ALLOWLIST_METRIC.get(cap_label, cap_label)
-            if is_allowlisted(rel, c.name, allowlist_metric, allowlist_index):
+            if is_allowlisted(rel, c.name, allowlist_metric, actual, allowlist_index):
                 return Violation(
                     filepath=c.filepath,
                     lineno=c.lineno,
@@ -499,6 +517,8 @@ def _check_class(  # noqa: C901 - cohesive: dispatch function; each branch = one
                     limit=limit,
                     allowlisted=True,
                 )
+            entry = get_allowlist_entry(rel, c.name, allowlist_metric, allowlist_index)
+            recorded = entry.metrics.get(allowlist_metric) if entry is not None else None
             return Violation(
                 filepath=c.filepath,
                 lineno=c.lineno,
@@ -507,6 +527,7 @@ def _check_class(  # noqa: C901 - cohesive: dispatch function; each branch = one
                 severity=ViolationSeverity.HARD,
                 actual=actual,
                 limit=limit,
+                recorded=recorded,
             )
 
         # Baseline ratchet (soft only)
@@ -581,9 +602,9 @@ def _check_file_loc(
     limit = file_loc_hard if severity == ViolationSeverity.HARD else file_loc_soft
 
     if severity == ViolationSeverity.HARD:
-        # HARD file LOC → check allowlist
+        # HARD file LOC → check allowlist (ratchet: drifted-past-recorded fails)
         rel = _rel_path(file_result.filepath)
-        if is_allowlisted(rel, "<file>", "file_loc", allowlist_index):
+        if is_allowlisted(rel, "<file>", "file_loc", loc, allowlist_index):
             return [
                 Violation(
                     filepath=file_result.filepath,
@@ -596,7 +617,9 @@ def _check_file_loc(
                     allowlisted=True,
                 )
             ]
-        # Not allowlisted → hard error
+        # Not allowlisted, or allowlisted but drifted past its recorded ceiling
+        entry = get_allowlist_entry(rel, "<file>", "file_loc", allowlist_index)
+        recorded = entry.metrics.get("file_loc") if entry is not None else None
         return [
             Violation(
                 filepath=file_result.filepath,
@@ -606,6 +629,7 @@ def _check_file_loc(
                 severity=ViolationSeverity.HARD,
                 actual=loc,
                 limit=limit,
+                recorded=recorded,
             )
         ]
 

@@ -44,6 +44,7 @@ from check_complexity import (  # noqa: E402
     load_baseline,
     update_baseline,
 )
+from complexity_config import AllowlistEntry, build_allowlist_index  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers to build synthetic Python source
@@ -451,6 +452,150 @@ class TestBaselineRatchet:
         hard = [v for v in result.violations if v.severity == ViolationSeverity.HARD]
         assert hard, f"HARD violation not in allowlist must block: {result.violations}"
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Allowlist ratchet — a HARD allowlist entry is a CEILING, not a blanket pass.
+#
+# Anti-recurrence: seeds an allowlist entry recording N, presents a file/
+# function measuring N+1, asserts the checker FAILS. Mutating the fix back
+# to an unconditional pass (is_allowlisted ignoring `actual`) must red this.
+# ---------------------------------------------------------------------------
+
+
+class TestAllowlistRatchet:
+    def test_hard_violation_at_recorded_allowlist_value_is_allowed(self, tmp_py, empty_baseline):
+        # File LOC == the recorded allowlist ceiling exactly → ALLOWED.
+        lines = ["x = 1"] * 1300  # 1300 > 1000 hard cap
+        f = tmp_py("\n".join(lines) + "\n", "target.py")
+        rel = str(f.resolve())  # tmp file outside repo -> _rel_path falls back to absolute
+        entry = AllowlistEntry(
+            path=rel,
+            function="<file>",
+            lineno=1,
+            metrics={"file_loc": 1300},
+            rationale="pre-existing; scheduled decomposition",
+            added="2026-08-20",
+            added_by="test",
+        )
+        index = build_allowlist_index([entry])
+
+        result = analyze_staged_file(
+            str(f),
+            is_test=False,
+            baseline=load_baseline(str(empty_baseline)),
+            allowlist_index=index,
+        )
+        allowed = [
+            v
+            for v in result.violations
+            if v.cap == "file_loc" and v.severity == ViolationSeverity.ALLOWED
+        ]
+        assert allowed, f"At-baseline HARD allowlist entry should pass: {result.violations}"
+        assert result.exit_code == 0
+
+    def test_hard_violation_below_recorded_allowlist_value_is_allowed(self, tmp_py, empty_baseline):
+        # File LOC below the recorded ceiling → still ALLOWED (shrinkage is fine).
+        lines = ["x = 1"] * 1250
+        f = tmp_py("\n".join(lines) + "\n", "target.py")
+        rel = str(f.resolve())
+        entry = AllowlistEntry(
+            path=rel,
+            function="<file>",
+            lineno=1,
+            metrics={"file_loc": 1300},
+            rationale="pre-existing; scheduled decomposition",
+            added="2026-08-20",
+            added_by="test",
+        )
+        index = build_allowlist_index([entry])
+
+        result = analyze_staged_file(
+            str(f),
+            is_test=False,
+            baseline=load_baseline(str(empty_baseline)),
+            allowlist_index=index,
+        )
+        allowed = [
+            v
+            for v in result.violations
+            if v.cap == "file_loc" and v.severity == ViolationSeverity.ALLOWED
+        ]
+        assert allowed, f"Below-baseline HARD allowlist entry should pass: {result.violations}"
+        assert result.exit_code == 0
+
+    def test_hard_violation_one_over_recorded_allowlist_value_fails(self, tmp_py, empty_baseline):
+        # THE ANTI-RECURRENCE TEST: allowlist records N=1300, file measures N+1=1301.
+        # An unconditional-pass is_allowlisted() would wrongly return ALLOWED here.
+        lines = ["x = 1"] * 1301
+        f = tmp_py("\n".join(lines) + "\n", "target.py")
+        rel = str(f.resolve())
+        entry = AllowlistEntry(
+            path=rel,
+            function="<file>",
+            lineno=1,
+            metrics={"file_loc": 1300},
+            rationale="pre-existing; scheduled decomposition",
+            added="2026-08-20",
+            added_by="test",
+        )
+        index = build_allowlist_index([entry])
+
+        result = analyze_staged_file(
+            str(f),
+            is_test=False,
+            baseline=load_baseline(str(empty_baseline)),
+            allowlist_index=index,
+        )
+        hard = [
+            v
+            for v in result.violations
+            if v.cap == "file_loc" and v.severity == ViolationSeverity.HARD
+        ]
+        assert hard, (
+            f"Allowlist entry drifted 1 over its recorded ceiling must FAIL, not pass "
+            f"unconditionally: {result.violations}"
+        )
+        assert result.exit_code == 1
+        msg = hard[0].message()
+        assert "1300" in msg, f"Violation message must name the recorded ceiling: {msg}"
+        assert "1301" in msg, f"Violation message must name the current measurement: {msg}"
+
+    def test_hard_violation_drift_message_names_both_numbers_for_function_metric(
+        self, tmp_py, empty_baseline
+    ):
+        # Same drift-must-fail contract, but for a function-level HARD metric
+        # (fn_loc) rather than file_loc — the fix must not be file_loc-only.
+        src = _fn_with_loc(151)  # 152 LOC > 150 hard cap
+        f = tmp_py(src, "target.py")
+        rel = str(f.resolve())
+        entry = AllowlistEntry(
+            path=rel,
+            function="my_func",
+            lineno=1,
+            metrics={"fn_loc": 151},  # recorded ceiling: one below actual
+            rationale="pre-existing; scheduled decomposition",
+            added="2026-08-20",
+            added_by="test",
+        )
+        index = build_allowlist_index([entry])
+
+        result = analyze_staged_file(
+            str(f),
+            is_test=False,
+            baseline=load_baseline(str(empty_baseline)),
+            allowlist_index=index,
+        )
+        hard = [
+            v
+            for v in result.violations
+            if v.cap == "fn_loc" and v.severity == ViolationSeverity.HARD
+        ]
+        assert hard, f"Function-level allowlist drift must FAIL: {result.violations}"
+        assert result.exit_code == 1
+        msg = hard[0].message()
+        assert "151" in msg
+        assert "152" in msg
 
 
 # ---------------------------------------------------------------------------
