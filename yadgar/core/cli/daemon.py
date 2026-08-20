@@ -181,9 +181,10 @@ def _handle_install_service(daemon, dev: bool) -> None:
     # command (backend && core) so a half-applied install can never come
     # up with the core running and the backend missing. The deploy window
     # is the measured gap (task #61) between the two ``start`` calls
-    # completing on a fresh install — during which the version handshake
-    # (``/health``'s ``versions_compatible`` field) is the only thing
-    # keeping an old core from talking to a new backend.
+    # completing on a fresh install — during which an old core is talking
+    # to a new backend with no gate stopping it (``/health``'s
+    # ``versions_compatible`` field is informational only — nothing reads
+    # it to refuse a peer).
     print(f"Backend: {result['backend_service']}  Core: {result['core_service']}")
     print(f"  Enable:  {result['enable']}")
     print(f"  Start:   {result['start']}")

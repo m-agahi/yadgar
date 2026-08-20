@@ -720,23 +720,23 @@ def _handshake_block(peer_url: str | None) -> dict:
     """
     import httpx as _httpx  # noqa: PLC0415
 
-    from yadgar import BACKEND_VERSION  # noqa: PLC0415
+    from yadgar import __version__  # noqa: PLC0415
     from yadgar._shared.version_compat import handshake_status  # noqa: PLC0415
 
     if not peer_url:
         # No peer configured (single-process dev mode) — unverifiable, not
         # incompatible. Mirrors the daemon's own "fresh install" self-check.
-        return handshake_status(BACKEND_VERSION, "unknown", side="core")
+        return handshake_status(__version__, "unknown", side="core")
 
     try:
         with _httpx.Client(timeout=1.5) as _c:
             _r = _c.get(f"{peer_url}/health")
         if _r.status_code != 200:
-            return handshake_status(BACKEND_VERSION, "unknown", side="core")
+            return handshake_status(__version__, "unknown", side="core")
         _peer_version = _r.json().get("version") or "unknown"
     except Exception:
-        return handshake_status(BACKEND_VERSION, "unknown", side="core")
-    return handshake_status(BACKEND_VERSION, _peer_version, side="core")
+        return handshake_status(__version__, "unknown", side="core")
+    return handshake_status(__version__, _peer_version, side="core")
 
 
 @observe(tier="stage")
