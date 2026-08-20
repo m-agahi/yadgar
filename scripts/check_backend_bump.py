@@ -41,7 +41,25 @@ BACKEND_BUILD_INPUTS: tuple[str, ...] = (
     "entrypoint-backend.sh",
     "Dockerfile.backend",
 )
-BACKEND_BUILD_DIRS: tuple[str, ...] = ("backend",)
+# Dockerfile.backend:8 is `COPY . /app` — the backend image ships the ENTIRE
+# repo tree, not just yadgar/backend/. That means this list is NOT "what the
+# image contains" (everything) — it is "what the backend PROCESS actually
+# imports and executes", which is the only thing worth gating a version bump
+# on. Measured via the backend's real import graph (see
+# yadgar/tests/scripts/test_check_backend_bump.py::TestBackendBuildDirsMatchRealImportGraph,
+# which derives this set from yadgar/backend/**'s ast import statements and
+# fails if it ever drifts from this constant): the backend imports
+# yadgar/_shared/** and yadgar/backend/** at hundreds of sites each, and
+# imports yadgar/core/** at ZERO sites. "backend" was already covered structurally
+# (yadgar/backend/ is itself under this dir); "_shared" was missing — PR #60
+# changed yadgar/_shared/wiki/store.py and this guard never fired, so the
+# backend shipped a stale copy of that file to production.
+#
+# Deliberately NOT widened to "everything COPY . /app covers" (e.g. core/,
+# docs/, scripts/ that the backend process never runs) — that would demand a
+# backend_version bump on every commit and the gate would get turned off
+# within a week.
+BACKEND_BUILD_DIRS: tuple[str, ...] = ("backend", "_shared")
 
 
 def _backend_version_from_json(text: str) -> str | None:
