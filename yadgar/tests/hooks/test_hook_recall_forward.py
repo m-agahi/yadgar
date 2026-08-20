@@ -37,7 +37,14 @@ def _make_mock_request(params: dict) -> MagicMock:
 class TestPromptRecallForwards:
     def test_forwards_with_profile_fast_and_dir(self):
         """hook_prompt_recall calls _forward_hook_recall with profile='fast',
-        max_results=5, min_heat=0.0, and the caller directory."""
+        max_results=_PROMPT_RECALL_CANDIDATES, min_heat=0.0, and the caller directory.
+
+        Car 8 (task 283): the forwarded max_results was 5 — the same number the
+        hook injects. It now OVER-FETCHES because ``_drop_anchor_rows`` removes
+        rows after retrieval; the injected page is still capped at 5
+        (``_PROMPT_RECALL_INJECTED``), asserted in
+        ``tests/hooks/test_car8_prompt_recall_no_anchors.py``.
+        """
         import yadgar._shared.runtime.state as _st
         import yadgar.core.server.http as _http
 
@@ -70,7 +77,7 @@ class TestPromptRecallForwards:
         resp = asyncio.run(_run())
         kw = captured["kwargs"]
         assert kw.get("profile") == "fast", captured
-        assert kw.get("max_results") == 5, captured
+        assert kw.get("max_results") == _http._PROMPT_RECALL_CANDIDATES, captured
         assert kw.get("min_heat") == 0.0, captured
         # directory is threaded via the forwarder object (bound at construction),
         # so the backend can scope server-side.
