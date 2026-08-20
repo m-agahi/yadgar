@@ -396,15 +396,15 @@ class TestUpdateMemoryFieldsProjectIdIsNoneSafe:
     for ``valid_until`` ("Couldn't coerce value ... Expected `none | string`
     but found `NULL`").
 
-    No live caller passes ``project_id=`` today — the MCP-level
-    ``_MEMORY_UPDATE_ALLOWED`` allowlist (``core/server/tools/admin_other.py``)
-    omits it, and every internal caller of ``update_memory_fields`` passes a
-    fixed, disjoint field set (confidence, tags, store_type, etc — none pass
-    ``project_id``). That is exactly what makes this a landmine rather than a
-    live bug: the first caller to add ``project_id=`` (e.g. a future
-    re-classification tool, which is the use Car L's comment on the allowlist
-    entry names) hits the crash in production with no test ever having
-    exercised the path.
+    Ledger task 262 DISARMED the landmine by walking onto it deliberately:
+    ``_MEMORY_UPDATE_ALLOWED`` (``core/server/tools/admin_other.py``) now
+    admits ``project_id``, which makes ``memory_update`` exactly the
+    re-classification caller Car L's comment on the allowlist entry predicted.
+    The falsy cases never reach here — ``_project_id_update_error`` rejects
+    empty / ``None`` at the MCP boundary precisely BECAUSE this NONE-literal
+    branch would silently null the column rather than fail. These tests keep
+    pinning the branch for every OTHER caller of ``update_memory_fields``,
+    which is still un-gated.
     """
 
     def _seed_memory(self, storage, mid: int) -> None:
