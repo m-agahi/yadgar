@@ -1,9 +1,11 @@
 """§17 memory_update / wiki_update — patch by integer ID.
 
 Tests:
-- memory_update patches allowed fields (content, tags, is_protected, is_stale)
+- memory_update patches allowed fields (content, tags, is_protected, is_stale,
+  importance, tier, project_id)
 - memory_update rejects unknown/disallowed keys (heat, embedding, id, created_at)
 - memory_update preserves heat, access_count, created_at
+- memory_update restamps project_id and validates its shape (ledger task 262)
 - wiki_update patches allowed fields (content, tags, category, confidence)
 - wiki_update rejects unknown/disallowed keys (slug, id, created_at)
 - Updates persist (re-fetch confirms change)
@@ -128,6 +130,174 @@ class TestMemoryUpdate:
         result = server.memory_update(mid, {"content": "new"})
         assert isinstance(result, dict)
         assert result["content"] == "new"
+
+
+# ── memory_update(fields={"project_id": …}) — ledger task 262 ────────────────
+
+
+@pytest.mark.usefixtures("admin_backend_bypass")
+class TestMemoryUpdateProjectId:
+    """``project_id`` is patchable — it is the sole memory scoping key.
+
+    Before task 262 ``_MEMORY_UPDATE_ALLOWED`` was
+    ``{content, tags, is_protected, is_stale, importance, tier}``, so
+    ``memory.project_id`` had NO restamp path through any MCP surface at all:
+    a row stamped with the wrong project was unreachable from every
+    project-scoped read (``build_project_scope_clause`` narrows on
+    ``project_id = $p OR <global-reach-tag> IN tags``) and nothing could
+    correct it. This is the memory half of the wiki fix in ledger task 246.
+    """
+
+    def _insert_memory(self, project_id: str, content: str = "restamp probe") -> int:
+        return server._get_storage().insert_memory(
+            {
+                "content": content,
+                "tags": ["original-tag"],
+                "store_type": "episodic",
+                "heat": 0.7,
+                "directory_context": "/tmp/test",
+                "project_id": project_id,
+            }
+        )
+
+    def _stored_project_id(self, mid: int):
+        """Re-READ the row from storage rather than trusting the return value.
+
+        Deliberate: yadgar write tools have a documented history of reporting
+        success for writes they dropped, so asserting on ``memory_update``'s
+        own echo would pass against a no-op.
+        """
+        row = server._get_storage().get_memory(mid)
+        assert row is not None
+        return row.get("project_id")
+
+    def test_restamp_project_id_changes_the_stored_row(self):
+        """The discriminating test: the stored row actually carries the new id."""
+        mid = self._insert_memory("wrong-owner/wrong-repo")
+        assert self._stored_project_id(mid) == "wrong-owner/wrong-repo"
+
+        result = server.memory_update(mid, {"project_id": "m-agahi/yadgar"})
+
+        assert self._stored_project_id(mid) == "m-agahi/yadgar", (
+            "memory_update reported success but the stored row was not restamped"
+        )
+        assert result["project_id"] == "m-agahi/yadgar"
+
+    def test_restamped_row_is_reachable_from_the_new_project_scope(self):
+        """The restamp is what makes the row reachable — the point of the fix.
+
+        Asserts against the real scope predicate (``build_project_scope_clause``)
+        rather than the column value alone, because the column is only
+        interesting insofar as the project-scoped read finds the row.
+        """
+        from yadgar._shared.storage.directory import build_project_scope_clause
+
+        mid = self._insert_memory("wrong-owner/wrong-repo", content="scope probe row")
+        clause, params = build_project_scope_clause("m-agahi/yadgar")
+
+        def _found() -> bool:
+            rows = server._get_storage()._q(
+                f"SELECT id FROM memory:{int(mid)} WHERE {clause}", params
+            )
+            return bool(rows)
+
+        # Guards against a vacuous probe: the SAME query with the row's OWN id
+        # must find it, so a False below means the scope predicate excluded the
+        # row rather than the record-id selector being malformed.
+        own_clause, own_params = build_project_scope_clause("wrong-owner/wrong-repo")
+        assert server._get_storage()._q(
+            f"SELECT id FROM memory:{int(mid)} WHERE {own_clause}", own_params
+        ), "probe is malformed — the row is not found even under its own project"
+        assert not _found(), "fixture is vacuous — the row was already in scope"
+        server.memory_update(mid, {"project_id": "m-agahi/yadgar"})
+        assert _found(), "restamped row is still unreachable from its project scope"
+
+    def test_project_id_empty_rejects(self):
+        """Empty string names no project — and would write the NONE literal."""
+        mid = self._insert_memory("m-agahi/yadgar")
+        with pytest.raises(ValueError, match="must be a non-empty string"):
+            server.memory_update(mid, {"project_id": ""})
+        assert self._stored_project_id(mid) == "m-agahi/yadgar"
+
+    def test_project_id_none_rejects(self):
+        """``None`` nulls the column, reproducing the unreachability being fixed."""
+        mid = self._insert_memory("m-agahi/yadgar")
+        with pytest.raises(ValueError, match="must be a non-empty string"):
+            server.memory_update(mid, {"project_id": None})
+        assert self._stored_project_id(mid) == "m-agahi/yadgar"
+
+    def test_project_id_non_string_rejects(self):
+        """A non-string value is rejected rather than coerced."""
+        mid = self._insert_memory("m-agahi/yadgar")
+        with pytest.raises(ValueError, match="must be a non-empty string"):
+            server.memory_update(mid, {"project_id": 42})
+        assert self._stored_project_id(mid) == "m-agahi/yadgar"
+
+    @pytest.mark.parametrize("sentinel", ["global", "unresolved", "system"])
+    def test_project_id_sentinel_rejects(self, sentinel):
+        """The ADR-0227 manufactured identities are not settable values.
+
+        Global REACH travels as the Car C7 tag, never as
+        ``project_id='global'`` — writing the sentinel here would mint exactly
+        the phantom identity ADR-0227 deletes.
+        """
+        mid = self._insert_memory("m-agahi/yadgar")
+        with pytest.raises(ValueError, match="names no project"):
+            server.memory_update(mid, {"project_id": sentinel})
+        assert self._stored_project_id(mid) == "m-agahi/yadgar"
+
+    def test_disallowed_field_message_names_project_id_as_allowed(self):
+        """The rejection message must name the CURRENT allowed set.
+
+        Asserting on the message text because a stale message is part of this
+        defect class: the docstring's hand-written "Allowed keys" list had been
+        wrong since v5.158 (it omitted ``importance`` / ``tier``), and a caller
+        told ``project_id`` is not allowed has no other way to discover that it
+        now is. The message renders ``sorted(_MEMORY_UPDATE_ALLOWED)``, so this
+        also pins the render and the allowlist together.
+        """
+        mid = self._insert_memory("m-agahi/yadgar")
+        with pytest.raises(ValueError) as exc:
+            server.memory_update(mid, {"directory_context": "/tmp/elsewhere"})
+        message = str(exc.value)
+        assert "directory_context" in message
+        assert "project_id" in message
+        for field in ("content", "tags", "is_protected", "is_stale", "importance", "tier"):
+            assert field in message
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("content", "regression content"),
+            ("tags", ["regression-tag"]),
+            ("is_protected", True),
+            ("is_stale", True),
+            ("importance", 0.5),
+            ("tier", "ephemeral"),
+        ],
+    )
+    def test_pre_existing_allowed_fields_still_work(self, field, value):
+        """Regression guard: widening the allowlist must not drop a member."""
+        mid = self._insert_memory("m-agahi/yadgar")
+        server.memory_update(mid, {field: value})
+        row = server._get_storage().get_memory(mid)
+        assert row is not None
+        assert row[field] == value
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("heat", 999.0),
+            ("embedding", b"\x00" * 16),
+            ("id", 42),
+            ("created_at", "2020-01-01"),
+        ],
+    )
+    def test_safety_boundary_fields_still_rejected(self, field, value):
+        """The allowlist exists to reject these — widening must not erode it."""
+        mid = self._insert_memory("m-agahi/yadgar")
+        with pytest.raises(ValueError, match=field):
+            server.memory_update(mid, {field: value})
 
 
 @pytest.mark.usefixtures("admin_backend_bypass")

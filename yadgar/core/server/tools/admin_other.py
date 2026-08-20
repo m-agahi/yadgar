@@ -20,7 +20,7 @@ from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 from yadgar.core.server._helpers import _q_with_timeout
-from yadgar.core.server.tools._project_param import accept_project_param
+from yadgar.core.server.tools._project_param import accept_project_param, project_id_value_error
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,11 @@ settings = get_settings()
 # decay RATE is keyed on importance: thermodynamics.py compute_decay uses the slow
 # IMPORTANCE_DECAY_FACTOR when importance>0.7, so an anchor left at importance=1.0
 # barely decays even after is_protected is cleared).
+# Task 262: "project_id" ADDED — the SOLE memory scoping key, and this list was the ONLY
+# gate on it (storage accepts it per Car L; the backend op forwards **fields unvalidated),
+# so a mis-stamped row had no restamp path at all. Memory half of ledger task 246.
 _MEMORY_UPDATE_ALLOWED: frozenset[str] = frozenset(
-    {"content", "tags", "is_protected", "is_stale", "importance", "tier"}
+    {"content", "tags", "is_protected", "is_stale", "importance", "tier", "project_id"}
 )
 
 # Allowed fields for MCP-level wiki_update
@@ -529,11 +532,16 @@ def wiki_get(page_id: int) -> dict | None:
 def memory_update(memory_id: int, fields: dict) -> dict:
     """Patch selected fields on a memory record.
 
-    Allowed keys: content, tags, is_protected, is_stale.
-    Rejected keys: heat, embedding, id, created_at (and any unknown key).
+    Allowed keys: ``content``, ``tags``, ``is_protected``, ``is_stale``,
+    ``importance``, ``tier``, ``project_id``. ``_MEMORY_UPDATE_ALLOWED`` is
+    authoritative and the rejection message renders it, so a caller need not
+    trust this list — it was stale from v5.158 until ledger task 262.
+    Rejected: ``heat``, ``embedding``, ``id``, ``created_at``, unknown keys.
 
-    Returns the updated memory dict.
-    Raises ValueError on disallowed or unknown keys.
+    ``project_id`` (task 262) is the SOLE memory scoping key and this is the
+    only MCP path that restamps it. Its VALUE is shape-validated — and NOT
+    registry-checked — by ``project_id_value_error``, which states why.
+    Raises ValueError on a disallowed key or a project_id naming no project.
     """
     unknown = set(fields) - _MEMORY_UPDATE_ALLOWED
     if unknown:
@@ -541,6 +549,8 @@ def memory_update(memory_id: int, fields: dict) -> dict:
             f"Disallowed field(s) for memory_update: {sorted(unknown)}. "
             f"Allowed: {sorted(_MEMORY_UPDATE_ALLOWED)}"
         )
+    if "project_id" in fields and (err := project_id_value_error(fields["project_id"])):
+        raise ValueError(err)
     # R3 Car 3b: allowed-key validation stays core (raises before any state touch);
     # the DB write (update_memory_fields) forwards to backend /admin. The empty-
     # fields read short-circuit is handled by the backend impl too.

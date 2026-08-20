@@ -46,6 +46,8 @@ import logging
 
 from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.storage._project_id_writer import _NON_IDENTIFYING_PROJECT_IDS
+from yadgar._shared.storage.directory import GLOBAL_REACH_TAG
 
 logger = logging.getLogger(__name__)
 
@@ -220,8 +222,68 @@ def accept_project_param(project: str | None, directory: str | None) -> str | No
     )
 
 
+@observe(exempt="pure single-value shape predicate on one string field; no I/O, no storage access")
+def project_id_value_error(value: object) -> str | None:
+    """Return the rejection message for a ``project_id`` WRITE, or ``None``.
+
+    Ledger task 262. Sibling of ``resolve_effective_project`` above, and
+    deliberately NOT folded into it: that function resolves which project a
+    CALL addresses (override → session → raise); this one validates a
+    project_id being written INTO a row as data. ``memory_update`` is the
+    first caller — it patches the column, so it never goes through the
+    resolver at all.
+
+    Lives here rather than in ``admin_other.py`` for the same reason
+    ``_shared/storage/_project_id_writer.py`` gives for its own existence:
+    that file is at the I13 per-file LOC budget, and this module is the
+    tools-layer home for project_id validation.
+
+    SHAPE ONLY — the same two rules the WIKI half of this fix applies (ledger
+    task 246, branch ``fix/wiki-set-metadata-project-id`` @ ``6fa99512``,
+    which adds ``WikiStore._metadata_value_error``). **That branch is NOT on
+    master yet**, so do not expect to grep the symbol. The RULE stays
+    duplicated even once it lands: that helper dispatches on WIKI field names
+    and sits in the module defining ``WikiStore``, so importing it would drag
+    the wiki store into this import graph and let a wiki-side dispatch edit
+    silently change memory validation. What IS shared is the AUTHORITY — both
+    halves read the one ``_NON_IDENTIFYING_PROJECT_IDS`` frozenset (Car C4, on
+    master), so the sentinel set cannot drift.
+
+    NO REGISTRY CHECK (ADR-0078 ``_ensure_project_exists_sync``), deliberately,
+    and for a stronger reason than the wiki half had: that function has ZERO
+    production call sites (definition + ``__all__`` + docstrings that claim it
+    enforces something it never runs for), and the CREATE paths are LOOSER
+    than this gate — ``resolve_effective_project`` validates non-empty-string
+    and nothing else, so it would happily stamp ``'global'`` on a new row.
+    The correction being stricter than the creation is therefore the OPPOSITE
+    of the asymmetry task 246 argued against; a real registry check belongs on
+    the create path first.
+
+    What is rejected, and why each matters:
+      * non-string / empty — ``update_memory_fields`` writes the bare ``NONE``
+        literal for any falsy ``project_id`` (``option<string>``, migration
+        033), so an empty string does not fail loudly, it NULLS the column.
+      * ``None`` — same NULL, and nulling reproduces exactly the
+        unreachability the restamp path exists to repair.
+      * the ADR-0227 manufactured identities — global REACH travels as the
+        ``GLOBAL_REACH_TAG`` tag inside ``build_project_scope_clause``, never
+        as ``project_id='global'``; writing the sentinel mints the phantom
+        namespace the registry exists to prevent.
+    """
+    if not isinstance(value, str) or not value:
+        return f"project_id must be a non-empty string; got {value!r}"
+    if value in _NON_IDENTIFYING_PROJECT_IDS:
+        return (
+            f"project_id {value!r} names no project — it is a manufactured "
+            "identity ADR-0227 deletes. Global reach is carried by the "
+            f"{GLOBAL_REACH_TAG!r} tag, not by project_id"
+        )
+    return None
+
+
 __all__ = [
     "InvalidProjectOverrideError",
     "accept_project_param",
+    "project_id_value_error",
     "resolve_effective_project",
 ]
