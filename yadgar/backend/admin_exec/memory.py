@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 
 import yadgar._shared.runtime.state as _st
+from yadgar._shared.config import get_settings
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_embeddings, _get_storage
 
@@ -95,6 +96,8 @@ def memory_update(payload: dict) -> dict:
     _st._storage.update_memory_fields(memory_id, **fields)
 
     if _reembed_content is not None:
+        embeddings = None
+        emb = None
         try:
             embeddings = _get_embeddings()
             encoded = embeddings.encode_batch([_reembed_content])
@@ -104,6 +107,26 @@ def memory_update(payload: dict) -> dict:
         except Exception:  # noqa: BLE001 — re-embed is best-effort; the field write already committed
             logger.warning(
                 "memory_update re-embed failed for memory %s (field write committed)",
+                memory_id,
+                exc_info=True,
+            )
+
+        # task 94: the guard above re-embeds the raw vector but never touched
+        # enriched_content/enrichment_* — those columns kept describing the
+        # SUPERSEDED text. Re-derive them from the NEW content via the same
+        # producer insert_memory uses, or explicitly null them when that
+        # isn't possible. Run this unconditionally on a real content change
+        # (not gated on the raw re-embed above succeeding) — even when `emb`
+        # is None the resync's own eligibility check falls back to nulling,
+        # which is still strictly better than leaving stale text behind.
+        try:
+            _st._storage.resync_enrichment_on_content_change(  # type: ignore[union-attr]
+                memory_id, _reembed_content, get_settings(), embeddings, emb
+            )
+        except Exception:  # noqa: BLE001 — resync is best-effort; the field+embedding writes already committed
+            logger.warning(
+                "memory_update enrichment resync failed for memory %s "
+                "(field+embedding write committed)",
                 memory_id,
                 exc_info=True,
             )

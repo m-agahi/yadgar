@@ -72,6 +72,74 @@ def _validate_provenance_agent(value: str) -> str:
     return value
 
 
+# task 94: columns the enrichment pipeline (insert-time _enrich_memory_if_enabled,
+# and the update-time resync below) writes together — a memory's enrichment
+# output is stored across all six or none.
+_ENRICHMENT_COLS = (
+    "enrichment_concepts",
+    "enrichment_comet",
+    "enrichment_queries",
+    "enrichment_logic",
+    "enriched_content",
+    "enrichment_model_versions",
+)
+
+
+@observe(tier="stage")
+def _derive_enrichment_resync(
+    mid: int, new_content: str, settings, embeddings_engine, embedding
+) -> tuple[dict, bytes | None]:
+    """Re-derive enrichment for ``resync_enrichment_on_content_change`` below,
+    or signal that the stale columns must be NULLed.
+
+    Returns ``(new_values, new_embedding)``: ``new_values`` maps every column
+    in ``_ENRICHMENT_COLS`` to its fresh value, or ``None`` to clear it.
+    ``new_embedding`` is the enrichment-derived embedding (bytes), or
+    ``None`` when unavailable — mirrors ``_enrich_memory_if_enabled``'s own
+    eligibility guard and 6-field mapping so create and update never diverge.
+    """
+    from yadgar._shared.storage import _get_enrichment_pipeline
+
+    eligible = (
+        settings
+        and getattr(settings, "INDEX_ENRICHMENT_ENABLED", False)
+        and len(new_content) >= getattr(settings, "ENRICHMENT_MIN_CONTENT_LENGTH", 20)
+        and embeddings_engine is not None
+        and embedding is not None
+    )
+    if not eligible:
+        return dict.fromkeys(_ENRICHMENT_COLS), None
+
+    try:
+        pipeline = _get_enrichment_pipeline(settings, embeddings_engine)
+        result = pipeline.enrich(new_content, embedding, settings)
+        new_values = {
+            "enrichment_concepts": result.concepts if result.concepts else None,
+            "enrichment_comet": result.comet_inferences if result.comet_inferences else None,
+            "enrichment_queries": result.queries if result.queries else None,
+            "enrichment_logic": result.logic_expansions if result.logic_expansions else None,
+            "enriched_content": result.enriched_content or None,
+            "enrichment_model_versions": result.model_versions if result.model_versions else None,
+        }
+        new_embedding = None
+        if new_values.get("enriched_content"):
+            new_embedding = embeddings_engine.encode_document_enriched(
+                new_content, new_values["enriched_content"]
+            )
+        return new_values, new_embedding
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Re-enrichment failed for memory %s on content update; nulling "
+            "stale enrichment fields instead of leaving them describing "
+            "superseded content: %s",
+            mid,
+            e,
+        )
+        return dict.fromkeys(_ENRICHMENT_COLS), None
+
+
 class _MemoryMixin:
     """Memory CRUD and primary-table operations — mixed into StorageEngine."""
 
@@ -298,6 +366,62 @@ class _MemoryMixin:
             import logging
 
             logging.getLogger(__name__).warning("Enrichment failed: %s", e)
+
+    @observe(tier="stage", metric="storage.memory.resync_enrichment_on_content_change")
+    def resync_enrichment_on_content_change(
+        self, mid: int, new_content: str, settings, embeddings_engine, embedding
+    ) -> None:
+        """A memory's ``content`` changed post-insert (memory_update) — re-sync
+        enrichment (task 94).
+
+        ``enriched_content`` / ``enrichment_queries`` / ``enrichment_concepts``
+        / ``enrichment_comet`` / ``enrichment_logic`` / ``enrichment_model_versions``
+        are the enrichment pipeline's output at insert time
+        (``_enrich_memory_if_enabled`` above), and ``enriched_content`` is what
+        the row's stored embedding is actually derived from
+        (``encode_document_enriched``). A content correction that patches
+        ``content`` alone leaves those columns describing the SUPERSEDED text —
+        a corrected memory keeps being retrievable by the claim that was
+        retracted, and the embedding (re-encoded from the new raw content by
+        the memory_update re-embed guard) ends up disagreeing with what
+        ``enriched_content`` still says.
+
+        Reuses the SAME producer ``insert_memory`` uses
+        (``_get_enrichment_pipeline``, via ``_derive_enrichment_resync`` below)
+        — never a reimplementation. When re-derivation is not possible
+        (enrichment disabled, content too short, no embeddings engine, or the
+        pipeline raises), the stale columns are explicitly NULLed instead of
+        left holding text derived from content that no longer exists on the
+        row: stale-but-honest beats stale-and-wrong.
+        """
+        new_values, new_embedding = _derive_enrichment_resync(
+            mid, new_content, settings, embeddings_engine, embedding
+        )
+
+        set_parts = []
+        params: dict = {"id": mid}
+        for col in _ENRICHMENT_COLS:
+            val = new_values.get(col)
+            if val is None:
+                # Untyped/schemaless columns, but mirror the option<string>-safe
+                # pattern used elsewhere in this file (project_id/valid_until):
+                # a literal NONE, not a bound Python None, is what actually
+                # clears the field.
+                set_parts.append(f"{col} = NONE")
+            else:
+                set_parts.append(f"{col} = ${col}")
+                params[col] = val
+        self._q(
+            f"UPDATE type::record('memory', $id) SET {', '.join(set_parts)}",
+            params,
+        )
+
+        if new_embedding is not None:
+            # Reuse update_memory_embedding (not a raw _q) so the memory_doc
+            # cache bust it already carries applies here too — the row was
+            # already live (unlike insert_memory's fresh row, which has
+            # nothing cached yet).
+            self.update_memory_embedding(mid, new_embedding, embeddings_engine.model_name)
 
     @observe(tier="boundary", metric="storage.memory.insert_memory")
     def insert_memory(self, memory: dict, embeddings_engine=None, settings=None) -> int:
