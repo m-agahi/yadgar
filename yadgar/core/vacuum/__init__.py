@@ -613,11 +613,15 @@ def _build_and_verify_side_db(
     The throwaway is governed by the launcher seam, NOT by ServiceController —
     ServiceController governs only the real backend lifecycle.
     """
-    from yadgar.core.vacuum.launcher import select_side_launcher
+    from yadgar.core.vacuum.launcher import select_side_launcher, side_build_host
 
     side_path.mkdir(parents=True, exist_ok=True)
     side_port = _free_port()
-    side_url = f"http://127.0.0.1:{side_port}"
+    # NOT a hardcoded 127.0.0.1: the publish side and the connect side are only
+    # the same place when the container runtime shares this process's network
+    # namespace.  See launcher.side_build_host — production still resolves to
+    # loopback, unchanged.
+    side_url = f"http://{side_build_host()}:{side_port}"
     if launcher is None:
         launcher = select_side_launcher()
     if launcher is None:

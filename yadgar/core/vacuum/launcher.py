@@ -94,6 +94,12 @@ SIDE_CONTAINER_NAME = "yadgar-vacuum-side-build"
 #: the caller (a free port) and published loopback-only onto this one.
 SIDE_CONTAINER_PORT = 8000
 
+#: Default host the side build is published on AND connected to.  Loopback is
+#: correct for every production install: the side build is a throwaway holding a
+#: full copy of the corpus, and the daemon that runs it is the local one, so
+#: there is nothing to gain and a whole DB to lose by binding it wider.
+SIDE_HOST_DEFAULT = "127.0.0.1"
+
 #: Grace SurrealDB gets to flush and exit on SIGTERM before the runtime escalates
 #: to SIGKILL.  An escalation shows up as a non-zero exit code and ABORTS the swap.
 STOP_GRACE_SEC = 30
@@ -243,6 +249,56 @@ def _launcher_mode() -> str:
     return normalised if normalised in _LAUNCHER_MODES else "auto"
 
 
+@observe(tier="stage")
+def side_build_host() -> str:
+    """Host the phase-3 side build is published on AND connected to.
+
+    Defaults to :data:`SIDE_HOST_DEFAULT` (``127.0.0.1``) — production behaviour
+    is byte-for-byte what it was before this knob existed, and MUST stay that
+    way: widening the bind would put a throwaway SurrealDB holding a full copy of
+    the corpus on the LAN, unauthenticated apart from the root creds.
+
+    The knob exists because publishing on loopback and connecting to loopback are
+    only the same place when the container runtime shares this process's network
+    namespace.  They do not when ``DOCKER_HOST`` names a REMOTE daemon — a
+    ``docker:dind`` sidecar being the case that forced this: the runtime publishes
+    the port on the sidecar's loopback, which is not reachable from here, so the
+    side build could never be talked to and phase 3 could never complete.  That is
+    the same namespace split :func:`yadgar.tests.integration.conftest.
+    _docker_endpoint_host` documents for the backend container's own port.
+
+    Kept as an EXPLICIT knob rather than derived from ``DOCKER_HOST`` here: the
+    derivation would silently widen the bind on any host that happens to point at
+    a TCP daemon, and "the vacuum quietly started binding all interfaces" is not a
+    thing that should happen without someone typing it.
+
+    Resolved through :func:`resolve_knob` for the same reason
+    :func:`_launcher_mode` is — a value written into ``config.yaml`` that the code
+    never reads is the phantom-knob bug.
+    """
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415 — avoid import cycle
+
+    raw = str(resolve_knob("YADGAR_VACUUM_SIDE_HOST", "VACUUM_SIDE_HOST", str, SIDE_HOST_DEFAULT))
+    return raw.strip() or SIDE_HOST_DEFAULT
+
+
+@observe(tier="stage")
+def side_publish_spec(port: int) -> str:
+    """``-p`` argument publishing *port* onto the container's SurrealDB port.
+
+    Loopback-only (``127.0.0.1:<port>:8000``) whenever the side host is loopback
+    — i.e. always, in production.  Any OTHER host means the daemon lives in a
+    different network namespace, where binding that namespace's loopback
+    publishes the port somewhere the caller cannot reach; there the port is
+    published on all of the DAEMON's interfaces (``<port>:8000``) and reached at
+    :func:`side_build_host`.  Mirrors the ``_bind_prefix`` rule the integration
+    fixture applies to the backend container.
+    """
+    host = side_build_host()
+    prefix = f"{host}:" if host == SIDE_HOST_DEFAULT else ""
+    return f"{prefix}{port}:{SIDE_CONTAINER_PORT}"
+
+
 class SideBackendLauncher(ABC):
     """Start / prove-a-clean-stop / force-reap a throwaway SurrealDB for the side build."""
 
@@ -389,7 +445,7 @@ class ContainerLauncher(SideBackendLauncher):
             "--security-opt",
             "label=disable",
             "-p",
-            f"127.0.0.1:{port}:{SIDE_CONTAINER_PORT}",
+            side_publish_spec(port),
             "-v",
             f"{side_path.parent}:/data",
             "-e",
