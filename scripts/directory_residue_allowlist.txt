@@ -134,6 +134,7 @@ carve-out-2  yadgar/_shared/wiki/store.py                  # the §25 read ladde
 carve-out-2  yadgar/_shared/contracts/models.py            # pydantic mirrors of stored rows (Episode, Checkpoint, NarrativeEntry, prospective)
 carve-out-2  yadgar/backend/write_exec/wiki_add_impl.py    # forwards directory_context= into the wiki write path
 carve-out-2  yadgar/backend/queue_drainer/dlq.py           # forwards directory_context= when re-applying a drained payload
+carve-out-2  yadgar/backend/admin_exec/identity_stamp.py   # Car 1 (task 309): the manifest REPORTS the legacy directory_context/directory column values it inherited project_id from, so an operator can review the basis and settle a conflicted one — a review artefact naming the retired column, never a scope key on any row; dies with the column in the drop migration, exactly like rekey_corpus.py below
 
 # ── wire contracts: keys crossing a process boundary ────────────────────────
 wire-contract  yadgar/backend/embed_service/embed_service_models.py  # RecallRequest.directory retained OPTIONAL and deliberately not deleted;

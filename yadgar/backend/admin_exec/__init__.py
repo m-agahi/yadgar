@@ -35,6 +35,7 @@ from yadgar.backend.admin_exec import (
     bookmarks,
     drain,
     engine_status,
+    identity_stamp,
     invariants,
     ledger,
     memory,
@@ -162,6 +163,12 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # ``directory_context`` counts so the core CLI can build the map
     # without importing a storage handle (layer-boundary contract).
     "rekey_discover_directories": project_backfill.rekey_discover_directories,
+    # Car 1 (ledger tasks 309 + 89): the graph-table half of the same job. C6
+    # covered ``memory`` + ``wiki_page``; the six tables below it were never
+    # named, leaving 10,997 rows with no identity that a later reader flip onto
+    # ``project_id`` would make invisible. Dry-run by default, and the dry run
+    # runs the write path's registry guard over every derived target.
+    "stamp_project_id": identity_stamp.stamp_project_id,
     "list_task_rows": ledger.list_task_rows,
     "get_task_row": ledger.get_task_row,
     "list_task_rows_all_projects": ledger.list_task_rows_all_projects,
