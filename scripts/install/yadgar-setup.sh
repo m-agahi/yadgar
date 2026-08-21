@@ -836,6 +836,37 @@ _probe_host_cli() {
     done
 }
 
+# Ledger task 306: the installer emits a fixed set of managed Claude Code hook
+# entries and nothing ever reported whether they reached the live settings.json.
+# Measured 2026-08-21: PostToolUse carried post-tool-capture but NOT
+# block-reflect, and PreCompact was an empty array, so pre-compact-drain never
+# fired either -- two managed hooks silently unwired for want of anyone asking.
+# Read-only: `yadgar verify-hooks` REPORTS divergence and never rewrites a hook
+# another tool installed (nix hand-rolls this wiring with jq; reconciling that
+# is a nix-repo change, not something this probe may do behind the user's back).
+_probe_managed_hooks() {
+    if ! command -v yadgar > /dev/null 2>&1; then
+        warn "yadgar CLI not on PATH - cannot verify managed-hook wiring"
+        return
+    fi
+    if ! yadgar verify-hooks --help > /dev/null 2>&1; then
+        warn "this yadgar has no 'verify-hooks' - upgrade to check hook wiring"
+        return
+    fi
+    # `|| true` is load-bearing under `set -euo pipefail`: divergence exits 1 by
+    # design, and that must print the report rather than abort the doctor run.
+    local report rc
+    rc=0
+    report=$(yadgar verify-hooks 2>&1) || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        info "OK: every yadgar-managed hook is wired"
+    else
+        warn "yadgar-managed hooks are MISSING from the live settings.json -"
+        warn "  a missing hook fires never and reports nothing. Details:"
+        echo "$report" >&2
+    fi
+}
+
 _run_doctor() {
     log "Doctor: Running verification probes..."
 
@@ -892,6 +923,9 @@ _run_doctor() {
             _run_enable_linger --check
             ;;
     esac
+
+    # Managed-hook wiring probe (task 306) - read-only, never repairs.
+    _probe_managed_hooks
 
     # Metrics endpoint probe
     info "Checking metrics endpoint (http://localhost:8765/metrics)..."

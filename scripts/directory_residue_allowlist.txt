@@ -110,6 +110,7 @@ carve-out-1  yadgar/core/hooks/post-tool-capture.py        # hook entry point; s
 
 # ── carve-out 3: genuine filesystem paths, permanent ────────────────────────
 carve-out-3  yadgar/core/install/**                        # install targets, config + interpreter paths (glob; see KNOWN GAP)
+carve-out-3  yadgar/core/cli/verify_hooks.py               # `yadgar verify-hooks` (task 306) is read-only: project_directory names a settings.json to OPEN (<project>/.claude/settings.json), exactly like its sibling home_dir, and is never compared against a project identity
 carve-out-3  yadgar/core/daemon/**                         # unit files and data dirs; watch_directory is a path to watch
 carve-out-3  yadgar/core/staleness/**                      # file-hash staleness inputs — real files on disk
 carve-out-3  yadgar/core/bootstrap/bootstrap.py            # watch_directory forwarded to the daemon watcher; a path, not a scope

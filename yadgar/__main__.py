@@ -129,6 +129,7 @@ def cli():
         stats,
         update,
         vacuum,
+        verify_hooks,
         viz,
     )
 
@@ -157,6 +158,7 @@ def cli():
     update.register(subparsers)
     project.register(subparsers)
     migrate.register(subparsers)
+    verify_hooks.register(subparsers)
 
     args = parser.parse_args()
 
