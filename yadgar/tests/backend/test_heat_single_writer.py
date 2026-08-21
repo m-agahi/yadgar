@@ -238,10 +238,21 @@ class TestHeatWriterFacade:
 
 
 class TestBehaviorPreservation:
-    """After refactor, heat values produced are identical to the old two-call path."""
+    """After refactor, heat values produced are identical to the old two-call path.
 
-    def test_memory_heat_value_unchanged(self):
+    These two assert on the PER-ROW intent params (``params["heat"]``), which is
+    the uncompacted write shape.  Ledger task 14 added ``_compact_heat_intents``,
+    which folds those intents into ``FOR``-loop statements carrying only
+    ``{"now": ...}`` — so both tests pin the uncompacted path explicitly via the
+    kill switch rather than being loosened to accept either shape.  Equivalence
+    of the COMPACTED path is proven at the DB level in
+    ``test_heat_decay_batched_writes.py`` (same fixture, compaction on vs off,
+    resulting rows compared).
+    """
+
+    def test_memory_heat_value_unchanged(self, monkeypatch):
         """Memory heat after single-call refactor matches the pre-refactor formula."""
+        monkeypatch.setenv("YADGAR_BATCHED_DECAY_WRITES_ENABLED", "0")
         memories = [_make_mem(1, 0.5, hours_old=1.0)]
         runner, mock_storage = _make_runner(memories, [])
 
@@ -262,8 +273,9 @@ class TestBehaviorPreservation:
             f"heat {params['heat']:.6f} ≠ expected {expected:.6f}"
         )
 
-    def test_entity_heat_value_unchanged(self):
+    def test_entity_heat_value_unchanged(self, monkeypatch):
         """Entity heat after refactor matches heat * DECAY_FACTOR^hours."""
+        monkeypatch.setenv("YADGAR_BATCHED_DECAY_WRITES_ENABLED", "0")
         entities = [_make_entity(10, 0.8, hours_old=1.0)]
         runner, mock_storage = _make_runner([], entities)
 
