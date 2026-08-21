@@ -84,6 +84,34 @@ _ENRICHMENT_COLS = (
     "enrichment_model_versions",
 )
 
+#: Pre-rendered clauses for the task-296 floor — literal ``NONE``, never a bound
+#: Python ``None``, mirroring the ``project_id``/``valid_until`` convention used
+#: throughout this file (a bound None serialises to SQL NULL, a different value).
+_ENRICHMENT_NULL_CLAUSES = tuple(f"{col} = NONE" for col in _ENRICHMENT_COLS)
+
+
+def _enrichment_null_clauses(converted: dict) -> tuple[str, ...]:
+    """THE TASK-296 FLOOR: clauses clearing stale enrichment, or ``()``.
+
+    ``content`` has four writers — ``memory_update`` (task 94), the nightly
+    compressor, the conflict-resolver UPDATE op and curation's merge — and only
+    the first re-synced enrichment, so the other three left the six columns
+    describing text the row no longer holds. ``update_memory_fields`` is the one
+    funnel all four already pass through, so the NULL-OUT belongs there: no
+    settings, no embeddings engine, no model inference, and it rides the SAME
+    UPDATE. It never touches ``embedding``, so it carries none of the ordering
+    hazard that keeps the RE-DERIVATION caller-side (a caller writing its own
+    embedding afterwards would clobber an enrichment-derived vector written
+    here). Callers that CAN re-derive do so after; everyone else lands on
+    stale-but-honest rather than stale-and-wrong. Unconditional on a content
+    change — no enrichment column is in ``_MEMORY_UPDATABLE_FIELDS``, so a
+    caller can never be supplying one that this would stomp.
+
+    Extracted rather than inlined only to keep ``update_memory_fields`` under
+    the I30 cyclomatic cap (inlining put it at 17 against a limit of 15).
+    """
+    return _ENRICHMENT_NULL_CLAUSES if "content" in converted else ()
+
 
 @observe(tier="stage")
 def _derive_enrichment_resync(
@@ -1217,6 +1245,7 @@ class _MemoryMixin:
             pname = f"v{i}"
             set_parts.append(f"{k} = ${pname}")
             params[pname] = v
+        set_parts.extend(_enrichment_null_clauses(converted))  # task 296 — see helper
         mid = int(memory_id)  # §5: cast to int to prevent record-ID injection
         self._q(f"UPDATE memory:{mid} SET {', '.join(set_parts)}", params)
         # Car 2 (backend 5.19.0): the memory_doc cache holds content+embedding by id.
