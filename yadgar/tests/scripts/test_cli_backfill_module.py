@@ -191,6 +191,57 @@ class TestCmdBackfillReslug:
             with pytest.raises(RuntimeError, match="YADGAR_EMBED_URL"):
                 cmd_backfill(_make_args(reslug_adr_pages=True))
 
+    def test_apply_with_collisions_exits_nonzero(self):
+        """Ledger task 13 defect 2: ``reslug`` has no ``ok`` key at all —
+        ``_print_reslug_report`` only PRINTS collisions to stderr, and the
+        branch returned 0 unconditionally. A collision on ``--apply`` means
+        a page was deliberately left un-reslugged (data is safe, but the
+        operator got no signal at all). This is the unread path: an
+        operator running ``--apply`` in a script has nobody reading
+        stderr, which is exactly the harm."""
+        result = {
+            "rewrites": [{"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1}],
+            "dry_run": False,
+            "collisions": [
+                {"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1, "occupant_id": 2}
+            ],
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(reslug_adr_pages=True, apply=True))
+        assert rc != 0
+
+    def test_apply_without_collisions_exits_zero(self):
+        """Pin: a clean apply (no collisions) must stay exit 0."""
+        result = {
+            "rewrites": [{"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1}],
+            "dry_run": False,
+            "collisions": [],
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(reslug_adr_pages=True, apply=True))
+        assert rc == 0
+
+    def test_dry_run_with_collisions_still_exits_zero(self):
+        """Pin, not an oversight: a dry run that REPORTS collisions is doing
+        its job — the operator is reading the report by definition (that is
+        why they ran a dry run instead of --apply). The exit code is the
+        only channel on --apply (nobody scripts a dry run and then ignores
+        its stdout the way an unattended --apply run can); gating dry-run
+        too would make every preview with a pre-existing collision fail the
+        same way a real apply-time failure does, which teaches an operator
+        to stop trusting the exit code on the run that matters. Mirrors
+        ``TestAdrRowsDryRunByDefault.test_dry_run_exits_zero_despite_a_mismatched_gate``."""
+        result = {
+            "rewrites": [{"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1}],
+            "dry_run": True,
+            "collisions": [
+                {"old": "yadgar-adr-0001", "new": "owner_repo_adr-0001", "id": 1, "occupant_id": 2}
+            ],
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(reslug_adr_pages=True))
+        assert rc == 0
+
 
 # ---------------------------------------------------------------------------
 # cmd_backfill — --adr-rows
@@ -340,6 +391,46 @@ class TestCmdBackfillAdrRows:
         with _patched(forward_side_effect=RuntimeError("YADGAR_EMBED_URL is not set")):
             with pytest.raises(RuntimeError, match="YADGAR_EMBED_URL"):
                 cmd_backfill(_make_args(adr_rows=True))
+
+    def test_dry_run_exits_nonzero_when_the_preflight_rejected_the_project(self):
+        """Task 176: the preview's exit code is the whole point of the preview.
+
+        ``_preflight_write_guards`` runs the write path's registry guard on the
+        dry-run path too, and reports a rejection as ``ok: False``. The dry-run
+        ``return 0`` below sits AFTER the ``ok is False`` branch, so a rejected
+        preview exits 1 — this pins that ordering, because reversing the two
+        lines would restore exactly the defect (a dry run that cannot fail).
+
+        Distinct from ``test_dry_run_exits_zero_despite_a_mismatched_gate``: the
+        GATE is a post-mortem that necessarily disagrees on a dry run, so it must
+        NOT gate the preview; the PREFLIGHT is a pre-write check that means the
+        apply cannot succeed, so it must.
+        """
+        result = {
+            "ok": False,
+            "error": (
+                "write-path guard 'assert_project_registered' rejected project_id "
+                "'owner/repo' (UnknownProjectError: unknown project_id: 'owner/repo')"
+            ),
+            "resume_after_adr": None,
+            "pages_seen": 230,
+            "rows_inserted": 0,
+            "rows_already_present": 0,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
+            "flagged": [],
+            "supersedes_links": 0,
+            "plan": [],
+            "gate": {
+                "index_rows": 230,
+                "pages_seen": 230,
+                "page_type_adr_rows": 0,
+                "exact_match": False,
+            },
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(adr_rows=True))
+        assert rc == 1, "a dry run that could not validate must not read as a green light"
 
 
 # ---------------------------------------------------------------------------

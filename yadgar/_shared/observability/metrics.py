@@ -840,14 +840,14 @@ yadgar_archive_purged_total = Counter(
 # Skip-and-count is the declared failure path for every derived-memory writer
 # with no session to inherit from: the write is dropped rather than collapsed
 # onto a sentinel, and the drop is loud HERE instead of fatal to the cycle.
-# writer labels: action_log_group | cls_promotion | memify_derive |
-#                dream_insight | nightly_sweep
+# writer labels: auto_capture_batch (one stage earlier, at /hooks/auto-capture)
+# | action_log_group | cls_promotion | memify_derive | dream_insight | nightly_sweep
 
 yadgar_project_id_skipped_total = Counter(
     "yadgar_project_id_skipped_total",
     "Writes skipped by a sessionless writer because no single project_id could be "
-    "named from its inputs (writer = action_log_group | cls_promotion | memify_derive "
-    "| dream_insight | nightly_sweep)",
+    "named from its inputs (writer = auto_capture_batch | action_log_group "
+    "| cls_promotion | memify_derive | dream_insight | nightly_sweep)",
     ["writer"],
     registry=_registry,
 )

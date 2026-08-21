@@ -22,8 +22,10 @@ orchestrator and the staleness scanner ride along for free.
 
 Guarded by ``yadgar/tests/scripts/test_cli_import_isolation.py`` — do NOT move
 this back under ``yadgar.core.server`` and do NOT add imports here from any
-``yadgar.core.server.*`` module. Its only first-party dependency is
-``yadgar._shared.observability.observe``; ``httpx`` is imported lazily per call.
+``yadgar.core.server.*`` module. Its only first-party dependencies are
+``yadgar._shared.observability.observe`` and ``yadgar._shared.refusal`` (which
+itself imports only the former, so the leaf property is preserved); ``httpx`` is
+imported lazily per call.
 
 NOTE: the ``@observe(metric=...)`` labels below deliberately keep their historic
 ``tools._forward.*`` names — those are Prometheus metric labels, not module
@@ -36,6 +38,7 @@ from __future__ import annotations
 import os
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.refusal import REFUSAL_STATUS, parse_refusal
 
 # backend 5.30.1: per-op timeout FLOORS for slow admin ops. check_invariants
 # walks every memory + wiki row backend-side (observed 33-34s on the production
@@ -95,9 +98,17 @@ def _forward_admin(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
         The backend impl's result dict (the /admin route wraps it as
         ``{"result": ...}``; this helper unwraps and returns the inner dict).
 
+        OR, when the op REFUSED by design (``AdminRefusal`` backend-side), the
+        structured refusal envelope — ``{"ok": False, "refused": True, "reason":
+        ..., "error": ..., **report}``. A refusal is an EXPECTED outcome, not a
+        transport failure, so it is returned rather than raised; callers
+        discriminate on ``ok`` / ``refused`` / ``reason``.
+
     Raises:
         RuntimeError: if ``YADGAR_EMBED_URL`` is not configured.
-        httpx.HTTPError: if the backend request fails (incl. 400 unknown op).
+        httpx.HTTPError: if the backend request fails (incl. 400 unknown op and
+            any 5xx — a genuine fault still raises, which is what keeps it
+            distinguishable from a refusal).
     """
     import httpx  # noqa: PLC0415
 
@@ -130,6 +141,32 @@ def _forward_admin(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
         )
     except httpx.ConnectError as exc:
         raise _unreachable_backend_error(backend_base, "forward an admin op") from exc
+
+    # Ledger tasks 80 + 294: a DELIBERATE refusal comes back as a structured
+    # envelope, and the caller gets it — it is not a fault, so it is not raised.
+    # This is also what makes quiesce.py's pre-existing
+    # ``if verification.get("status") != "ok"`` reachable at last: the old
+    # unconditional raise_for_status() fired before the body was ever read, so
+    # the one place that inspected the tri-state report was dead code.
+    # Everything else — 500s, the 400 unknown-op, a 409 that is not ours —
+    # still raises exactly as before.
+    #
+    # The peek is GATED ON THE STATUS CODE so that every other response walks
+    # the byte-identical pre-car path below. An earlier draft read the body
+    # unconditionally and then guarded the unwrap with ``isinstance(body, dict)``;
+    # that silently changed the SUCCESS path for any caller whose response is a
+    # bare mock (``MagicMock().json()`` is not a dict, so ``{}`` would be
+    # returned where a MagicMock used to be). Narrowing a fix to the case it is
+    # for is cheaper than auditing every mock in the suite.
+    if resp.status_code == REFUSAL_STATUS:
+        try:
+            _body = resp.json()
+        except Exception:  # noqa: BLE001 — a non-JSON body is simply not a refusal
+            _body = None
+        refusal = parse_refusal(resp.status_code, _body)
+        if refusal is not None:
+            return refusal
+
     resp.raise_for_status()
     data = resp.json()
     return data.get("result", {})

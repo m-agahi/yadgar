@@ -787,8 +787,9 @@ def project_seed(
 
     Car A (2026-08-14 identity train, plan §2). Closes the gap where
     ``backend.admin_exec.ledger.create_project_row`` is registered but
-    had no MCP / CLI path; engine-#2 ledger writes were blocked by
-    ADR-0078's ``_ensure_project_exists_sync`` guard with no way to
+    had no MCP / CLI path; engine-#2 ledger writes were blocked by the
+    registry guard inside ``create_task_row`` / ``create_adr_row``
+    (``MariaStorageEngine.assert_project_registered``) with no way to
     prime the registry first.
 
     Reads the TSV at ``map_path`` (default: ``<cwd>/.yadgar/
@@ -799,9 +800,11 @@ def project_seed(
     ``DuplicateProjectError`` → returns ``skipped``). Drop / review
     rows are skipped (not registry rows — operator decisions).
 
-    The guard at ``_ensure_project_exists_sync`` is NOT relaxed by
-    this tool. This is the SEED that lets the guard ever succeed;
-    subsequent writes still hit the registry check.
+    The registry guard is NOT relaxed by this tool. This is the SEED
+    that lets it ever succeed; subsequent writes still hit the check —
+    ``assert_project_registered`` on the engine-#2 ledger tables, and
+    (Car 5) ``assert_project_registered_for_create`` on the ``memorize``
+    / ``wiki_add`` create path.
 
     ADR-0225: this tool takes NO ``directory`` parameter. The TSV's
     first column (``source_directory``) is a host-side origin hint
@@ -815,11 +818,13 @@ def project_seed(
             pass it here.
 
     Returns:
-        ``{"ok": True, "counts": {seed, drop, review, created, skipped,
-        failed}, "map_path": <path>}`` on completion. Backend errors on
-        individual rows are reported in ``counts["failed"]``; structural
-        map errors (file not found, malformed row) return
-        ``{"ok": False, "error": ...}``.
+        ``{"ok": counts["failed"] == 0, "counts": {seed, drop, review,
+        created, skipped, failed}, "map_path": <path>}`` on completion —
+        ``ok`` is False whenever at least one row genuinely failed
+        (duplicates are ``skipped``, not ``failed``, so an idempotent
+        re-run of an already-seeded map still reports ``ok: True``).
+        Structural map errors (file not found, malformed row) return
+        ``{"ok": False, "error": ...}`` before any row is processed.
     """
     from yadgar.core.cli.project import (
         DEFAULT_MAP_PATH,
@@ -865,4 +870,10 @@ def project_seed(
         outcome = seed_row(row, auth_token=auth_token)
         counts[outcome] += 1
 
-    return {"ok": True, "counts": counts, "map_path": str(resolved_map)}
+    # ``ok`` used to be a literal True — it reflected only whether the TSV
+    # map parsed, never per-row outcome, so a caller reading ``ok`` first
+    # (the field a model checks first) saw success while counts["failed"]
+    # > 0 (ledger task 13 defect 1). Duplicates are classified "skipped",
+    # not "failed" (see ``is_duplicate_project_error``), so an idempotent
+    # re-run of an already-seeded map still reports ok: True here.
+    return {"ok": counts["failed"] == 0, "counts": counts, "map_path": str(resolved_map)}

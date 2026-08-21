@@ -1741,7 +1741,13 @@ def _maintenance_enter(ttl_seconds: float) -> bool:
     window — the handler widens rather than overwrites.
     """
     return bool(
-        _maintenance_post(_MAINTENANCE_ENTER_PATH, {"ttl_seconds": ttl_seconds}).get("previous")
+        _maintenance_post(
+            _MAINTENANCE_ENTER_PATH,
+            # Car 1 (2026-08-20 train): NAME the window. The gate envelope used
+            # to hardcode "(vacuum)" whoever opened it, which was right here and
+            # wrong for nightly and for the backup quiesce.
+            {"ttl_seconds": ttl_seconds, "operation": "vacuum"},
+        ).get("previous")
     )
 
 

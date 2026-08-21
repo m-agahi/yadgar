@@ -669,6 +669,30 @@ async def _maintenance_ttl(request: Request) -> float | None:
     return ttl if ttl > 0 else None
 
 
+@observe(tier="stage")
+async def _maintenance_label(request: Request) -> dict:
+    """Read the optional ``operation`` / ``phase`` labels off the enter body.
+
+    Same tolerant-by-design stance as ``_maintenance_ttl`` above and for the same
+    reason: a malformed label must never 500 the endpoint that un-wedges the
+    engine.  ``None`` means "not supplied" — the caller leaves the stored label
+    untouched, which is what makes a nested enter safe.
+
+    Single ``except Exception`` on purpose — see ``_maintenance_ttl``.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return {"operation": None, "phase": None}
+    if not isinstance(body, dict):
+        return {"operation": None, "phase": None}
+    out = {}
+    for key in ("operation", "phase"):
+        value = body.get(key)
+        out[key] = value.strip() if isinstance(value, str) and value.strip() else None
+    return out
+
+
 @observe(tier="boundary")
 async def maintenance_enter_handler(request: Request) -> JSONResponse:
     """POST /api/control/maintenance/enter — enter maintenance mode.
@@ -676,9 +700,14 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
     Sets _maintenance_mode=True so every MCP tool returns a fast structured error
     instead of touching the DB. Core stays UP — no MCP disconnect for clients.
 
-    Body (task:0113, both optional):
+    Body (task:0113, all optional):
       ``ttl_seconds`` — self-heal deadline; omitted/blank/<=0 keeps the historic
       no-expiry behaviour so a caller that has not been updated cannot regress.
+      ``operation`` — what the window is FOR ("vacuum"/"nightly"/"backup"); the
+      gate envelope used to hardcode "(vacuum)" for all three (Car 1, 2026-08-20
+      train). Honoured on the OUTER enter only; unlabelled renders "maintenance".
+      ``phase`` — where inside the operation we are. Re-entering IS the phase
+      channel, so advancing it needs no extra route.
 
     Returns ``previous`` — the state BEFORE this call.  Windows nest: nightly
     enters at step 1 and exits at step 7, and its step-4 vacuum enters the same
@@ -699,6 +728,7 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
     import yadgar._shared.runtime.state as _st  # noqa: PLC0415 — late import, write live attr
 
     ttl = await _maintenance_ttl(request)
+    label = await _maintenance_label(request)
     previous = bool(_st._maintenance_mode)
     deadline = (time.monotonic() + ttl) if ttl else None
     if previous and (_st._maintenance_deadline is None or deadline is None):
@@ -709,6 +739,16 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
         _st._maintenance_entered_at = time.monotonic()
     _st._maintenance_mode = True
     _st._maintenance_deadline = deadline
+    # ``operation`` names the WINDOW, so like ``_maintenance_entered_at`` above
+    # it belongs to the OUTER holder: nightly labels the window at step 1 and its
+    # step-4 vacuum must not relabel it, because the window the caller is waiting
+    # on is nightly's. ``phase`` is the opposite — anyone may advance it, and a
+    # nested enter is exactly how a phase transition is reported.
+    # Absent means "leave it alone" in both cases, never "clear it".
+    if label["operation"] is not None and not previous:
+        _st._maintenance_operation = label["operation"]
+    if label["phase"] is not None:
+        _st._maintenance_phase = label["phase"]
     deadline_seconds = (deadline - time.monotonic()) if deadline is not None else None
     logger.info(
         "maintenance mode entered",
@@ -718,6 +758,8 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
             "outcome": "ok",
             "previous": previous,
             "ttl_seconds": ttl,
+            "operation": _st._maintenance_operation,
+            "phase": _st._maintenance_phase,
         },
     )
     return JSONResponse(
@@ -726,6 +768,8 @@ async def maintenance_enter_handler(request: Request) -> JSONResponse:
             "maintenance_mode": True,
             "previous": previous,
             "deadline_seconds": deadline_seconds,
+            "operation": _st._maintenance_operation,
+            "phase": _st._maintenance_phase,
         }
     )
 
@@ -739,12 +783,14 @@ async def maintenance_exit_handler(request: Request) -> JSONResponse:
 
     Clears the TTL deadline too (task:0113): a surviving deadline would make the
     next no-TTL enter inherit an already-expired window and self-clear at once.
+    Car 1 (2026-08-20 train) clears the operation/phase labels for the same
+    reason — a stale label would mislabel the NEXT window's envelope.
     """
-    import yadgar._shared.runtime.state as _st  # noqa: PLC0415 — late import, write live attr
+    from yadgar._shared.runtime.maintenance import (  # noqa: PLC0415
+        reset_maintenance_state,
+    )
 
-    _st._maintenance_mode = False
-    _st._maintenance_deadline = None
-    _st._maintenance_entered_at = None
+    reset_maintenance_state()
     logger.info(
         "maintenance mode exited",
         extra={"component": "control", "action": "maintenance_exit", "outcome": "ok"},

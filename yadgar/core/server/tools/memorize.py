@@ -11,6 +11,11 @@ from yadgar._shared.security.secrets import (
     gate_or_reject,  # noqa: F401 — required by I26 secret-gate check
 )
 from yadgar._shared.server_helpers import normalize_write_context
+
+# Car 5 (2026-08-20 train): the CREATE-path registry gate. Same
+# ``UnknownProjectError`` class ``MariaStorageEngine.assert_project_registered``
+# raises, so one ``except`` binds both halves of the guarantee.
+from yadgar._shared.storage.sql.errors import UnknownProjectError
 from yadgar._shared.write_exec import (
     MemorizeContext,
     phase_validate,
@@ -29,6 +34,9 @@ from yadgar.core.server._app import _tool
 from yadgar.core.server.tools._project_param import (
     InvalidProjectOverrideError,
     resolve_effective_project,
+)
+from yadgar.core.server.tools._project_registry import (
+    assert_project_registered_for_create,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,9 +90,11 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
     ``session_project`` (Car E) > raise (C5 deleted the derivation and the
     ``"global"`` fallback). ``context`` is NOT and never was a resolution
     source — see ``resolve_effective_project``, where it is accepted only so a
-    supplied-and-ignored path stays observable in the log. The non-string /
-    empty guards fire at the type level; the deep registry check lives at the
-    backend write path (`_ensure_project_exists_sync`, §15 / ADR-0078).
+    supplied-and-ignored path stays observable in the log. Car 5 (2026-08-20)
+    added the two gates this docstring used to attribute to an uncalled backend
+    guard: a sentinel guard (``global`` / ``unresolved`` / ``system`` refused)
+    and the REGISTRY check no writer of ``memory.project_id`` had ever
+    performed — see ``_project_registry.assert_project_registered_for_create``.
 
     tags carries a ``None`` default purely as a consequence of ``context``
     becoming optional in front of it: Python forbids a required parameter
@@ -176,9 +186,12 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
             session_project=None,
             tool="memorize",
         )
+        # Car 5: the registry check ~12 docstrings claimed ran "backend-side".
+        # It never did; see ``_project_registry`` for why it must run here.
+        assert_project_registered_for_create(effective_project_id, tool="memorize")
     except UnresolvedProjectError as exc:
         return {"stored": False, "ok": False, **exc.payload}
-    except InvalidProjectOverrideError as exc:
+    except (InvalidProjectOverrideError, UnknownProjectError) as exc:
         return {"stored": False, "ok": False, "error": f"memorize: {exc}"}
 
     return _enqueue(ctx, wait=wait, project_id=effective_project_id)
@@ -198,9 +211,13 @@ def _enqueue(ctx: MemorizeContext, wait: bool = False, *, project_id: str | None
     unattributed, to be re-derived inside a container with no git binary and
     no host project mounts (§1.1 / ADR-0227). The MCP tool call is the only
     participant that can see the session, so it is the only honest place to
-    resolve. The deep registry check stays backend-side (Car A0
-    ``_ensure_project_exists_sync``, §15 / ADR-0078), which REJECTS unknown
-    project_ids fail-loud at INSERT time — core stays out of the DB.
+    resolve. Car 5 (2026-08-20): the registry check that this comment used to
+    attribute to an uncalled backend guard runs in ``memorize`` itself,
+    ABOVE this function, via ``assert_project_registered_for_create``. It has
+    to: that guard had zero call sites, and the drainer — the only other place
+    a queued memorize write passes through — is a bare thread that cannot
+    drive engine #2's pooled async engine. Core still touches no DB; the
+    lookup is a forwarded ``list_project_rows``, cached in-process.
     """
     payload: dict = {
         "content": ctx.content,

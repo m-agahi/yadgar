@@ -211,10 +211,32 @@ class _FusionMixin:
     @staticmethod
     @observe(tier="hot", metric="retrieval.fusion.apply_prior_boost")
     def _apply_prior_boost(fused_scores: dict, weight: float, priors: dict) -> list:
-        """Apply a precomputed prior boost (additive, O(1)) and return re-sorted list."""
+        """Apply a precomputed prior boost (MULTIPLICATIVE, O(1)); return re-sorted list.
+
+        Car 8 (task 283) replaced the additive form
+        ``fused_scores[mid] + weight * prior_val`` with
+        ``fused_scores[mid] * (1 + weight * prior_val)``.
+
+        The additive term was QUERY-INDEPENDENT: it handed every row the same
+        absolute boost regardless of how well that row matched the query, so a
+        popular row that only grazed the query outranked a row that matched it.
+        Measured on the live corpus 2026-08-20: ``memory:531268``
+        (``cofire_prior`` 0.7407) carried a ``+0.1140`` head start it kept no
+        matter what the query was, and was returned first for unrelated queries.
+
+        Multiplicative makes the prior a FRACTION OF THE QUERY SCORE:
+
+        * a row scoring 0 (no match, or the min-max normalization floor) stays
+          at 0 — a prior can never manufacture relevance, at any weight;
+        * the uplift is bounded by ``(1 + w * prior)`` REGARDLESS of the fusion
+          method's score scale, which is what the additive form got wrong (it
+          was calibrated against the raw signal weights, a different scale);
+        * "popular AND relevant beats relevant alone" is preserved — among rows
+          of comparable query relevance the higher prior still wins.
+        """
         for mid, prior_val in priors.items():
             if prior_val and mid in fused_scores:
-                fused_scores[mid] = fused_scores[mid] + weight * prior_val
+                fused_scores[mid] = fused_scores[mid] * (1.0 + weight * prior_val)
         return sorted(fused_scores.items(), key=_tiebreak_key, reverse=True)
 
     @observe(tier="stage", metric="retrieval.fusion")
@@ -252,9 +274,12 @@ class _FusionMixin:
         else:
             fused_scores, fused = self._wrrf_fuse(scores, signal_weights)
 
-        # v5.54.1: Apply precomputed graph_prior boost — additive, ALL profiles, O(1).
+        # v5.54.1: Apply precomputed graph_prior boost — ALL profiles, O(1).
         # Prior is stored on each memory row during consolidation — NO graph traversal.
-        # Confidence gating intentionally bypassed (prior is additive, not a signal).
+        # Confidence gating intentionally bypassed (prior is a post-fusion boost,
+        # not a signal). Car 8: the boost is MULTIPLICATIVE — see _apply_prior_boost.
+        # Applies on BOTH branches above: `fused_scores` is populated by
+        # `dict(fused)` in the convex branch and by the mixin in the wrrf branch.
         try:
             gp_weight = float(self._settings.WRRF_GRAPH_PRIOR_WEIGHT)
         except TypeError:
@@ -263,9 +288,11 @@ class _FusionMixin:
             priors = self._storage.get_memory_graph_priors(list(fused_scores.keys()))
             fused = self._apply_prior_boost(fused_scores, gp_weight, priors)
 
-        # v5.54.2: Apply precomputed cofire_prior boost — additive, ALL profiles, O(1).
+        # v5.54.2: Apply precomputed cofire_prior boost — ALL profiles, O(1).
         # Co-recall (transition-edge) prior — NO transition/graph traversal.
-        # Confidence gating intentionally bypassed (additive, not a signal weight).
+        # Confidence gating intentionally bypassed (post-fusion boost, not a signal
+        # weight). Car 8: MULTIPLICATIVE, and it COMPOSES with the graph_prior boost
+        # above — a row with both at 1.0 is scaled by (1+gp_w)*(1+cf_w).
         try:
             cf_weight = float(self._settings.WRRF_COFIRE_PRIOR_WEIGHT)
         except (TypeError, ValueError):  # fmt: skip

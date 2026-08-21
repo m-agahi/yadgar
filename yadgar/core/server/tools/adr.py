@@ -233,9 +233,10 @@ def adr_add(
     namespace; the body page's slug follows the same project_id (D32 ③
     scheme — ``{project_id}_adr-NNNN``). When BOTH ``project`` and
     ``directory`` are supplied, ``project`` wins and ``directory`` is logged-
-    and-ignored (§9 [VERIFY]). The deep registry check is backend-side
-    (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
-    type-level guard.
+    and-ignored (§9 [VERIFY]). Core enforces the shape guard (Car 5: sentinels
+    included); the registry check runs un-bypassably INSIDE the ledger write,
+    ``create_adr_row`` → ``MariaStorageEngine.assert_project_registered`` — NOT
+    the standalone backend guard this used to name, which has no call site.
 
     Car H: accepts ``tier`` (D27 enum: ``binding|historical``) and
     ``subsystem`` (D28 explicit; §10 Q2 normalizer → lowercase + trim, empty
@@ -663,9 +664,10 @@ def adr_get(directory: str, adr_id: str, *, project: str | None = None) -> dict:
 
     # C5 (0047 PR#40 §5): ``derive_project_id(cwd=resolved)`` deleted. The
     # namespace stamp on the ledger row comes from ``project=`` and nothing
-    # else. The deep registry check is backend-side
-    # (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
-    # type-level guard.
+    # else. Car 5: core enforces the shape guard (sentinels included). This is
+    # a READ — no registry check runs on it, by design: an unknown project_id
+    # simply matches no rows, and the fail-loud check belongs on the write
+    # (``create_adr_row`` → ``assert_project_registered``).
     try:
         project_id = resolve_effective_project(
             project=project,
@@ -764,9 +766,8 @@ def _fetch_adr_ledger_row(
     Car M (0047 §7, §16.6): when ``project_id`` is supplied (the caller
     provided ``project=`` and the override won), it is forwarded to the
     backend ``get_adr_row`` op so the row lookup is namespaced to that
-    project_id. The deep registry check is backend-side
-    (`_ensure_project_exists_sync`, §15 / ADR-0078); core enforces the
-    type-level guard.
+    project_id. Car 5: core enforces the shape guard (sentinels included);
+    no registry check runs on a READ — an unknown project_id matches no rows.
     """
     payload: dict[str, Any] = {"id": adr_id_int}
     if project_id is not None:

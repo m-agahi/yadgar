@@ -53,9 +53,23 @@ mints a phantom namespace, per the comment at ledger.py:557-559).
    ``"skipped"`` rather than ``"failed"``.
 4. **Best-effort per row.** A single malformed project_id must not
    abort the rest of the migration. ``FAIL: <key>: <error>`` is
-   logged to stderr; the loop continues; the final exit code is 0
-   unless the **map file** itself was structurally broken
-   (SystemExit(2) on parse failure).
+   logged to stderr; the loop continues.
+
+   **Correction (ledger task 13 defect 1, 2026-08-20):** the final
+   exit code / MCP ``ok`` field is NOT unconditionally 0/True as
+   originally decided above. ``cmd_project_seed`` now exits 1, and
+   the MCP tool's ``ok`` reflects ``counts["failed"] == 0``, whenever
+   at least one row genuinely failed (duplicates still classify as
+   ``skipped``, not ``failed``, so an idempotent re-run stays
+   success-shaped). The original decision left both surfaces
+   success-shaped even with real per-row failures, which reached
+   production: an operator ran the seed, got ``ok: True``, and
+   reported three deterministic ``DataError 1406`` failures
+   (``display_name`` overflow — see ``project.py``'s
+   ``row["note"][:255]`` slice against the registry's
+   ``display_name VARCHAR(64)`` column) as "transient". The
+   best-effort **behavior** (loop continues past a bad row) is
+   unchanged; only the **final signal** changed.
 5. **DROP / REVIEW rows skipped.** Map rows whose column 2 is
    ``DROP`` or ``REVIEW`` are operator decisions (delete the rows;
    hand the entry back to a human), not registry rows. The seed

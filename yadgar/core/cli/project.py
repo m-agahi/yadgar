@@ -23,9 +23,13 @@ as a project-scoping concept; the column is kept here because it
 documents where the row was first written from, but the registry payload
 keys on ``project_id`` alone.
 
-The guard at ``_ensure_project_exists_sync`` is NOT relaxed by this
-module: it still refuses unknown project_ids on the WRITE path. This
-module is the SEED that lets the guard ever succeed.
+The registry guard is NOT relaxed by this module: unknown project_ids
+are still refused on the WRITE path — by
+``MariaStorageEngine.assert_project_registered`` inside
+``create_task_row`` / ``create_adr_row``, and (Car 5, 2026-08-20) by
+``assert_project_registered_for_create`` on the ``memorize`` /
+``wiki_add`` create path. This module is the SEED that lets those
+succeed.
 """
 
 from __future__ import annotations
@@ -228,10 +232,16 @@ def cmd_project_seed(args: argparse.Namespace) -> int:
     """``yadgar project seed`` handler.
 
     Walks the map file, calls ``create_project_row`` per seed-eligible
-    row, prints a per-row outcome, and exits 0 unless the map was
-    structurally malformed. Backend errors on individual rows do NOT
-    cause a non-zero exit (the migration is best-effort per row — a
-    single typo'd project_id is not a reason to abandon the rest).
+    row, and prints a per-row outcome. A backend error on one row does
+    NOT abort the rest of the migration — the loop is still best-effort
+    per row (a single typo'd project_id must not stop the others from
+    seeding), and ``seed_row`` never raises. What DOES change is the
+    final exit code: a genuine (non-duplicate) per-row failure now makes
+    the run exit 1 (ledger task 13 defect 1 — this used to always return
+    0 unless the map file itself was structurally malformed, so an
+    operator reading the exit code alone never learned a row failed).
+    Duplicates (idempotent re-run) are classified "skipped", not
+    "failed", and do not trip this gate.
     """
     map_path = Path(args.map) if args.map else DEFAULT_MAP_PATH
     rows = parse_map(map_path)
@@ -269,6 +279,8 @@ def cmd_project_seed(args: argparse.Namespace) -> int:
         )
 
     print(json.dumps(counts))
+    if counts["failed"] > 0:
+        return 1
     return 0
 
 

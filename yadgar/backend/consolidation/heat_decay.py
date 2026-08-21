@@ -5,9 +5,34 @@ Architecture (T4 — BC-CSW1 single-writer):
     directly.  A reconcile step merges the intent lists.  A SINGLE
     HeatWriter.apply_heat_intents() call applies the reconciled set — one
     storage.batch_writes for all heat mutations per cycle.
+
+Batched writes (ledger task 14, car 10):
+    The intents above are one UPDATE per changed row.  On the live corpus
+    (1740 decay-eligible rows, measured 2026-08-21) that is 1740 statements —
+    and in server mode ``_build_chunk_body`` expands each into 3 ``LET`` + 1
+    ``UPDATE``, so SurrealDB parses ~6960 statements every cycle; in embedded
+    mode (the nightly cycle) ``batch_writes`` runs each as its own round-trip.
+    ``_compact_heat_intents`` folds each run of identical-template intents into
+    a bounded number of ``FOR $r IN [...] { UPDATE $r.i SET ... }`` statements.
+
+    The decay ARITHMETIC stays in Python, deliberately — it is NOT expressible
+    in SurrealQL without changing behaviour or duplicating the formula:
+      * ``tags`` is stored as BOTH a JSON string and a real array in the live
+        corpus, and the ``_action_stream`` cold-threshold branch reads it;
+      * ``last_accessed`` / ``last_decay_at`` are ISO strings, not datetimes;
+      * the domain multiplier comes from ``astrocyte_process`` rows, not a
+        ``memory`` column;
+      * ``stats[...]`` and the ``heat_updated`` SSE payload both need the new
+        per-row heat in Python, so the row fetch cannot go away — meaning a
+        SQL-side formula would be a SECOND copy of the arithmetic, not a
+        replacement, and ``math::pow`` is not bit-identical to Python ``**``.
+    Collapsing only the WRITE keeps exactly one arithmetic implementation, so
+    the batched path is equal to the per-row path by construction.
 """
 
+import json
 import logging
+import math
 from datetime import UTC, datetime
 
 from yadgar._shared.observability.observe import observe
@@ -15,6 +40,127 @@ from yadgar._shared.server_helpers import _push_event
 from yadgar._shared.storage.heat_writer import HeatWriter
 
 logger = logging.getLogger("yadgar.consolidation")
+
+# ---------------------------------------------------------------------------
+# Decay UPDATE templates — the SINGLE source for both the emitters below and
+# the compactor.  _compact_heat_intents matches on OBJECT IDENTITY with these
+# constants (not by parsing SQL), so an emitter and its compaction rule can
+# never drift apart.  Nothing else in the tree may reconstruct this text.
+# ---------------------------------------------------------------------------
+_MEM_DECAY_SQL = (
+    "UPDATE type::record('memory', $id) SET "
+    "heat = $heat, last_decay_at = $now, access_count_since_decay = 0"
+)
+_ENT_DECAY_SQL = "UPDATE type::record('entity', $id) SET heat = $heat, last_decay_at = $now"
+_ENT_DECAY_COLD_SQL = (
+    "UPDATE type::record('entity', $id) SET heat = $heat, last_decay_at = $now, archived = true"
+)
+
+# template -> (table, SET clause rewritten against the FOR-loop variable $r)
+_COMPACTABLE: dict[str, tuple[str, str]] = {
+    _MEM_DECAY_SQL: (
+        "memory",
+        "heat = $r.h, last_decay_at = $now, access_count_since_decay = 0",
+    ),
+    _ENT_DECAY_SQL: ("entity", "heat = $r.h, last_decay_at = $now"),
+    _ENT_DECAY_COLD_SQL: ("entity", "heat = $r.h, last_decay_at = $now, archived = true"),
+}
+
+# Rows folded into one FOR statement.  A module constant, NOT a knob (avoid
+# config-surface churn).  Must stay well under MAX_BATCH_BYTES: _send_chunk
+# CANNOT split a single oversized statement — it only WARNs and posts anyway.
+# At ~48 bytes per inlined row this is ~24 KB per statement vs the 1 MB cap.
+_MAX_ROWS_PER_FOR = 500
+
+
+def _batched_decay_writes_enabled() -> bool:
+    """Kill switch for the compaction (env-only, mirrors the cache knobs).
+
+    Deliberately not in the config registry: it exists so an operator can fall
+    back to the per-row path if a future SurrealDB regresses the ``FOR`` form,
+    not as a tuning surface.
+    """
+    from yadgar._shared.config import resolve_knob  # noqa: PLC0415
+
+    return resolve_knob(
+        "YADGAR_BATCHED_DECAY_WRITES_ENABLED",
+        "BATCHED_DECAY_WRITES_ENABLED",
+        lambda v: v.lower() not in ("0", "false", "no"),
+        True,
+    )
+
+
+@observe(tier="hot")
+def _inlinable(params: dict | None) -> bool:
+    """True when (id, heat, now) can be safely inlined into a FOR array literal.
+
+    ``id`` must be a real int (``bool`` is an int subclass and is rejected) so
+    the inlined record-id literal cannot carry injected text; ``heat`` must be
+    a finite real number so ``json.dumps`` emits a valid SurrealQL numeric
+    literal; ``now`` must be a string so it can ride as the single bound param.
+    Anything else is forwarded per-row, untouched.
+    """
+    if not params:
+        return False
+    rid, heat, now = params.get("id"), params.get("heat"), params.get("now")
+    if not isinstance(rid, int) or isinstance(rid, bool):
+        return False
+    if isinstance(heat, bool) or not isinstance(heat, int | float):
+        return False
+    return math.isfinite(heat) and isinstance(now, str)
+
+
+@observe(tier="stage", metric="consolidation.compact_heat_intents")
+def _compact_heat_intents(
+    intents: list[tuple[str, dict | None]],
+) -> list[tuple[str, dict | None]]:
+    """Fold per-row decay UPDATEs into bounded ``FOR``-loop statements.
+
+    Groups by (SQL template, ``now`` value) so the three decay templates never
+    merge with each other and rows stamped with different watermarks stay apart.
+    Each group is emitted at the position of its FIRST member, so relative order
+    is preserved.  Intents whose template is unknown, or whose params fail
+    ``_inlinable``, pass through verbatim.
+
+    The float literal is produced by ``json.dumps`` — the SAME shortest
+    round-trip text ``_build_chunk_body`` would have written into its ``LET``,
+    so the double SurrealDB parses is bit-identical to the per-row path.
+    """
+    if not intents or not _batched_decay_writes_enabled():
+        return list(intents)
+
+    # Pass 1 — bucket each intent under an emit key, remembering first-seen order.
+    # A pass-through gets its own singleton key so it keeps its place in the list.
+    order: list[tuple[str, str] | int] = []
+    groups: dict[tuple[str, str], list[tuple[int, float]]] = {}
+    passthrough: dict[int, tuple[str, dict | None]] = {}
+
+    for idx, (sql, params) in enumerate(intents):
+        if sql not in _COMPACTABLE or not _inlinable(params):
+            passthrough[idx] = (sql, params)
+            order.append(idx)
+            continue
+        assert params is not None  # noqa: S101 — narrowed by _inlinable
+        key = (sql, params["now"])
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append((params["id"], float(params["heat"])))
+
+    # Pass 2 — emit.
+    out: list[tuple[str, dict | None]] = []
+    for entry in order:
+        if isinstance(entry, int):
+            out.append(passthrough[entry])
+            continue
+        sql, now = entry
+        table, set_clause = _COMPACTABLE[sql]
+        rows = groups[entry]
+        for start in range(0, len(rows), _MAX_ROWS_PER_FOR):
+            chunk = rows[start : start + _MAX_ROWS_PER_FOR]
+            array = ", ".join(f"{{i: {table}:{rid}, h: {json.dumps(h)}}}" for rid, h in chunk)
+            out.append((f"FOR $r IN [{array}] {{ UPDATE $r.i SET {set_clause}; }};", {"now": now}))
+    return out
 
 
 @observe(tier="stage", metric="consolidation.build_heat_updates")
@@ -74,8 +220,12 @@ class _HeatDecayMixin:
         ent_intents = self._decay_entities(now)
         # Phase 2 — reconcile: merge both intent lists (one entry per id)
         all_intents = _reconcile_heat_intents(mem_intents, ent_intents)
-        # Phase 3 — single apply via HeatWriter facade (BC-CSW1)
-        HeatWriter(self._storage).apply_heat_intents(all_intents)
+        # Phase 3 — single apply via HeatWriter facade (BC-CSW1).  The intents
+        # are compacted into FOR-loop statements FIRST (task 14) so the one
+        # batch carries a bounded statement count instead of one per row.  The
+        # UNCOMPACTED lists are what Phase 4 reads — compaction changes the
+        # write shape only, never the values.
+        HeatWriter(self._storage).apply_heat_intents(_compact_heat_intents(all_intents))
         # Phase 4 — emit ONE heat_updated SSE event for the changed rows (F2).
         # After apply, so the payload references persisted heat values. Skip the
         # push entirely when nothing changed (the idempotency fix makes repeat
@@ -163,8 +313,7 @@ class _HeatDecayMixin:
                 # even when heat didn't change (so the cycle-counter stays clean).
                 mem_batch.append(
                     (
-                        "UPDATE type::record('memory', $id) SET "
-                        "heat = $heat, last_decay_at = $now, access_count_since_decay = 0",
+                        _MEM_DECAY_SQL,
                         {"id": mem["id"], "heat": new_heat, "now": now.isoformat()},
                     )
                 )
@@ -192,13 +341,6 @@ class _HeatDecayMixin:
             if goes_cold:
                 new_heat = 0.0
             if abs(new_heat - ent["heat"]) > 1e-9 or goes_cold:
-                set_clause = "heat = $heat, last_decay_at = $now"
-                if goes_cold:
-                    set_clause += ", archived = true"
-                ent_batch.append(
-                    (
-                        f"UPDATE type::record('entity', $id) SET {set_clause}",
-                        {"id": ent["id"], "heat": new_heat, "now": now.isoformat()},
-                    )
-                )
+                sql = _ENT_DECAY_COLD_SQL if goes_cold else _ENT_DECAY_SQL
+                ent_batch.append((sql, {"id": ent["id"], "heat": new_heat, "now": now.isoformat()}))
         return ent_batch

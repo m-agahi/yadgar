@@ -13,11 +13,11 @@
   {
     "path": "yadgar/backend/admin_exec/adr_seed.py",
     "function": "seed_adr_rows",
-    "lineno": 602,
+    "lineno": 714,
     "metrics": {
-      "fn_loc": 193
+      "fn_loc": 204
     },
-    "rationale": "Car G (0047 \u00a77): seed_adr_rows cyclomatic moved from the legacy ~10 (ad-hoc page-by-page loop with parse_index_rows fallback) to 23 after the D35a/D35b re-point to per-ADR pages and the async storage refactor that put list/create/link/supersede on the ledger directly (the layer-boundary cleanup removed the _forward_admin bridge \u2014 every storage call now carries its own await + try/except guard). The branches are irreducible: idempotency check (body_slug existing), per-page title/status/date parse, body_writer/row_inserter/slug_linker injector selection, supersede-target extraction + add_adr_supersedes forward, page-id\u2194row-id resolution, gate predicate on success, type guards on storage returns (async vs sync stub), result-shape narrowing \u2014 all part of the seed's stated contract. Splitting into _seed_one_page + _finalize_seed helpers would still need the same branches somewhere; cyclomatic wouldn't reduce.",
+    "rationale": "Car G (0047 \u00a77): seed_adr_rows cyclomatic moved from the legacy ~10 (ad-hoc page-by-page loop with parse_index_rows fallback) to 23 after the D35a/D35b re-point to per-ADR pages and the async storage refactor that put list/create/link/supersede on the ledger directly (the layer-boundary cleanup removed the _forward_admin bridge \u2014 every storage call now carries its own await + try/except guard). The branches are irreducible: idempotency check (body_slug existing), per-page title/status/date parse, body_writer/row_inserter/slug_linker injector selection, supersede-target extraction + add_adr_supersedes forward, page-id\u2194row-id resolution, gate predicate on success, type guards on storage returns (async vs sync stub), result-shape narrowing \u2014 all part of the seed's stated contract. Splitting into _seed_one_page + _finalize_seed helpers would still need the same branches somewhere; cyclomatic wouldn't reduce. | Re-baselined 2026-08-21 (car 19, ledger task 176): fn_loc 193 -> 204 (+11). The growth is 9 docstring lines and 2 code lines \u2014 the dry-run preflight call plus the `if structural_error is None:` guard that skips the insert loop when the write path's guards already rejected the input. The BRANCH count is why this is not decomposable away: the whole point is that the dry-run path and the apply path must pass through the SAME validation, so hoisting it into a helper (which is what _preflight_write_guards already is) cannot remove the call site or the guarded loop. Reviewed on its merits, unlike a bare ratchet re-baseline.",
     "added": "2026-08-09",
     "added_by": "car-g-adr-seed"
   },
@@ -26,9 +26,9 @@
     "function": "wiki_add",
     "lineno": 362,
     "metrics": {
-      "fn_loc": 190
+      "fn_loc": 211
     },
-    "rationale": "Car B0 (#83): wiki_add was already at fn_loc=148 (2 lines under the 150 HARD cap) before this change. Persisting repo-wiki module staleness metadata requires 2 new signature params (hash, source_file) + 2 payload dict entries + a 2-line docstring note \u2014 all irreducible feature surface, not logic branching (cyclomatic unchanged). Net +6 crosses the cap. The honest fix is extracting the payload-dict/branch-resolution preamble into a helper; that decomposition is a wiki-tools refactor of its own, not in scope for the B0 prerequisite. Car M (0047 spine train, 2026-08-09): fn_loc 154 -> 190 for the cross-project project= override (resolve_effective_project wiring + debug docstring block + payload stamping). Cyclomatic and params unchanged (the project= param is keyword-only, defaults to None, takes 0 lines in the argument list). Same deferral: the parameter is essential feature surface, not logic branching; extracting payload-dict resolution into a helper is the wiki-tools refactor's job, not in scope for Car M.",
+    "rationale": "Car B0 (#83): wiki_add was already at fn_loc=148 (2 lines under the 150 HARD cap) before this change. Persisting repo-wiki module staleness metadata requires 2 new signature params (hash, source_file) + 2 payload dict entries + a 2-line docstring note \u2014 all irreducible feature surface, not logic branching (cyclomatic unchanged). Net +6 crosses the cap. The honest fix is extracting the payload-dict/branch-resolution preamble into a helper; that decomposition is a wiki-tools refactor of its own, not in scope for the B0 prerequisite. Car M (0047 spine train, 2026-08-09): fn_loc 154 -> 190 for the cross-project project= override (resolve_effective_project wiring + debug docstring block + payload stamping). Cyclomatic and params unchanged (the project= param is keyword-only, defaults to None, takes 0 lines in the argument list). Same deferral: the parameter is essential feature surface, not logic branching; extracting payload-dict resolution into a helper is the wiki-tools refactor's job, not in scope for Car M. Re-baselined 2026-08-20 from fn_loc=190->194 (+4) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up. | Re-baselined 2026-08-20 on the signals-that-lie train merge: fn_loc 194 -> 211 (+17). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
     "added": "2026-07-21",
     "added_by": "repo-wiki-refresh-car-b0"
   },
@@ -37,9 +37,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1002
+      "file_loc": 1029
     },
-    "rationale": "Folder-split #17 Car 4b: rewriting call-site imports to the real layer paths made several import statements longer (yadgar.tracing -> yadgar._shared.tracing, etc.); ruff-format wrapped one multi-symbol import across parenthesized lines, pushing file_loc from ~999 to 1002, just over the 1000 HARD cap. Net +3 lines are import-path formatting, not logic; module's essential complexity is unchanged. Splitting to shed 3 lines is churn with no readability gain.",
+    "rationale": "Folder-split #17 Car 4b: rewriting call-site imports to the real layer paths made several import statements longer (yadgar.tracing -> yadgar._shared.tracing, etc.); ruff-format wrapped one multi-symbol import across parenthesized lines, pushing file_loc from ~999 to 1002, just over the 1000 HARD cap. Net +3 lines are import-path formatting, not logic; module's essential complexity is unchanged. Splitting to shed 3 lines is churn with no readability gain. Re-baselined 2026-08-20 from file_loc=1002->1029 (+27) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-07-07",
     "added_by": "reorg-car4b"
   },
@@ -48,9 +48,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 2046
+      "file_loc": 2061
     },
-    "rationale": "P0 #37 safe-stop train (2026-07-10): +~265 LOC for the swap quiescence gate, finalize rollback-on-unverified, and the /proc inode-coherence scan (all with incident-context docstrings \u2014 the 07-09 split-brain postmortem lives next to the code it guards). Prior entry: I33 obs rollout 1015. The honest fix is splitting finalize/guards out of __init__ \u2014 that restructure belongs to the parked T2 layer-boundary train (#5), not a P0 incident-fix branch. Car 0092 (2026-07-31): 1280 -> 1713. +~430 LOC for the side-build surreal-binary preflight, the named-skip-reason consolidation_log path, and the abort-path .pre-vacuum prune -- again incident-context docstrings carrying the wedge postmortem (export + stop-both-units + full copytree ran before a FileNotFoundError, and no abort path pruned the snapshot it had just made). The honest fix remains splitting finalize/guards/preflight out of __init__ into siblings of phases.py; that restructure still belongs to the parked T2 layer-boundary train (#5), not a bug-train car. Car 0092 full fix (2026-08-01): 1713 -> 1739. The side-build LAUNCHER SEAM itself was deliberately put in a NEW sibling (yadgar/core/vacuum/launcher.py) rather than added here, and _stop_side_backend_clean MOVED there with it -- so the container branch cost this file +26 net LOC (the broadened preflight and its incident-context docstring), not +250. Car 0113 (2026-08-01): 1739 -> 1974. +~235 LOC for the write-quiescence seam (the maintenance enter/exit/release helpers, the cross-process queue-drain nudge, and the incident-context block explaining WHY the exact-count gate is structurally blind to a write landing between the export and the backend stop). The seam is deliberately here rather than in a sibling: it wraps cmd_vacuum_impl's existing sensitive-lock try/finally, which lives in this file, and splitting only the wrapper out would put the lifecycle on one side of a module boundary and the lock it must not skip on the other. The honest fix remains splitting finalize/guards/preflight out into siblings of phases.py, still parked on the T2 layer-boundary train (#5). Car 0046 (2026-08-01): 1974 -> 2046. +72 net LOC, almost entirely the incident-context docstrings on the single reap site (_reap_vacuum_residue carries the reasoning of the SEVEN scattered call sites it replaces, including Car 0092's low-disk wedge argument, so deleting those calls cannot be misread as regressing it). The retention MECHANICS deliberately went to phases.py next to _run_cleanup_script (_reap_export_pairs, _reap_snapshots_by_age, the stamp parser), not here; what stays is the wrapper, which \u2014 like 0113's \u2014 must live beside the try/finally and the lock it may not skip. Two removals partly offset it: seven reap call sites and their comment blocks, and _vacuum_finalize's keep_n param (which retired that function's params=9 allowlist entry outright).",
+    "rationale": "P0 #37 safe-stop train (2026-07-10): +~265 LOC for the swap quiescence gate, finalize rollback-on-unverified, and the /proc inode-coherence scan (all with incident-context docstrings \u2014 the 07-09 split-brain postmortem lives next to the code it guards). Prior entry: I33 obs rollout 1015. The honest fix is splitting finalize/guards out of __init__ \u2014 that restructure belongs to the parked T2 layer-boundary train (#5), not a P0 incident-fix branch. Car 0092 (2026-07-31): 1280 -> 1713. +~430 LOC for the side-build surreal-binary preflight, the named-skip-reason consolidation_log path, and the abort-path .pre-vacuum prune -- again incident-context docstrings carrying the wedge postmortem (export + stop-both-units + full copytree ran before a FileNotFoundError, and no abort path pruned the snapshot it had just made). The honest fix remains splitting finalize/guards/preflight out of __init__ into siblings of phases.py; that restructure still belongs to the parked T2 layer-boundary train (#5), not a bug-train car. Car 0092 full fix (2026-08-01): 1713 -> 1739. The side-build LAUNCHER SEAM itself was deliberately put in a NEW sibling (yadgar/core/vacuum/launcher.py) rather than added here, and _stop_side_backend_clean MOVED there with it -- so the container branch cost this file +26 net LOC (the broadened preflight and its incident-context docstring), not +250. Car 0113 (2026-08-01): 1739 -> 1974. +~235 LOC for the write-quiescence seam (the maintenance enter/exit/release helpers, the cross-process queue-drain nudge, and the incident-context block explaining WHY the exact-count gate is structurally blind to a write landing between the export and the backend stop). The seam is deliberately here rather than in a sibling: it wraps cmd_vacuum_impl's existing sensitive-lock try/finally, which lives in this file, and splitting only the wrapper out would put the lifecycle on one side of a module boundary and the lock it must not skip on the other. The honest fix remains splitting finalize/guards/preflight out into siblings of phases.py, still parked on the T2 layer-boundary train (#5). Car 0046 (2026-08-01): 1974 -> 2046. +72 net LOC, almost entirely the incident-context docstrings on the single reap site (_reap_vacuum_residue carries the reasoning of the SEVEN scattered call sites it replaces, including Car 0092's low-disk wedge argument, so deleting those calls cannot be misread as regressing it). The retention MECHANICS deliberately went to phases.py next to _run_cleanup_script (_reap_export_pairs, _reap_snapshots_by_age, the stamp parser), not here; what stays is the wrapper, which \u2014 like 0113's \u2014 must live beside the try/finally and the lock it may not skip. Two removals partly offset it: seven reap call sites and their comment blocks, and _vacuum_finalize's keep_n param (which retired that function's params=9 allowlist entry outright). Re-baselined 2026-08-20 from file_loc=2046->2055 (+9) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 2055 -> 2061 (+6). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
     "added": "2026-07-10",
     "added_by": "safestop-car2"
   },
@@ -72,9 +72,9 @@
     "function": "hook_auto_capture",
     "lineno": 393,
     "metrics": {
-      "cyclomatic": 16
+      "cyclomatic": 19
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor Re-baselined 2026-08-20 from cyclomatic=16->19 (+3) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -95,9 +95,9 @@
     "function": "hook_prompt_recall",
     "lineno": 603,
     "metrics": {
-      "cyclomatic": 20
+      "cyclomatic": 21
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Car 7 (2026-08-13) resynced cyclomatic 17 -> 20 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Car 7 (2026-08-13) resynced cyclomatic 17 -> 20 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. Re-baselined 2026-08-20 from cyclomatic=20->21 (+1) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -117,10 +117,10 @@
     "function": "_make_event_stream",
     "lineno": 1564,
     "metrics": {
-      "cyclomatic": 16,
+      "cyclomatic": 17,
       "nesting": 5
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor Re-baselined 2026-08-20 from cyclomatic=16->17 (+1) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -141,9 +141,9 @@
     "function": "memorize",
     "lineno": 68,
     "metrics": {
-      "params": 10
+      "params": 11
     },
-    "rationale": "PERMANENT. The 10 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers.",
+    "rationale": "PERMANENT. The 10 parameters are the public MCP tool schema the LLM calls directly; bundling into a dataclass would break the tool API and require a coordinated schema change across all callers. Re-baselined 2026-08-20 from params=10->11 (+1) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -152,9 +152,9 @@
     "function": "_render_project_brief",
     "lineno": 213,
     "metrics": {
-      "cyclomatic": 35
+      "cyclomatic": 37
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor Re-baselined 2026-08-20 from cyclomatic=35->37 (+2) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -163,10 +163,10 @@
     "function": "recall",
     "lineno": 111,
     "metrics": {
-      "fn_loc": 208,
-      "params": 9
+      "fn_loc": 225,
+      "params": 10
     },
-    "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436->180. ADR-0215 (branch removal) then deleted the branch-detection block, dropping cyclomatic below the HARD cap \u2014 that metric is gone from this entry. ADR-0215 Car 5 then dropped the branch_hint param (10->9). fn_loc remains above the cap due to multi-path input validation (type_filter, mode, profile, consolidation, shadow observe). params=9: all 9 are required by the MCP schema \u2014 splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers. Car 7 (2026-08-13) resynced fn_loc 180 -> 208 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
+    "rationale": "PERMANENT. MCP tool entry point. Phase 2a: forward-only rewrite reduced fn_loc 436->180. ADR-0215 (branch removal) then deleted the branch-detection block, dropping cyclomatic below the HARD cap \u2014 that metric is gone from this entry. ADR-0215 Car 5 then dropped the branch_hint param (10->9). fn_loc remains above the cap due to multi-path input validation (type_filter, mode, profile, consolidation, shadow observe). params=9: all 9 are required by the MCP schema \u2014 splitting into a dataclass would break the API surface. Allowlisted permanently; revisit when Phase 2b extracts validation helpers. Car 7 (2026-08-13) resynced fn_loc 180 -> 208 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. Re-baselined 2026-08-20 from fn_loc=208->221 (+13), params=9->10 (+1) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up. | Re-baselined 2026-08-20 on the signals-that-lie train merge: fn_loc 221 -> 225 (+4). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -176,9 +176,9 @@
     "lineno": 351,
     "metrics": {
       "cyclomatic": 25,
-      "params": 14
+      "params": 15
     },
-    "rationale": "PERMANENT. Public MCP tool: the params are the LLM-facing schema and cannot be bundled without breaking the API. Car C (#83) adds slug+upsert (2 params). ADR-0215 Car 5 dropped branch+branch_hint, leaving 14. R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization.",
+    "rationale": "PERMANENT. Public MCP tool: the params are the LLM-facing schema and cannot be bundled without breaking the API. Car C (#83) adds slug+upsert (2 params). ADR-0215 Car 5 dropped branch+branch_hint, leaving 14. R3 Car 1: sync write moved to backend run_wiki_add_replay; wait path (_wiki_add_wait_path) is a payload-dict helper. Residual cyclo is essential orchestration glue across enqueue, wait polling, validation, approval gating, and error normalization. Re-baselined 2026-08-20 from params=14->15 (+1) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -209,9 +209,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 2219
+      "file_loc": 2220
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) \u2014 pure data, not logic; the module is a single-responsibility config loader by design. Car 7 (2026-08-13) resynced file_loc 1923 -> 2219 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) \u2014 pure data, not logic; the module is a single-responsibility config loader by design. Car 7 (2026-08-13) resynced file_loc 1923 -> 2219 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 2219 -> 2220 (+1). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -220,9 +220,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 3300
+      "file_loc": 3610
     },
-    "rationale": "pre-existing large file; updated from 1842 in v5.100.0 after three hook endpoints received shadow-observe instrumentation blocks (~90 LoC) plus accumulated growth from v5.97-v5.100 hook additions. Re-baselined 2284->2748: the bulk is accumulated growth since v5.100.0; #30 added ~44 LoC (two _record_subagent_* metric helpers + the subagent-capture wiring). Car B (2026-08-14 train) re-baselined 2748 -> 3300 (+552, +20%): the new ``_register_session_binding`` / ``lookup_session_binding`` / ``_clear_session_bindings`` / ``_register_session_bind_route`` quartet (~160 LOC of code+docstring+@trace_span) plus the per-request session-binding middleware (~280 LOC: ASGI dispatch, ContextVar setup, lookup-with-fallback) plus the project_id-decode fallback when the ASGI scope doesn't carry the session nonce (~80 LOC) plus the integration with /mcp and /sse routes that need their existing handlers wrapped. None of this can be split into siblings without restructuring the request pipeline (the binding lookup has to run BEFORE the route handler resolves scope-bound state). Scheduled for wave N split alongside the existing ``yadgar/_shared/runtime/session_bind.py`` and ``session_project.py`` siblings once Car D's re-key lands \u2014 Car D's new project_id-based resolution means most of the session-binding plumbing is project_id-only, and the wave-N split can put the ASGI middleware in a sibling then.",
+    "rationale": "pre-existing large file; updated from 1842 in v5.100.0 after three hook endpoints received shadow-observe instrumentation blocks (~90 LoC) plus accumulated growth from v5.97-v5.100 hook additions. Re-baselined 2284->2748: the bulk is accumulated growth since v5.100.0; #30 added ~44 LoC (two _record_subagent_* metric helpers + the subagent-capture wiring). Car B (2026-08-14 train) re-baselined 2748 -> 3300 (+552, +20%): the new ``_register_session_binding`` / ``lookup_session_binding`` / ``_clear_session_bindings`` / ``_register_session_bind_route`` quartet (~160 LOC of code+docstring+@trace_span) plus the per-request session-binding middleware (~280 LOC: ASGI dispatch, ContextVar setup, lookup-with-fallback) plus the project_id-decode fallback when the ASGI scope doesn't carry the session nonce (~80 LOC) plus the integration with /mcp and /sse routes that need their existing handlers wrapped. None of this can be split into siblings without restructuring the request pipeline (the binding lookup has to run BEFORE the route handler resolves scope-bound state). Scheduled for wave N split alongside the existing ``yadgar/_shared/runtime/session_bind.py`` and ``session_project.py`` siblings once Car D's re-key lands \u2014 Car D's new project_id-based resolution means most of the session-binding plumbing is project_id-only, and the wave-N split can put the ASGI middleware in a sibling then. Car 4 (2026-08-20 train, complexity-allowlist-ratchet) re-baselined 3300 -> 3496 (+196, +5.9%): this car turns the HARD allowlist gate from an unconditional pass into a ratchet (is_allowlisted() now requires actual <= recorded, not just presence in the allowlist) -- the previous 3300 entry was silently 196 lines stale and the old gate never noticed. 3496 is the measured LOC as of this car. Car 1 of the same train is expected to add further lines to this file; if it pushes past 3496, that car must re-baseline again with its own rationale rather than relying on this number. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 3496 -> 3564 (+68). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size. | Car 20 (ledger task 303, same train) re-baselined 3564 -> 3610 (+46, +1.3%): one new sibling helper, ``_observe_dropped_actions``, called from BOTH of ``hook_auto_capture``'s drop branches. It cannot move to a sibling module without taking ``_split_batch_by_project`` with it (the two are one decision -- what to discard, and how loudly to say so), and that pair is only meaningful beside the handler that flushes the batch; a wave-N split should move all three together. The +46 is mostly rationale: the helper exists because the one-line ``logger.debug`` it replaces is precisely what let action_log capture die for six days behind HTTP 200s, so the docstring records why the drop is now WARNING+metric and why the response deliberately stays 200. Already trimmed once before re-baselining -- the long-form narrative lives in yadgar/tests/server/test_auto_capture_drop_audible.py's module docstring instead.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -231,9 +231,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 2660
+      "file_loc": 2716
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module \u2014 keeping them co-located is the established pattern; refactor remains deferred to the wave N split.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module \u2014 keeping them co-located is the established pattern; refactor remains deferred to the wave N split. Re-baselined 2026-08-20 from file_loc=2660->2716 (+56) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -242,9 +242,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1876
+      "file_loc": 2130
     },
-    "rationale": "pre-existing; v5.61.0 +412 LOC for L2+L3 MCP tool registrations (wiki_replace_at/delete_at/insert_at/replace_markdown_block + heading_type param for wiki_append_section); scheduled for v5.55 wave N refactor. Car 7 (2026-08-13) resynced file_loc 1579 -> 1876 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
+    "rationale": "pre-existing; v5.61.0 +412 LOC for L2+L3 MCP tool registrations (wiki_replace_at/delete_at/insert_at/replace_markdown_block + heading_type param for wiki_append_section); scheduled for v5.55 wave N refactor. Car 7 (2026-08-13) resynced file_loc 1579 -> 1876 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. Re-baselined 2026-08-20 from file_loc=1876->2088 (+212) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 2088 -> 2125 (+37). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size. | Re-baselined 2026-08-21, car/refusal-not-crash (ledger tasks 80 + 294): file_loc 2125 -> 2130 (+5). wiki_delete is the ONLY wiki tool that post-processes _forward_admin's result rather than returning it verbatim, so it is the only one that has to recognise the new structured-refusal envelope; without the +5 it reports Car J's mutability lock as \"Wiki page not found\", which trades the old bare HTTP 500 for a wrong answer -- exactly the class of defect this train exists to remove. Correctness fix, not feature growth; NOT a review-and-approve of the size, and decomposition of this module remains the separate wave-N follow-up named above.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -264,9 +264,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 2661
+      "file_loc": 2800
     },
-    "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended). T2 Car C: file relocated wiki.py -> wiki/store.py (contract split; internal I13 split remains task #18). Car 7 (2026-08-13) resynced file_loc 2251 -> 2661 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
+    "rationale": "pre-existing large file; v5.61.0 +281 LOC for edit primitives (L4+L1) + ~484 LOC for L2+L3 (positional/structural primitives + helpers); scheduled for refactor post-v5.64. Updated v5.85 S3: +81 LOC for tag-aware recall helpers (_collect_wiki_vector_scores_tagged, _collect_scores_dispatch, _tag_filter_pass extended). T2 Car C: file relocated wiki.py -> wiki/store.py (contract split; internal I13 split remains task #18). Car 7 (2026-08-13) resynced file_loc 2251 -> 2661 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. Re-baselined 2026-08-20 from file_loc=2661->2800 (+139) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -330,9 +330,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1526
+      "file_loc": 1651
     },
-    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) \u2014 the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately. RE-REVIEWED 2026-08-13 (car3/unscoped-reads): the recorded 1241 was ALREADY stale by 246 lines \u2014 the file stood at 1487 before this car, i.e. +19.8%, parked just under the 20% tolerance where the gate could not see it. This car adds +39 (1487 -> 1526) and is what pushed it into view: get_recent_memories and get_stale_memories each gain an optional project_id arm plus the note recording why the predicate is directory_context and not the project_id column \u2014 both were corpus-wide reads that served every project's rows through restore and the memory://stale MCP resource. The +39 is fixing a cross-project leak, not a feature, and the honest remedy for the file remains the _MemoryMixin split tracked with its storage/wiki.py and storage/migrations.py siblings. The number is corrected here rather than left drifting so the next +20% is measured from the truth.",
+    "rationale": "Storage _MemoryMixin; file drifted to 1204 across v5.9x perf cars (recorded baseline 1027 was stale). v5.104 PIECE D adds find_memory_ids_by_entities (+37 LOC) \u2014 the batched read-side of the spreading-activation N+1 fix, exact-parity with the per-name loop it degrades to. A new mixin extraction would break the class_methods count; the storage split is a larger refactor tracked separately. RE-REVIEWED 2026-08-13 (car3/unscoped-reads): the recorded 1241 was ALREADY stale by 246 lines \u2014 the file stood at 1487 before this car, i.e. +19.8%, parked just under the 20% tolerance where the gate could not see it. This car adds +39 (1487 -> 1526) and is what pushed it into view: get_recent_memories and get_stale_memories each gain an optional project_id arm plus the note recording why the predicate is directory_context and not the project_id column \u2014 both were corpus-wide reads that served every project's rows through restore and the memory://stale MCP resource. The +39 is fixing a cross-project leak, not a feature, and the honest remedy for the file remains the _MemoryMixin split tracked with its storage/wiki.py and storage/migrations.py siblings. The number is corrected here rather than left drifting so the next +20% is measured from the truth. Re-baselined 2026-08-20 from file_loc=1526->1527 (+1) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 1527 -> 1651 (+124). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
     "added": "2026-06-25",
     "added_by": "feat/v5.104-perf-train",
     "reviewed": "2026-08-13",
@@ -387,9 +387,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1182
+      "file_loc": 1203
     },
-    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split. Car 7 (2026-08-13) resynced file_loc 1006 -> 1182 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size.",
+    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split. Car 7 (2026-08-13) resynced file_loc 1006 -> 1182 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 1182 -> 1203 (+21). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
     "added": "2026-07-03",
     "added_by": "feat/obs-p1-recall-readpath"
   },
@@ -464,9 +464,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1017
+      "file_loc": 1068
     },
-    "rationale": "Car F1 (PR #40 CI failure class B): this file sat at EXACTLY 1000 \u2014 the HARD cap itself \u2014 before this change, so ANY net addition trips the gate. The addition is +17 net for a crash fix, not a feature: SurrealDB NONE and NULL are different values and each emptiness guard ADMITS the other's, so the two brute-force cosine arms here (search_wiki_vectors scoped, search_wiki_vectors_tagged) took a second guard, and the two writers here (insert_wiki_page, update_wiki_page) stopped binding a Python None that lands as SurrealDB NULL over the HTTP transport and then kills every scoped recall with 'Expected `array<number>` but found `NULL`'. Nine of the 17 lines are pure code (the emb_assign branch, the update_wiki_page embedding branch); the rest are the docstring notes that stop the second guard being deleted later as redundant-looking belt-and-braces \u2014 which is exactly how the single-guard version shipped in C7. Those comments were ALREADY compressed once to get from +32 to +17, with the full account kept in storage/vector.py::search_vectors (the canonical site) rather than duplicated here. Shedding the remaining 17 would mean deleting unrelated prose from a 1000-line file on a CI-failure branch: churn with no readability gain, and outside this car's remit. The honest fix is the _WikiMixin split, which belongs to the wave N module split alongside its siblings (storage/memory.py, storage/migrations.py) already carrying entries above.",
+    "rationale": "Car F1 (PR #40 CI failure class B): this file sat at EXACTLY 1000 \u2014 the HARD cap itself \u2014 before this change, so ANY net addition trips the gate. The addition is +17 net for a crash fix, not a feature: SurrealDB NONE and NULL are different values and each emptiness guard ADMITS the other's, so the two brute-force cosine arms here (search_wiki_vectors scoped, search_wiki_vectors_tagged) took a second guard, and the two writers here (insert_wiki_page, update_wiki_page) stopped binding a Python None that lands as SurrealDB NULL over the HTTP transport and then kills every scoped recall with 'Expected `array<number>` but found `NULL`'. Nine of the 17 lines are pure code (the emb_assign branch, the update_wiki_page embedding branch); the rest are the docstring notes that stop the second guard being deleted later as redundant-looking belt-and-braces \u2014 which is exactly how the single-guard version shipped in C7. Those comments were ALREADY compressed once to get from +32 to +17, with the full account kept in storage/vector.py::search_vectors (the canonical site) rather than duplicated here. Shedding the remaining 17 would mean deleting unrelated prose from a 1000-line file on a CI-failure branch: churn with no readability gain, and outside this car's remit. The honest fix is the _WikiMixin split, which belongs to the wave N module split alongside its siblings (storage/memory.py, storage/migrations.py) already carrying entries above. Re-baselined 2026-08-20 from file_loc=1017->1068 (+51) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-08-12",
     "added_by": "car-f1-vector-null"
   },
@@ -497,10 +497,10 @@
     "function": "_build_tool_wrappers",
     "lineno": 564,
     "metrics": {
-      "cyclomatic": 16,
-      "fn_loc": 162
+      "cyclomatic": 18,
+      "fn_loc": 195
     },
-    "rationale": "Car B (2026-08-14 train): the function builds (sync, async) instrumented wrappers for every @_tool \u2014 each wrapper carries its own session-binding ContextVar plumbing (Car B's session_bind.bind_session entrypoint), and the per-tool branch count grew because Car B adds: (1) a ``sync_or_async`` discriminator (was implicit before Car B; now the function must decide which of the two wrappers to emit per tool, since Car B's offload-to-worker-thread offload hook runs INSIDE the wrapper and only one of the two wrappers needs it), (2) a ``needs_session_bind`` discriminator (tools that take an explicit ``project=`` override do NOT need the session-bind wrapper \u2014 only tools that read project from the ContextVar do), and (3) a ``forwards_to_backend`` discriminator (the proxy tools that already route through ``_forward_admin`` would double-wrap if they got the session-bind treatment). The net effect is +1 cyclomatic branch per discriminator + the existing branch tree, hitting 16 (limit 15); fn_loc grew 137 -> 162 with the discriminator branches and the docstring explaining why each discriminator exists. The honest fix is splitting into ``_build_sync_wrapper`` + ``_build_async_wrapper`` + a small ``_needs_*`` predicate set \u2014 but that move belongs to the wave-N module split alongside the existing Car 0037 entry below (and the F5/F10 / ci-local allowlists at the file level), not a Car B (binding-only) scope. Refactoring the wrapper inside a car whose entire purpose is to ADD session-binding (not refactor wrappers) would couple two changes and balloon the diff.",
+    "rationale": "Car B (2026-08-14 train): the function builds (sync, async) instrumented wrappers for every @_tool \u2014 each wrapper carries its own session-binding ContextVar plumbing (Car B's session_bind.bind_session entrypoint), and the per-tool branch count grew because Car B adds: (1) a ``sync_or_async`` discriminator (was implicit before Car B; now the function must decide which of the two wrappers to emit per tool, since Car B's offload-to-worker-thread offload hook runs INSIDE the wrapper and only one of the two wrappers needs it), (2) a ``needs_session_bind`` discriminator (tools that take an explicit ``project=`` override do NOT need the session-bind wrapper \u2014 only tools that read project from the ContextVar do), and (3) a ``forwards_to_backend`` discriminator (the proxy tools that already route through ``_forward_admin`` would double-wrap if they got the session-bind treatment). The net effect is +1 cyclomatic branch per discriminator + the existing branch tree, hitting 16 (limit 15); fn_loc grew 137 -> 162 with the discriminator branches and the docstring explaining why each discriminator exists. The honest fix is splitting into ``_build_sync_wrapper`` + ``_build_async_wrapper`` + a small ``_needs_*`` predicate set \u2014 but that move belongs to the wave-N module split alongside the existing Car 0037 entry below (and the F5/F10 / ci-local allowlists at the file level), not a Car B (binding-only) scope. Refactoring the wrapper inside a car whose entire purpose is to ADD session-binding (not refactor wrappers) would couple two changes and balloon the diff. Re-baselined 2026-08-20 from cyclomatic=16->18 (+2), fn_loc=162->180 (+18) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up. | Re-baselined 2026-08-20 on the signals-that-lie train merge: fn_loc 180 -> 195 (+15). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
     "added": "2026-08-14",
     "added_by": "car-b-session-bind"
   },
@@ -509,9 +509,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1005
+      "file_loc": 1007
     },
-    "rationale": "Car F (task #61): this file sat at 1000 (the HARD cap) before this change, so ANY net addition trips the gate. The additions are +5 net: two new fields on the /health payload (``version`` and ``versions_compatible`` \u2014 the Car F version handshake), one lazy import inside the health handler so the import lives beside the function that uses it. The I13 docstring at line 9 already pins this module as an ACCEPTED single-file case (relocated to embed_service_handshake.py for the helpers themselves; only the dict field remains here). The honest fix is the embed_service module split the I13 docstring references; that restructure belongs to the parked T2 layer-boundary train, not Car F. Shedding 5 lines by removing the version_handshake or the lazy import would mean either inlining the bound check into the dict literal (loses the sibling-module boundary the I13 cap rationale demanded) or moving the import to module top (which is what was tried first and which ruff rejected on the function-grouping lint). The 5-line cost is the cheapest expression of the deploy-ordering fix that satisfies both the 1000 HARD cap gate AND the I13 single-file rationale.",
+    "rationale": "Car F (task #61): this file sat at 1000 (the HARD cap) before this change, so ANY net addition trips the gate. The additions are +5 net: two new fields on the /health payload (``version`` and ``versions_compatible`` \u2014 the Car F version handshake), one lazy import inside the health handler so the import lives beside the function that uses it. The I13 docstring at line 9 already pins this module as an ACCEPTED single-file case (relocated to embed_service_handshake.py for the helpers themselves; only the dict field remains here). The honest fix is the embed_service module split the I13 docstring references; that restructure belongs to the parked T2 layer-boundary train, not Car F. Shedding 5 lines by removing the version_handshake or the lazy import would mean either inlining the bound check into the dict literal (loses the sibling-module boundary the I13 cap rationale demanded) or moving the import to module top (which is what was tried first and which ruff rejected on the function-grouping lint). The 5-line cost is the cheapest expression of the deploy-ordering fix that satisfies both the 1000 HARD cap gate AND the I13 single-file rationale. Re-baselined 2026-08-20 from file_loc=1005->1007 (+2) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-08-14",
     "added_by": "car-f-deploy-ordering"
   },
@@ -520,9 +520,9 @@
     "function": "cli",
     "lineno": 59,
     "metrics": {
-      "fn_loc": 151
+      "fn_loc": 167
     },
-    "rationale": "Car D (2026-08-14 train): cli() was at fn_loc=150 (right at the HARD cap) before Car D. Adding migrate.register(subparsers) (the Car D wire-up of yadgar migrate rekey) plus adding migrate to the existing from-import block adds +1 net fn_loc, tripping the 150 HARD cap at 151. The fn is the single CLI dispatch surface; refactoring it into _register_subcommands / _handle_default_server / _dispatch_subcommand helpers would not reduce the cyclomatic (the dispatcher branches by subcommand either way) and would split the entry-point surface across modules \u2014 a carve that belongs to a separate refactor car, not to Car D whose scope is the corpus re-key migration. The 1-line cost is the cheapest expression of Car D wiring the subcommand exposes.",
+    "rationale": "Car D (2026-08-14 train): cli() was at fn_loc=150 (right at the HARD cap) before Car D. Adding migrate.register(subparsers) (the Car D wire-up of yadgar migrate rekey) plus adding migrate to the existing from-import block adds +1 net fn_loc, tripping the 150 HARD cap at 151. The fn is the single CLI dispatch surface; refactoring it into _register_subcommands / _handle_default_server / _dispatch_subcommand helpers would not reduce the cyclomatic (the dispatcher branches by subcommand either way) and would split the entry-point surface across modules \u2014 a carve that belongs to a separate refactor car, not to Car D whose scope is the corpus re-key migration. The 1-line cost is the cheapest expression of Car D wiring the subcommand exposes. Re-baselined 2026-08-20 from fn_loc=151->167 (+16) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
     "added": "2026-08-14",
     "added_by": "car-d-corpus-rekey"
   }

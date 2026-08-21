@@ -238,3 +238,79 @@ class TestHttpPost:
             with patch("urllib.request.urlopen", side_effect=OSError("refused")):
                 # Should not raise
                 mod.main()
+
+
+# ---------------------------------------------------------------------------
+# project_id minting (Car 20 / ledger task 303)
+# ---------------------------------------------------------------------------
+
+
+class TestProjectIdMinted:
+    """The standalone script must stamp ``project_id`` on the POSTed payload.
+
+    Car 20 root cause: nix's ``~/.claude/settings.json`` wires PostToolUse to a
+    copy of THIS script, not to ``hook_runner.py post-tool-capture`` ->
+    ``core/cli/hook.py::hook_post_tool_capture`` (which mints). The two copies
+    diverged and only the unwired one carried the identity, so on that box every
+    captured action reached ``/hooks/auto-capture`` with no ``project_id`` and
+    was silently dropped by ``_split_batch_by_project``.
+
+    bb131432 fixed exactly this class for prompt-recall by patching BOTH copies;
+    post-tool-capture's standalone was overlooked in that same commit.
+    """
+
+    def _post_body(self, mint_side_effect=None, mint_return=None):
+        mod = _load_module()
+        payload = json.dumps(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "ls"},
+                "cwd": "/proj",
+                "session_id": "sess",
+            }
+        )
+        captured_req = []
+        mock_resp = MagicMock()
+
+        def _capture(req, timeout=None):
+            captured_req.append(req)
+            return mock_resp
+
+        # The mint is imported INSIDE main(), so patch it at the source module.
+        # Never let the assertion depend on the test runner's own git remote.
+        mint_patch = patch(
+            "yadgar.core.hooks._identity_mint.mint_project_id",
+            side_effect=mint_side_effect,
+            return_value=mint_return,
+        )
+        with patch("sys.stdin", io.StringIO(payload)):
+            with mint_patch:
+                with patch("urllib.request.urlopen", side_effect=_capture):
+                    mod.main()
+
+        assert captured_req, "expected urlopen to be called"
+        return json.loads(captured_req[0].data.decode())
+
+    def test_project_id_is_stamped_on_the_payload(self):
+        body = self._post_body(mint_return="m-agahi/yadgar")
+        assert body.get("project_id") == "m-agahi/yadgar", (
+            "the standalone PostToolUse script must mint and send project_id — "
+            "without it /hooks/auto-capture drops the action unattributed"
+        )
+
+    def test_unmintable_tree_still_posts_and_never_raises(self):
+        """Fail-OPEN: mint_project_id raises by design (ADR-0227, no fallback).
+
+        A PostToolUse hook that crashes interferes with the user's tool call;
+        a dropped telemetry row does not. The hook must still fire, just
+        without an identity — never invent one, never propagate the raise.
+        """
+        from yadgar.core.hooks._identity_mint import UnresolvableProjectError
+
+        body = self._post_body(mint_side_effect=UnresolvableProjectError("no origin remote"))
+        assert not body.get("project_id"), (
+            "an unmintable tree must NOT produce a project_id — ADR-0227 forbids "
+            f"a manufactured key; got {body.get('project_id')!r}"
+        )
+        # The POST itself still happened (asserted inside _post_body) and
+        # main() returned without raising.

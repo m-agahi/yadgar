@@ -39,6 +39,7 @@ from fastapi import Depends, HTTPException
 
 import yadgar.backend.embed_service.embed_service as _es
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.refusal import REFUSAL_STATUS, AdminRefusal, refusal_envelope
 from yadgar.backend.embed_service.embed_service_models import (
     AdminRequest,
     AdminResponse,
@@ -368,6 +369,13 @@ async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)
 
     op must be a registered admin op (yadgar.backend.admin_exec.run_admin_op).
     Unknown ops → 400. Called by the core thin forwarders (_forward_admin).
+
+    Ledger tasks 80 + 294: an op that REFUSES by design (``AdminRefusal`` — the
+    restore-verification gate, Car J's wiki mutability lock) returns
+    ``REFUSAL_STATUS`` carrying the structured envelope, not a bare 500. Opt-in
+    is per exception TYPE, so every other op's error shape is unchanged and a
+    genuine fault still surfaces as a server fault — that distinguishability is
+    the point.
     """
     from yadgar.backend.admin_exec import run_admin_op_async  # noqa: PLC0415
     from yadgar.backend.cache.scope_versions import get_scope_versions  # noqa: PLC0415
@@ -379,6 +387,18 @@ async def admin_route(req: AdminRequest, _: None = Depends(_require_admin_token)
         result = await run_admin_op_async(req.op, req.payload)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AdminRefusal as exc:
+        # Logged at WARNING, never ERROR: nothing broke. The op's own logging
+        # (restore_sql logs CRITICAL on a violation) is untouched.
+        logger.warning(
+            "admin op refused: %s (%s)",
+            req.op,
+            exc.reason,
+            extra={"component": "backend.admin", "action": req.op, "outcome": "refused"},
+        )
+        raise HTTPException(
+            status_code=REFUSAL_STATUS, detail=refusal_envelope(exc, req.op)
+        ) from exc
 
     # Car B piggyback: per-kind scope-version epochs the core PTC keys by.
     # Cheap (single lock acquire on the singleton).

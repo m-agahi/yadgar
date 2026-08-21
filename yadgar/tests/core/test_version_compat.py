@@ -85,3 +85,22 @@ def test_handshake_includes_peer_version_field() -> None:
     block = handshake_status("5.182.0", "5.99.0", side="core")
     assert block["peer_version"] == "5.99.0"
     assert block["compatible"] is False
+
+
+def test_core_handshake_block_reports_own_version_not_backend_constant() -> None:
+    # Wiring-level regression test. ``_handshake_block`` (core side) must
+    # report the CORE's own ``__version__`` as ``self_version`` — it is
+    # reporting on ITSELF, the core process. It must NOT report
+    # ``BACKEND_VERSION`` (a separate hardcoded constant tracking the
+    # backend image, unrelated to what process is running this code).
+    # Before the fix, ``_handshake_block`` imported ``BACKEND_VERSION``
+    # instead of ``__version__``, so the core's own version never entered
+    # the comparison at all — a bug masked in production because both
+    # constants happened to read "5.78.0" at the time.
+    from yadgar import BACKEND_VERSION, __version__
+    from yadgar.core.server.http import _handshake_block
+
+    # peer_url=None takes the "no peer configured" branch — no network call.
+    block = _handshake_block(None)
+    assert block["self_version"] == __version__
+    assert block["self_version"] != BACKEND_VERSION

@@ -22,11 +22,15 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from check_backend_bump import (  # noqa: E402
+    BACKEND_BUILD_DIRS,
     _is_backend_build_input,
     check,
     collect_ci_inputs,
     collect_precommit_inputs,
 )
+
+_REPO_ROOT = Path(__file__).parent.parent.parent.parent
+_BACKEND_PKG_DIR = _REPO_ROOT / "yadgar" / "backend"
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -472,3 +476,90 @@ class TestCollectPrecommitInputs:
         changed, base_srv, index_srv = collect_precommit_inputs("origin/master", fake_git)
         ok, _msg = check(changed, base_srv, index_srv)
         assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# Anti-recurrence: BACKEND_BUILD_DIRS must be derived from — and stay in sync
+# with — the backend's REAL import graph, not a hand-maintained second list.
+#
+# PR #60 landed a change to yadgar/_shared/wiki/store.py. Dockerfile.backend:8
+# is `COPY . /app` — the backend image ships the ENTIRE repo tree — but
+# BACKEND_BUILD_DIRS only named ("backend",), so the guard never fired and the
+# backend ran a stale copy of yadgar/_shared/ in production. This test walks
+# yadgar/backend/**'s actual `import`/`from ... import` statements (ast, not a
+# second hardcoded list) and asserts every top-level yadgar/ subpackage the
+# backend process really imports is covered by BACKEND_BUILD_DIRS. A hardcoded
+# second copy of the trigger set here would reproduce the exact defect this
+# test exists to prevent.
+# ---------------------------------------------------------------------------
+
+import ast  # noqa: E402
+
+
+def _yadgar_top_level_imports(py_file: Path) -> set[str]:
+    """Return top-level yadgar/ subpackage names imported by *py_file*.
+
+    E.g. `from yadgar._shared.wiki import store` -> {"_shared"};
+    `import yadgar.backend.embed_service` -> {"backend"}.
+    """
+    tree = ast.parse(py_file.read_text(), filename=str(py_file))
+    tops: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("yadgar."):
+                parts = node.module.split(".")
+                if len(parts) >= 2:
+                    tops.add(parts[1])
+            elif node.module == "yadgar":
+                # from yadgar import _shared / from yadgar import backend
+                for alias in node.names:
+                    tops.add(alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("yadgar."):
+                    parts = alias.name.split(".")
+                    if len(parts) >= 2:
+                        tops.add(parts[1])
+    return tops
+
+
+def _backend_real_import_graph_top_levels() -> set[str]:
+    """Walk every non-test .py file under yadgar/backend/ and collect every
+    top-level yadgar/ subpackage the backend process actually imports."""
+    tops: set[str] = set()
+    for py_file in _BACKEND_PKG_DIR.rglob("*.py"):
+        if "tests" in py_file.parts:
+            continue
+        tops |= _yadgar_top_level_imports(py_file)
+    return tops
+
+
+class TestBackendBuildDirsMatchRealImportGraph:
+    """BACKEND_BUILD_DIRS must agree with what yadgar/backend/** really imports."""
+
+    def test_backend_process_never_imports_core(self) -> None:
+        """The backend process must not import yadgar.core (measured: 0 sites
+        today). If it ever does, BACKEND_BUILD_DIRS needs a deliberate, scoped
+        widening — not the blanket 'everything COPY . /app touches' that would
+        demand a backend bump on every commit."""
+        real_tops = _backend_real_import_graph_top_levels()
+        assert "core" not in real_tops, (
+            f"yadgar/backend/** now imports yadgar.core (found: {real_tops!r}). "
+            "Update BACKEND_BUILD_DIRS in scripts/check_backend_bump.py to match."
+        )
+
+    def test_backend_build_dirs_cover_real_import_graph(self) -> None:
+        """Every top-level yadgar/ subpackage the backend actually imports —
+        other than yadgar.backend itself, which is structurally covered by
+        BACKEND_BUILD_DIRS naming 'backend' — must be listed in
+        BACKEND_BUILD_DIRS. Otherwise a change to that subpackage ships in the
+        backend image (Dockerfile.backend `COPY . /app`) with no version-bump
+        gate — the exact PR #60 defect."""
+        real_tops = _backend_real_import_graph_top_levels()
+        external_tops = real_tops - {"backend"}
+        uncovered = external_tops - set(BACKEND_BUILD_DIRS)
+        assert not uncovered, (
+            f"yadgar/backend/** imports {uncovered!r}, which is not in "
+            f"BACKEND_BUILD_DIRS {BACKEND_BUILD_DIRS!r}. A change to that "
+            "package ships in the backend image with no version-bump gate."
+        )

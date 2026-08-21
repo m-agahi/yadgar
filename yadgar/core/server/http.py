@@ -32,6 +32,7 @@ from yadgar import __version__
 from yadgar._shared.config import resolve_knob
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.runtime.maintenance import apply_maintenance_health
 from yadgar._shared.server_helpers import _push_event  # F2: re-stamp relayed backend events
 from yadgar.core.forward import _forward_viz  # F2: poll backend /viz events op
 from yadgar.core.sanitize import sanitize_log_field
@@ -397,9 +398,9 @@ def _sentinel_memorize(content: str, project_id: str | None) -> dict:
 
     KNOWN RESIDUAL — the async rejection window. ``memorize`` defaults to
     ``wait=False``, so ``queued`` means the job reached the file queue, not that
-    it was stored: the backend re-validates the stamp at INSERT time
-    (``_ensure_project_exists_sync``) and can DLQ a job this function already
-    reported as accepted. F9 is what makes that window reachable — before it,
+    it was stored: the drainer re-validates the stamp — shape only, in
+    ``QueueDrainer._validate_project_id`` (Car 5: the guard this used to name
+    never ran) — and can DLQ an accepted job. F9 makes that window reachable — before it,
     every sentinel write was refused SYNCHRONOUSLY. It is deliberately not
     closed here: ``wait=True`` would block the SessionStart handler for up to
     ``WIKI_WRITE_WAIT_TIMEOUT_SECONDS`` (5s) behind a hook whose ``urlopen``
@@ -689,6 +690,11 @@ async def _build_health_payload() -> dict:
     # Fix A O2 GATE (daemon-offload-A): degrade (→ 503) on tool-pool saturation.
     _apply_tool_pool_health(payload)
 
+    # Car 1 (2026-08-20 train): report the MCP write-gate. /health read `ok`
+    # throughout a live vacuum, so the one signal an operator reaches for
+    # contradicted every gated tool. ADDITIVE — it never touches `status`.
+    apply_maintenance_health(payload)
+
     # #74 fix #1 — readiness anti-flap. Only degrade on dependency outage after N
     # CONSECUTIVE probe misses; a single success resets. A transiently-busy backend
     # (one 2s embed-probe miss) stays 200, so it can never cascade into a 503 that
@@ -720,23 +726,23 @@ def _handshake_block(peer_url: str | None) -> dict:
     """
     import httpx as _httpx  # noqa: PLC0415
 
-    from yadgar import BACKEND_VERSION  # noqa: PLC0415
+    from yadgar import __version__  # noqa: PLC0415
     from yadgar._shared.version_compat import handshake_status  # noqa: PLC0415
 
     if not peer_url:
         # No peer configured (single-process dev mode) — unverifiable, not
         # incompatible. Mirrors the daemon's own "fresh install" self-check.
-        return handshake_status(BACKEND_VERSION, "unknown", side="core")
+        return handshake_status(__version__, "unknown", side="core")
 
     try:
         with _httpx.Client(timeout=1.5) as _c:
             _r = _c.get(f"{peer_url}/health")
         if _r.status_code != 200:
-            return handshake_status(BACKEND_VERSION, "unknown", side="core")
+            return handshake_status(__version__, "unknown", side="core")
         _peer_version = _r.json().get("version") or "unknown"
     except Exception:
-        return handshake_status(BACKEND_VERSION, "unknown", side="core")
-    return handshake_status(BACKEND_VERSION, _peer_version, side="core")
+        return handshake_status(__version__, "unknown", side="core")
+    return handshake_status(__version__, _peer_version, side="core")
 
 
 @observe(tier="stage")
@@ -785,6 +791,11 @@ async def health_check(request: Request) -> JSONResponse:
                 "active_sessions": 0,
                 "error": "health probe timed out",
             }
+            # Car 1 (2026-08-20 train): the fallback payload is built from
+            # scratch, so it misses the block _build_health_payload adds. This
+            # path is MORE likely during a window, not less — the backend is
+            # stopped, so a dependency probe is exactly what exhausts the budget.
+            apply_maintenance_health(payload)
 
         # C1 (obs-train): 503 on any non-ok status so monitoring detects db/embed
         # outages instead of reading them healthy. #74 fix #1 REVERSES the prior
@@ -1082,11 +1093,15 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         # from. The batch holds the identities; split on them instead.
         _groups = _split_batch_by_project(to_flush)
         if not _groups:
-            logger.debug(
-                "auto-capture: dropped %d unattributed action(s) — no project_id to route them to",
-                len(to_flush),
+            _observe_dropped_actions(len(to_flush), len(to_flush))
+            return JSONResponse(
+                {
+                    "status": "dropped",
+                    "reason": "no_project_id",
+                    "batch_size": len(to_flush),
+                    "dropped_unattributed": len(to_flush),
+                }
             )
-            return JSONResponse({"status": "dropped", "reason": "no_project_id"})
         from datetime import UTC
 
         ts = datetime.now(UTC).isoformat()
@@ -1119,6 +1134,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
             _st._consolidation.record_activity()
 
         _dropped = len(to_flush) - sum(len(a) for _, a in _groups)
+        _observe_dropped_actions(_dropped, len(to_flush))
         return JSONResponse(
             {
                 "status": "captured",
@@ -1728,6 +1744,58 @@ def _filter_prompt_recall_results(results: list[dict], project_id: str | None) -
     ]
 
 
+#: Rows prompt-recall INJECTS into the prompt (unchanged — the 3000-char budget
+#: below is sized for this many).
+_PROMPT_RECALL_INJECTED = 5
+#: Rows prompt-recall ASKS the backend for. Car 8 (task 283): the anchor filter
+#: below removes rows AFTER retrieval, so a 5-row page would frequently collapse
+#: to an empty injection (measured: all 5 top rows were anchors). Over-fetching
+#: is cheap here — the backend's `rerank_pool` is already
+#: `max(max_results, RERANKER_TOP_K=50, CROSS_ENCODER_TOP_K)`, so the extra rows
+#: cost a longer trim, not extra hydration, and profile="fast" runs no CE/NLI.
+_PROMPT_RECALL_CANDIDATES = 15
+
+
+@observe(tier="stage")
+def _drop_anchor_rows(results: list[dict]) -> list[dict]:
+    """Drop anchored memories from a PROMPT-RECALL result page.
+
+    Car 8 (task 283). Anchors are ALREADY in the context window on BOTH
+    injection paths: ``hook_session_context`` renders ``project_brief`` in
+    ``catalog`` mode, whose ``_render`` prints ``top_anchors_global`` +
+    ``top_anchors_project`` (``tools/project.py:158``), and the post-compact
+    path calls ``restore()``, which emits the same ``_anchor`` bucket.
+    Re-surfacing them here spends the hook's entire 3000-char budget restating
+    context the model already has — measured 2026-08-20, all five rows a live
+    prompt-recall returned were ``_anchor`` tagged, ``is_protected``, heat 1.0.
+
+    ``project_brief``'s own hot-memories query already excludes this bucket
+    (``_get_hot_memories``: ``'anchor' NOTINSIDE tags AND '_anchor' NOTINSIDE
+    tags``) for the same reason — anchors are surfaced once, deliberately, and
+    every other surface skips them. prompt-recall was the outlier.
+
+    Scoped to THIS hook on purpose. An explicit ``recall("what did we decide
+    about X")`` must still return anchors: there the model asked for them and
+    they are not duplicated. Nothing else calls this.
+
+    Both anchor markings are honoured — the ``_anchor`` tag ``anchor()`` writes,
+    and bare ``is_protected`` (legacy anchors and ``memorize(is_protected=True)``
+    predate the tag).
+    """
+    kept: list[dict] = []
+    for r in results:
+        tags = r.get("tags") or []
+        if r.get("is_protected") or (isinstance(tags, list | tuple) and "_anchor" in tags):
+            continue
+        kept.append(r)
+    if len(kept) != len(results):
+        logger.debug(
+            "prompt-recall: dropped %d anchored row(s) — already injected by SessionStart",
+            len(results) - len(kept),
+        )
+    return kept
+
+
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
 @trace_span()
 async def hook_prompt_recall(request: Request) -> JSONResponse:
@@ -1800,7 +1868,8 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
                 _HookRecallForwarder(directory or "", _hook_project),
                 "prompt-recall",
                 query,
-                max_results=5,
+                # Car 8: over-fetch so _drop_anchor_rows below has headroom.
+                max_results=_PROMPT_RECALL_CANDIDATES,
                 min_heat=0.0,
                 profile="fast",
             )
@@ -1822,6 +1891,10 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         except Exception:  # noqa: BLE001 — hook must never raise into the prompt
             _scoped = None
         results = _filter_prompt_recall_results(results, _scoped)
+        # Car 8 (task 283): anchors are already in the window via SessionStart —
+        # drop them, THEN trim to the injected page size. Order matters: trimming
+        # first would throw away the non-anchor rows the filter exists to keep.
+        results = _drop_anchor_rows(results)[:_PROMPT_RECALL_INJECTED]
 
         if not results:
             return JSONResponse({"text": ""})
@@ -3267,6 +3340,47 @@ def _split_batch_by_project(actions: list[dict]) -> list[tuple[str, list[dict]]]
             continue
         grouped.setdefault(pid, []).append(action)
     return list(grouped.items())
+
+
+@observe(tier="hot", span=False, metric="http.auto_capture.observe_dropped")
+def _observe_dropped_actions(dropped: int, batch_size: int) -> None:
+    """Make ``_split_batch_by_project``'s discards loud and countable.
+
+    Car 20 (ledger task 303). DROPPING an unattributed action is right — the
+    drainer would reject the row and it would cost a human a DLQ entry. The
+    SILENCE was wrong: the whole-batch drop used a ``logger.debug`` (invisible
+    at the container's INFO level) plus a countless HTTP 200, and the partial
+    drop logged nothing at all. So when the host-side hook stopped sending
+    ``project_id``, capture died for six days behind 536 HTTP 200s and an empty
+    DLQ — failure rendered as well-formed success. Both branches call this.
+
+    Mechanism is deliberately NOT new: ``observe_project_id_skip`` beside a
+    WARNING is what this failure class already uses one stage later, in
+    ``backend/consolidation/cleanup.py``'s ``action_log_group`` skip. Distinct
+    ``writer`` label keeps the two stages separable.
+
+    The response stays 200: every client of ``/hooks/auto-capture`` catches
+    ``HTTPError``, closes it and returns, so a non-200 changes nothing
+    observable at the hook while adding a failure path to a fire-and-forget
+    call made on every tool use. The count rides the 200 body instead.
+
+    No-op when nothing was dropped — a warning that fires on the healthy path
+    is one operators learn to ignore.
+    """
+    if dropped <= 0:
+        return
+    from yadgar._shared.storage._project_id_writer import (  # noqa: PLC0415
+        observe_project_id_skip,
+    )
+
+    observe_project_id_skip("auto_capture_batch", dropped)
+    logger.warning(
+        "auto-capture: dropped %d of %d action(s) — no project_id to route them to. "
+        "The PostToolUse hook must mint one host-side (ADR-0227: the daemon cannot). "
+        "If this is every action, the wired hook is not sending project_id.",
+        dropped,
+        batch_size,
+    )
 
 
 # Car B (0047 §3.2) — POST /session_bind

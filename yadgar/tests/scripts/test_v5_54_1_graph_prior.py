@@ -338,6 +338,9 @@ class TestFastProfileGraphPriorBoost:
 
         # Apply the boost logic by calling _fuse_scores with pre-built scores
         # We need to build minimal scores dict to get through _fuse_scores
+        # NOTE (Car 8 / task 283): the two rows carry IDENTICAL query scores on
+        # purpose — this asserts the narrow "among comparable matches the higher
+        # prior wins" claim, NOT "a prior beats the query". Do not widen the gap.
         scores = {
             1: {"vector": 0.8, "fts": 0.6, "ppr": 0.0, "spread": 0.0},
             2: {"vector": 0.8, "fts": 0.6, "ppr": 0.0, "spread": 0.0},
@@ -714,11 +717,17 @@ class TestGraphPriorConfigRegistered:
     """WRRF_GRAPH_PRIOR_WEIGHT is three-way registered (config.py + registry + yaml)."""
 
     def test_settings_has_wrrf_graph_prior_weight(self):
-        """Settings must have WRRF_GRAPH_PRIOR_WEIGHT with default 0.2."""
+        """Settings must have WRRF_GRAPH_PRIOR_WEIGHT with default 0.06.
+
+        Car 8 (task 283) re-derived this from 0.2 when the boost became
+        multiplicative — see the derivation comment in config.py.
+        """
         from yadgar._shared.config import Settings
 
         default_val = Settings.model_fields["WRRF_GRAPH_PRIOR_WEIGHT"].default
-        assert default_val == 0.2, f"WRRF_GRAPH_PRIOR_WEIGHT default must be 0.2, got {default_val}"
+        assert default_val == 0.06, (
+            f"WRRF_GRAPH_PRIOR_WEIGHT default must be 0.06, got {default_val}"
+        )
 
     def test_registry_has_wrrf_graph_prior_weight(self):
         """config_registry must include YADGAR_WRRF_GRAPH_PRIOR_WEIGHT."""

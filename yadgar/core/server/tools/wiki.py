@@ -11,6 +11,11 @@ from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar._shared.security.secrets import gate_or_reject
 from yadgar._shared.server_helpers import _has_unpaired_surrogate, _push_event
 from yadgar._shared.storage.directory import RecallScope
+
+# Car 5 (2026-08-20 train): the CREATE-path registry gate. Same
+# ``UnknownProjectError`` class ``MariaStorageEngine.assert_project_registered``
+# raises, so one ``except`` binds both halves of the guarantee.
+from yadgar._shared.storage.sql.errors import UnknownProjectError
 from yadgar._shared.wiki.policy import is_recall_visible
 from yadgar.core.forward import _forward_admin
 
@@ -25,6 +30,9 @@ from yadgar.core.server.tools._project_param import (
     InvalidProjectOverrideError,
     accept_project_param,
     resolve_effective_project,
+)
+from yadgar.core.server.tools._project_registry import (
+    assert_project_registered_for_create,
 )
 
 logger = logging.getLogger(__name__)
@@ -158,6 +166,13 @@ def _wiki_write_canonical(payload: dict, wait: bool = False) -> dict:
                 "project_id — this process cannot derive one)"
             ),
         )
+    # Car 5 (2026-08-20 train): the canonical path enqueues DIRECTLY (see the
+    # ``_get_file_queue().enqueue`` below) — it does not pass through
+    # ``wiki_add``, so the gate wired there does not cover it. Leaving it out
+    # would make ``wiki_add``'s new docstring claim over-broad for exactly the
+    # two page types (``adr``, ``task_list``) whose whole point is being
+    # canonical, and an over-broad claim is the defect class this car deletes.
+    assert_project_registered_for_create(payload["project_id"], tool="_wiki_write_canonical")
     # Canonical writes are server-side sanctioned (adr_add + wiki_write_task_list
     # are the SOLE writers of their page_types). Car J (0047 §7 D25/D26) marks
     # ``adr`` as mutability='locked' (decisions are immutable, Car G supersede
@@ -420,9 +435,19 @@ def wiki_add(
     the write to that project_id's pages; ``directory`` stays as the
     directory-context hint (the same shape ``directory_context`` already
     carries). Precedence: ``project`` (override) > ``session_project`` >
-    ``directory``-derived > ``"global"``. The deep "is this project_id in the
-    registry?" check is backend-side (Car A0 `_ensure_project_exists_sync`,
-    §15 / ADR-0078); core enforces the type-level guard.
+    ``directory``-derived > ``"global"``. Core enforces the shape guard
+    (non-empty string, and NOT an ADR-0227 sentinel — Car 5).
+
+    Car 5 also wires the REGISTRY check, which no writer of
+    ``wiki_page.project_id`` had ever performed: an unregistered project_id is
+    rejected before the enqueue by
+    ``_project_registry.assert_project_registered_for_create``, which forwards
+    ``list_project_rows`` to the backend and caches the key set in-process.
+    When the registry cannot be consulted (engine #2 absent, backend
+    unreachable) it WARNs and falls through to the shape guard rather than
+    refusing the write — see that module's docstring. The claim covers the
+    canonical writers too: ``_wiki_write_canonical`` enqueues directly rather
+    than through this tool, so it carries its own call to the same gate.
 
     append=False (default): create a new page or overwrite an existing one.
     append=True: merge content into an existing page (appends with timestamp,
@@ -516,9 +541,15 @@ def wiki_add(
             session_project=None,
             tool="wiki_add",
         )
+        # Car 5 (2026-08-20 train): the real registry check.
+        # ``wiki_page.project_id`` had NO registry check on any writer — the
+        # "backend-side" one the docstrings named had zero call sites.
+        # Degrades to the shape gate when engine #2 is absent; see
+        # ``_project_registry``'s module docstring.
+        assert_project_registered_for_create(_effective_project_id, tool="wiki_add")
     except UnresolvedProjectError as exc:
         return {"stored": False, "ok": False, **exc.payload}
-    except InvalidProjectOverrideError as exc:
+    except (InvalidProjectOverrideError, UnknownProjectError) as exc:
         return {
             "stored": False,
             "ok": False,
@@ -567,8 +598,9 @@ def wiki_add(
     # inside a container with no git binary and no host project mounts, where
     # the classifier silently yields ``local/<basename>`` or ``unresolved``
     # (§1.1). This tool call is the only participant that can see the session,
-    # so it is the only honest place to resolve. The deep registry check stays
-    # backend-side (`_ensure_project_exists_sync`, §15 / ADR-0078).
+    # so it is the only honest place to resolve — and Car 5 is why the
+    # registry check is resolved here too, not "backend-side": the guard that
+    # phrase named had zero call sites, and the drainer cannot reach engine #2.
     _payload["project_id"] = _effective_project_id
 
     # wait=True: enqueue first (preserves FIFO), then poll until the drainer commits.
@@ -903,9 +935,9 @@ def wiki_read(
     assert _st._wiki is not None, "WikiStore not initialized"
 
     # Car M (0047 §7, §16.6): resolve the effective project_id BEFORE the cache
-    # key so the override scopes every cached lookup. The deep registry check
-    # is backend-side (Car A0 `_ensure_project_exists_sync`, §15 / ADR-0078);
-    # core enforces the type-level guard only. _resolve_wiki_read_project
+    # key so the override scopes every cached lookup. Car 5: core enforces the
+    # shape guard (sentinels included); no registry check runs on a READ — an
+    # unregistered project_id simply resolves no page. _resolve_wiki_read_project
     # raises ValueError already prefixed with ``"wiki_read: "`` so we use
     # ``str(exc)`` rather than re-prefixing.
     try:
@@ -958,8 +990,13 @@ def wiki_delete(slug: str) -> dict:
     # The SSE push_event and file-queue mirror cleanup are CORE-side side-effects
     # (core's SSE bus + the shared file-queue mirror) — they stay here, after the
     # forward reports the delete succeeded.
-    deleted = _forward_admin("wiki_delete", {"slug": slug}).get("deleted", False)
-    if deleted:
+    _res = _forward_admin("wiki_delete", {"slug": slug})
+    # The only wiki tool that post-processes the result, so the only one that must
+    # know a refusal: Car J's lock carries no ``deleted``, and calling that "not
+    # found" below would swap the old 500 for a fresh lie.
+    if _res.get("refused"):
+        return _res
+    if _res.get("deleted", False):
         _push_event({"event": "wiki_deleted", "slug": slug})
         try:
             _get_file_queue().delete_wiki(slug)
@@ -1520,14 +1557,19 @@ def wiki_set_metadata(
       from every project-scoped read.
     - ``directory_context``: ``'global'`` or an absolute path (starts with '/').
 
-    NO REGISTRY CHECK (ADR-0078 ``_ensure_project_exists_sync``) runs here, on
-    purpose: no writer of ``wiki_page.project_id`` performs one. The create path
-    (``_resolve_project_id_for_write``) takes the caller's value unvalidated,
-    and ``assert_project_registered`` fires only on the engine-#2 ledger tables
-    (``task`` / ``adr``), which ``wiki_page`` — a SurrealDB row with no FK to
-    ``project`` — is not. Gating the CORRECTION more tightly than the CREATION
-    would also make a SurrealDB-only write hard-fail with
-    ``ProjectRegistryUnavailableError`` wherever engine #2 is not composed.
+    NO REGISTRY CHECK runs here, still — but Car 5 (2026-08-20) removed the
+    premise this paragraph used to rest on. It said "no writer of
+    ``wiki_page.project_id`` performs one", which was true and was the defect:
+    ``wiki_add`` now gates on
+    ``_project_registry.assert_project_registered_for_create``, so the CREATION
+    path is no longer looser than this CORRECTION path. ``wiki_page`` is still
+    a SurrealDB row with no FK to ``project``, and ``assert_project_registered``
+    still fires only on the engine-#2 ledger tables — the check reaches
+    ``wiki_add`` over the forwarded ``list_project_rows`` seam, which degrades
+    to the shape guard rather than hard-failing with
+    ``ProjectRegistryUnavailableError`` where engine #2 is not composed. What
+    stays absent here is that forwarded lookup on a single-row correction whose
+    caller has just been told which project the page belongs to.
 
     Idempotent per row: no version row created when the value already matches.
     On real change per row: creates a wiki_page_version row (v5.41 versioning).

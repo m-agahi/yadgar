@@ -1107,6 +1107,18 @@ class TestSupersedeResolvesThroughMap:
         class _ResumedSqlDouble:
             """ADR-0001 already landed — at id 500, which is NOT its number."""
 
+            async def assert_project_registered(self, project_id: str) -> None:
+                """The ADR-0078 registry guard (task 176).
+
+                Present because the REAL ledger handle has it and this double
+                stands in for the real handle on the real path (no
+                ``row_inserter``). ``_preflight_write_guards`` runs every
+                :data:`adr_seed._WRITE_PATH_GUARDS` name on both the dry-run and
+                the apply path, and treats a handle that cannot run a guard as a
+                structural fault rather than as a pass.
+                """
+                return None
+
             def list_adr_rows(self, **_kw: object) -> list[dict]:
                 return [{"id": 500, "body_slug": "m-agahi_yadgar_adr-0001"}]
 

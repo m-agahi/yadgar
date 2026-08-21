@@ -66,6 +66,14 @@ ALLOWLIST: dict[str, str] = {
         "param is unchanged pre-existing code: it resolves a WIKI page by "
         "slug+directory, never an identity"
     ),
+    "admin_exec/adr_seed_storage.py": (
+        "same C10 (d) carve-out as adr_seed.py above, and the same cause as "
+        "adr_retype.py: the internal storage helpers MOVED here 2026-08-21 (car 19) "
+        "when adr_seed.py crossed the I30 file_loc cap again. `_adr_slug_prefixes` "
+        "and `_count_legacy_index_rows` are unchanged pre-existing code — both use "
+        "basename(directory) as a historical SLUG component for the legacy "
+        "`<basename>-adr-{index,NNNN}` pages, never as an identity"
+    ),
     "retrieval/core.py": (
         "basename(directory) embedding-prefix surrogate — same class as C10 (d), "
         "unowned by the plan; changing it changes stored embedding text"
