@@ -32,6 +32,7 @@ from yadgar._shared.observability.tracing import trace_span
 from yadgar._shared.storage._project_id_writer import _resolve_project_id_for_write
 from yadgar._shared.storage.directory import GLOBAL_REACH_TAG
 from yadgar._shared.storage.mutability_gate import enforce_mutability
+from yadgar._shared.storage.truncation_gate import enforce_no_size_collapse
 from yadgar._shared.storage.wiki_change_summary import compute_change_summary
 
 _log = logging.getLogger(__name__)
@@ -189,6 +190,7 @@ class _WikiMixin:
         page_id: int,
         updates: dict,
         _sanctioned: bool = False,
+        _allow_truncation: bool = False,
     ) -> bool:
         """Update fields on an existing wiki page. Return True if found.
 
@@ -207,6 +209,11 @@ class _WikiMixin:
         ``WikiStore.add`` upsert, ``admin_exec.wiki_update`` that bypasses
         ``WikiStore`` entirely). Override wins over per-type default.
         ``_sanctioned=True`` for Car G supersede retype, Car K sweep.
+
+        Ledger task 271: the size-collapse gate is enforced here too, under its
+        OWN ``_allow_truncation`` kwarg. It is deliberately not the same key as
+        ``_sanctioned`` — a regenerator writing a gutted body is the case this
+        guard is best placed to catch. See ``storage/truncation_gate.py``.
         """
         if not updates:
             return False
@@ -220,6 +227,19 @@ class _WikiMixin:
         # reject the write with PermissionError. Sanctioned transitions
         # (Car G supersede retype, Car K nightly sweep) pass _sanctioned=True.
         enforce_mutability(old_page, op="update_wiki_page", sanctioned=_sanctioned)
+
+        # Ledger task 271: refuse a write that collapses the body. Same
+        # chokepoint, same reason as Car J. NOT gated on ``_sanctioned`` — see
+        # ``truncation_gate``'s docstring; regenerators opt in per call site.
+        # Read from ``updates`` rather than the post-merge ``new_content``
+        # below so a metadata-only update (no ``content`` key) compares the old
+        # body with itself and can never fire.
+        enforce_no_size_collapse(
+            old_page,
+            updates.get("content", old_page.get("content", "")),
+            op="update_wiki_page",
+            allowed=_allow_truncation,
+        )
 
         # Handle embedding conversion if present.
         if "embedding" in updates and isinstance(updates["embedding"], bytes):

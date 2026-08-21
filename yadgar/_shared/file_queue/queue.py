@@ -156,6 +156,21 @@ class FileQueue:
                 "reason": "duplicate_detected",
                 "candidates": fm.get("candidates", []),
             }
+        # Ledger task 271: the size-collapse refusal. Keyed on ``last_error``
+        # rather than ``failure_reason`` because this rejection is raised INSIDE
+        # the apply (WikiSizeCollapseError from the storage gate), so it takes
+        # the generic ``_move_to_dlq`` path and its failure_reason is the
+        # default ``permanent_error``. Surfacing it matters more than usual: the
+        # message is what NAMES ``allow_truncation=True`` and
+        # ``wiki_restore(slug, version)``, and a guard whose way forward never
+        # reaches the caller is the same defect it exists to remove.
+        last_error = str(meta.get("last_error") or "")
+        if "wiki_size_collapse:" in last_error:
+            return {
+                "stored": False,
+                "reason": "wiki_size_collapse",
+                "hint": last_error,
+            }
         # Car C (#83): slug_exists — upsert=False collision surfaces synchronously.
         if reason == "slug_exists":
             fm = meta.get("failure_metadata") or {}

@@ -209,6 +209,45 @@ def test_wiki_mutability_refusal_is_typed_and_still_a_permissionerror() -> None:
     assert envelope["page_id"] == 42
 
 
+def test_wiki_size_collapse_refusal_renders_as_409_despite_being_a_valueerror(
+    _client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task 271: the size-collapse gate reaches the route as a refusal, not a 500.
+
+    ``WikiSizeCollapseError`` subclasses BOTH ``AdminRefusal`` and ``ValueError``,
+    and Python matches ``except`` clauses in WRITTEN ORDER rather than by
+    specificity — so a ``ValueError`` arm added ahead of the ``AdminRefusal`` arm
+    would silently swallow every refusal this gate raises. Paired deliberately
+    with ``test_unexpected_exception_is_still_a_server_fault`` above, which
+    raises a BARE ``ValueError`` and asserts 500: together they pin that the
+    subclass is distinguishable from the builtin at the route, which is the one
+    claim the envelope-level tests cannot make.
+    """
+    from yadgar._shared.storage.truncation_gate import WikiSizeCollapseError
+
+    exc = WikiSizeCollapseError(
+        {"id": 7052, "slug": "agent-prompt-review-pr", "content": "x" * 15902},
+        "y" * 3717,
+        "update_wiki_page",
+    )
+    assert isinstance(exc, ValueError)
+    monkeypatch.setattr("yadgar.backend.admin_exec.run_admin_op_async", _raise(exc))
+
+    resp = _client.post("/admin", json={"op": "wiki_update", "payload": {}})
+
+    assert resp.status_code == REFUSAL_STATUS, (
+        "a size-collapse refusal must not render as a server fault — check the "
+        "/admin route's except-clause ORDER before assuming the type is wrong"
+    )
+    body = resp.json()["detail"]
+    assert body["refused"] is True
+    assert body["reason"] == "wiki_size_collapse"
+    assert body["old_bytes"] == 15902
+    assert body["new_bytes"] == 3717
+    # The way forward has to survive into the wire envelope, not just the log.
+    assert "allow_truncation=True" in body["error"]
+
+
 def test_derived_pages_get_their_own_reason_code() -> None:
     """``derived`` is not collapsed into ``locked`` — the fix differs per value."""
     from yadgar._shared.storage.mutability_gate import WikiImmutableError, enforce_mutability

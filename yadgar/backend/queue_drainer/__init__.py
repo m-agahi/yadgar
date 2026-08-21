@@ -79,10 +79,15 @@ def _classify_error(err_str: str) -> str:
     v5.10.2: SecretLeakBlocked is always permanent — retrying will never help.
     Car C (#83): slug_exists is permanent — the slug already exists and retrying
     a upsert=False write will always fail.
+    Ledger task 271: wiki_size_collapse is permanent — a policy decision does
+    not become true by waiting, so it goes to DLQ on the permanent budget
+    rather than being retried twenty times first.
     """
     if "SecretLeakBlocked" in err_str:
         return "permanent"
     if "slug_exists:" in err_str:
+        return "permanent"
+    if "wiki_size_collapse:" in err_str:
         return "permanent"
     if _re.search(r"\b4\d\d\b", err_str):
         return "permanent"

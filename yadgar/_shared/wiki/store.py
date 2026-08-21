@@ -861,7 +861,13 @@ class WikiStore:
 
                 updates["page_type"] = page_type
                 updates["wiki_schema_version"] = WIKI_SCHEMA_VERSION
-            self._storage.update_wiki_page(existing["id"], updates)
+            # Ledger task 271: forward the caller's size-collapse assertion to
+            # the storage gate. Never derived here — the canonical-seam
+            # exemption is decided by run_wiki_add_replay, which is the only
+            # thing that knows a write is canonical (see truncation_gate).
+            self._storage.update_wiki_page(
+                existing["id"], updates, _allow_truncation=bool(o.allow_truncation)
+            )
             self._sync_crossrefs(slug, links)
             self._link_memories(slug, source_memory_ids)
             return {**existing, **updates}
@@ -1797,7 +1803,13 @@ class WikiStore:
         if embedding is not None:
             updates["embedding"] = embedding
 
-        self._storage.update_wiki_page(page_id, updates)
+        # Ledger task 271: restore is the RECOVERY path and is never gated by
+        # the size-collapse guard — reverting to an earlier, shorter version is
+        # the fix for an over-eager growth, and the refusal message names this
+        # tool as the undo for a truncation that already landed. Same exemption
+        # the similarity gate and ``_reject_if_discipline_weakening`` already
+        # grant it, for the same reason.
+        self._storage.update_wiki_page(page_id, updates, _allow_truncation=True)
         new_version = self._storage.get_max_version_for_page(page_id)
 
         # Rebuild crossrefs from restored content
