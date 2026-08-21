@@ -20,11 +20,26 @@ logger = logging.getLogger(__name__)
 # was removed with repo_wiki's decommission, #33/ADR-0162; the gate that
 # produced it no longer exists. The v5.42.3 branch-context rejection was
 # removed with branch scoping itself, ADR-0215.)
+#
+# Task 229: the ``AdminRefusal`` reasons the drainer now stamps belong here and
+# not in "failures". ``dlq_requeue``'s taxonomy check is the ONLY thing that
+# stops an operator requeueing a job the drainer will refuse again — a refusal
+# reason left outside this set mints a requeue loop. The unblock for each is an
+# operator action (``wiki_set_mutability``, or re-running the generator) followed
+# by ``dlq_requeue(force=True)``, which is exactly the flow this set gates.
+# THE COST OF THE TYPE CHECK: a new ``AdminRefusal`` subclass whose ``reason``
+# is not added here silently lands in the wrong bucket. Literals rather than an
+# import from ``_shared.storage.mutability_gate`` — this module is a core tool
+# surface and the reason strings are a wire contract, not an implementation
+# detail to be coupled to.
 _REJECTION_TAXONOMY: frozenset[str] = frozenset(
     {
         "duplicate_detected",
         "policy_rejected",
         "missing_directory",  # v5.42.5: queue entry lacks directory_context
+        "wiki_page_locked",  # task 229: WikiImmutableError, mutability="locked"
+        "wiki_page_derived",  # task 229: WikiImmutableError, mutability="derived"
+        "wiki_page_immutable",  # task 229: WikiImmutableError fallback reason
     }
 )
 
@@ -56,14 +71,29 @@ def dlq_inspect(filter: str | None = None) -> list[dict]:  # noqa: A002 — shad
     file_size, and failure_reason. Each entry has a filename you can pass to dlq_requeue()
     or dlq_dismiss().
 
-    filter: narrow results by failure_reason.
+    filter: narrow results by failure_reason. The two buckets are defined by
+    _REJECTION_TAXONOMY (authoritative — read it rather than this prose, which
+    has gone stale before):
       None / "all"    — all entries (default, current behavior)
-      "rejections"    — only similarity gate rejections (failure_reason: duplicate_detected, etc.)
-      "failures"      — only permanent errors (failure_reason: permanent_error or absent)
+      "rejections"    — the system DECIDED to refuse: a similarity duplicate
+                        (duplicate_detected), a policy rejection
+                        (policy_rejected, missing_directory), or a wiki
+                        mutability refusal (wiki_page_locked /
+                        wiki_page_derived / wiki_page_immutable). Requeueing
+                        one unchanged reproduces the refusal.
+      "failures"      — everything else, i.e. the write FAILED rather than being
+                        refused: permanent_error (or absent, the legacy shape),
+                        transient_error (task 229 — retries exhausted against a
+                        transient fault), and any reason not in the taxonomy.
+
+    KNOWN GAP: slug_exists and missing_project_id are stamped by the drainer but
+    are in neither set, so they land in "failures" and stay requeueable. That
+    predates task 229 and is not corrected here.
 
     These operations will NOT be retried automatically. Fix the root cause first, then
     call dlq_requeue(filename) to send them back through the queue. For rejection entries
     (duplicate_detected), use wiki_add(force=True) or delete the existing page, then retry.
+    For a mutability refusal, call wiki_set_mutability, then dlq_requeue(force=True).
     Or call dlq_dismiss(filename) to acknowledge and drop the entry.
     """
     import json as _json
