@@ -392,6 +392,46 @@ class TestCmdBackfillAdrRows:
             with pytest.raises(RuntimeError, match="YADGAR_EMBED_URL"):
                 cmd_backfill(_make_args(adr_rows=True))
 
+    def test_dry_run_exits_nonzero_when_the_preflight_rejected_the_project(self):
+        """Task 176: the preview's exit code is the whole point of the preview.
+
+        ``_preflight_write_guards`` runs the write path's registry guard on the
+        dry-run path too, and reports a rejection as ``ok: False``. The dry-run
+        ``return 0`` below sits AFTER the ``ok is False`` branch, so a rejected
+        preview exits 1 — this pins that ordering, because reversing the two
+        lines would restore exactly the defect (a dry run that cannot fail).
+
+        Distinct from ``test_dry_run_exits_zero_despite_a_mismatched_gate``: the
+        GATE is a post-mortem that necessarily disagrees on a dry run, so it must
+        NOT gate the preview; the PREFLIGHT is a pre-write check that means the
+        apply cannot succeed, so it must.
+        """
+        result = {
+            "ok": False,
+            "error": (
+                "write-path guard 'assert_project_registered' rejected project_id "
+                "'owner/repo' (UnknownProjectError: unknown project_id: 'owner/repo')"
+            ),
+            "resume_after_adr": None,
+            "pages_seen": 230,
+            "rows_inserted": 0,
+            "rows_already_present": 0,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
+            "flagged": [],
+            "supersedes_links": 0,
+            "plan": [],
+            "gate": {
+                "index_rows": 230,
+                "pages_seen": 230,
+                "page_type_adr_rows": 0,
+                "exact_match": False,
+            },
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(adr_rows=True))
+        assert rc == 1, "a dry run that could not validate must not read as a green light"
+
 
 # ---------------------------------------------------------------------------
 # cmd_backfill — no mode flag given
