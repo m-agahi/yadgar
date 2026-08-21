@@ -91,6 +91,30 @@ def test_success_path_unchanged() -> None:
     assert result == {"added": True}
 
 
+def test_bare_mock_response_behaves_exactly_as_before() -> None:
+    """A loosely-mocked response must walk the byte-identical pre-car path.
+
+    Dozens of existing tests hand ``_forward_admin`` a bare ``MagicMock`` whose
+    ``.json()`` is itself a MagicMock, not a dict. Reading the body
+    unconditionally and then guarding the unwrap with ``isinstance(body, dict)``
+    turned those into ``{}`` — a silent SUCCESS-path change to serve a refusal
+    path they never touch. Gating the peek on the status code is what keeps them
+    honest, and this pins it.
+    """
+    from yadgar.core.forward import _forward_admin
+
+    bare = MagicMock()  # status_code is a Mock; .json() returns a Mock
+    with (
+        patch("httpx.post", lambda *a, **k: bare),
+        patch.dict("os.environ", _ENV),
+    ):
+        result = _forward_admin("bookmark_add", {})
+
+    assert result is bare.json.return_value.get.return_value, (
+        "the unwrap must still be `resp.json().get('result', {})` verbatim"
+    )
+
+
 # ---------------------------------------------------------------------------
 # The one tool that POST-PROCESSES the forward's result rather than returning
 # it verbatim. Every other wiki-edit tool is `return _forward_admin(...)`, so

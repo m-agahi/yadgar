@@ -38,7 +38,7 @@ from __future__ import annotations
 import os
 
 from yadgar._shared.observability.observe import observe
-from yadgar._shared.refusal import parse_refusal
+from yadgar._shared.refusal import REFUSAL_STATUS, parse_refusal
 
 # backend 5.30.1: per-op timeout FLOORS for slow admin ops. check_invariants
 # walks every memory + wiki row backend-side (observed 33-34s on the production
@@ -150,16 +150,26 @@ def _forward_admin(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
     # the one place that inspected the tri-state report was dead code.
     # Everything else — 500s, the 400 unknown-op, a 409 that is not ours —
     # still raises exactly as before.
-    try:
-        body = resp.json()
-    except Exception:  # noqa: BLE001 — a non-JSON body is simply not a refusal
-        body = None
-    refusal = parse_refusal(resp.status_code, body)
-    if refusal is not None:
-        return refusal
+    #
+    # The peek is GATED ON THE STATUS CODE so that every other response walks
+    # the byte-identical pre-car path below. An earlier draft read the body
+    # unconditionally and then guarded the unwrap with ``isinstance(body, dict)``;
+    # that silently changed the SUCCESS path for any caller whose response is a
+    # bare mock (``MagicMock().json()`` is not a dict, so ``{}`` would be
+    # returned where a MagicMock used to be). Narrowing a fix to the case it is
+    # for is cheaper than auditing every mock in the suite.
+    if resp.status_code == REFUSAL_STATUS:
+        try:
+            _body = resp.json()
+        except Exception:  # noqa: BLE001 — a non-JSON body is simply not a refusal
+            _body = None
+        refusal = parse_refusal(resp.status_code, _body)
+        if refusal is not None:
+            return refusal
 
     resp.raise_for_status()
-    return body.get("result", {}) if isinstance(body, dict) else {}
+    data = resp.json()
+    return data.get("result", {})
 
 
 @observe(tier="boundary", metric="tools._forward._forward_viz")
