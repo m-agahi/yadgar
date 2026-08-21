@@ -41,8 +41,11 @@ BACKEND_BUILD_INPUTS: tuple[str, ...] = (
     "entrypoint-backend.sh",
     "Dockerfile.backend",
 )
-# Dockerfile.backend:8 is `COPY . /app` — the backend image ships the ENTIRE
-# repo tree, not just yadgar/backend/. That means this list is NOT "what the
+# Dockerfile.backend carries a `COPY . /app` — the backend image ships the
+# ENTIRE repo tree, not just yadgar/backend/. (Task 331 moved that COPY to the
+# BOTTOM of the file so a source edit stops invalidating the apt / torch / model
+# layers above it; what the image CONTAINS is unchanged.) That means this list
+# is NOT "what the
 # image contains" (everything) — it is "what the backend PROCESS actually
 # imports and executes", which is the only thing worth gating a version bump
 # on. Measured via the backend's real import graph (see
