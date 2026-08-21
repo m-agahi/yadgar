@@ -700,24 +700,25 @@ class _MemoryMixin:
     def get_memories_for_directory(self, project_id: str, min_heat: float = 0.1) -> list[dict]:
         """Rows this project owns, hottest first.
 
-        C10g (0047 PR#40 §5) — the PARAMETER is re-keyed onto ``project_id``;
-        the PREDICATE deliberately stays on ``directory_context``. That is not
-        an oversight: C10f moved ``memorize``'s stamp so a new ``memory`` row
-        stores the resolved ``owner/repo`` in ``directory_context``, so this
-        column IS the project key today. Re-keying the predicate onto the
-        separate ``project_id`` column is C11's table work, and doing it here
-        would strand every row written by C10f.
+        C10g (0047 PR#40 §5) re-keyed the PARAMETER onto ``project_id`` but left
+        the PREDICATE on ``directory_context``: C10f's stamp had just moved the
+        resolved ``owner/repo`` into that column, so a ``project_id`` predicate
+        would have stranded every row C10f wrote.
 
-        C9a's ``_C9C_SEMANTIC_SPLIT`` deferral is discharged by this rename:
-        the predictive_coding / narrative / restoration callers all pass a
-        resolved project_id. ONE caller does not —
-        ``backend/admin_exec/staleness.py`` passes a changed file's parent
-        directory. It is left deliberately (its directory arm degrades to
-        no-match; its ``file_hash`` arm is unaffected) and the rename is what
-        makes that mismatch visible at the call site instead of silent.
+        **Task 310 completes it: the predicate is now ``project_id``.** That
+        blocker is discharged — the column is populated at 2363/2363 rows
+        (measured 2026-08-21), so the new predicate cannot under-match, while
+        the OLD one silently dropped every legacy row still holding a filesystem
+        path (the ADR-0427 ``checkpoint_restore.py:522`` class).
+
+        Every caller passes a resolved project_id except
+        ``backend/admin_exec/staleness.py``, which passes a changed file's
+        parent directory. Left deliberately, UNCHANGED by this car: that arm was
+        already a no-match against a project-keyed ``directory_context``. Its
+        ``file_hash`` arm does the work.
         """
         rows = self._q(
-            "SELECT * FROM memory WHERE directory_context = $dir AND heat >= $min "
+            "SELECT * FROM memory WHERE project_id = $dir AND heat >= $min "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC",
             {"dir": project_id, "min": min_heat, "now": self._now_iso()},
@@ -732,14 +733,15 @@ class _MemoryMixin:
         resource had no way to scope: the predicate was ``is_stale = true`` and
         nothing else, so the resource served every project's stale rows.
 
-        Keyed on ``directory_context`` for the same reason as
-        ``get_memories_for_directory`` (C10f's stamp lives there).
+        Task 310 — keyed on ``project_id`` for the same reason as
+        ``get_memories_for_directory`` above (2363/2363 rows stamped; the old
+        ``directory_context`` predicate dropped every legacy path-valued row).
         ``None`` stays corpus-wide — this is a general-purpose primitive and the
         scope policy belongs to its callers.
         """
         if project_id:
             rows = self._q(
-                "SELECT * FROM memory WHERE is_stale = true AND directory_context = $dir",
+                "SELECT * FROM memory WHERE is_stale = true AND project_id = $dir",
                 {"dir": project_id},
             )
         else:
@@ -1431,7 +1433,7 @@ class _MemoryMixin:
 
         Two queries, hard cap `limit` each (safety cap 50 per design).
         Global = ``'global' IN tags`` (**C5**).
-        Project = ``directory_context = project_id`` (**C10g**).
+        Project = ``project_id = project_id`` (**task 310**).
 
         **C10g (0047 PR#40 §5) re-keyed the project bucket onto the project_id,
         together with its writer.** ``CheckpointRestore.anchor_memory`` now
@@ -1439,10 +1441,12 @@ class _MemoryMixin:
         caller's ``context`` path, matching what C10f did to ``memorize``. The
         two halves are ONE change: C10f attempted the stamp alone, watched this
         reader's tests go red, and reverted rather than ship a bucket whose
-        writer it no longer agreed with. The PREDICATE stays on
-        ``directory_context`` for the same reason as
-        ``get_memories_for_directory`` — that column is where the write path
-        puts the identity today; moving onto the ``project_id`` column is C11's.
+        writer it no longer agreed with.
+
+        **Task 310 moves the predicate onto the ``project_id`` column**, for the
+        same reason as ``get_memories_for_directory``: 2363/2363 rows stamped,
+        so the bucket can only widen — a legacy anchor whose
+        ``directory_context`` is a filesystem path is now reachable.
         v5.65: 'system' removed from global bucket (mis-stamp sink; v5.64 stopped new writes).
         Deduplicates by memory id. Returns global anchors first, then project.
         No rank-filter applied — anchors surface unconditionally (design §2).
@@ -1479,7 +1483,7 @@ class _MemoryMixin:
         project_rows = self._q(
             "SELECT * FROM memory "
             "WHERE '_anchor' INSIDE tags AND is_protected = true "
-            "AND directory_context = $dir "
+            "AND project_id = $dir "
             "AND (valid_until IS NONE OR valid_until > $now) "
             "ORDER BY heat DESC LIMIT $lim",
             {"dir": project_id, "now": _now, "lim": _cap},
@@ -1511,12 +1515,8 @@ class _MemoryMixin:
         the whole corpus's newest rows into ``## Working Memory``, for every
         project and even for a caller whose identity did not resolve.
 
-        The predicate is on ``directory_context``, NOT the separate
-        ``project_id`` column — the same choice ``get_memories_for_directory``
-        and ``get_anchored_memories_scoped`` state and for the same reason: C10f
-        moved ``memorize``'s stamp onto ``directory_context``, so that column is
-        where the identity lives for every row written since. Keying this on the
-        ``project_id`` column instead would strand the entire post-C10f corpus.
+        Task 310 — the predicate is the ``project_id`` COLUMN, the same choice
+        ``get_memories_for_directory`` states and for the same reason.
 
         ``project_id=None`` stays corpus-wide, matching the sibling
         ``get_recent_memories_since(directory=None)`` directly below. The
@@ -1528,7 +1528,7 @@ class _MemoryMixin:
         if exclude_anchored:
             where += " AND '_anchor' NOTINSIDE tags"
         if project_id:
-            where += " AND directory_context = $dir"
+            where += " AND project_id = $dir"
             params["dir"] = project_id
         rows = self._q(
             f"SELECT * FROM memory WHERE {where} ORDER BY created_at DESC LIMIT $lim",

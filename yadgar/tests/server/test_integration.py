@@ -362,52 +362,60 @@ class TestMemoryStatsAccurate:
 
 class TestProjectContext:
     def test_only_relevant_directory_returned(self, storage):
-        """Memories for different directories should be isolated."""
+        """Memories for different projects should be isolated.
+
+        Task 310: ``get_memories_for_directory`` keys on the ``project_id``
+        COLUMN, so the two scopes here are two IDENTITIES. Sharing
+        ``_TEST_PROJECT_ID`` across every row would collapse them into one and
+        the isolation this asserts would be unreachable.
+        """
+        _FRONTEND = "acme/frontend"
+        _BACKEND = "acme/backend"
         storage.insert_memory(
             {
-                "project_id": _TEST_PROJECT_ID,
+                "project_id": _FRONTEND,
                 "content": "frontend uses React with TypeScript",
-                "directory_context": "/projects/frontend",
+                "directory_context": _FRONTEND,
                 "heat": 1.0,
                 "tags": ["react"],
             }
         )
         storage.insert_memory(
             {
-                "project_id": _TEST_PROJECT_ID,
+                "project_id": _FRONTEND,
                 "content": "frontend CSS uses Tailwind",
-                "directory_context": "/projects/frontend",
+                "directory_context": _FRONTEND,
                 "heat": 0.9,
                 "tags": ["css"],
             }
         )
         storage.insert_memory(
             {
-                "project_id": _TEST_PROJECT_ID,
+                "project_id": _BACKEND,
                 "content": "backend uses FastAPI with SQLAlchemy",
-                "directory_context": "/projects/backend",
+                "directory_context": _BACKEND,
                 "heat": 1.0,
                 "tags": ["fastapi"],
             }
         )
         storage.insert_memory(
             {
-                "project_id": _TEST_PROJECT_ID,
+                "project_id": _FRONTEND,
                 "content": "cold frontend memory",
-                "directory_context": "/projects/frontend",
+                "directory_context": _FRONTEND,
                 "heat": 0.3,
                 "tags": ["old"],
             }
         )
 
         # Get project context for frontend (min_heat = HOT_THRESHOLD = 0.7)
-        results = storage.get_memories_for_directory("/projects/frontend", min_heat=0.7)
+        results = storage.get_memories_for_directory(_FRONTEND, min_heat=0.7)
         assert len(results) == 2
-        assert all(r["directory_context"] == "/projects/frontend" for r in results)
+        assert all(r["project_id"] == _FRONTEND for r in results)
         assert all(r["heat"] >= 0.7 for r in results)
 
         # Get project context for backend
-        results = storage.get_memories_for_directory("/projects/backend", min_heat=0.7)
+        results = storage.get_memories_for_directory(_BACKEND, min_heat=0.7)
         assert len(results) == 1
         assert results[0]["content"] == "backend uses FastAPI with SQLAlchemy"
 

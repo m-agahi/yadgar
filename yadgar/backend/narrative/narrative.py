@@ -236,7 +236,21 @@ class NarrativeEngine:
                 topics.append(summary)
         return topics
 
+    @observe(tier="stage")
     def _get_active_directories(self, min_heat: float = 0.3) -> list[str]:
-        """Get directories that have memories above the heat threshold."""
+        """project_ids that have memories above the heat threshold.
+
+        Task 310 — reads ``project_id``, not ``directory_context``, and it moves
+        in LOCKSTEP with ``get_memories_for_directory``'s predicate rather than
+        optionally. Every value produced here is consumed as an identity:
+        ``auto_narrate`` feeds it to ``get_narratives_for_directory`` and to
+        ``generate_narrative`` → ``get_memories_for_directory(project_id)``. Left
+        on ``directory_context`` it would hand a legacy row's filesystem path to
+        a project_id-keyed predicate and narrate an empty window.
+
+        Falsy values are dropped: ``project_id`` is ``option<string>``, and a
+        ``None`` group would only reach ``generate_narrative`` and produce a
+        nameless narrative.
+        """
         memories = self._storage.get_memories_by_heat(min_heat=min_heat, limit=10000)
-        return list({m["directory_context"] for m in memories})
+        return list({pid for m in memories if (pid := m.get("project_id"))})

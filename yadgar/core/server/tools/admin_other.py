@@ -57,9 +57,23 @@ def forget(memory_id: int) -> dict:
 
 @_tool(power=True)
 def validate_memory(memory_id: int) -> dict:
-    """Check memory validity against current file state."""
-    from yadgar._shared.server_helpers import _file_hash
+    """Check memory validity against current file state.
 
+    ``StalenessDetector`` is the ONLY validator (built on every full core path,
+    ``core/bootstrap/bootstrap.py:60``), so the ``None`` arm is the
+    engines-not-built / post-shutdown case and reports that it could not check.
+
+    **Task 332 — the hand-rolled fallback on that arm is DELETED, not
+    repaired.** It hashed ``memory["directory_context"]`` as a filesystem path,
+    but C10f (``_memorize_phases/_phase_store.py:168``) stamps that column with
+    ``ctx.project_id``: ``_file_hash`` could only return ``None``, so the branch
+    declared every memory carrying a ``file_hash`` stale with "file no longer
+    exists" AND forwarded that verdict via ``update_memory_staleness``. It was
+    never a degraded copy of the real check — ``staleness.py:122`` resolves the
+    path from ``file_hash`` via ``get_filepath_by_hash`` and reads no scoping
+    column, so repairing this would duplicate that method in a tool shell. A
+    fallback that WRITES is worse than no fallback.
+    """
     if _st._staleness is not None:
         result = _st._staleness.validate_memory(memory_id)
         # Normalize response format for the MCP tool
@@ -69,27 +83,11 @@ def validate_memory(memory_id: int) -> dict:
             "reason": result["reason"],
         }
 
-    # Fallback if staleness detector not initialized
-    storage = _get_storage()
-    memory = storage.get_memory(memory_id)
-    if memory is None:
-        return {"memory_id": memory_id, "is_valid": False, "reason": "memory not found"}
-
-    if not memory.get("file_hash"):
-        return {"memory_id": memory_id, "is_valid": True, "reason": "no file hash to validate"}
-
-    # T2 Car E1 (ADR-0078): the host-FS hash comparison stays core; the
-    # staleness-flag WRITE forwards to the backend /admin op.
-    current_hash = _file_hash(memory["directory_context"])
-    if current_hash is None:
-        _forward_admin("update_memory_staleness", {"memory_id": memory_id, "is_stale": True})
-        return {"memory_id": memory_id, "is_valid": False, "reason": "file no longer exists"}
-
-    if current_hash != memory["file_hash"]:
-        _forward_admin("update_memory_staleness", {"memory_id": memory_id, "is_stale": True})
-        return {"memory_id": memory_id, "is_valid": False, "reason": "file has changed"}
-
-    return {"memory_id": memory_id, "is_valid": True, "reason": "file hash matches"}
+    return {
+        "memory_id": memory_id,
+        "is_valid": False,
+        "reason": "staleness detector not initialized — validity not checked",
+    }
 
 
 @_tool(power=True)
