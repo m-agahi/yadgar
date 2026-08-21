@@ -24,20 +24,29 @@ R1 is BASELINE-RATCHETED, R3 is enforced at zero. See ``.swallow-baseline.json``
 HONEST COVERAGE LIMIT (ADR-0420 requires this be stated, not implied — claiming
 fuller coverage than the detector has would itself be an instance of the class):
 
-  * RETRO-COVERAGE IS 1 OF 14, NOT "roughly half". ADR-0420's Consequences
-    section claims the detector "catches roughly HALF the class". Checked
-    against the ADR's own 14 named instances (278, 280, 281, 282, 13, 94, 283,
-    173, 303, 176, 80, 294, 285, 271) it retro-catches exactly ONE — 285 — plus
-    a now-fixed half of 13. 303 was a conditional drop path, not an except
-    handler. 80 and 294 were failures rendered AS failures, with the wrong type.
-    The ADR has been amended with this correction. THE DETECTOR'S VALUE IS
-    FORWARD-LOOKING: it stops the shape from being re-introduced. It is not a
-    retro-audit of the class.
+PROVENANCE OF THE NUMBERS BELOW. Only two figures were measured by THIS script
+in the car that shipped it: ``R3 = 0`` and ``R1 = 30`` (run it and see). Every
+other count is quoted from the read-only ADR-0420 audit of 2026-08-20 and was
+NOT re-verified here — each is marked ``[audit, not re-verified]``. That audit's
+R3 count was independently shown WRONG by this implementation (see the ADR
+correction), so treat its other figures as indicative, not authoritative.
+Restating a number you did not take, in the detector whose whole subject is
+measurement honesty, is the class.
 
-  * The ``None`` / bare-``return`` / ``""`` / ``0`` return shapes are EXCLUDED.
-    That is 197 of the 250 non-test hits of the naive rule — the recall traded
-    away to buy precision. Three live examples sit in
-    ``yadgar/_shared/wiki/store.py``: ``_collect_wiki_fts_scores``,
+  * RETRO-COVERAGE IS 1 OF 14, NOT "roughly half" ``[audit, not re-verified]``.
+    ADR-0420's Consequences section claims the detector "catches roughly HALF
+    the class". The audit checked that against the ADR's own 14 named instances
+    (278, 280, 281, 282, 13, 94, 283, 173, 303, 176, 80, 294, 285, 271) and
+    found it retro-catches exactly ONE — 285 — plus a now-fixed half of 13.
+    303 was a conditional drop path, not an except handler; 80 and 294 were
+    failures rendered AS failures, with the wrong type. The ADR has been amended
+    with this correction. THE DETECTOR'S VALUE IS FORWARD-LOOKING: it stops the
+    shape from being re-introduced. It is not a retro-audit of the class.
+
+  * The ``None`` / bare-``return`` / ``""`` / ``0`` return shapes are EXCLUDED —
+    the recall traded away to buy precision. The audit put that at 197 of the
+    250 non-test hits of the naive rule ``[audit, not re-verified]``. Three live
+    examples sit in ``yadgar/_shared/wiki/store.py``: ``_collect_wiki_fts_scores``,
     ``_collect_wiki_vector_scores`` and ``_collect_wiki_vector_scores_tagged``
     each do ``except Exception: logger.debug(...)`` with NO return at all, and
     fall through implicitly. Those three are arguably worse than what R1 does
@@ -49,15 +58,24 @@ fuller coverage than the detector has would itself be an instance of the class):
     because resolving a call's return shape needs type inference this does not do.
 
   * ``contextlib.suppress`` is a BYPASS. A ``with suppress(Exception):`` block
-    has no ``ExceptHandler`` node, so R1 cannot see it. Only one non-test use
-    exists today, but it is a real hole and rewriting a handler into
-    ``suppress`` would silently exit the rule.
+    has no ``ExceptHandler`` node, so R1 cannot see it. The audit found one
+    non-test use ``[audit, not re-verified]``, but it is a real hole: rewriting
+    a handler into ``suppress`` would silently exit the rule.
+
+  * THE LOG-LEVEL PROBE IS NAME-BASED AND OVER-EXEMPTS. ``_handler_log_level``
+    matches ANY attribute call whose name is in ``_LOG_LEVELS``, so
+    ``parser.error(...)`` (argparse) and ``warnings.warn(...)`` both read as
+    >= WARNING and quietly exempt their handler. Resolving the receiver to a
+    real ``logging.Logger`` needs type inference this does not do. The 30
+    baselined sites are therefore plausibly an UNDERCOUNT, in the direction
+    that weakens the ratchet.
 
   * R2 (literal ``ok: True`` beside an unread failure counter) and R4 (``cmd_*``
     returning 0 after building a counts structure it never branches on) from
-    ADR-0420's decision list are DELIBERATELY NOT BUILT. Measured: R2 hits 8
-    sites of which 5 are test fixtures, and it misses its OWN motivating example
-    (``project_seed``); R4 hits 1. Neither earns a ratchet.
+    ADR-0420's decision list are DELIBERATELY NOT BUILT. The audit measured R2
+    at 8 sites of which 5 are test fixtures — and missing its OWN motivating
+    example (``project_seed``) — and R4 at 1 ``[audit, not re-verified]``.
+    Neither earns a ratchet.
 ────────────────────────────────────────────────────────────────────────────────
 
 Baseline governance (modeled on ``.observe-allowlist.json``, deliberately NOT on
@@ -71,6 +89,15 @@ under ``--warn``:
     merely stored. A site whose logging improves makes the baseline TIGHTEN
     (the run fails until the file is regenerated) and it can never loosen;
   * ``category`` must be in the enum and ``rationale`` >= 40 chars.
+
+SCANS THE WORKING TREE, NOT THE GIT INDEX. Under pre-commit that is the same
+thing — pre-commit stashes unstaged changes, so the on-disk content during the
+hook IS the staged content. A MANUAL run on a dirty tree is therefore reporting
+on what you have, not on what you are about to commit; a green manual run is not
+evidence the commit will pass. (``scripts/check_observe_coverage.py`` solves this
+by reading the git index; that is the closest model for this ratchet's governance
+and worth reading. It is not adopted here because this hook is ``always_run`` on
+a full scan, where the two agree.)
 
 Usage::
 

@@ -179,12 +179,18 @@ class TestR1:
         assert "R1" in _rules(res)
 
     def test_return_inside_nested_def_is_not_the_handlers(self, tmp_path):
+        """The handler itself returns nothing — only the nested def does.
+
+        Deliberately carries NO `raise`: with one, `_handler_has_raise` short-
+        circuits and `_handler_returns` is never reached, so the test would pass
+        without exercising the nested-def exclusion it is named for.
+        """
         res = _scan(
             tmp_path,
             "def h():\n    try:\n        return risky()\n"
             "    except Exception:\n"
             "        def inner():\n            return []\n"
-            "        raise\n",
+            "        cleanup(inner)\n",
         )
         assert "R1" not in _rules(res)
 

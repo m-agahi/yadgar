@@ -116,13 +116,18 @@ class TestSemanticSearchPassesAnExplicitScope:
 
     def test_unscoped_scope_builds_a_clause_without_raising(self):
         """The regression itself: an unscoped RecallScope must not raise."""
-        from yadgar._shared.storage.directory import RecallScope  # noqa: PLC0415
+        from yadgar._shared.storage.directory import (  # noqa: PLC0415
+            RecallScope,
+            UnresolvedProjectError,
+        )
 
         sql, params = RecallScope(unscoped=True).with_default_opt_in(None).clause()
         assert isinstance(sql, str)
         assert isinstance(params, dict)
 
-        with pytest.raises(Exception):  # noqa: B017 - the pre-fix behaviour, any raise
+        # Named explicitly: a refactor that raised TypeError here instead would
+        # otherwise keep this test green while the guard had changed meaning.
+        with pytest.raises(UnresolvedProjectError):
             RecallScope().with_default_opt_in(None).clause()
 
 
