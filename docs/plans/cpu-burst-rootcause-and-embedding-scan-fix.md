@@ -1,8 +1,35 @@
 # CPU/Fan Burst Root-Cause Validation + Consolidation Embedding-Scan Efficiency Fix
 
-**Status:** Part 2 (embedding scan) buildable; Part 1 (host fan-burst) deferred — see task #26 (2026-06-27: likely non-yadgar / observer-effect, unresolved).
+**Status:** SUPERSEDED (2026-08-20 audit) — do NOT implement as written. Retained for history.
 
 Investigation date: 2026-06-25. Read-only investigation + design. No code edited.
+
+> **SUPERSEDED 2026-08-20 / 2026-08-21 (ledger task 14, car 10 of
+> `train/signals-that-lie-2026-08-20`).** Two of this plan's load-bearing claims
+> no longer hold; the ADR-0081/0082 lifecycle requires that be recorded here
+> rather than left for the next reader to rediscover.
+>
+> 1. **The CPU-burst premise is dropped.** Part 2 was justified by the ~20-min
+>    idle CPU/fan burst being the consolidation embedding scan. The plan itself
+>    already downgraded that to OPEN (see the TL;DR below); the 2026-08-20 audit
+>    closed it out. Do not cite the fan burst as motivation for any further work
+>    on this path.
+> 2. **The `SELECT *` projection work has ALREADY SHIPPED.** The decay scan now
+>    reads `get_all_memories_for_decay_scalar()`
+>    (`yadgar/_shared/storage/memory.py`) — a scalar-only projection with no
+>    `content` / `embedding` column. There is no `SELECT *` left on the decay
+>    path to remove.
+>
+> What actually remained, and what car 10 built, is the ONE item the rescoped
+> task names: the decay pass emitted one `UPDATE` statement per changed row
+> (1740 decay-eligible rows measured on the live corpus 2026-08-21). That is now
+> folded into a bounded number of `FOR $r IN [...] { UPDATE $r.i SET ... }`
+> statements by `_compact_heat_intents`
+> (`yadgar/backend/consolidation/heat_decay.py`). The decay ARITHMETIC stays in
+> Python deliberately — see that module's docstring for the five reasons it is
+> not faithfully expressible in SurrealQL.
+>
+> Everything below this banner is the 2026-06-25 investigation as written.
 
 > **AUDIT 2026-06-25 (improvement-train #29, group A car #30–33).** Part 2 cites
 > re-verified against current code: **31/33 line-refs exact**, two minor drifts +
