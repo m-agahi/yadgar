@@ -23,6 +23,7 @@ from starlette.responses import JSONResponse, RedirectResponse
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.core.server._app import mcp_server
 
 logger = logging.getLogger(__name__)
@@ -161,13 +162,20 @@ async def api_wiki_search(request: Request) -> JSONResponse:
 
     wiki = _st._wiki
     if wiki is None:
-        return JSONResponse([], status_code=503, headers=_NO_CACHE)
+        return JSONResponse(
+            {"error": "wiki engine unavailable"}, status_code=503, headers=_NO_CACHE
+        )
 
     try:
-        results = await asyncio.to_thread(wiki.query, q, tags, None, limit)
-    except Exception as exc:
-        logger.debug("api_wiki_search error q=%s: %s", q, exc)
-        return JSONResponse([], status_code=500, headers=_NO_CACHE)
+        # Car H1: a falsy project_id RAISES unless `unscoped` is set. This is the
+        # whole-corpus bookmarks UI — it has no project identity, so it declares
+        # the unscoped read rather than passing no scope and dying on the guard.
+        results = await asyncio.to_thread(
+            wiki.query, q, tags, None, limit, scope=RecallScope(unscoped=True)
+        )
+    except Exception:
+        logger.warning("api_wiki_search failed q=%s", q, exc_info=True)
+        return JSONResponse({"error": "wiki search failed"}, status_code=500, headers=_NO_CACHE)
 
     cleaned = [dict(r, **{"embedding": None}) for r in results or []]
     for r in cleaned:
@@ -186,13 +194,15 @@ async def api_wiki_list(request: Request) -> JSONResponse:
     """
     slug_prefix = (request.query_params.get("slug_prefix") or "").strip() or None
     if _st._wiki is None or _st._storage is None:
-        return JSONResponse([], status_code=503, headers=_NO_CACHE)
+        return JSONResponse(
+            {"error": "wiki engine unavailable"}, status_code=503, headers=_NO_CACHE
+        )
 
     try:
         rows = await asyncio.to_thread(_st._storage.list_wiki_pages, None, slug_prefix, 100)
-    except Exception as exc:
-        logger.debug("api_wiki_list error: %s", exc)
-        return JSONResponse([], status_code=500, headers=_NO_CACHE)
+    except Exception:
+        logger.warning("api_wiki_list failed slug_prefix=%s", slug_prefix, exc_info=True)
+        return JSONResponse({"error": "wiki list failed"}, status_code=500, headers=_NO_CACHE)
 
     result = [
         {

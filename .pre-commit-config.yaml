@@ -341,6 +341,19 @@ repos:
         pass_filenames: false
         files: ^(yadgar/.*\.py|scripts/.*\.py|\.complexity-allowlist\.json|\.complexity-config\.json)$
 
+      - id: check-swallowed-failure
+        name: Check ADR-0420 swallowed failure (R3 at zero, R1 baseline-ratcheted)
+        language: system
+        entry: python scripts/check_swallowed_failure.py
+        pass_filenames: false
+        # always_run (same reason as check-test-weakening below, and as the
+        # comment there records): this hook's HARD arm is baseline INTEGRITY —
+        # a stale entry, a shape change, a log-level move. A `files:` filter
+        # keyed on staged paths skips exactly the commits that matter: deleting
+        # or renaming a baselined function strands its entry, and the commit
+        # that does it may stage no file the filter would match.
+        always_run: true
+
       - id: check-test-weakening
         name: Block silent test weakening (e2e assert removal / ✅ regression) (#52)
         language: system
