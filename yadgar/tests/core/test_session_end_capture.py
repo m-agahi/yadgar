@@ -687,6 +687,64 @@ def test_signals_sentinel_different_project_not_surfaced(flush_queue):
     assert "extract_last_session_findings" not in action_types
 
 
+def test_signals_sentinel_legacy_directory_context_still_surfaced(flush_queue):
+    """A sentinel row whose ``directory_context`` predates C10f is still found.
+
+    Car E1 (task 310): ``_check_session_end_sentinel``'s query used to read
+    ``directory_context = $project_id`` — comparing the ``project_id``-shaped
+    bound value against a column that, for rows written before the writer
+    started stamping ``directory_context`` from the resolved ``project_id``,
+    still holds a raw filesystem path. Verified live on the corpus 2026-08-21:
+    2 of 9 ``_session_end_sentinel`` rows have ``directory_context !=
+    project_id``. This test manufactures that same legacy shape — a row whose
+    ``project_id`` is set correctly but whose ``directory_context`` is a stale
+    path — and asserts the reader still surfaces it. Before the fix (querying
+    the ``directory_context`` column), this row is invisible; after (querying
+    ``project_id``), it is found regardless of what ``directory_context``
+    holds.
+    """
+    from yadgar.core import server
+    from yadgar.tests.core.conftest import TEST_PROJECT_ID, memorize_scoped
+
+    directory = "/tmp/sentinel_legacy_dc_test"
+    sentinel_content = json.dumps(
+        {
+            "type": "session_end_sentinel",
+            "version": 1,
+            "cwd": directory,
+            "end_reason": "logout",
+            "ended_at": "2026-05-30T10:00:00Z",
+            "transcript_path": "/tmp/sentinel_legacy_dc_test/t.jsonl",
+            "session_id": "legacy-dc-sess",
+            "message_count": 5,
+            "last_human_turns": [],
+            "last_touched_files": [],
+        }
+    )
+    row = memorize_scoped(
+        content=sentinel_content,
+        tags=["_session_end_sentinel", "session_end"],
+        project=TEST_PROJECT_ID,
+    )
+    flush_queue()
+
+    # Simulate a legacy row: project_id is correct, but directory_context still
+    # holds a raw path from before the writer stamped it from project_id.
+    storage = server._get_storage()
+    storage._q(
+        "UPDATE type::record('memory', $id) SET directory_context = $stale_path",
+        {"id": row["id"], "stale_path": "/home/legacy-user/stale-checkout"},
+    )
+
+    result = server.project_brief(directory, mode="signals", project=TEST_PROJECT_ID)
+    actions = result.get("recommended_actions", [])
+    action_types = [a["action"] for a in actions]
+    assert "extract_last_session_findings" in action_types, (
+        f"Expected extract_last_session_findings for a project_id-matched legacy "
+        f"sentinel row, got: {action_types}"
+    )
+
+
 def test_signals_sentinel_skipped_without_project(flush_queue):
     """project_brief with no ``project=`` cannot scope the sentinel — and says so.
 

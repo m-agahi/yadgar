@@ -231,9 +231,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 2716
+      "file_loc": 2723
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module — keeping them co-located is the established pattern; refactor remains deferred to the wave N split. Re-baselined 2026-08-20 from file_loc=2660->2716 (+56) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. Grew with the ADR-0007 agent-prompt capture nudge (_apply_agent_prompt_signal + _get_agent_prompt_toc_updated_at), which mirrors the existing ADR signal helpers in the same module — keeping them co-located is the established pattern; refactor remains deferred to the wave N split. Re-baselined 2026-08-20 from file_loc=2660->2716 (+56) when the allowlist gate became a ratchet (car/complexity-allowlist-ratchet): the entry had been passing unconditionally because the recorded value was never compared to the current measurement, so it drifted silently. This re-baseline is NOT a review-and-approve of the new size on its own merits -- it records the as-measured value so the ratchet can catch every future change from here. Decomposition, if warranted, is tracked as a separate follow-up. | Car E1 (task 310, dc-eradication train) re-baselined 2716 -> 2723 (+7): _check_session_end_sentinel's SQL predicate was renamed from directory_context to project_id (the task's actual fix), and its docstring was expanded to record the live corpus counts that justified the change and why the other 30 directory_context refs in this file were left untouched. No new function; the delta is docstring + a one-line SQL text change.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
