@@ -248,10 +248,26 @@ def test_resolve_session_project_failure_emits_no_guess(tmp_path):
 # (`core/cli/hook.py`, already listed below), and an allowlist naming a file
 # that no longer exists is exactly the stale-subject rot this train spent a car
 # clearing out of the other allowlists.
+#
+# Car 20 (ledger task 303) adds a FIFTH: `core/hooks/post-tool-capture.py`.
+# Read against the paragraph above, that looks like the rot returning — it is
+# the OPPOSITE case, and the difference is whether anything dispatches to the
+# file. `prompt-recall.py` was unwired by every client, so Car 8 deleted it.
+# `post-tool-capture.py` is unwired only by YADGAR'S OWN installer (which uses
+# `hook_runner.py post-tool-capture` -> `core/cli/hook.py`); the nix
+# home-manager module installs a COPY of this script into `~/.claude/hooks/`
+# and points settings.json at it, so on a nix-managed box it is the sole live
+# PostToolUse path. It is a host-side Claude Code hook script run by the user's
+# own interpreter with git and the working tree in reach — the same category as
+# `session-start-context.py`. Deleting it would break that client; leaving it
+# unminted left the capture pipeline silently dead for six days. Hence: wired
+# for some client, so patched in both copies (which is what bb131432 did for
+# prompt-recall's two copies before Car 8 established nothing dispatched to it).
 _ALLOWED_IMPORTERS = frozenset(
     {
         "yadgar/core/hooks/session-start-context.py",
         "yadgar/core/hooks/session-end-capture.py",
+        "yadgar/core/hooks/post-tool-capture.py",
         "yadgar/core/cli/hook.py",
         "yadgar/core/cli/_shared.py",
     }

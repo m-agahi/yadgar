@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """Yadgar auto-capture — PostToolCall hook handler.
 
-Reads tool call JSON from stdin, writes to action_log table.
-Only imports stdlib (json, sys) plus surrealdb — no ML model loading.
-Runs in <100ms. Backgrounded by the shell wrapper for zero latency.
+Reads tool call JSON from stdin, POSTs it to ``/hooks/auto-capture``.
+No ML model loading. Backgrounded by the shell wrapper for zero latency.
 
 HTTP-only: writes via daemon HTTP endpoint. No direct surrealkv
 access — the host path differs from the container path (/data/...).
+
+Two copies of this handler exist: this standalone script and
+``core/cli/hook.py::hook_post_tool_capture`` (dispatched by
+``hook_runner.py post-tool-capture``, which is what yadgar's own installer
+wires). Which one runs is the CLIENT's choice — nix's home-manager module
+installs a copy of THIS file into ``~/.claude/hooks/``. Both must therefore
+carry the same payload contract; when they diverged on ``project_id`` the
+capture pipeline died for six days on the nix-wired box while every signal
+still read healthy (Car 20 / ledger task 303).
 """
 
 import json
@@ -41,6 +49,31 @@ _SUMMARY_FIELDS = (
     "skill",
     "description",
 )
+
+
+@observe(tier="stage")
+def _mint_or_none(cwd: str) -> str | None:
+    """Resolve *cwd*'s ``project_id`` host-side, or ``None``. Never raises.
+
+    Car 20 (ledger task 303). The identity must be stamped HERE: this script
+    is host-side, the daemon it POSTs to is not — the container has no git
+    binary and no project mounts, so a project_id resolved on the far side of
+    the call could only be manufactured (ADR-0227 §1.1). Without one,
+    ``/hooks/auto-capture``'s ``_split_batch_by_project`` drops the action.
+
+    Fail-OPEN, matching ``core/cli/hook.py::hook_post_tool_capture``:
+    ``mint_project_id`` raises by design (ADR-0227 deleted every fallback),
+    and a PostToolUse hook that crashes interferes with the user's tool call
+    while a dropped telemetry row does not. ``None`` is returned rather than
+    a guess — an unattributed row is skipped-and-counted downstream, never
+    bucketed under an invented key.
+    """
+    try:
+        from yadgar.core.hooks._identity_mint import mint_project_id  # noqa: PLC0415
+
+        return mint_project_id(cwd)
+    except Exception:  # noqa: BLE001 — never brick a tool call over identity
+        return None
 
 
 @observe(tier="boundary")
@@ -88,14 +121,20 @@ def main():
             import urllib.error as _err
             import urllib.request as _req
 
-            _payload = json.dumps(
-                {
-                    "tool_name": tool_name,
-                    "summary": summary,
-                    "directory": cwd,
-                    "session_id": session_id,
-                }
-            ).encode()
+            # Car 20: stamp the identity (see _mint_or_none). Omitted, never
+            # empty — an absent key and a "" both read as unattributed
+            # downstream, and omission keeps the payload honest.
+            _body: dict = {
+                "tool_name": tool_name,
+                "summary": summary,
+                "directory": cwd,
+                "session_id": session_id,
+            }
+            _project_id = _mint_or_none(cwd)
+            if _project_id:
+                _body["project_id"] = _project_id
+
+            _payload = json.dumps(_body).encode()
             _headers = {"Content-Type": "application/json"}
             # Car 9: route through the ONE sanctioned bearer-token resolver
             # (env var, else secrets.env) rather than a bare os.environ.get.

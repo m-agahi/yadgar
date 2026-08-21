@@ -1093,11 +1093,15 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
         # from. The batch holds the identities; split on them instead.
         _groups = _split_batch_by_project(to_flush)
         if not _groups:
-            logger.debug(
-                "auto-capture: dropped %d unattributed action(s) — no project_id to route them to",
-                len(to_flush),
+            _observe_dropped_actions(len(to_flush), len(to_flush))
+            return JSONResponse(
+                {
+                    "status": "dropped",
+                    "reason": "no_project_id",
+                    "batch_size": len(to_flush),
+                    "dropped_unattributed": len(to_flush),
+                }
             )
-            return JSONResponse({"status": "dropped", "reason": "no_project_id"})
         from datetime import UTC
 
         ts = datetime.now(UTC).isoformat()
@@ -1130,6 +1134,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
             _st._consolidation.record_activity()
 
         _dropped = len(to_flush) - sum(len(a) for _, a in _groups)
+        _observe_dropped_actions(_dropped, len(to_flush))
         return JSONResponse(
             {
                 "status": "captured",
@@ -3335,6 +3340,47 @@ def _split_batch_by_project(actions: list[dict]) -> list[tuple[str, list[dict]]]
             continue
         grouped.setdefault(pid, []).append(action)
     return list(grouped.items())
+
+
+@observe(tier="hot", span=False, metric="http.auto_capture.observe_dropped")
+def _observe_dropped_actions(dropped: int, batch_size: int) -> None:
+    """Make ``_split_batch_by_project``'s discards loud and countable.
+
+    Car 20 (ledger task 303). DROPPING an unattributed action is right — the
+    drainer would reject the row and it would cost a human a DLQ entry. The
+    SILENCE was wrong: the whole-batch drop used a ``logger.debug`` (invisible
+    at the container's INFO level) plus a countless HTTP 200, and the partial
+    drop logged nothing at all. So when the host-side hook stopped sending
+    ``project_id``, capture died for six days behind 536 HTTP 200s and an empty
+    DLQ — failure rendered as well-formed success. Both branches call this.
+
+    Mechanism is deliberately NOT new: ``observe_project_id_skip`` beside a
+    WARNING is what this failure class already uses one stage later, in
+    ``backend/consolidation/cleanup.py``'s ``action_log_group`` skip. Distinct
+    ``writer`` label keeps the two stages separable.
+
+    The response stays 200: every client of ``/hooks/auto-capture`` catches
+    ``HTTPError``, closes it and returns, so a non-200 changes nothing
+    observable at the hook while adding a failure path to a fire-and-forget
+    call made on every tool use. The count rides the 200 body instead.
+
+    No-op when nothing was dropped — a warning that fires on the healthy path
+    is one operators learn to ignore.
+    """
+    if dropped <= 0:
+        return
+    from yadgar._shared.storage._project_id_writer import (  # noqa: PLC0415
+        observe_project_id_skip,
+    )
+
+    observe_project_id_skip("auto_capture_batch", dropped)
+    logger.warning(
+        "auto-capture: dropped %d of %d action(s) — no project_id to route them to. "
+        "The PostToolUse hook must mint one host-side (ADR-0227: the daemon cannot). "
+        "If this is every action, the wired hook is not sending project_id.",
+        dropped,
+        batch_size,
+    )
 
 
 # Car B (0047 §3.2) — POST /session_bind
