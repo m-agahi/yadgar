@@ -118,10 +118,21 @@ def _print_seed_report(result: dict, *, dry_run: bool) -> None:
     returned no id" — so the line an operator reads to decide whether the
     backfill worked could not tell "nothing to do" from "totally broken", which
     is exactly how a run that inserted zero rows read as a success.
+
+    Task 311: the gate's verdict now comes from one of TWO predicates, so the
+    report NAMES the one that ran. ``exact_match: true`` alone cannot be told
+    apart from a three-zero comparison, and the operator reading this line is
+    the person who has to make that distinction — the dict dump the line above
+    already carries reads as noise, not as an answer.
     """
     mode = "DRY RUN" if dry_run else "APPLY"
     gate = result.get("gate", {}) or {}
     flagged = result.get("flagged", []) or []
+    predicate = (
+        "index_absent (legacy ADR index page gone) -> pages_seen == page_type_adr_rows"
+        if gate.get("index_absent")
+        else "three-way -> index_rows == pages_seen == page_type_adr_rows"
+    )
     print(
         f"[{mode}] pages_seen={result.get('pages_seen')} "
         f"rows_inserted={result.get('rows_inserted')} "
@@ -131,6 +142,10 @@ def _print_seed_report(result: dict, *, dry_run: bool) -> None:
         f"next_id={result.get('next_id')} ({result.get('next_id_basis')}) "
         f"flagged={len(flagged)} "
         f"gate={gate}",
+        file=sys.stderr,
+    )
+    print(
+        f"  GATE predicate: {predicate} -> exact_match={gate.get('exact_match')}",
         file=sys.stderr,
     )
     if result.get("ok") is False:

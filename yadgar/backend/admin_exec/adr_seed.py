@@ -24,7 +24,10 @@ NOT sanctioned transitions).
 D35c verification gate: EXACT equality on a stated predicate. Three known
 counts (index_rows vs pages_seen vs page_type='adr' rows) reconciled BEFORE
 cutover, never absorbed silently. ``>=`` is NOT a gate (2026-06-16 vacuum
-destroyed 3,622 memories through a ``>=`` check).
+destroyed 3,622 memories through a ``>=`` check). Task 311: when ``index_rows``
+is 0 the legacy index page is GONE (ADR-0253 deleted it corpus-wide), so the
+reconciliation is two-sided — ``pages_seen == page_type_adr_rows``.
+``gate["index_absent"]`` reports which of the two predicates ran.
 """
 
 from __future__ import annotations
@@ -142,14 +145,79 @@ def _exact_equality_gate(
 ) -> bool:
     """D35c verification gate — EXACT equality on a stated predicate.
 
-    The three known counts (index_rows vs pages_seen vs page_type='adr'
-    rows) must reconcile BEFORE cutover. A residue gap is NOT absorbed
-    silently. ``>=`` is NOT a gate — that was the 2026-06-16 vacuum that
-    destroyed 3,622 memories.
+    The known counts (index_rows vs pages_seen vs page_type='adr' rows) must
+    reconcile BEFORE cutover. A residue gap is NOT absorbed silently. ``>=`` is
+    NOT a gate — that was the 2026-06-16 vacuum that destroyed 3,622 memories.
 
-    Returns True only when all three counts match exactly.
+    TWO predicates, chosen by whether the legacy index still exists:
+
+    * ``index_rows > 0`` — the three-way equality. Unchanged.
+    * ``index_rows == 0`` — the legacy ``<project>-adr-index`` page is GONE, so
+      the reconciliation is two-sided: ``pages_seen == page_type_adr_rows``.
+
+    Ledger task 311. ``_count_legacy_index_rows``'s docstring has asserted this
+    reading since Car G — *"treats index_rows=0 as a hard signal that the index
+    is gone, NOT as a mismatch — the gate's two-sided reconciliation is between
+    pages_seen and page_type_adr_rows, with index_rows as the legacy-trace
+    counter"* — and nothing implemented it. ADR-0253 deleted the index page
+    corpus-wide, so the counter returns 0 forever, ``exact_match`` was
+    unreachable, and ``cli/backfill.py``'s ``if not gate["exact_match"]:
+    return 1`` turned a clean 0-insert ``--apply`` into a reported failure. The
+    op that lies about its own success is worse than the op with no gate.
+
+    This is NOT the ``>=`` weakening above. The zero case still demands EXACT
+    equality; it demands it of the two counts that still have a source. The
+    third side is not relaxed, it is absent — and a source that no longer
+    exists cannot be evidence either way.
+
+    CONSEQUENCE, stated so the next reader does not file it as vacuous: an
+    empty project (no ADR pages, no ledger rows) now gates green on ``0 == 0``.
+    That is correct per ADR-0429 — the op has no remaining work on any corpus
+    and is retained only for future projects onboarding legacy ADRs — and it is
+    what makes "there was nothing to do" exit 0 instead of 1.
+
+    Returns True only when the counts the corpus can still produce match
+    exactly.
     """
+    if index_rows == 0:
+        return pages_seen == page_type_adr_rows
     return index_rows == pages_seen == page_type_adr_rows
+
+
+@observe(tier="stage", metric="backend.admin.adr_seed._verification_gate")
+def _verification_gate(
+    *,
+    index_rows: int,
+    pages_seen: int,
+    page_type_adr_rows: int,
+) -> dict[str, object]:
+    """Build the D35c ``gate`` block: the counts, the verdict, and its provenance.
+
+    ``index_absent`` is the discriminator task 311 added. Two different
+    predicates answer to ``exact_match`` now — see ``_exact_equality_gate``,
+    which owns the branch — and ``exact_match: true`` on a 0/0/0 gate is
+    otherwise indistinguishable from a three-way match. The operator reading
+    the CLI report is the one who has to tell them apart, so the fact travels
+    in the payload rather than being re-derived downstream.
+
+    A named function rather than a dict literal inline in ``seed_adr_rows``:
+    the block stopped being a transcription of three counts the moment its
+    verdict acquired a branch, and ``seed_adr_rows`` sits under an I13
+    allowlisted ``fn_loc`` ceiling that a growing literal eats into.
+    """
+    return {
+        "index_rows": index_rows,
+        "pages_seen": pages_seen,
+        "page_type_adr_rows": page_type_adr_rows,
+        # Paired with ``_exact_equality_gate``'s own ``index_rows == 0`` branch:
+        # this key REPORTS which predicate ran, that one CHOOSES it.
+        "index_absent": index_rows == 0,
+        "exact_match": _exact_equality_gate(
+            index_rows=index_rows,
+            pages_seen=pages_seen,
+            page_type_adr_rows=page_type_adr_rows,
+        ),
+    }
 
 
 @observe(tier="stage", metric="backend.admin.adr_seed._parse_adr_id_from_slug")
@@ -769,7 +837,10 @@ async def seed_adr_rows(
           - plan: dry-run only — one entry per planned insert.
           - flagged, supersedes_links, supersedes_failed.
           - gate: D35c output ``{"index_rows", "pages_seen",
-            "page_type_adr_rows", "exact_match"}``.
+            "page_type_adr_rows", "index_absent", "exact_match"}``.
+            ``index_absent`` (task 311) names which predicate produced
+            ``exact_match`` — the two-sided one when the legacy index page is
+            gone, the three-way one when it still exists.
         On a structural fault: ``{"ok": False, "error", "resume_after_adr"}``
         alongside the partial counts. Never raises — ``admin_exec`` pins the
         never-raise error model and both tool shells key on ``ok is False``.
@@ -894,16 +965,11 @@ async def seed_adr_rows(
         "supersedes_unresolved": run.supersedes_unresolved,
         # Where each ADR actually landed. Ids are not numbers.
         "number_to_id": dict(sorted(run.number_to_id.items())),
-        "gate": {
-            "index_rows": index_rows,
-            "pages_seen": pages_seen,
-            "page_type_adr_rows": page_type_adr_rows,
-            "exact_match": _exact_equality_gate(
-                index_rows=index_rows,
-                pages_seen=pages_seen,
-                page_type_adr_rows=page_type_adr_rows,
-            ),
-        },
+        "gate": _verification_gate(
+            index_rows=index_rows,
+            pages_seen=pages_seen,
+            page_type_adr_rows=page_type_adr_rows,
+        ),
     }
     if dry_run:
         result_dict["plan"] = run.plan
