@@ -8,6 +8,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Import the script from scripts/ — not a package, use direct path injection.
 # ---------------------------------------------------------------------------
@@ -16,7 +18,12 @@ _SCRIPTS_DIR = str(Path(__file__).parent.parent.parent.parent / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from check_pr_metadata import main, validate_pr_metadata  # noqa: E402
+from check_pr_metadata import (  # noqa: E402
+    check_template_drift,
+    main,
+    template_path,
+    validate_pr_metadata,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — _GOOD_BODY has all 5 required sections with >=20 real chars each
@@ -229,6 +236,75 @@ class TestValidatePrMetadataMissingSections:
         # Title errors are 0 here; all 5 section errors should be present.
         assert len(errors) == 5
 
+    def test_missing_section_error_names_the_exact_search_targets(self) -> None:
+        """The error must say what it searched for, not just that it's 'missing'."""
+        errors = validate_pr_metadata(_GOOD_TITLE, self._body_without("What"))
+        what_errors = [e for e in errors if "What" in e]
+        assert what_errors
+        assert any("## What" in e for e in what_errors)
+        assert any("<summary>" in e for e in what_errors)
+
+    def test_missing_section_error_lists_headings_actually_present(self) -> None:
+        """The near-miss case: author used a descriptive label instead of the
+        literal required word. The error must surface what WAS found so the
+        author can see the mismatch without reading the validator source."""
+        body = _GOOD_BODY_COLLAPSIBLE.replace(
+            "<summary><b>What</b></summary>", "<summary><b>The cars</b></summary>"
+        )
+        errors = validate_pr_metadata(_GOOD_TITLE, body)
+        what_errors = [e for e in errors if "missing required section 'What'" in e]
+        assert what_errors, f"Expected a missing-What error, got: {errors}"
+        assert any("The cars" in e for e in what_errors)
+        # Summary/Why/Notes/Test plan headings found should also be listed.
+        assert any("Summary" in e for e in what_errors)
+
+    def test_missing_section_error_has_no_headings_found_message_on_empty_body(self) -> None:
+        errors = validate_pr_metadata(_GOOD_TITLE, "")
+        assert all("none found" in e.lower() for e in errors)
+
+    def test_missing_section_error_includes_line_numbers_of_found_headings(self) -> None:
+        body = _GOOD_BODY_COLLAPSIBLE.replace(
+            "<summary><b>What</b></summary>", "<summary><b>The cars</b></summary>"
+        )
+        errors = validate_pr_metadata(_GOOD_TITLE, body)
+        what_errors = [e for e in errors if "missing required section 'What'" in e]
+        assert what_errors
+        assert any("line 1" in e for e in what_errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_pr_metadata — under-length errors now carry a line number
+# ---------------------------------------------------------------------------
+
+
+class TestValidatePrMetadataContentLengthDiagnostics:
+    def test_under_length_error_includes_line_number_of_the_section(self) -> None:
+        body = """\
+## Summary
+
+This is a substantive summary of the changes for this pull request review.
+
+## What
+
+short
+
+## Why
+
+The old validator only checked two sections and did not enforce content length.
+
+## Notes
+
+No breaking changes to the public API surface; migration is straightforward.
+
+## Test plan
+
+All tests pass; manual smoke confirmed with exit code zero on valid body.
+"""
+        errors = validate_pr_metadata(_GOOD_TITLE, body)
+        what_errors = [e for e in errors if "'What'" in e]
+        assert what_errors
+        assert any("line 5" in e for e in what_errors)
+
 
 # ---------------------------------------------------------------------------
 # validate_pr_metadata — under-length section content errors
@@ -374,3 +450,92 @@ class TestMain:
         monkeypatch.delenv("PR_TITLE", raising=False)
         monkeypatch.delenv("PR_BODY", raising=False)
         assert main() == 1
+
+
+# ---------------------------------------------------------------------------
+# template_path — the message must name the template for the forge that is
+# actually running this check, not a hardcoded one.
+# ---------------------------------------------------------------------------
+
+
+class TestTemplatePath:
+    def test_github_server_url_selects_github_template(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+        assert template_path() == ".github/PULL_REQUEST_TEMPLATE.md"
+
+    def test_non_github_server_url_selects_forgejo_template(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GITHUB_SERVER_URL", "https://codeberg.org")
+        assert template_path() == ".forgejo/PULL_REQUEST_TEMPLATE.md"
+
+    def test_self_hosted_forgejo_url_selects_forgejo_template(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GITHUB_SERVER_URL", "https://git.example.internal")
+        assert template_path() == ".forgejo/PULL_REQUEST_TEMPLATE.md"
+
+    def test_missing_server_url_defaults_to_github(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No GITHUB_SERVER_URL (local/dev run) — GitHub is the primary forge (ADR-0178)."""
+        monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+        assert template_path() == ".github/PULL_REQUEST_TEMPLATE.md"
+
+    def test_trailing_slash_on_github_url_still_matches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com/")
+        assert template_path() == ".github/PULL_REQUEST_TEMPLATE.md"
+
+    def test_validate_pr_metadata_error_uses_context_template_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A GitHub-context run must not reference the Forgejo-only template path."""
+        monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+        errors = validate_pr_metadata(_GOOD_TITLE, "")
+        assert any(".github/PULL_REQUEST_TEMPLATE.md" in e for e in errors)
+        assert not any(".forgejo/PULL_REQUEST_TEMPLATE.md" in e for e in errors)
+
+    def test_validate_pr_metadata_accepts_explicit_template_path_override(self) -> None:
+        """Callers (main(), tests) can pin the path instead of reading the env."""
+        errors = validate_pr_metadata(_GOOD_TITLE, "", template_path="custom/TEMPLATE.md")
+        assert any("custom/TEMPLATE.md" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# check_template_drift — the two forge templates must not silently diverge.
+# ---------------------------------------------------------------------------
+
+
+class TestCheckTemplateDrift:
+    def test_identical_templates_return_none(self, tmp_path: Path) -> None:
+        forgejo_dir = tmp_path / ".forgejo"
+        github_dir = tmp_path / ".github"
+        forgejo_dir.mkdir()
+        github_dir.mkdir()
+        (forgejo_dir / "PULL_REQUEST_TEMPLATE.md").write_text("## Summary\n")
+        (github_dir / "PULL_REQUEST_TEMPLATE.md").write_text("## Summary\n")
+        assert check_template_drift(repo_root=tmp_path) is None
+
+    def test_diverged_templates_return_a_warning_naming_both_paths(self, tmp_path: Path) -> None:
+        forgejo_dir = tmp_path / ".forgejo"
+        github_dir = tmp_path / ".github"
+        forgejo_dir.mkdir()
+        github_dir.mkdir()
+        (forgejo_dir / "PULL_REQUEST_TEMPLATE.md").write_text("## Summary\n")
+        (github_dir / "PULL_REQUEST_TEMPLATE.md").write_text("## Summary\n## Extra\n")
+        warning = check_template_drift(repo_root=tmp_path)
+        assert warning is not None
+        assert ".forgejo/PULL_REQUEST_TEMPLATE.md" in warning
+        assert ".github/PULL_REQUEST_TEMPLATE.md" in warning
+
+    def test_missing_one_template_does_not_crash_and_returns_none(self, tmp_path: Path) -> None:
+        github_dir = tmp_path / ".github"
+        github_dir.mkdir()
+        (github_dir / "PULL_REQUEST_TEMPLATE.md").write_text("## Summary\n")
+        assert check_template_drift(repo_root=tmp_path) is None
+
+    def test_real_repo_templates_are_not_diverged(self) -> None:
+        """Live check against this repo's actual two template files."""
+        assert check_template_drift() is None
