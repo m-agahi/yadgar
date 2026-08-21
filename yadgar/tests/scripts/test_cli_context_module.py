@@ -189,3 +189,59 @@ class TestCmdContext:
             cmd_context(_make_args())
         out = capsys.readouterr().out
         assert "Critical Facts" in out
+
+
+# ---------------------------------------------------------------------------
+# task 310 (E2) — hot-memories query scopes on project_id, not
+# directory_context. The column was re-stamped from the resolved project_id
+# (C10f/C10g) so the old ``directory_context = $dir`` predicate bound a raw
+# filesystem path against a column legacy rows still hold paths in but new
+# rows hold identity strings in — silently missing every post-re-key row.
+# ---------------------------------------------------------------------------
+
+
+class TestProjectIdScoping:
+    def test_hot_query_selects_on_project_id_column(self, capsys):
+        """The SQL text must scope on project_id, not the retired directory_context."""
+        mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=[])
+        with (
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
+            patch(
+                "yadgar.core.cli._shared.resolve_cli_project",
+                return_value="m-agahi/yadgar",
+            ),
+        ):
+            cmd_context(_make_args())
+        hot_query = mock_storage._q.call_args_list[0].args[0]
+        assert "project_id = $dir" in hot_query
+        assert "directory_context" not in hot_query
+
+    def test_hot_query_binds_resolved_project_id_not_raw_directory(self, capsys):
+        """The bound $dir value is the RESOLVED project_id, not args.directory."""
+        mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=[])
+        with (
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
+            patch(
+                "yadgar.core.cli._shared.resolve_cli_project",
+                return_value="m-agahi/yadgar",
+            ),
+        ):
+            cmd_context(_make_args(directory="/home/user/project"))
+        hot_params = mock_storage._q.call_args_list[0].args[1]
+        assert hot_params == {"dir": "m-agahi/yadgar"}
+
+    def test_unresolvable_project_binds_none_not_directory_fallback(self, capsys):
+        """required=False degrades to None on an unresolvable tree — the query
+        must bind that None (matching no rows) rather than silently falling
+        back to the raw directory path."""
+        mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=[])
+        with (
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
+            patch("yadgar.core.cli._shared.resolve_cli_project", return_value=None),
+        ):
+            cmd_context(_make_args(directory="/home/user/project"))
+        hot_params = mock_storage._q.call_args_list[0].args[1]
+        assert hot_params == {"dir": None}

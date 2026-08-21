@@ -15,9 +15,11 @@ def cmd_context(args):
     directory = args.directory
     # C4: resolved host-side, non-fatal — this is a SessionStart read path and
     # must not refuse to print context because a tree has no remote.
-    # C7: the query below still selects on ``directory_context``; when the read
-    # path is re-keyed onto ``project_id`` this is the value it uses.
-    resolve_cli_project(getattr(args, "project", None), directory, required=False)
+    # task 310 (E2): the hot-memories query below scopes on ``project_id`` —
+    # this is the resolved value it binds. ``required=False`` means an
+    # unresolvable tree degrades to ``None``, which matches no rows rather
+    # than guessing or falling back to the retired ``directory_context`` key.
+    project_id = resolve_cli_project(getattr(args, "project", None), directory, required=False)
 
     storage = None
     try:
@@ -25,9 +27,9 @@ def cmd_context(args):
         hot = (
             storage._q(
                 "SELECT content, heat FROM memory "
-                "WHERE directory_context = $dir AND heat >= 0 "
+                "WHERE project_id = $dir AND heat >= 0 "
                 "ORDER BY heat DESC LIMIT 6",
-                {"dir": directory},
+                {"dir": project_id},
             )
             or []
         )
