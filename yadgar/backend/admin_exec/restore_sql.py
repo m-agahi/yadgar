@@ -90,6 +90,7 @@ from pathlib import Path
 from typing import Any
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.refusal import AdminRefusal
 from yadgar._shared.storage.sql.config import MariaClientConfig, read_client_option_file
 from yadgar.backend.admin_exec.backup_sql import _dump_dir
 from yadgar.backend.admin_exec.invariants_cross_engine import (
@@ -163,17 +164,29 @@ _DIGEST_SEP = "0x1F"
 _NULL_SENTINEL = "'NULL'"
 
 
-class RestoreVerificationError(RuntimeError):
+class RestoreVerificationError(AdminRefusal, RuntimeError):
     """A restore that was not proven good. Carries the full tri-state report.
 
     Raised for BOTH ``violation`` and ``unavailable`` — see the module docstring
     for why a gate collapses those two into one refusal while car H's reporting
     arm keeps them apart.
+
+    An ``AdminRefusal`` (ledger task 80): this is the gate DECIDING, so the
+    ``/admin`` route renders it as a structured 4xx carrying the report rather
+    than as a bare 500 that reads as "the backend fell over". The top-level
+    ``reason`` stays deliberately coarse — the never-collapsed ``REASON_*``
+    vocabulary above is per-CHECK and rides along inside ``checks``, and minting
+    a parallel top-level dialect for it would be a second source of truth.
     """
+
+    reason = "restore_not_verified"
 
     def __init__(self, message: str, report: dict) -> None:
         super().__init__(message)
         self.report = report
+
+    def refusal_report(self) -> dict:
+        return self.report
 
 
 # ── identifier quoting ───────────────────────────────────────────────────────
