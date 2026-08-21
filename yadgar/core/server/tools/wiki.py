@@ -990,8 +990,13 @@ def wiki_delete(slug: str) -> dict:
     # The SSE push_event and file-queue mirror cleanup are CORE-side side-effects
     # (core's SSE bus + the shared file-queue mirror) — they stay here, after the
     # forward reports the delete succeeded.
-    deleted = _forward_admin("wiki_delete", {"slug": slug}).get("deleted", False)
-    if deleted:
+    _res = _forward_admin("wiki_delete", {"slug": slug})
+    # The only wiki tool that post-processes the result, so the only one that must
+    # know a refusal: Car J's lock carries no ``deleted``, and calling that "not
+    # found" below would swap the old 500 for a fresh lie.
+    if _res.get("refused"):
+        return _res
+    if _res.get("deleted", False):
         _push_event({"event": "wiki_deleted", "slug": slug})
         try:
             _get_file_queue().delete_wiki(slug)

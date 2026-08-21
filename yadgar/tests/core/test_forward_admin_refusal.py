@@ -89,3 +89,50 @@ def test_refusal_status_without_the_envelope_still_raises() -> None:
 def test_success_path_unchanged() -> None:
     result = _forward_with(_response(200, {"result": {"added": True}}), op="bookmark_add")
     assert result == {"added": True}
+
+
+# ---------------------------------------------------------------------------
+# The one tool that POST-PROCESSES the forward's result rather than returning
+# it verbatim. Every other wiki-edit tool is `return _forward_admin(...)`, so
+# the envelope reaches the caller untouched; wiki_delete branches on a
+# ``deleted`` key the envelope does not carry, and its else-branch says "not
+# found". Left alone, this car would have swapped a bare 500 for a WRONG
+# ANSWER — the same class of defect, and strictly harder to notice.
+# ---------------------------------------------------------------------------
+_LOCK_REFUSAL = {
+    "ok": False,
+    "refused": True,
+    "op": "wiki_delete",
+    "reason": "wiki_page_locked",
+    "error": "wiki page mutability='locked' forbids delete_wiki_page (...)",
+    "mutability": "locked",
+    "slug": "m-agahi_yadgar_adr-0154",
+}
+
+
+def test_wiki_delete_reports_a_refusal_as_a_refusal() -> None:
+    from unittest.mock import patch as _patch
+
+    import yadgar.core.server.tools.wiki as _w
+
+    with _patch.object(_w, "_forward_admin", lambda op, payload: _LOCK_REFUSAL):
+        result = _w.wiki_delete("m-agahi_yadgar_adr-0154")
+
+    assert result["refused"] is True
+    assert result["reason"] == "wiki_page_locked"
+    assert "not found" not in result.get("error", ""), (
+        "a locked page EXISTS — reporting the refusal as a missing page is the "
+        "lie this train removes"
+    )
+
+
+def test_wiki_delete_not_found_is_unchanged() -> None:
+    """The genuine miss keeps its own message; only the refusal branch is new."""
+    from unittest.mock import patch as _patch
+
+    import yadgar.core.server.tools.wiki as _w
+
+    with _patch.object(_w, "_forward_admin", lambda op, payload: {"deleted": False}):
+        result = _w.wiki_delete("nope")
+
+    assert result == {"deleted": False, "error": "Wiki page 'nope' not found"}
