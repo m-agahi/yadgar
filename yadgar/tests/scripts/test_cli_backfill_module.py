@@ -387,6 +387,56 @@ class TestCmdBackfillAdrRows:
             rc = cmd_backfill(_make_args(adr_rows=True, apply=True))
         assert rc != 0
 
+    def test_apply_exits_zero_on_a_clean_no_op_with_the_legacy_index_gone(self, capsys):
+        """Ledger task 311: a 0-insert ``--apply`` no-op must exit 0.
+
+        The gate block is built by the REAL ``_exact_equality_gate`` rather than
+        hand-stubbed, because a stubbed ``exact_match: True`` would pass before
+        the fix and prove only that the CLI reads a key. The counts are the live
+        corpus's (ADR-0429): the legacy ``<project>-adr-index`` page is deleted
+        everywhere, so ``index_rows`` is 0 forever, and every project's page
+        count already equals its ledger row count — there is no remaining work
+        for this op anywhere. Before the fix that exact state produced
+        ``exact_match: False`` and ``backfill.py``'s ``return 1``: a no-op the
+        operator was told had failed, on the irreversible ``--apply`` path.
+
+        Also asserts the predicate is NAMED on stderr. ``exact_match: true``
+        alone cannot distinguish "reconciled the two live counts" from
+        "compared three zeros", and the operator reading the report is the
+        person who has to tell them apart.
+        """
+        from yadgar.backend.admin_exec.adr_seed import _exact_equality_gate
+
+        index_rows, pages_seen, page_type_adr_rows = 0, 230, 230
+        result = {
+            "pages_seen": pages_seen,
+            "rows_inserted": 0,
+            "rows_already_present": pages_seen,
+            "rows_failed": 0,
+            "rows_skipped_by_request": 0,
+            "flagged": [],
+            "supersedes_links": 0,
+            "gate": {
+                "index_rows": index_rows,
+                "pages_seen": pages_seen,
+                "page_type_adr_rows": page_type_adr_rows,
+                "index_absent": index_rows == 0,
+                "exact_match": _exact_equality_gate(
+                    index_rows=index_rows,
+                    pages_seen=pages_seen,
+                    page_type_adr_rows=page_type_adr_rows,
+                ),
+            },
+        }
+        with _patched(forward_return=result):
+            rc = cmd_backfill(_make_args(adr_rows=True, apply=True))
+        err = capsys.readouterr().err
+        assert rc == 0, (
+            "a converged corpus is not a failed run; the D35c gate's third side "
+            "no longer exists, so demanding it made every apply exit non-zero"
+        )
+        assert "index_absent" in err, "the report must name which predicate produced the verdict"
+
     def test_forward_error_propagates(self):
         with _patched(forward_side_effect=RuntimeError("YADGAR_EMBED_URL is not set")):
             with pytest.raises(RuntimeError, match="YADGAR_EMBED_URL"):

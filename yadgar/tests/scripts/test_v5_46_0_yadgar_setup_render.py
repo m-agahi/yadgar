@@ -104,12 +104,33 @@ def test_yadgar_setup_noninteractive_recognized():
 
 
 def test_yadgar_setup_doctor_recognized():
-    """--doctor flag must be recognized (no unknown flag error)."""
+    """--doctor flag must be recognized (no unknown flag error).
+
+    Matched against the arg-parser's OWN rejection string rather than a bare
+    "unknown"/"unrecognized" substring sweep of the whole run. The sweep was
+    both too broad and machine-dependent: `--doctor` shells out to
+    `yadgar verify-hooks`, whose report legitimately names its four hook
+    statuses (missing / unrecognized / foreign / unexpected), so the test's
+    outcome turned on which `yadgar` build happened to be on PATH and on the
+    live settings.json. Any probe that ever prints one of those words as
+    ordinary output would have broken it the same way.
+
+    "ERROR: Unknown flag:" is the literal string yadgar-setup.sh emits in its
+    `*)` case arm — the same one test_yadgar_setup_rejects_unknown_flag
+    exercises. The coupling is deliberate: if that message is ever reworded,
+    both tests must be updated together.
+    """
     result = _run_setup("--doctor", "--dryrun")
-    # --doctor may fail if not on macOS — check it doesn't fail on flag parse
+    # --doctor may fail if not on macOS — check it doesn't fail on flag parse.
+    # Deliberately NOT asserting returncode: --doctor legitimately warns (and
+    # can exit non-zero) on a host whose units/hooks are not fully wired.
     combined = result.stdout + result.stderr
-    assert "unknown" not in combined.lower() and "unrecognized" not in combined.lower(), (
-        f"--doctor flag not recognized:\n{combined}"
+    assert "Unknown flag:" not in combined, f"--doctor flag not recognized:\n{combined}"
+    # Not-rejected is weaker than dispatched. Assert the flag actually reached
+    # _run_doctor, so a parse arm that swallowed --doctor without running it
+    # could not pass.
+    assert "Doctor: Running verification probes" in combined, (
+        f"--doctor parsed but never dispatched to _run_doctor:\n{combined}"
     )
 
 

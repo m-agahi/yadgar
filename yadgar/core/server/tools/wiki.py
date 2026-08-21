@@ -426,6 +426,7 @@ def wiki_add(
     upsert: bool = True,
     *,
     project: str | None = None,
+    allow_truncation: bool = False,
 ) -> dict:
     """Create or update a wiki page. Content can include [[slug]] cross-references.
 
@@ -468,6 +469,15 @@ def wiki_add(
 
     Use force=True to bypass the gate. Use replace_slug=<existing-slug> to overwrite
     an existing page by a different slug (gate is skipped for both).
+
+    allow_truncation (task 271): an update whose new body is under 50% of the old
+      one (old >= 1 KB) is REFUSED, reason ``wiki_size_collapse``. Usually that
+      means the write is incomplete — re-read the page and write back the WHOLE
+      intended body; ``wiki_restore(slug, version)`` undoes one that landed.
+      Pass True only when the loss is deliberate. ``force`` does NOT open this
+      gate: it bypasses duplicate detection on CREATE, and conflating the two
+      would weaken this one for every dedup bypass. Threshold + evidence:
+      ``_shared/storage/truncation_gate.py``.
 
     slug: optional — store at EXACTLY this slug (create-or-overwrite when upsert=True).
       When None (default), slug is derived from title (backward-compat).
@@ -591,6 +601,8 @@ def wiki_add(
         "page_type": page_type,
         # Car C (#83): upsert semantics — drainer reads upsert from payload.
         "upsert": upsert,
+        # Ledger task 271: the size-collapse gate's escape hatch.
+        "allow_truncation": allow_truncation,
     }
     # C3 (0047 PR#40 §5.C3): stamp the resolved project_id UNCONDITIONALLY.
     # Car M stamped it only when the caller passed ``project=``, which left the

@@ -102,7 +102,18 @@ def test_loop_lag_monitor_spikes_when_loop_blocked():
             await asyncio.sleep(0.2)  # a few clean probes
             # Block the loop synchronously — the probe callback cannot fire,
             # so the NEXT probe records a large lag (~the block duration).
-            time.sleep(1.0)
+            #
+            # 1.5s, NOT 1.0s, and the margin is load-bearing. The probe records
+            # `lag = elapsed - interval`, and the in-flight probe's sleep began
+            # at most `interval` BEFORE the block, so the recorded lag is at
+            # most the block duration and never more:
+            #     block - interval <= lag <= block
+            # A 1.0s block therefore lands at ~0.9995s (measured five times on
+            # 2026-08-21: 0.999595 / 0.999462 / 0.999585 / …), i.e. just INSIDE
+            # le="1.0" — so the overflow assertion below could only pass on
+            # scheduling jitter. The stimulus must strictly exceed the bucket
+            # bound being asserted. Do not tighten this back to 1.0.
+            time.sleep(1.5)
             await asyncio.sleep(0.3)  # let the post-block probe fire + record
             return (
                 yadgar_event_loop_lag_max_seconds._value.get(),
@@ -121,8 +132,10 @@ def test_loop_lag_monitor_spikes_when_loop_blocked():
     # see the spike. Assert the >1.0s observation overflowed past le="1.0".
     after_inf = _hist_bucket_count("+Inf")
     assert after_inf > before_high, "histogram recorded no new observations"
-    # The spike observation must NOT have landed in le<=1.0 (it was ~1.0s lag,
-    # and overflow into higher buckets is what survives recovery).
+    # The spike observation must NOT have landed in le<=1.0 (it was ~1.5s lag,
+    # and overflow into higher buckets is what survives recovery). Sub-1.0
+    # observations from the clean probes increment le="1.0" and "+Inf" equally,
+    # so they cancel in the delta and only a >1.0s observation can satisfy this.
     assert after_inf - after_high >= 1, (
         f"expected >=1 observation above the 1.0s bucket (inf={after_inf}, le1.0={after_high})"
     )

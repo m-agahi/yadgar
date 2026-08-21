@@ -86,6 +86,23 @@ repos:
         always_run: true
         pass_filenames: false
 
+      - id: check-version-compat-window
+        name: Check version_compat.json's declared window covers server.json's shipped pair
+        language: system
+        entry: python3 scripts/check_version_compat_window.py
+        # always_run: same gate-blindness class as check-versions and
+        # check-backend-bump above (ADR-0080). server.json's `version` /
+        # `backend_version` and yadgar/_shared/version_compat.json's declared
+        # window are two independent files — either can be edited without the
+        # other being staged. That is exactly how this went stale for 5 minor
+        # releases each side (task 173): core.max sat at 5.183.1 and
+        # backend.max at 5.75.0 while production shipped 5.188.0 / 5.80.0, and
+        # /health reported a correctly-matched pair as incompatible. Nothing
+        # gates a live process on that field (it's informational — see the
+        # sidecar's own _comment) but the DECLARATION must stay honest.
+        always_run: true
+        pass_filenames: false
+
       - id: check-complexity
         name: Enforce I13 complexity caps (LOC / nesting / class / file)
         language: system
@@ -340,6 +357,19 @@ repos:
         entry: python scripts/check_complexity_allowlist.py
         pass_filenames: false
         files: ^(yadgar/.*\.py|scripts/.*\.py|\.complexity-allowlist\.json|\.complexity-config\.json)$
+
+      - id: check-swallowed-failure
+        name: Check ADR-0420 swallowed failure (R3 at zero, R1 baseline-ratcheted)
+        language: system
+        entry: python scripts/check_swallowed_failure.py
+        pass_filenames: false
+        # always_run (same reason as check-test-weakening below, and as the
+        # comment there records): this hook's HARD arm is baseline INTEGRITY —
+        # a stale entry, a shape change, a log-level move. A `files:` filter
+        # keyed on staged paths skips exactly the commits that matter: deleting
+        # or renaming a baselined function strands its entry, and the commit
+        # that does it may stage no file the filter would match.
+        always_run: true
 
       - id: check-test-weakening
         name: Block silent test weakening (e2e assert removal / ✅ regression) (#52)

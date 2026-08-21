@@ -1709,6 +1709,59 @@ def _migration_033_project_id_other_tables(storage) -> None:
     )
 
 
+# ── Car 1 (ledger task 309) — the GRAPH tables ─────────────────────────────
+
+#: Tables that 034 declares ``project_id`` on. C11's criterion was "carries a
+#: legacy ``directory`` / ``directory_context`` column", and these three carry
+#: NEITHER: their owner is inherited from the rows that produced them
+#: (``entity.name = 'memory:N'`` → that memory's project; a relationship from
+#: its two endpoints; a cluster from its member memories). So C11 never reached
+#: them, and they had no ``project_id`` declaration at all.
+#:
+#: Declared here rather than left to the backfill's ``UPDATE`` because all three
+#: are SCHEMALESS: the UPDATE would create the column UNTYPED, which is invisible
+#: to ``INFO FOR TABLE`` review and carries no index — so the scope predicate
+#: every reader is about to move onto would table-scan 5,560 relationship rows.
+_CAR1_GRAPH_PROJECT_ID_TABLES: tuple[str, ...] = (
+    "entity",
+    "relationship",
+    "memory_cluster",
+)
+
+
+def _migration_034_project_id_graph_tables(storage) -> None:
+    """Declare ``project_id`` + an index on ``entity`` / ``relationship`` / ``memory_cluster``.
+
+    Car 1 (ledger task 309). **Schema statements ONLY — no data step, no scan,
+    no derivation**, for the reason 031 established and 033 restated: a
+    migration runs inside a container that installs no git and mounts no host
+    project directory, so anything it derived would be a well-formed guess
+    indistinguishable at read time from a correct value (ADR-0227).
+
+    The data step is ``admin_exec.identity_stamp.stamp_project_id`` — an
+    operator-invoked op that returns a reviewable manifest and writes nothing
+    until it is re-run with ``dry_run=False``. It inherits each row's owner from
+    already-adjudicated rows rather than deriving one, and leaves every
+    ambiguous row alone in a named bucket.
+
+    ``project_id`` is ``option<string>``: pre-existing rows read as ``None``,
+    NOT as ``"global"``. Every statement is ``DEFINE ... IF NOT EXISTS``, so a
+    replay issues the identical list and changes nothing.
+    """
+    for table in _CAR1_GRAPH_PROJECT_ID_TABLES:
+        storage._q(f"DEFINE FIELD IF NOT EXISTS project_id ON TABLE {table} TYPE option<string>;")
+    for table in _CAR1_GRAPH_PROJECT_ID_TABLES:
+        storage._q(
+            f"DEFINE INDEX IF NOT EXISTS {table}_project_id_idx ON TABLE {table} FIELDS project_id;"
+        )
+    _log.info(
+        "migration_034: declared project_id + index on %d graph tables (%s) — schema only, "
+        "no backfill; the data step is the stamp_project_id admin op",
+        len(_CAR1_GRAPH_PROJECT_ID_TABLES),
+        ", ".join(_CAR1_GRAPH_PROJECT_ID_TABLES),
+    )
+
+
 _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {"version": "001_hnsw_indexes", "fn": _migration_001_hnsw_indexes},
     {"version": "002_relationship_indexes", "fn": _migration_002_relationship_indexes},
@@ -1829,6 +1882,10 @@ _MIGRATIONS: list[dict] = [  # noqa: E501 — append only, never reorder
     {
         "version": "033_project_id_other_tables",
         "fn": _migration_033_project_id_other_tables,
+    },
+    {
+        "version": "034_project_id_graph_tables",
+        "fn": _migration_034_project_id_graph_tables,
     },
 ]
 

@@ -29,6 +29,7 @@ from starlette.responses import JSONResponse
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage.directory import RecallScope
 from yadgar.core.server._app import mcp_server
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,12 @@ def _page_row_to_dict(r: dict) -> dict:
 @observe(tier="stage")
 async def _wiki_search_semantic(wiki: object, q: str, limit: int) -> list[dict]:
     """Embedding-based search — no SurrealDB syntax."""
-    results = await asyncio.to_thread(wiki.query, q, None, None, limit)
+    # Car H1: a falsy project_id RAISES unless `unscoped` is set. The Bookmarks
+    # tab is a whole-corpus browser with no project identity, so it declares the
+    # unscoped read rather than passing no scope and dying on the guard.
+    results = await asyncio.to_thread(
+        wiki.query, q, None, None, limit, scope=RecallScope(unscoped=True)
+    )
     return [{k: v for k, v in r.items() if k != "embedding"} for r in (results or [])]
 
 
@@ -111,7 +117,7 @@ async def api_wiki_query(request: Request) -> JSONResponse:
     wiki = _st._wiki
     storage = _st._storage
     if wiki is None or storage is None:
-        return JSONResponse([], status_code=503, headers=_CORS)
+        return JSONResponse({"error": "wiki engine unavailable"}, status_code=503, headers=_CORS)
 
     try:
         if mode == "semantic":
@@ -121,9 +127,9 @@ async def api_wiki_query(request: Request) -> JSONResponse:
         else:
             results = await _wiki_search_keyword(storage, q, limit)
         return JSONResponse(results, headers=_CORS)
-    except Exception as exc:
-        logger.debug("api_wiki_query error q=%s mode=%s: %s", q, mode, exc)
-        return JSONResponse([], status_code=500, headers=_CORS)
+    except Exception:
+        logger.warning("api_wiki_query failed q=%s mode=%s", q, mode, exc_info=True)
+        return JSONResponse({"error": "wiki query failed"}, status_code=500, headers=_CORS)
 
 
 # ---------------------------------------------------------------------------

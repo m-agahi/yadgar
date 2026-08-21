@@ -763,6 +763,83 @@ class TestVerificationGateExactEquality:
         assert _exact_equality_gate(index_rows=10, pages_seen=11, page_type_adr_rows=11) is False
 
 
+class TestVerificationGateIndexAbsentZeroCase:
+    """Ledger task 311 — ``index_rows == 0`` means the index is GONE, not a mismatch.
+
+    ``_count_legacy_index_rows``'s own docstring has stated the intended
+    behaviour since Car G — *"treats index_rows=0 as a hard signal that the
+    index is gone, NOT as a mismatch — the gate's two-sided reconciliation is
+    between pages_seen and page_type_adr_rows"* — and no code implemented it.
+    The legacy ``<project>-adr-index`` page is deleted corpus-wide (ADR-0253),
+    so the counter returns 0 forever, the bare three-way equality could never
+    hold, and ``backfill.py``'s ``if not gate["exact_match"]: return 1`` turned
+    a clean 0-insert ``--apply`` no-op into exit 1.
+
+    This is NOT the ``>=``-shaped weakening the D35c gate exists to forbid: the
+    zero case still demands EXACT equality, on the two counts that still have a
+    source. The third side is not relaxed, it is absent.
+    """
+
+    def test_zero_index_rows_reconciles_the_two_live_counts(self):
+        from yadgar.backend.admin_exec.adr_seed import _exact_equality_gate
+
+        # The no-op case ADR-0429 describes: nothing left to seed anywhere.
+        assert _exact_equality_gate(index_rows=0, pages_seen=0, page_type_adr_rows=0) is True
+        # A fully-seeded project: every page has its row, index long deleted.
+        assert _exact_equality_gate(index_rows=0, pages_seen=230, page_type_adr_rows=230) is True
+
+    def test_zero_index_rows_still_rejects_a_real_two_sided_mismatch(self):
+        """The absent third side is dropped; the surviving predicate is not."""
+        from yadgar.backend.admin_exec.adr_seed import _exact_equality_gate
+
+        assert _exact_equality_gate(index_rows=0, pages_seen=230, page_type_adr_rows=229) is False
+        assert _exact_equality_gate(index_rows=0, pages_seen=0, page_type_adr_rows=3) is False
+
+    def test_nonzero_index_rows_keeps_the_three_way_predicate(self):
+        """A corpus that still HAS an index page reconciles all three counts.
+
+        Pins the branch the integration fixture takes
+        (``tests/integration/test_adr_seed_ledger_ids.py`` builds a legacy index
+        page with 230 rows and asserts ``exact_match is False``): the zero case
+        must not leak into it.
+        """
+        from yadgar.backend.admin_exec.adr_seed import _exact_equality_gate
+
+        assert _exact_equality_gate(index_rows=230, pages_seen=236, page_type_adr_rows=227) is False
+        assert _exact_equality_gate(index_rows=10, pages_seen=10, page_type_adr_rows=10) is True
+
+
+class TestSeedResultNamesWhichPredicateRan:
+    """The gate block must say WHICH predicate produced ``exact_match``.
+
+    Two different questions now answer to one key, and an operator reading
+    ``exact_match: true`` on a 0/0/0 gate cannot otherwise tell "reconciled two
+    live counts" from "compared three zeros". ``index_absent`` is the
+    discriminator, and it is what the CLI report prints.
+    """
+
+    async def test_gate_carries_index_absent_on_a_clean_no_op(self) -> None:
+        from yadgar.backend.admin_exec.adr_seed import seed_adr_rows
+
+        result = await seed_adr_rows(
+            project_id="m-agahi/yadgar",
+            directory="/home/max/git/yadgar",
+            storage=_OrderFakeStorage([]),
+            row_inserter=lambda payload: {"id": 1},
+            slug_linker=lambda adr_id, slug: None,
+        )
+        gate = result.get("gate") or {}
+        assert gate.get("index_absent") is True, (
+            "the legacy index page is gone corpus-wide; the gate must say so "
+            "rather than leaving exact_match's provenance unstated"
+        )
+        assert gate.get("exact_match") is True, (
+            "0 pages seen and 0 ledger rows IS reconciled — this is the "
+            "no-op the CLI must exit 0 on"
+        )
+        assert result.get("rows_inserted") == 0
+
+
 # ── Fix 1 (task-adr-backfill-prompts): slug regex accepts BOTH separators ──
 
 

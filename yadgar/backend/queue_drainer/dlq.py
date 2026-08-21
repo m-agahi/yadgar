@@ -20,6 +20,31 @@ def _json_default(obj):
     return str(obj)
 
 
+#: ``classification`` -> the ``failure_reason`` that AGREES with it (task 229).
+#: The two fields describe the same fact and must never contradict each other.
+_REASON_BY_CLASSIFICATION = {
+    "permanent": "permanent_error",
+    "transient": "transient_error",
+}
+
+
+@observe(tier="stage", metric="drainer.dlq.reason_for_classification")
+def _reason_for_classification(classification: str) -> str:
+    """Derive the ``failure_reason`` a retry-exhausted entry should carry.
+
+    Task 229: ``_move_to_dlq``'s ``failure_reason`` used to DEFAULT to
+    ``"permanent_error"``, so every caller that named no reason stamped
+    ``permanent_error`` onto the sidecar regardless of what ``classification``
+    said. The retry-exhaustion call site is one such caller, which is how the
+    live corpus grew entries reading ``classification: "transient"`` beside
+    ``failure_reason: "permanent_error"`` — two fields of one record disagreeing.
+
+    Deriving at the default (rather than patching the one call site) is what
+    kills the class: any future caller that omits a reason gets a true one.
+    """
+    return _REASON_BY_CLASSIFICATION.get(classification, "permanent_error")
+
+
 class _DLQMixin:
     """Dead-letter queue operations for QueueDrainer."""
 
@@ -29,13 +54,20 @@ class _DLQMixin:
         path: Path,
         attempt,
         op_type: str,
-        failure_reason: str = "permanent_error",
+        failure_reason: str | None = None,
         failure_metadata: dict | None = None,
     ) -> None:
         """Atomically move a queue file to DLQ, write a .error.json sidecar, append events log.
 
         v5.42.0: failure_reason taxonomy (permanent_error | duplicate_detected | policy_rejected).
         failure_metadata carries structured context for rejection entries.
+
+        Task 229: ``failure_reason`` now defaults to ``None`` and is DERIVED from
+        ``attempt.classification`` when a caller names none — it used to default
+        to the literal ``"permanent_error"``, which stamped a claim the sibling
+        ``classification`` field disproved. Callers that pass a reason are
+        unaffected; the parse-error path (classification ``"permanent"``) keeps
+        stamping ``permanent_error`` exactly as before.
         """
         now_ts = datetime.now(UTC).isoformat()
         first_failed = (
@@ -51,7 +83,7 @@ class _DLQMixin:
             "classification": attempt.classification,
             "last_error": attempt.last_error,
             "moved_to_dlq_at": now_ts,
-            "failure_reason": failure_reason,
+            "failure_reason": failure_reason or _reason_for_classification(attempt.classification),
         }
         if failure_metadata:
             meta["failure_metadata"] = failure_metadata

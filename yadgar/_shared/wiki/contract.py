@@ -74,3 +74,10 @@ class WikiAddOptions:
     # page_type policy forces ``storage_scope="global"`` keeps its real
     # project_id — ownership and reach are different facts (§1.4).
     project_id: str | None = None
+    # Ledger task 271: the operator-facing half of the size-collapse gate
+    # (storage/truncation_gate.py). ``wiki_add`` is the whole-page write path
+    # and the one the incident used, so it is where "yes, I mean to drop most
+    # of this page" has to be sayable. Threaded here rather than as a 7th
+    # positional so ``add``'s signature stays inside the params cap; reaches
+    # ``storage.update_wiki_page`` as its ``_allow_truncation`` kwarg.
+    allow_truncation: bool = False

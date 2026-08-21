@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 from yadgar._shared.file_queue.queue import FileQueue
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.refusal import AdminRefusal
 from yadgar.backend.queue_drainer._locals import _drain_local
 from yadgar.backend.queue_drainer.apply import _ApplyMixin
 from yadgar.backend.queue_drainer.dlq import _DLQMixin
@@ -78,10 +79,15 @@ def _classify_error(err_str: str) -> str:
     v5.10.2: SecretLeakBlocked is always permanent — retrying will never help.
     Car C (#83): slug_exists is permanent — the slug already exists and retrying
     a upsert=False write will always fail.
+    Ledger task 271: wiki_size_collapse is permanent — a policy decision does
+    not become true by waiting, so it goes to DLQ on the permanent budget
+    rather than being retried twenty times first.
     """
     if "SecretLeakBlocked" in err_str:
         return "permanent"
     if "slug_exists:" in err_str:
+        return "permanent"
+    if "wiki_size_collapse:" in err_str:
         return "permanent"
     if _re.search(r"\b4\d\d\b", err_str):
         return "permanent"
@@ -361,6 +367,49 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         self._attempts.pop(fname, None)
         logger.warning("%s rejected (DLQ): %s — %s", op_type, fname, reject_reason)
 
+    @observe(tier="hot", metric="drainer.reject_refusal_to_dlq")
+    def _reject_refusal_to_dlq(
+        self,
+        path,
+        fname: str,
+        attempt: _Attempt,
+        op_type: str,
+        exc: AdminRefusal,
+        now: float,
+    ) -> None:
+        """Route an ``AdminRefusal`` straight to DLQ — zero further retries (task 229).
+
+        Shaped after ``_handle_sim_rejection`` rather than
+        ``_reject_permanent_to_dlq``: the latter stamps
+        ``attempt.count = self._max_permanent``, and writing 3 for a single
+        attempted apply is the same field-contradicts-reality defect this fix
+        exists to remove. ``attempt.count + 1`` counts the apply that just
+        refused on top of any that came before, so a refusal arriving on a retry
+        still reports the true total.
+
+        ``exc.reason`` is carried through verbatim rather than collapsed into
+        ``policy_rejected``: the operator fix differs per reason — a ``locked``
+        page needs ``wiki_set_mutability``, a ``derived`` page needs its
+        generator re-run.
+        """
+        _attempt = _Attempt(
+            count=attempt.count + 1,
+            last_error=str(exc)[:500],
+            classification="permanent",
+            first_failed_at=attempt.first_failed_at or now,
+        )
+        self._move_to_dlq(
+            path,
+            _attempt,
+            op_type,
+            failure_reason=exc.reason,
+            failure_metadata=exc.refusal_report() or None,
+        )
+        # The queue file is gone; a surviving tracker entry would leak. Pop
+        # explicitly — a refusal can arrive on a retry, so the key may exist.
+        self._attempts.pop(fname, None)
+        logger.warning("%s refused (DLQ, no retry): %s — %s", op_type, fname, exc.reason)
+
     def _build_rejection_reason_and_meta(
         self, reject_reason: str, data: dict, op_type: str
     ) -> tuple[str, dict | None]:
@@ -421,6 +470,17 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             return 1
         except Exception as exc:
             err_str = str(exc)
+            # Task 229: a refusal is a DECISION, not a fault — it can never
+            # succeed, so it must not consume the retry budget. Recognised by
+            # TYPE, deliberately not by another string match: _classify_error's
+            # `\b4\d\d\b` (meant for an HTTP 4xx) also matches any bare 4xx-shaped
+            # integer in the message, and WikiImmutableError's message embeds
+            # `page_id=`. page_id=456 would read permanent (3 retries),
+            # page_id=4567 transient (20) — the same refusal given a different
+            # retry budget by a database id.
+            if isinstance(exc, AdminRefusal):
+                self._reject_refusal_to_dlq(path, fname, attempt, op_type, exc, now)
+                return 0
             # Car C (#83): slug_exists is an immediate-permanent rejection — no retry.
             # wiki_add(upsert=False) on an existing slug always fails; retrying wastes
             # drain cycles. Bypass the attempt counter and DLQ directly so wait=True

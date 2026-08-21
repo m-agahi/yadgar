@@ -74,6 +74,13 @@ ALLOWLIST: dict[str, str] = {
         "basename(directory) as a historical SLUG component for the legacy "
         "`<basename>-adr-{index,NNNN}` pages, never as an identity"
     ),
+    "admin_exec/identity_stamp.py": (
+        "carve-out 2 — Car 1 (ledger task 309). The op REPORTS the legacy "
+        "directory_context / directory column values it inherited project_id from, "
+        "so an operator can review the basis and settle a conflicted one via "
+        "--mapping-file. A review artefact naming the retired column, never a scope "
+        "key on any row; dies with the column in the drop migration"
+    ),
     "retrieval/core.py": (
         "basename(directory) embedding-prefix surrogate — same class as C10 (d), "
         "unowned by the plan; changing it changes stored embedding text"
