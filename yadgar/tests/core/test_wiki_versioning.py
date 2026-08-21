@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from yadgar._shared.storage.migrations import _migration_013_wiki_page_version
+from yadgar._shared.storage.truncation_gate import WikiSizeCollapseError
 from yadgar.core import server
 from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
@@ -593,9 +594,31 @@ class TestCorruptionPrevention:
         big_content = "# Roadmap\n\n## Pipeline\n\n" + "- feature item\n" * 100
         pid = _insert_page("roadmap", "Roadmap Page", big_content)
 
-        # Agent overwrites with short content (the bug)
+        # Agent overwrites with short content (the bug). Ledger task 271 added
+        # the size-collapse gate at this exact storage chokepoint, so the write
+        # that caused the 2026-05-31 incident is now REFUSED outright — assert
+        # that first-line defence explicitly rather than letting it silently
+        # take over this test.
         short_patch = "# Roadmap\n\n- v5.41 plan committed\n"
-        _storage().update_wiki_page(pid, {"content": short_patch})
+        with pytest.raises(WikiSizeCollapseError):
+            _storage().update_wiki_page(pid, {"content": short_patch})
+
+        # A refusal must not leave a version row behind. "Refused, but wrote
+        # anyway" is precisely the signals-that-lie defect class; the page must
+        # still be at version 1 with its original body.
+        refused_history = _wiki().history(pid)
+        # Spelled out rather than a bare `len(...) == 1`: an empty or errored
+        # history would satisfy a count check vacuously. The v1 row must be
+        # present AND alone.
+        assert [e["version"] for e in refused_history] == [1], (
+            f"refused write must leave exactly the v1 row, got {refused_history}"
+        )
+        assert _storage().get_wiki_page(pid)["content"] == big_content
+
+        # Now land the truncation deliberately (the escape hatch a human uses
+        # for an intended prune) so the RECOVERY property this test was written
+        # for is still exercised end-to-end.
+        _storage().update_wiki_page(pid, {"content": short_patch}, _allow_truncation=True)
 
         # Verify v2 has the short content
         v2 = _wiki().read_version(pid, version=2)
