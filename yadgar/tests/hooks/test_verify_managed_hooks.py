@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from yadgar.core.install._verify import (
+    _harvest_expected,
     _hook_logical_name,
     _is_runner_dispatched,
     expected_managed_hooks,
@@ -309,3 +310,39 @@ def test_doctor_hook_probe_never_repairs():
     probe = text.split("_probe_managed_hooks() {", 1)[1].split("\n}", 1)[0]
     assert "install --client" not in probe
     assert "--hooks" not in probe
+
+
+# ── drift must be loud, never a silently smaller expected set ────────────────
+
+
+def test_installer_preview_yields_no_unrecognized_command(tmp_path):
+    """Every command yadgar's own installer emits must be nameable.
+
+    A managed hook whose command matches neither install family would drop out
+    of the expected set — and the verifier would then report CLEAN for a hook
+    it cannot see, which is the exact silence this module exists to end.  The
+    shape is reachable: ``core/cli/hook.py`` documents a ``yadgar hook <event>``
+    dispatch used to wire ported clients, and that spelling is nameable by
+    neither family.  One emitter change and the check goes blind at exit 0
+    unless this stays loud.
+    """
+    _expected, unrecognized = _harvest_expected(home_dir=tmp_path)
+    assert unrecognized == [], f"installer emits un-nameable commands: {unrecognized}"
+
+
+def test_unrecognized_installer_command_fails_the_check(tmp_path, monkeypatch):
+    import yadgar.core.install._verify as verify_mod
+
+    real = verify_mod._hook_logical_name
+
+    def _blind_to_block_reflect(command: str):
+        return None if command.endswith("block-reflect") else real(command)
+
+    monkeypatch.setattr(verify_mod, "_hook_logical_name", _blind_to_block_reflect)
+    _write_global_settings(tmp_path, _nix_shaped_settings())
+    report = verify_managed_hooks(home_dir=tmp_path)
+    assert report["ok"] is False
+    assert any(f["status"] == "unrecognized" for f in report["findings"])
+    text = format_hook_verify_report(report)
+    assert "unrecognized" in text.lower()
+    assert "block-reflect" in text

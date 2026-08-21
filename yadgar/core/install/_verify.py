@@ -69,6 +69,7 @@ STATUS_PRESENT = "present"
 STATUS_MISSING = "missing"
 STATUS_FOREIGN = "foreign"
 STATUS_UNEXPECTED = "unexpected"
+STATUS_UNRECOGNIZED = "unrecognized"
 
 
 # ── logical-name extraction ──────────────────────────────────────────────────
@@ -143,8 +144,17 @@ def _entry_commands(entry: object) -> list[str]:
 def _harvest_expected(
     home_dir: Path,
     project_directory: str | None = None,
-) -> dict[str, dict[str, bool]]:
-    """Return ``{event: {logical hook name: runner_dispatched}}`` the installer emits.
+) -> tuple[dict[str, dict[str, bool]], list[dict[str, str]]]:
+    """Return ``({event: {name: runner_dispatched}}, unrecognized)`` for the installer.
+
+    ``unrecognized`` carries every command the installer emits that
+    :func:`_hook_logical_name` cannot name.  Dropping those silently would be
+    the module's own defect turned inward: a managed hook absent from the
+    expected set makes the verifier report CLEAN for a hook it cannot see.  The
+    shape is reachable — ``core/cli/hook.py`` documents a ``yadgar hook
+    <event>`` dispatch used to wire ported clients, which matches neither
+    install family — so an emitter change must fail loudly here rather than
+    quietly shrink what gets checked.
 
     Harvested by running ``install_hooks_impl`` in ``dry_run`` mode, which
     computes the full settings dict and writes nothing (every ``_copy_hook`` /
@@ -174,6 +184,7 @@ def _harvest_expected(
 
     preview = result.get("preview") or {}
     expected: dict[str, dict[str, bool]] = {}
+    unrecognized: list[dict[str, str]] = []
     for event, entries in (preview.get("hooks") or {}).items():
         if not isinstance(entries, list):
             continue
@@ -181,11 +192,13 @@ def _harvest_expected(
         for entry in entries:
             for command in _entry_commands(entry):
                 name = _hook_logical_name(command)
-                if name is not None:
-                    names[name] = _is_runner_dispatched(command)
+                if name is None:
+                    unrecognized.append({"event": event, "command": command})
+                    continue
+                names[name] = _is_runner_dispatched(command)
         if names:
             expected[event] = names
-    return expected
+    return expected, unrecognized
 
 
 @observe(tier="boundary")
@@ -194,9 +207,8 @@ def expected_managed_hooks(
     project_directory: str | None = None,
 ) -> dict[str, set[str]]:
     """Return ``{event: {logical hook name, …}}`` yadgar's installer would emit."""
-    return {
-        event: set(names) for event, names in _harvest_expected(home_dir, project_directory).items()
-    }
+    expected, _unrecognized = _harvest_expected(home_dir, project_directory)
+    return {event: set(names) for event, names in expected.items()}
 
 
 # ── live wiring ──────────────────────────────────────────────────────────────
@@ -295,15 +307,24 @@ def verify_managed_hooks(
           "ok": bool,                  # False iff any managed hook is MISSING
           "scopes_inspected": [{"scope", "path", "exists"}, …],
           "findings": [{"event", "name", "status", "scope", "command"}, …],
-          "counts": {"present": n, "missing": n, "foreign": n, "unexpected": n},
+          "counts": {"present", "missing", "foreign", "unexpected", "unrecognized"},
         }
 
     ``foreign`` and ``unexpected`` are reported but do NOT fail the check —
     a foreign-shaped entry still fires, and an ``unexpected`` one is a hook
-    another tool wired that this yadgar no longer installs.  Only an absent
-    managed hook is a real "this never runs" finding.
+    another tool wired that this yadgar no longer installs.  An absent managed
+    hook is a real "this never runs" finding and fails.  So does
+    ``unrecognized``: a command the installer emits that this module cannot
+    name would otherwise vanish from the expected set and be reported clean —
+    a blind spot in the very tool built to end blind spots.
+
+    LIMITATION: the comparison answers "is this hook REGISTERED", not "does it
+    WORK".  A standalone-script entry is matched by name only; nothing here
+    checks that the script it points at still exists on disk, that the baked
+    interpreter resolves, or that the hook exits 0.  A clean result means the
+    wiring is present, not that the hooks run.
     """
-    expected = _harvest_expected(home_dir, project_directory)
+    expected, unrecognized = _harvest_expected(home_dir, project_directory)
     live, inspected = _collect_live(home_dir, project_directory)
 
     findings: list[dict[str, Any]] = []
@@ -353,12 +374,32 @@ def verify_managed_hooks(
             }
         )
 
+    # A command yadgar's OWN installer emits that this module cannot name is a
+    # hole in the check itself: the hook silently leaves the expected set and
+    # the verifier then reports clean for something it never looked at.  Fail.
+    for item in unrecognized:
+        findings.append(
+            {
+                "event": item["event"],
+                "name": "",
+                "status": STATUS_UNRECOGNIZED,
+                "scope": None,
+                "command": item["command"],
+            }
+        )
+
     counts = {
         status: sum(1 for f in findings if f["status"] == status)
-        for status in (STATUS_PRESENT, STATUS_MISSING, STATUS_FOREIGN, STATUS_UNEXPECTED)
+        for status in (
+            STATUS_PRESENT,
+            STATUS_MISSING,
+            STATUS_FOREIGN,
+            STATUS_UNEXPECTED,
+            STATUS_UNRECOGNIZED,
+        )
     }
     return {
-        "ok": counts[STATUS_MISSING] == 0,
+        "ok": counts[STATUS_MISSING] == 0 and counts[STATUS_UNRECOGNIZED] == 0,
         "scopes_inspected": inspected,
         "findings": findings,
         "counts": counts,
@@ -380,6 +421,17 @@ def format_hook_verify_report(report: dict[str, Any]) -> str:
     by_status: dict[str, list[dict[str, Any]]] = {}
     for finding in report["findings"]:
         by_status.setdefault(finding["status"], []).append(finding)
+
+    unrecognized = by_status.get(STATUS_UNRECOGNIZED, [])
+    if unrecognized:
+        lines.append("")
+        lines.append(
+            f"  UNRECOGNIZED — the installer emits {len(unrecognized)} command(s) this "
+            "check cannot name, so they were never verified. Teach "
+            "_hook_logical_name the new shape:"
+        )
+        for finding in unrecognized:
+            lines.append(f"    {finding['event']}: {finding['command']}")
 
     missing = by_status.get(STATUS_MISSING, [])
     if missing:
@@ -409,13 +461,19 @@ def format_hook_verify_report(report: dict[str, Any]) -> str:
     lines.append("")
     lines.append(
         f"  {len(present)} present, {len(missing)} missing, "
-        f"{len(foreign)} foreign, {len(unexpected)} unexpected"
+        f"{len(foreign)} foreign, {len(unexpected)} unexpected, "
+        f"{len(unrecognized)} unrecognized"
     )
     if report["ok"]:
-        lines.append("  OK: every managed hook is wired.")
-    else:
+        lines.append("  OK: every managed hook is registered (registration only — see LIMITATION).")
+    elif missing:
         lines.append(
             "  DIVERGENCE: at least one managed hook is absent from every "
             "settings file inspected — it will never fire."
+        )
+    else:
+        lines.append(
+            "  BLIND SPOT: the installer emits a command shape this check "
+            "cannot name — some managed hooks were not verified at all."
         )
     return "\n".join(lines)
