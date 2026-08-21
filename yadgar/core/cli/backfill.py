@@ -1,4 +1,4 @@
-"""``yadgar backfill ...`` subcommand — operator-invoked ADR backfill ops.
+"""``yadgar backfill ...`` subcommand — operator-invoked backfill ops.
 
 task-adr-backfill-prompts (2026-08-15). ``seed_adr_rows`` and ``reslug`` are
 registered backend admin ops (``yadgar.backend.admin_exec._ADMIN_OPS``,
@@ -36,6 +36,16 @@ Safety:
     beyond a stderr line. Dry-run collisions stay exit 0: the operator is
     reading the preview by definition, whereas ``--apply`` is the unread
     path an unattended script exercises.
+  - ``--stamp-identity`` (Car 1, ledger task 309) forwards ``stamp_project_id``
+    — the graph-table half of the ``project_id`` migration, covering the six
+    tables C6's ``memory``/``wiki_page`` backfill never named. Dry-run by
+    default like the two above, and unlike ``--adr-rows`` a dry run exits
+    NON-ZERO when the preflight fails: that op's only failure mode IS the
+    preflight (the write path's registry guard, run over every derived target
+    on both paths), so a preview reporting ``ok: False`` has established that
+    the apply cannot succeed. ``--mapping-file`` supplies operator overrides;
+    an unreadable one exits 2 BEFORE forwarding, because a mapping that could
+    not be read must never become a run "without overrides".
   - ``--skip-adr`` states which ADR numbers to leave un-inserted (ADR-0006:
     the ids they need are already spent). Repeatable and comma-separated.
     Without it the governing ADR had no mechanism at all.
@@ -137,6 +147,108 @@ def _print_seed_report(result: dict, *, dry_run: bool) -> None:
         print(f"  FLAGGED: {f}", file=sys.stderr)
 
 
+def _print_stamp_report(result: dict, *, dry_run: bool) -> None:
+    """Print the ``--stamp-identity`` manifest summary to stderr.
+
+    The per-table line an operator actually decides on is the BUCKET split:
+    ``rows_stamped`` alone reads as success even when 80% of the table went
+    undecidable, which is the report shape ADR-0222 was filed about. So every
+    bucket prints, with the per-reason breakdown, and the two never-an-owner
+    classes print SEPARATELY — a reach marker (``global``: no owner axis at
+    all) and a conflict (two owners claim one directory) are different facts
+    and take different operator actions.
+    """
+    mode = "DRY RUN" if dry_run else "APPLY"
+    totals = result.get("totals", {}) or {}
+    dangling = result.get("dangling_relationships", {}) or {}
+    print(
+        f"[{mode}] rows_seen={totals.get('rows_seen')} "
+        f"rows_stamped={totals.get('rows_stamped')} "
+        f"rows_cross_project={totals.get('rows_cross_project')} "
+        f"rows_undecidable={totals.get('rows_undecidable')} "
+        f"dangling_relationships={dangling.get('count')} "
+        f"guards={(result.get('guards') or {}).get('checked_project_ids')}",
+        file=sys.stderr,
+    )
+    for table, report in (result.get("tables") or {}).items():
+        print(
+            f"  {table}: seen={report.get('rows_seen')} "
+            f"stamped={report.get('rows_stamped')} "
+            f"cross_project={report.get('rows_cross_project')} "
+            f"undecidable={report.get('rows_undecidable')} "
+            f"{report.get('undecidable_by_reason')}",
+            file=sys.stderr,
+        )
+    reach = result.get("reach_markers") or []
+    if reach:
+        print(
+            f"  reach_markers (never an owner — ADR-0227): {reach}",
+            file=sys.stderr,
+        )
+    for conflict in result.get("map_conflicts") or []:
+        print(
+            f"  CONFLICT: {conflict.get('directory')} claimed by "
+            f"{conflict.get('project_ids')} — pass --mapping-file to settle it",
+            file=sys.stderr,
+        )
+    if result.get("ok") is False:
+        print(f"  REFUSED: {result.get('error')}", file=sys.stderr)
+
+
+def _load_mapping(path: str) -> dict:
+    """Read the operator's ``{directory: project_id}`` override file.
+
+    Raises ValueError on anything that is not a JSON object of strings. Loud,
+    because a silently-empty mapping is indistinguishable from "no overrides
+    were needed" in the manifest, and the operator supplied the file precisely
+    because the corpus join could not settle something.
+    """
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"--mapping-file {path!r}: expected a JSON object, got {type(raw).__name__}"
+        )
+    return {str(k): str(v) for k, v in raw.items()}
+
+
+def _run_stamp_identity(args: argparse.Namespace) -> int:
+    """``--stamp-identity`` branch (Car 1, ledger task 309).
+
+    Its own function rather than a fourth arm inline: ``cmd_backfill`` was
+    already at the I13 cyclomatic cap, and a branch bolted on regardless is
+    how a HARD gate turns into an allowlist entry nobody re-reads.
+
+    Takes NO ``project_id``. The op is corpus-wide by construction — it
+    inherits each row's owner from the rows that produced it, across every
+    project in the store — so passing the invoking session's identity would
+    name a scope the op does not have.
+    """
+    from yadgar.core.forward import _forward_admin
+
+    dry_run = not getattr(args, "apply", False)
+    payload: dict = {"dry_run": dry_run}
+    mapping_file = getattr(args, "mapping_file", None)
+    if mapping_file:
+        try:
+            payload["mapping"] = _load_mapping(mapping_file)
+        except (OSError, ValueError) as exc:
+            # Exit BEFORE forwarding. A mapping the operator supplied and this
+            # command could not read must never become "ran without overrides"
+            # — that is the run they wrote the file to prevent.
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+    result = _forward_admin("stamp_project_id", payload)
+    _print_stamp_report(result, dry_run=dry_run)
+    print(json.dumps(result))
+    # NON-ZERO ON A DRY RUN TOO, unlike --adr-rows' D35c gate. That gate
+    # reconciles a POST-write census, so a preview necessarily disagrees with
+    # it. This op's only failure mode is the PREFLIGHT — the write path's own
+    # registry guard, run over every derived target on both paths (Car 19) —
+    # so a preview reporting ok=False has established that the apply cannot
+    # succeed, which is exactly what an exit code is for.
+    return 1 if result.get("ok") is False else 0
+
+
 def cmd_backfill(args: argparse.Namespace) -> int:
     """``yadgar backfill`` handler.
 
@@ -192,8 +304,12 @@ def cmd_backfill(args: argparse.Namespace) -> int:
             return 1
         return 0
 
+    if getattr(args, "stamp_identity", False):
+        return _run_stamp_identity(args)
+
     print(
-        "ERROR: specify --reslug-adr-pages or --adr-rows (see `yadgar backfill --help`)",
+        "ERROR: specify --reslug-adr-pages, --adr-rows or --stamp-identity "
+        "(see `yadgar backfill --help`)",
         file=sys.stderr,
     )
     return 2
@@ -247,9 +363,34 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     p.add_argument(
+        "--stamp-identity",
+        dest="stamp_identity",
+        action="store_true",
+        default=False,
+        help=(
+            "Stamp project_id on entity / relationship / memory_cluster / checkpoint / "
+            "memory_block / episode by inheriting it from already-stamped rows "
+            "(dry-run by default; pass --apply to write)"
+        ),
+    )
+    p.add_argument(
+        "--mapping-file",
+        dest="mapping_file",
+        metavar="PATH",
+        default=None,
+        help=(
+            "JSON {directory: project_id} overrides for --stamp-identity. Wins over "
+            "the corpus-derived map — use it to settle a directory two projects "
+            "claim. Sentinel targets ('global', 'system', 'unresolved') are refused"
+        ),
+    )
+    p.add_argument(
         "--apply",
         action="store_true",
         default=False,
-        help=("Apply --reslug-adr-pages or --adr-rows (default: dry-run report only, no writes)"),
+        help=(
+            "Apply --reslug-adr-pages, --adr-rows or --stamp-identity "
+            "(default: dry-run report only, no writes)"
+        ),
     )
     p.set_defaults(func=cmd_backfill)

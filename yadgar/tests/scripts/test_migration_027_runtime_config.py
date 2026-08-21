@@ -36,7 +36,9 @@ class TestMigration027Registration:
         (agent page_type split, ADR-0209), 029 (drop branch column,
         ADR-0215), 030 (mutability_override, Car J), and 031
         (project_id_backfill, Car M) and 033 (project_id on the other nine
-        directory-bearing tables, Car C11) were appended after 027. The guard's
+        directory-bearing tables, Car C11) and 034 (project_id on the three
+        GRAPH tables — entity / relationship / memory_cluster, Car 1 / ledger
+        task 309) were appended after 027. The guard's
         PURPOSE survives: a hardcoded expected value that must be bumped by
         hand whenever a new migration is appended, so an unnoticed append
         still fails CI. Update the literal below to the new tail whenever
@@ -45,7 +47,7 @@ class TestMigration027Registration:
         equals its own max) — that would never fail and stops being a guard.
         """
         nums = [int(m["version"].split("_")[0]) for m in _MIGRATIONS]
-        assert max(nums) == 33
+        assert max(nums) == 34
 
 
 class TestMigration027DefinesTable:
