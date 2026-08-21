@@ -16,6 +16,11 @@ from yadgar._shared.storage import StorageEngine
 # that builds its own write payload still reds — the signal of the flip.
 _PROJECT = "m-agahi/yadgar"
 
+#: A project id that this file NEVER writes into — the empty-scope probe.
+#: Task 310 made ``get_memories_for_directory`` predicate on ``project_id``,
+#: so an "empty scope" must be a project id, not a filesystem path.
+_EMPTY_PROJECT = "m-agahi/yadgar-empty"
+
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 
@@ -43,7 +48,7 @@ def _make_memory(
     storage,
     embeddings,
     content,
-    directory="/proj",
+    project=_PROJECT,
     tags=None,
     heat=1.0,
     confidence=1.0,
@@ -51,14 +56,29 @@ def _make_memory(
     surprise=0.0,
     created_at=None,
 ):
+    """Insert one memory owned by *project*.
+
+    ``project`` is the SCOPE KEY, stamped into BOTH ``project_id`` and
+    ``directory_context`` — that is what the production write path does
+    (``write_exec/_memorize_phases/_phase_store.py:168`` sets
+    ``"directory_context": ctx.project_id``).  It used to be a filesystem
+    path named ``directory``, which stopped matching when task 310 re-keyed
+    ``get_memories_for_directory``'s predicate onto ``project_id``.
+    """
     embedding = embeddings.encode(content)
+    if embedding is None:
+        raise RuntimeError(
+            "EmbeddingEngine returned None — the model did not load "
+            "(install the `ml` extra). Seeding an embedding-less corpus makes "
+            "every downstream score a silent fallback constant, not a measurement."
+        )
     mid = storage.insert_memory(
         {
             "content": content,
             "embedding": embedding,
             "tags": tags or [],
-            "directory_context": directory,
-            "project_id": _PROJECT,
+            "directory_context": project,
+            "project_id": project,
             "heat": heat,
             "is_stale": False,
             "file_hash": None,
@@ -108,7 +128,7 @@ class TestCoverageAssessment:
         graph.add_relationship("FastAPI", "uvicorn", "co_occurrence")
         graph.add_relationship("FastAPI", "REST", "co_occurrence")
 
-        result = meta.assess_coverage("How does FastAPI work?", "/proj")
+        result = meta.assess_coverage("How does FastAPI work?", _PROJECT)
 
         assert result["coverage"] >= 0.7
         assert result["suggestion"] == "sufficient"
@@ -118,7 +138,7 @@ class TestCoverageAssessment:
 
     def test_coverage_insufficient(self, meta, storage, embeddings):
         """No relevant memories → low coverage."""
-        result = meta.assess_coverage("How does Kubernetes autoscaling work?", "/proj")
+        result = meta.assess_coverage("How does Kubernetes autoscaling work?", _PROJECT)
 
         assert result["coverage"] < 0.4
         assert result["suggestion"] == "insufficient"
@@ -142,7 +162,7 @@ class TestCoverageAssessment:
         )
         graph.add_relationship("Django", "ORM", "co_occurrence")
 
-        result = meta.assess_coverage("How does Django handle requests?", "/proj")
+        result = meta.assess_coverage("How does Django handle requests?", _PROJECT)
 
         assert 0.3 <= result["coverage"] < 0.8
         assert result["suggestion"] in ("partial", "sufficient")
@@ -159,7 +179,7 @@ class TestCoverageAssessment:
             created_at=now - timedelta(hours=2),
         )
 
-        result = meta.assess_coverage("React hooks", "/proj")
+        result = meta.assess_coverage("React hooks", _PROJECT)
         assert result["recency_score"] == 1.0  # < 1 day old
 
     def test_coverage_old_recency(self, meta, storage, embeddings):
@@ -173,7 +193,7 @@ class TestCoverageAssessment:
             created_at=old_date,
         )
 
-        result = meta.assess_coverage("React class components", "/proj")
+        result = meta.assess_coverage("React class components", _PROJECT)
         assert result["recency_score"] == 0.2  # > 30 days old
 
     def test_coverage_entity_gap_detection(self, meta, storage, embeddings, graph):
@@ -187,13 +207,13 @@ class TestCoverageAssessment:
         # "typing" entity exists, but "mypy" doesn't
         graph.add_relationship("Python", "typing", "co_occurrence")
 
-        result = meta.assess_coverage("Python typing with mypy", "/proj")
+        result = meta.assess_coverage("Python typing with mypy", _PROJECT)
         # "mypy" should be in gaps since it's not in the graph
         assert any("mypy" in g for g in result["gaps"])
 
     def test_coverage_returns_all_fields(self, meta, storage, embeddings):
         """Coverage result has all required fields."""
-        result = meta.assess_coverage("test query", "/proj")
+        result = meta.assess_coverage("test query", _PROJECT)
 
         assert "coverage" in result
         assert "confidence" in result
@@ -231,12 +251,12 @@ class TestGapDetection:
                 storage,
                 embeddings,
                 f"Old architecture decision {i}",
-                directory="/proj",
+                project=_PROJECT,
                 tags=["architecture"],
                 heat=0.1,
             )
 
-        gaps = meta.detect_gaps("/proj")
+        gaps = meta.detect_gaps(_PROJECT)
 
         stale = [g for g in gaps if g["type"] == "stale_region"]
         assert len(stale) > 0
@@ -249,18 +269,18 @@ class TestGapDetection:
             storage,
             embeddings,
             "Maybe the config file is at /etc/app.conf",
-            directory="/proj",
+            project=_PROJECT,
             confidence=0.3,
         )
         _make_memory(
             storage,
             embeddings,
             "The database might use PostgreSQL or MySQL",
-            directory="/proj",
+            project=_PROJECT,
             confidence=0.2,
         )
 
-        gaps = meta.detect_gaps("/proj")
+        gaps = meta.detect_gaps(_PROJECT)
 
         low_conf = [g for g in gaps if g["type"] == "low_confidence"]
         assert len(low_conf) > 0
@@ -276,16 +296,16 @@ class TestGapDetection:
             storage,
             embeddings,
             "Redis is used as the broker for Celery task queue",
-            directory="/proj",
+            project=_PROJECT,
         )
         _make_memory(
             storage,
             embeddings,
             "Configure Redis connection for Celery workers",
-            directory="/proj",
+            project=_PROJECT,
         )
 
-        gaps = meta.detect_gaps("/proj")
+        gaps = meta.detect_gaps(_PROJECT)
 
         missing = [g for g in gaps if g["type"] == "missing_connection"]
         assert len(missing) > 0
@@ -312,7 +332,7 @@ class TestGapDetection:
 
     def test_gap_detection_no_gaps(self, meta, storage, embeddings, graph):
         """No gaps when knowledge is well-connected."""
-        gaps = meta.detect_gaps("/empty_dir")
+        gaps = meta.detect_gaps(_EMPTY_PROJECT)
         # Should not crash with empty data
         assert isinstance(gaps, list)
 
@@ -619,7 +639,7 @@ class TestMCPTools:
         _make_memory(storage, embeddings, "FastAPI dependency injection system")
         graph.add_relationship("FastAPI", "routing", "co_occurrence")
 
-        result = mc.assess_coverage("FastAPI routing", "/proj")
+        result = mc.assess_coverage("FastAPI routing", _PROJECT)
 
         assert isinstance(result, dict)
         assert "coverage" in result
@@ -636,10 +656,10 @@ class TestMCPTools:
         # Create isolated entity
         storage.insert_entity({"name": "TestIsolated", "type": "variable"})
         # Create low-heat memories
-        _make_memory(storage, embeddings, "old data", heat=0.1, directory="/proj")
-        _make_memory(storage, embeddings, "more old data", heat=0.1, directory="/proj")
+        _make_memory(storage, embeddings, "old data", heat=0.1, project=_PROJECT)
+        _make_memory(storage, embeddings, "more old data", heat=0.1, project=_PROJECT)
 
-        result = mc.detect_gaps("/proj")
+        result = mc.detect_gaps(_PROJECT)
 
         assert isinstance(result, list)
         # Should find at least isolated entity gap
@@ -678,7 +698,7 @@ def gap_detection_at_scale(tmp_path, settings, embeddings):
                 "content": shared_content,
                 "embedding": embedding,
                 "tags": [],
-                "directory_context": "/proj",
+                "directory_context": _PROJECT,
                 "project_id": _PROJECT,
                 "heat": 0.5,
                 "is_stale": False,
@@ -699,7 +719,7 @@ def test_detect_gaps_under_5s_at_50_entities(gap_detection_at_scale):
     """
     mc, _engine = gap_detection_at_scale
     t0 = time.monotonic()
-    mc.detect_gaps("/proj")
+    mc.detect_gaps(_PROJECT)
     elapsed = time.monotonic() - t0
     assert elapsed < 5.0, f"detect_gaps took {elapsed:.1f}s at N=50 entities (target <5s)"
 
@@ -720,7 +740,7 @@ def test_detect_gaps_correctness_missing_connection_found(tmp_path, settings, em
                 "content": "alpha and beta work together",
                 "embedding": embedding,
                 "tags": [],
-                "directory_context": "/proj",
+                "directory_context": _PROJECT,
                 "project_id": _PROJECT,
                 "heat": 0.5,
                 "is_stale": False,
@@ -728,7 +748,7 @@ def test_detect_gaps_correctness_missing_connection_found(tmp_path, settings, em
             }
         )
 
-    gaps = mc.detect_gaps("/proj")
+    gaps = mc.detect_gaps(_PROJECT)
     types = [g["type"] for g in gaps]
     assert "missing_connection" in types
     engine.close()
