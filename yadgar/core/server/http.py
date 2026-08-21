@@ -2592,7 +2592,7 @@ async def api_stats(request: Request) -> JSONResponse:
     Cache is keyed by project param. Response includes cache_age_seconds.
     """
     if _st._storage is None:
-        return JSONResponse({}, status_code=503)
+        return JSONResponse({"error": "storage unavailable"}, status_code=503)
     project = request.query_params.get("project")
 
     from yadgar._shared.config import get_settings  # noqa: PLC0415
@@ -2632,7 +2632,7 @@ async def api_stats(request: Request) -> JSONResponse:
 async def api_graph_stats(request: Request) -> JSONResponse:
     """Return graph statistics: counts + top entities by heat."""
     if _st._storage is None:
-        return JSONResponse({}, status_code=503)
+        return JSONResponse({"error": "storage unavailable"}, status_code=503)
     # T2 Car E3: assembly runs backend-side.
     from yadgar.core.forward import _forward_viz  # noqa: PLC0415
 
@@ -2868,7 +2868,7 @@ async def api_heat_histogram(request: Request) -> JSONResponse:
 async def api_consolidation_log(request: Request) -> JSONResponse:
     """Return last N consolidation cycle records (oldest first)."""
     if _st._storage is None:
-        return JSONResponse([], status_code=503)
+        return JSONResponse({"error": "storage unavailable"}, status_code=503)
     try:
         limit = max(1, min(200, int(request.query_params.get("limit", 30))))
     except (ValueError, TypeError) as _e:
