@@ -86,6 +86,18 @@ def run_wiki_add_replay(payload: dict) -> dict:
     # so mutability='locked' page_types (e.g. ``adr``) can be first-inserted AND
     # updated by the canonical write seam.
     _sanctioned = bool(payload.get("_sanctioned", False))
+    # Ledger task 271: the size-collapse gate's escape hatch
+    # (storage/truncation_gate.py). Two ways open here — the caller's explicit
+    # ``allow_truncation``, and ``_sanctioned``, which marks the CANONICAL
+    # write seam (_wiki_write_canonical: task-list mirrors, ADR bodies). Those
+    # regenerate a whole body from current truth and legitimately shrink — a
+    # task-list mirror shrinks as tasks complete. The coupling lives HERE, at
+    # the one seam that knows a write is canonical, and deliberately NOT inside
+    # the gate: a regenerator emitting a gutted page is the case the gate is
+    # best placed to catch, so every OTHER sanctioned writer stays gated.
+    # Carried on BOTH option bundles below — the replace_slug branch is a real
+    # write path.
+    _allow_truncation = bool(payload.get("allow_truncation", False)) or _sanctioned
     if replace_slug is not None:
         existing = _st._wiki._storage.get_wiki_page_by_slug(replace_slug)
         if existing is not None:
@@ -101,6 +113,7 @@ def run_wiki_add_replay(payload: dict) -> dict:
                     page_type=page_type,
                     sanctioned=_sanctioned,
                     project_id=project_id,
+                    allow_truncation=_allow_truncation,
                 ),
             )
             result.pop("embedding", None)
@@ -133,6 +146,7 @@ def run_wiki_add_replay(payload: dict) -> dict:
         upsert=upsert,
         sanctioned=_sanctioned,
         project_id=project_id,
+        allow_truncation=_allow_truncation,
     )
     if append:
         result = _st._wiki.ingest(
