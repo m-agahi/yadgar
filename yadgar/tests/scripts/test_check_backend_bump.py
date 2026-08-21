@@ -482,8 +482,9 @@ class TestCollectPrecommitInputs:
 # Anti-recurrence: BACKEND_BUILD_DIRS must be derived from — and stay in sync
 # with — the backend's REAL import graph, not a hand-maintained second list.
 #
-# PR #60 landed a change to yadgar/_shared/wiki/store.py. Dockerfile.backend:8
-# is `COPY . /app` — the backend image ships the ENTIRE repo tree — but
+# PR #60 landed a change to yadgar/_shared/wiki/store.py. Dockerfile.backend
+# carries a `COPY . /app` — the backend image ships the ENTIRE repo tree (task
+# 331 moved that COPY to the bottom of the file; the contents are unchanged) — but
 # BACKEND_BUILD_DIRS only named ("backend",), so the guard never fired and the
 # backend ran a stale copy of yadgar/_shared/ in production. This test walks
 # yadgar/backend/**'s actual `import`/`from ... import` statements (ast, not a
