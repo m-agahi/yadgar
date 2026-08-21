@@ -13,11 +13,11 @@
   {
     "path": "yadgar/backend/admin_exec/adr_seed.py",
     "function": "seed_adr_rows",
-    "lineno": 602,
+    "lineno": 714,
     "metrics": {
-      "fn_loc": 193
+      "fn_loc": 204
     },
-    "rationale": "Car G (0047 \u00a77): seed_adr_rows cyclomatic moved from the legacy ~10 (ad-hoc page-by-page loop with parse_index_rows fallback) to 23 after the D35a/D35b re-point to per-ADR pages and the async storage refactor that put list/create/link/supersede on the ledger directly (the layer-boundary cleanup removed the _forward_admin bridge \u2014 every storage call now carries its own await + try/except guard). The branches are irreducible: idempotency check (body_slug existing), per-page title/status/date parse, body_writer/row_inserter/slug_linker injector selection, supersede-target extraction + add_adr_supersedes forward, page-id\u2194row-id resolution, gate predicate on success, type guards on storage returns (async vs sync stub), result-shape narrowing \u2014 all part of the seed's stated contract. Splitting into _seed_one_page + _finalize_seed helpers would still need the same branches somewhere; cyclomatic wouldn't reduce.",
+    "rationale": "Car G (0047 \u00a77): seed_adr_rows cyclomatic moved from the legacy ~10 (ad-hoc page-by-page loop with parse_index_rows fallback) to 23 after the D35a/D35b re-point to per-ADR pages and the async storage refactor that put list/create/link/supersede on the ledger directly (the layer-boundary cleanup removed the _forward_admin bridge \u2014 every storage call now carries its own await + try/except guard). The branches are irreducible: idempotency check (body_slug existing), per-page title/status/date parse, body_writer/row_inserter/slug_linker injector selection, supersede-target extraction + add_adr_supersedes forward, page-id\u2194row-id resolution, gate predicate on success, type guards on storage returns (async vs sync stub), result-shape narrowing \u2014 all part of the seed's stated contract. Splitting into _seed_one_page + _finalize_seed helpers would still need the same branches somewhere; cyclomatic wouldn't reduce. | Re-baselined 2026-08-21 (car 19, ledger task 176): fn_loc 193 -> 204 (+11). The growth is 9 docstring lines and 2 code lines \u2014 the dry-run preflight call plus the `if structural_error is None:` guard that skips the insert loop when the write path's guards already rejected the input. The BRANCH count is why this is not decomposable away: the whole point is that the dry-run path and the apply path must pass through the SAME validation, so hoisting it into a helper (which is what _preflight_write_guards already is) cannot remove the call site or the guarded loop. Reviewed on its merits, unlike a bare ratchet re-baseline.",
     "added": "2026-08-09",
     "added_by": "car-g-adr-seed"
   },
