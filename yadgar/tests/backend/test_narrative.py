@@ -68,12 +68,16 @@ class TestGenerateNarrative:
                 }
             )
 
-        entry = narrative.generate_narrative("/home/proj", period_hours=24)
+        # Task 310: the narrative window is keyed on ``project_id`` (its
+        # ``get_memories_for_directory`` sink moved onto that column), so the
+        # scope named here is the identity the rows carry — not the path in
+        # ``directory_context``, which ADR-0233 retired as a scoping key.
+        entry = narrative.generate_narrative(_TEST_PROJECT, period_hours=24)
 
         assert entry["id"] is not None
-        assert "/home/proj" in entry["summary"]
+        assert _TEST_PROJECT in entry["summary"]
         assert "3 memories recorded" in entry["summary"]
-        assert entry["directory_context"] == "/home/proj"
+        assert entry["directory_context"] == _TEST_PROJECT
 
     def test_narrative_with_decisions(self, narrative, storage):
         """Narrative captures decision keywords."""
@@ -89,7 +93,7 @@ class TestGenerateNarrative:
             }
         )
 
-        entry = narrative.generate_narrative("/proj", period_hours=24)
+        entry = narrative.generate_narrative(_TEST_PROJECT, period_hours=24)
         assert "Key decisions" in entry["summary"]
         assert len(entry["key_decisions"]) >= 1
 
@@ -108,7 +112,7 @@ class TestGenerateNarrative:
         )
         storage.update_memory_scores(mid, importance=0.9)
 
-        entry = narrative.generate_narrative("/proj", period_hours=24)
+        entry = narrative.generate_narrative(_TEST_PROJECT, period_hours=24)
         assert "Notable events" in entry["summary"]
 
     def test_empty_directory_narrative(self, narrative, storage):
@@ -187,15 +191,18 @@ class TestProjectStory:
 
 class TestAutoNarrate:
     def test_auto_narrate(self, narrative, storage, settings):
-        """Narratives generated during sleep for active directories."""
-        # Create active memories in two directories
-        for directory in ["/proj-a", "/proj-b"]:
+        """Narratives generated during sleep for active projects."""
+        # Task 310: ``_get_active_directories`` groups on ``project_id``, so two
+        # ACTIVE SCOPES means two distinct identities. Two rows sharing one
+        # project_id are one scope no matter what path each carries in the
+        # retired ``directory_context`` column.
+        for project in ["m-agahi/proj-a", "m-agahi/proj-b"]:
             storage.insert_memory(
                 {
-                    "project_id": _TEST_PROJECT,
-                    "content": f"Working on {directory}",
+                    "project_id": project,
+                    "content": f"Working on {project}",
                     "embedding": _make_embedding(),
-                    "directory_context": directory,
+                    "directory_context": project,
                     "heat": 0.8,
                     "created_at": _recent_timestamp(hours_ago=1),
                     "last_accessed": _recent_timestamp(),
@@ -208,7 +215,7 @@ class TestAutoNarrate:
         assert stats["narratives_generated"] >= 2
 
         # Verify narratives were created
-        story_a = narrative.get_project_story("/proj-a")
+        story_a = narrative.get_project_story("m-agahi/proj-a")
         assert "No narrative entries found" not in story_a
 
     def test_auto_narrate_skips_recent(self, narrative, storage, settings):
@@ -225,10 +232,13 @@ class TestAutoNarrate:
             }
         )
 
-        # Create a recent narrative entry
+        # Create a recent narrative entry. Task 310: ``auto_narrate`` looks the
+        # existing entry up by the project_id it grouped on, so the entry must
+        # be keyed on that identity — the same value ``generate_narrative``
+        # itself writes into ``directory_context`` (narrative.py:109).
         storage.insert_narrative_entry(
             {
-                "directory_context": "/proj",
+                "directory_context": _TEST_PROJECT,
                 "summary": "Recent narrative",
                 "period_start": _recent_timestamp(hours_ago=12),
                 "period_end": _recent_timestamp(),
