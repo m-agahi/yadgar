@@ -805,12 +805,17 @@ def _build_adr_get_response(
 @observe(tier="stage", metric="tools.adr._row_to_response_metadata")
 def _row_to_response_metadata(row: dict) -> dict[str, Any]:
     """Map ledger row fields onto the D5 additive metadata keys. ADR-0209
-    §14.3: baseline_hash + content_hash keys. Extracted for I13."""
+    §14.3: baseline_hash + content_hash keys. Extracted for I13.
+
+    rationale / alternatives / revisit_trigger live on the body page as flat
+    bullets (task 247, C1) — the adr table has no such columns, so emitting
+    them here with value ``""`` would mislead the caller into reading "" as
+    "this ADR has none". Omit them entirely; key-absent is the unambiguous
+    signal to read the body. D5 additive-only governs ADDITIONS going
+    forward, not retention of never-populated keys.
+    """
     return {
         "date": row.get("decided_on") or "",
-        "rationale": "",  # prose lives on the body page (D4)
-        "alternatives": "",  # ditto
-        "revisit_trigger": "",  # ditto
         "supersedes": _fmt_supersedes(row.get("supersedes")),
         # Ledger task 195: NEW key. ``adr_get`` never emitted it, so the read
         # of a superseded ADR could not say what replaced it. D5's merge is
