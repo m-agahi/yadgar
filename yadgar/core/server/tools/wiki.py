@@ -691,6 +691,14 @@ def wiki_add(
 _WIKI_READ_CACHE_TTL = 120.0
 _WIKI_QUERY_CACHE_TTL = 60.0  # fuzzy search → shorter TTL acceptable
 
+# Car C9 task 70 (paired with task 71): cap the content size returned by
+# wiki_read. Below wiki_add's 65 536 ceiling (line 267, 554) so legacy
+# over-size rows still get truncated; above wiki_find_similar_pages's
+# 4000-byte search window (_shared/wiki/store.py:1239) so full-page reads
+# stay useful. Task 71 sets the WRITE cap to the same value -- both must
+# move in lockstep; if you bump one, bump the other.
+_WIKI_READ_CONTENT_CAP_BYTES = 8_192
+
 
 def _current_wiki_epoch() -> int:
     """Global structural epoch — bumped on every wiki write. Folded into cache keys
@@ -1035,6 +1043,19 @@ def wiki_read(
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}
     page.pop("embedding", None)
+    # Car C9 task 70: cap the returned `content` to a single-payload window
+    # (task 71 caps the WRITE side to the same value). Mirrors the v5.7.x
+    # uncapped-return class but on the single-page read path; keeps hot
+    # MCP reads under the byte budget so a 50 KB rollup doesn't drag 50 KB
+    # over the boundary. Truncation is applied BEFORE the cache put so a
+    # warm hit returns the same view as the cold hit (consistent across
+    # hits/misses); `content_truncated` lets callers re-fetch with a
+    # version-pinned path if they need the full body.
+    _content = page.get("content") or ""
+    if isinstance(_content, str) and len(_content.encode("utf-8")) > _WIKI_READ_CONTENT_CAP_BYTES:
+        page["content"] = _content[:_WIKI_READ_CONTENT_CAP_BYTES]
+        page["content_truncated"] = True
+        page["content_total_bytes"] = len(_content.encode("utf-8"))
     # Car 2: store the resolved page. deep_copy=True → callers cannot corrupt the
     # cached value, and each hit returns its own isolated copy.
     _wiki_read_cache.put(_r_key, page)
