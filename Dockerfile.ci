@@ -18,7 +18,7 @@ LABEL org.opencontainers.image.description="yadgar CI runner image — Python 3.
 #   docker build -f Dockerfile.ci --build-arg YADGAR_VERSION=$(python3 scripts/bump_version.py --current-version) .
 # The default below documents the version current at the last LABEL touch; the
 # authoritative tag is whatever the manual rebuild pushes (ci-pr.yaml pins it).
-ARG YADGAR_VERSION=5.136.0
+ARG YADGAR_VERSION=5.190.0
 LABEL org.opencontainers.image.version="${YADGAR_VERSION}"
 
 # Pin the HF cache to a HOME-independent absolute path. The test suite's
