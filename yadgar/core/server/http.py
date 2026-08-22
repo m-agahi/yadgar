@@ -624,7 +624,35 @@ def _uptime_seconds() -> float:
 
 
 @observe(tier="stage")
-async def _build_health_payload() -> dict:
+def _apply_readiness_antiflap(payload: dict, db_ok: bool | None, embed_ok: bool | None) -> None:
+    """Stamp ``status`` / ``db`` / ``embed`` from one counter snapshot (C4 task 67).
+
+    Updates the global consecutive-failure counter, then mutates the payload so
+    every field uses the same snapshot. While the counter is below the
+    threshold the verdict is "still ok" and the per-probe booleans stay True;
+    on the Nth consecutive miss the verdict AND the field flip together. A
+    single success resets everything in one call. ``None`` (no probe configured)
+    stays out of the payload — same shape as before.
+    """
+    global _readiness_consecutive_failures
+    threshold = _readiness_fail_threshold()
+    dependency_down = db_ok is False or embed_ok is False
+    if dependency_down:
+        _readiness_consecutive_failures += 1
+        payload["readiness_consecutive_failures"] = _readiness_consecutive_failures
+        if _readiness_consecutive_failures >= threshold:
+            payload["status"] = "degraded"
+    else:
+        _readiness_consecutive_failures = 0
+    readiness_healthy = _readiness_consecutive_failures < threshold
+    if db_ok is not None:
+        payload["db"] = bool(db_ok) or readiness_healthy
+    if embed_ok is not None:
+        payload["embed"] = bool(embed_ok) or readiness_healthy
+
+
+@observe(tier="stage")
+async def _build_health_payload() -> dict:  # noqa: PLR0915 -- 1 boundary stage; fixes #74 + #67 in lockstep
     """Build the /health payload, probing db + embed CONCURRENTLY (C2 P1).
 
     Total latency is bounded by the slowest single probe (~2s), not the sum of
@@ -632,10 +660,9 @@ async def _build_health_payload() -> dict:
     """
     import httpx  # noqa: PLC0415
 
-    # mcp 2.0.0: the private ``_session_manager`` attr became the ``session_manager``
-    # property, which raises RuntimeError until ``streamable_http_app()`` has been
-    # called (lazy init). For stdio/sse transports — or any pre-serve probe — that
-    # means "no streamable sessions", so treat it as zero rather than 500-ing.
+    # mcp 2.0.0: the ``_session_manager`` attr became the ``session_manager``
+    # property, which raises RuntimeError until ``streamable_http_app()`` has
+    # been called. Treat pre-serve RuntimeError as zero rather than 500-ing.
     session_count = 0
     try:
         _session_manager = mcp_server.session_manager
@@ -649,8 +676,7 @@ async def _build_health_payload() -> dict:
     db_ok = None
     embed_ok = None
 
-    # §9 Q5: async httpx client to avoid blocking the event loop.
-    # v5.95: probe timeout config.yaml-authoritative (HEALTH_PROBE_TIMEOUT_SEC).
+    # §9 Q5: async httpx client. Probe timeout config.yaml-authoritative.
     from yadgar._shared.config import get_settings  # noqa: PLC0415 -- avoid import cycle
 
     _probe_timeout = float(get_settings().HEALTH_PROBE_TIMEOUT_SEC)
@@ -674,42 +700,26 @@ async def _build_health_payload() -> dict:
         "transport": _st._active_transport,
         "uptime_seconds": _uptime_seconds(),
         "active_sessions": session_count,
-        # Car F (task #61) — version handshake. The peer here is the backend,
-        # probed at the embed URL (same shape as the db probe, but the embed
-        # service is the one that exposes ``version`` in its /health payload).
-        # Absence of a version field on the peer is reported as "unverifiable"
-        # rather than "incompatible" — the check is permissive on read and
-        # strict on write (the orchestrator writes the boundary).
+        # Car F (task #61) — version handshake. Peer = backend, probed at the
+        # embed URL (the only one that exposes ``version``). Missing version
+        # is reported as "unverifiable" rather than "incompatible".
         "versions_compatible": _handshake_block(embed_url),
     }
-    if db_ok is not None:
-        payload["db"] = db_ok
-    if embed_ok is not None:
-        payload["embed"] = embed_ok
+
+    # #74 fix #1 (C4 task 67) — readiness anti-flap. Update the counter, THEN
+    # stamp status / db / embed from one snapshot. The earlier 2-step gate
+    # produced ``embed: false`` for ~2 intervals while ``status: ok`` still
+    # said ready — a contradiction ``curl /health`` reported as broken.
+    _apply_readiness_antiflap(payload, db_ok, embed_ok)
 
     # Fix A O2 GATE (daemon-offload-A): degrade (→ 503) on tool-pool saturation.
     _apply_tool_pool_health(payload)
 
     # Car 1 (2026-08-20 train): report the MCP write-gate. /health read `ok`
     # throughout a live vacuum, so the one signal an operator reaches for
-    # contradicted every gated tool. ADDITIVE — it never touches `status`.
+    # contradicted every gated tool. ADDITIVE — never touches `status`.
     apply_maintenance_health(payload)
 
-    # #74 fix #1 — readiness anti-flap. Only degrade on dependency outage after N
-    # CONSECUTIVE probe misses; a single success resets. A transiently-busy backend
-    # (one 2s embed-probe miss) stays 200, so it can never cascade into a 503 that
-    # P0 (now watching /health/live) would not act on anyway. The pool-saturation
-    # degrade above is NOT anti-flapped — a wedged pool is a real, local stall.
-    global _readiness_consecutive_failures
-    dependency_down = db_ok is False or embed_ok is False
-    if dependency_down:
-        _readiness_consecutive_failures += 1
-        threshold = _readiness_fail_threshold()
-        payload["readiness_consecutive_failures"] = _readiness_consecutive_failures
-        if _readiness_consecutive_failures >= threshold:
-            payload["status"] = "degraded"
-    else:
-        _readiness_consecutive_failures = 0
     return payload
 
 

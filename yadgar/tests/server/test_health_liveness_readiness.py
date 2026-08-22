@@ -150,3 +150,114 @@ def test_readiness_recovers_resets_counter(monkeypatch):
         state["ok"] = False
         resp = asyncio.run(srv_http.health_check(_make_request()))  # miss 1 again
     assert resp.status_code == 200, "counter must reset on success — not latent-503"
+
+
+# ---------------------------------------------------------------------------
+# Task 67 — the probe field MUST agree with status during the anti-flap window.
+#
+# /health returned ``status: ok`` for the first ~2 misses while reporting
+# ``embed: false`` the whole time — an operator staring at ``curl /health`` saw a
+# payload that contradicted itself. The fix gates ``db`` / ``embed`` on the same
+# consecutive-failure counter that gates ``status``: the field reads ``true``
+# while the readiness verdict still says ok, and only flips to ``false`` once
+# the verdict itself has degraded.
+# ---------------------------------------------------------------------------
+
+
+class TestProbeFieldsAgreeWithStatus:
+    def test_probe_field_stays_true_under_threshold_misses(self, monkeypatch):
+        """Under threshold misses, status stays ok AND embed must read true.
+
+        Until the readiness counter crosses the threshold, the verdict is "still
+        ok", so the per-probe booleans must not contradict it. The whole point
+        of the anti-flap window is that a single transient miss is not a
+        verdict — surfacing ``embed: false`` while ``status: ok`` reads as a
+        broken health check.
+        """
+        monkeypatch.setenv("YADGAR_EMBED_URL", "http://embed.test")
+        monkeypatch.setenv("YADGAR_DB_URL", "http://db.test")
+        monkeypatch.setenv("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "3")
+
+        async def _probe(_client, _url):
+            return False  # every probe misses
+
+        with patch.object(srv_http, "_probe_dependency", _probe):
+            resp = asyncio.run(srv_http.health_check(_make_request()))
+        body = _body(resp)
+        assert resp.status_code == 200, "anti-flap must keep status ok under threshold"
+        assert body["status"] == "ok", body
+        assert body["embed"] is True, (
+            "embed field must agree with status while the verdict is still ok — "
+            "an operator who sees embed=false while status=ok reads a broken "
+            "health check (task 67, C4)"
+        )
+
+    def test_probe_field_flips_false_when_status_degrades(self, monkeypatch):
+        """Once the counter crosses the threshold, status AND the field flip together."""
+        monkeypatch.setenv("YADGAR_EMBED_URL", "http://embed.test")
+        monkeypatch.setenv("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "3")
+
+        async def _probe(_client, _url):
+            return False
+
+        with patch.object(srv_http, "_probe_dependency", _probe):
+            for _ in range(2):
+                asyncio.run(srv_http.health_check(_make_request()))
+            resp = asyncio.run(srv_http.health_check(_make_request()))  # 3rd miss → degraded
+        body = _body(resp)
+        assert resp.status_code == 503, "the 3rd miss must degrade status"
+        assert body["status"] == "degraded"
+        assert body["embed"] is False, (
+            "embed must flip to false in lockstep with status — same counter, "
+            "same verdict (task 67, C4)"
+        )
+
+    def test_probe_field_reports_truth_when_healthy(self, monkeypatch):
+        """When the probe is healthy, db/embed reflect reality (not anti-flapped).
+
+        Anti-flap is for misses; a true positive must still surface. If we gated
+        on ``status: ok`` instead of the counter, a healthy probe on a degraded
+        counter would lie as ``db: false``.
+        """
+        monkeypatch.setenv("YADGAR_EMBED_URL", "http://embed.test")
+        monkeypatch.setenv("YADGAR_DB_URL", "http://db.test")
+
+        async def _probe(_client, _url):
+            return True
+
+        with patch.object(srv_http, "_probe_dependency", _probe):
+            resp = asyncio.run(srv_http.health_check(_make_request()))
+        body = _body(resp)
+        assert body["status"] == "ok"
+        assert body["db"] is True and body["embed"] is True, (
+            "healthy probes must report truth, not be masked by anti-flap (task 67, C4)"
+        )
+
+    def test_probe_field_recovers_alongside_status(self, monkeypatch):
+        """A recovery resets the counter AND clears the field; no latent lie.
+
+        Mirror of ``test_readiness_recovers_resets_counter`` but for the
+        payload field — if the counter resets to zero on a probe success, the
+        field must immediately agree, not keep reading ``false`` for an extra
+        probe cycle.
+        """
+        monkeypatch.setenv("YADGAR_EMBED_URL", "http://embed.test")
+        monkeypatch.setenv("YADGAR_HEALTH_READINESS_FAIL_THRESHOLD", "3")
+
+        state = {"ok": False}
+
+        async def _probe(_client, _url):
+            return state["ok"]
+
+        with patch.object(srv_http, "_probe_dependency", _probe):
+            asyncio.run(srv_http.health_check(_make_request()))  # miss 1
+            asyncio.run(srv_http.health_check(_make_request()))  # miss 2
+            state["ok"] = True
+            resp = asyncio.run(srv_http.health_check(_make_request()))  # success
+        body = _body(resp)
+        assert body["status"] == "ok"
+        assert body["embed"] is True, (
+            "recovery must clear embed in the same call as status — a single "
+            "probe success resets the counter, the field has no excuse to "
+            "lag (task 67, C4)"
+        )
