@@ -1070,10 +1070,15 @@ def wiki_delete(slug: str) -> dict:
     # (core's SSE bus + the shared file-queue mirror) — they stay here, after the
     # forward reports the delete succeeded.
     _res = _forward_admin("wiki_delete", {"slug": slug})
-    # The only wiki tool that post-processes the result, so the only one that must
-    # know a refusal: Car J's lock carries no ``deleted``, and calling that "not
-    # found" below would swap the old 500 for a fresh lie.
-    if _res.get("refused"):
+    # Car C9 / task 223: the only wiki tool whose post-processing must recognise a
+    # refusal — PR #54 fixed the same shape on wiki_set_mutability, but a 500
+    # reading as a dead backend is the defect this car closes. The guard keys on
+    # either the explicit ``refused`` marker (live contract,
+    # yadgar/core/forward.py:115-120) OR a present ``reason`` field
+    # (defence-in-depth in case a future envelope drops the marker), and exits
+    # BEFORE the "deleted" branch — which would otherwise mis-classify a locked
+    # page as "not found".
+    if isinstance(_res, dict) and (_res.get("refused") or _res.get("reason")):
         return _res
     if _res.get("deleted", False):
         _push_event({"event": "wiki_deleted", "slug": slug})
