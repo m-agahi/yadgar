@@ -85,6 +85,87 @@ def test_cmd_hook_prompt_recall_flows_stdin(capsys):
     assert "42" in capsys.readouterr().out
 
 
+def test_cmd_hook_prompt_recall_surfaces_skip_reason_on_stderr(capsys):
+    """Car 8 task 338: server returns {skipped, retry_after_seconds} when the
+    throttle fires (http.py:1856) or when SessionStart ran <3 min ago (the
+    session-context throttle, http.py:1841). Today the hook only reads
+    ``result.get("text", "")`` and prints if truthy — a throttle hit returns
+    ``{"text": "", "skipped": "rate_limited", "retry_after_seconds": 47}`` and
+    the hook silently emits nothing. From the operator's seat it is
+    indistinguishable from a dead daemon and from a successful "no memories"
+    recall (both yield an empty stdout). stdout must STAY clean (the model
+    still parses it), but stderr must carry the skip reason so a developer
+    debugging "no recall" can tell throttle from empty."""
+    args = _parse(["hook", "prompt-recall"])
+    payload = json.dumps({"prompt": "anything", "cwd": "/proj"})
+    with (
+        patch.object(
+            hook,
+            "_http_get",
+            return_value={"text": "", "skipped": "rate_limited", "retry_after_seconds": 47},
+        ),
+        patch("sys.stdin", io.StringIO(payload)),
+        pytest.raises(SystemExit),
+    ):
+        args.func(args)
+    out, err = capsys.readouterr()
+    assert out == "", "stdout MUST stay clean — it is injected into the prompt"
+    assert "rate_limited" in err, (
+        "skip reason must surface on stderr so an operator can distinguish "
+        "throttle from dead daemon from empty-recall"
+    )
+    assert "47" in err, "retry_after_seconds must surface — that is the value the operator needs"
+
+
+def test_cmd_hook_prompt_recall_surfaces_session_context_skip(capsys):
+    """Companion to the rate-limited case: the OTHER skip reason the server
+    emits (``session_context_recent`` from the 180s session-context throttle,
+    http.py:1841). It does NOT carry ``retry_after_seconds`` — the operator
+    needs to see the skip label AND the absence of a retry timer. Both must
+    be distinguishable from a rate-limit hit."""
+    args = _parse(["hook", "prompt-recall"])
+    payload = json.dumps({"prompt": "anything", "cwd": "/proj"})
+    with (
+        patch.object(
+            hook,
+            "_http_get",
+            return_value={"text": "", "skipped": "session_context_recent"},
+        ),
+        patch("sys.stdin", io.StringIO(payload)),
+        pytest.raises(SystemExit),
+    ):
+        args.func(args)
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "session_context_recent" in err
+
+
+def test_cmd_hook_prompt_recall_does_not_surface_skip_when_text_present(capsys):
+    """A skip label can ALSO appear when the server returns BOTH text AND a
+    non-blocking diagnostic (rare today, but the schema does not forbid it).
+    When ``text`` is truthy we print the injection AND must NOT also print
+    the skip reason on stderr — that would pollute the developer's view of
+    "recall fired fine" with a false-positive "throttled" hint."""
+    args = _parse(["hook", "prompt-recall"])
+    payload = json.dumps({"prompt": "anything", "cwd": "/proj"})
+    with (
+        patch.object(
+            hook,
+            "_http_get",
+            return_value={"text": "ok injection", "skipped": "rate_limited"},
+        ),
+        patch("sys.stdin", io.StringIO(payload)),
+        pytest.raises(SystemExit),
+    ):
+        args.func(args)
+    out, err = capsys.readouterr()
+    assert "ok injection" in out
+    assert "rate_limited" not in err, (
+        "a successful injection must not also warn about a skip label — the "
+        "label is descriptive metadata, not an error"
+    )
+
+
 def test_cmd_hook_prompt_recall_deadline_at_least_1s(capsys):
     """Car G (task #63): the prompt-recall hook deadline must clear the
     measured server latency (0.60–0.88 s) with margin. The exact value may
