@@ -430,10 +430,13 @@ class _WikiMixin:
     ) -> dict | None:
         """§25 directory-aware wiki page resolution.
 
-        ADR-0215 removed the branch axis; what remains is the directory ladder:
-        1. directory = $caller_dir   (project-scoped)
-        2. directory = 'global'      (global fallback)
-        3. Returns None if not found.
+        ADR-0215 removed the branch axis; the ladder is:
+        1. directory = $caller_dir         (project-scoped)
+        2. directory = 'global'            (legacy global fallback, ADR-0171 era)
+        3. $reach IN tags                  (Car C9 task 272: mirror project-side
+                                            reach rung so tag-reach rows are
+                                            findable here too)
+        4. Returns None if not found.
 
         When caller_directory is None (no caller context), matches on slug alone.
 
@@ -456,10 +459,25 @@ class _WikiMixin:
         if rows:
             return self._row_to_dict(rows[0])
 
-        # Step 2: global fallback
+        # Step 2: global fallback (legacy reach shape, ADR-0171 era)
         rows = self._q(
             "SELECT * FROM wiki_page WHERE slug = $slug AND directory_context = 'global' LIMIT 1",
             {"slug": slug},
+        )
+        if rows:
+            return self._row_to_dict(rows[0])
+
+        # Step 3 (Car C9 task 272): mirror the project-keyed ladder's
+        # rung 2 reach (get_wiki_page_by_slug_project lines 509-513) so
+        # tag-reach rows are reachable from tools that fall through to
+        # the directory-keyed fallback (wiki_append_section, wiki_restore,
+        # wiki_history, wiki_diff, wiki_read_version, the *_text / *_at /
+        # *_block family). Two queries, NOT one OR — with LIMIT 1 the
+        # OR form would pick arbitrarily between a directory='global'
+        # row (rung 2) and a tag-reach row (rung 3) sharing the slug.
+        rows = self._q(
+            "SELECT * FROM wiki_page WHERE slug = $slug AND $reach IN tags LIMIT 1",
+            {"slug": slug, "reach": GLOBAL_REACH_TAG},
         )
         return self._row_to_dict(rows[0]) if rows else None
 
