@@ -1589,6 +1589,23 @@ def wiki_append_section(
     if _gate is not None:
         return _gate
 
+    # Car C9 task 71 (paired with task 70): cap the section body at the
+    # same 8 192-byte window the read path now uses. Without this, a single
+    # append of a 50 KB dump would have grown the row past the read cap,
+    # so the truncation marker would fire on EVERY subsequent read —
+    # the append "succeeded" but the page was made unreadable by it. The
+    # constant is shared with the read cap (line 700) so the two stay in
+    # lockstep; bump both together. Length is bytes on the UTF-8 encode
+    # to match what crosses the wire — char length would let a 4-byte
+    # payload slip past a 1 KB intended cap.
+    _content_bytes = len((content or "").encode("utf-8"))
+    if _content_bytes > _WIKI_READ_CONTENT_CAP_BYTES:
+        return {
+            "error": "section_content_too_large",
+            "content_bytes": _content_bytes,
+            "max_bytes": _WIKI_READ_CONTENT_CAP_BYTES,
+        }
+
     # R3 Car 3c: slug→page_id resolution stays core (backend has no git/cwd); the
     # section write forwards keyed by page_id.
     page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
