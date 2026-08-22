@@ -204,7 +204,7 @@ def _query_core_counts(db, project, sd):
         db,
         project,
         "SELECT count() FROM memory GROUP ALL",
-        "SELECT count() FROM memory WHERE directory_context = $p GROUP ALL",
+        "SELECT count() FROM memory WHERE project_id = $p GROUP ALL",
     )
     sd.total = _count(total_res)
 
@@ -213,7 +213,7 @@ def _query_core_counts(db, project, sd):
             db,
             project,
             "SELECT count() FROM memory WHERE is_stale = false AND heat >= 0.05 GROUP ALL",
-            "SELECT count() FROM memory WHERE directory_context = $p "
+            "SELECT count() FROM memory WHERE project_id = $p "
             "AND is_stale = false AND heat >= 0.05 GROUP ALL",
         )
     )
@@ -222,7 +222,7 @@ def _query_core_counts(db, project, sd):
             db,
             project,
             "SELECT count() FROM memory WHERE is_stale = true GROUP ALL",
-            "SELECT count() FROM memory WHERE directory_context = $p AND is_stale = true GROUP ALL",
+            "SELECT count() FROM memory WHERE project_id = $p AND is_stale = true GROUP ALL",
         )
     )
     sd.archived = _count(
@@ -230,7 +230,7 @@ def _query_core_counts(db, project, sd):
             db,
             project,
             "SELECT count() FROM memory WHERE heat < 0.05 GROUP ALL",
-            "SELECT count() FROM memory WHERE directory_context = $p AND heat < 0.05 GROUP ALL",
+            "SELECT count() FROM memory WHERE project_id = $p AND heat < 0.05 GROUP ALL",
         )
     )
     sd.protected = _count(
@@ -238,8 +238,7 @@ def _query_core_counts(db, project, sd):
             db,
             project,
             "SELECT count() FROM memory WHERE is_protected = true GROUP ALL",
-            "SELECT count() FROM memory WHERE directory_context = $p "
-            "AND is_protected = true GROUP ALL",
+            "SELECT count() FROM memory WHERE project_id = $p AND is_protected = true GROUP ALL",
         )
     )
 
@@ -251,7 +250,7 @@ def _query_type_breakdown(db, project, sd):
             db,
             project,
             "SELECT count() FROM memory WHERE store_type = 'episodic' GROUP ALL",
-            "SELECT count() FROM memory WHERE directory_context = $p "
+            "SELECT count() FROM memory WHERE project_id = $p "
             "AND store_type = 'episodic' GROUP ALL",
         )
     )
@@ -260,7 +259,7 @@ def _query_type_breakdown(db, project, sd):
             db,
             project,
             "SELECT count() FROM memory WHERE store_type = 'semantic' GROUP ALL",
-            "SELECT count() FROM memory WHERE directory_context = $p "
+            "SELECT count() FROM memory WHERE project_id = $p "
             "AND store_type = 'semantic' GROUP ALL",
         )
     )
@@ -273,7 +272,7 @@ def _query_compression_levels(db, project, sd):
             db,
             project,
             f"SELECT count() FROM memory WHERE compression_level = {lvl} GROUP ALL",
-            f"SELECT count() FROM memory WHERE directory_context = $p "
+            f"SELECT count() FROM memory WHERE project_id = $p "
             f"AND compression_level = {lvl} GROUP ALL",
         )
         setattr(sd, attr, _count(res))
@@ -288,7 +287,7 @@ def _query_heat_stats(db, project, sd):
         "math::max(heat) AS max_h FROM memory GROUP ALL",
         "SELECT math::min(heat) AS min_h, math::mean(heat) AS avg_h, "
         "math::max(heat) AS max_h FROM memory "
-        "WHERE directory_context = $p GROUP ALL",
+        "WHERE project_id = $p GROUP ALL",
     )
     sd.heat_min = _one(heat_res, "min_h", 0) or 0
     sd.heat_avg = _one(heat_res, "avg_h", 0) or 0
@@ -304,7 +303,7 @@ def _query_heat_stats(db, project, sd):
     ]:
         if project:
             br = db.query(
-                "SELECT count() FROM memory WHERE directory_context = $p "
+                "SELECT count() FROM memory WHERE project_id = $p "
                 "AND heat >= $lo AND heat < $hi GROUP ALL",
                 {"p": project, "lo": lo, "hi": hi},
             )
@@ -328,20 +327,19 @@ def _query_access_stats(db, project, sd):
         "SELECT math::sum(access_count) AS total_ac, "
         "math::mean(access_count) AS avg_ac, "
         "math::max(access_count) AS max_ac FROM memory "
-        "WHERE directory_context = $p GROUP ALL",
+        "WHERE project_id = $p GROUP ALL",
     )
     useful_res = _q(
         db,
         project,
         "SELECT math::sum(useful_count) AS total_uc FROM memory GROUP ALL",
-        "SELECT math::sum(useful_count) AS total_uc FROM memory "
-        "WHERE directory_context = $p GROUP ALL",
+        "SELECT math::sum(useful_count) AS total_uc FROM memory WHERE project_id = $p GROUP ALL",
     )
     never_res = _q(
         db,
         project,
         "SELECT count() FROM memory WHERE access_count = 0 GROUP ALL",
-        "SELECT count() FROM memory WHERE directory_context = $p AND access_count = 0 GROUP ALL",
+        "SELECT count() FROM memory WHERE project_id = $p AND access_count = 0 GROUP ALL",
     )
     sd.total_accesses = _one(access_res, "total_ac", 0) or 0
     sd.avg_accesses = _one(access_res, "avg_ac", 0) or 0
@@ -361,7 +359,7 @@ def _query_temporal_stats(db, project, sd):
         "math::max(last_accessed) AS last_acc FROM memory GROUP ALL",
         "SELECT math::min(created_at) AS oldest, math::max(created_at) AS newest, "
         "math::max(last_accessed) AS last_acc FROM memory "
-        "WHERE directory_context = $p GROUP ALL",
+        "WHERE project_id = $p GROUP ALL",
     )
     sd.oldest = _one(temporal_res, "oldest", None)
     sd.newest = _one(temporal_res, "newest", None)
@@ -452,7 +450,7 @@ def _query_top_tags(db, project, sd):
     """Populate sd.top_tags."""
     if project:
         tags_res = db.query(
-            "SELECT tags FROM memory WHERE directory_context = $p",
+            "SELECT tags FROM memory WHERE project_id = $p",
             {"p": project},
         )
     else:
@@ -778,7 +776,20 @@ def _run_db_path(args):
 
     settings = Settings()
     db_path = str(Path(args.db_path or settings.DB_PATH).expanduser())
-    project = str(Path(args.project).resolve()) if args.project else None
+    # Car 8 task 333: the pre-333 code coerced ``args.project`` through
+    # ``Path(...).resolve()`` — turning an identity-shaped value like
+    # ``m-agahi/yadgar`` into a filesystem path no row had ever held, and
+    # then comparing against ``directory_context`` (a column post-re-key
+    # rows do not bind on). The 13 SELECTs below now scope on
+    # ``project_id = $p`` and the value they bind is the resolved
+    # identity (or ``None`` on an unresolvable tree), not a derived path.
+    from yadgar.core.cli._shared import resolve_cli_project
+
+    project = resolve_cli_project(
+        getattr(args, "project", None),
+        os.getcwd(),
+        required=False,
+    )
 
     sd = StatsData()
 

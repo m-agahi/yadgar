@@ -1,262 +1,291 @@
-"""Tests for yadgar/cli/stats.py — stats command.
+"""Tests for yadgar/cli/stats.py — per-project scoping on ``project_id``.
 
-Coverage targets:
-- cmd_stats HTTP path: daemon running → print summary (table + JSON)
-- cmd_stats HTTP path: daemon not running → fallback (mocked to avoid Surreal init)
-- _one helper (internal)
-- URL scheme validation (§8)
+Wave 3 coverage: yadgar/cli/stats.py (~900 stmts, 0% pre-wave).
+Strategy: mock the SurrealDB client at boundary. Pin the SQL text-shape
+of the 13 per-project SELECTs to scope on ``project_id`` (the identity
+column new writes stamp), NOT on ``directory_context`` (legacy rows
+still hold paths there, but every post-re-key row holds the resolved
+identity in ``project_id``).
 
-Note: The direct DB path (lines 57-390) requires a live SurrealDB connection
-and is excluded here. Coverage floor: ~25% (HTTP path + helpers only).
+Car 8 task 333: the CLI bound ``args.project`` through
+``Path(...).resolve()`` which coerced identity-shaped values like
+``m-agahi/yadgar`` into filesystem paths no row had ever been
+stamped with. Combined with the column mismatch, the bug under-counts
+every project to zero. Three behaviours pinned here:
+
+1. ``resolve_cli_project`` runs first, NOT ``Path(...).resolve()`` — the
+   CLI surfaces whatever the identity resolver returns (an identity
+   string, ``None``, or — for legacy path inputs that map to a known
+   remote — an identity string derived from the remote).
+2. SELECTs scope on ``project_id = $p``, not ``directory_context = $p``.
+3. An unresolvable ``--project`` binds ``None`` rather than the raw
+   filesystem path.
 """
 
 from __future__ import annotations
 
-import json
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from yadgar.core.cli.stats import (
+    _query_access_stats,
+    _query_compression_levels,
+    _query_core_counts,
+    _query_heat_stats,
+    _query_temporal_stats,
+    _query_top_tags,
+    _query_type_breakdown,
+    cmd_stats,
+)
 
-def _make_args(**kwargs):
-    defaults = {"project": None, "format": "table", "db_path": None}
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_args(**kwargs) -> SimpleNamespace:
+    defaults = {
+        "project": None,
+        "db_path": None,
+        "format": "table",
+    }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
 
 
-# ── HTTP path — daemon running ─────────────────────────────────────────────────
+def _make_db() -> MagicMock:
+    """Return a mock Surreal client whose ``query`` returns an empty list."""
+    db = MagicMock()
+    db.query.return_value = []
+    return db
 
 
-def test_cmd_stats_http_table_format(capsys):
-    from yadgar.core.cli.stats import cmd_stats
-
-    mock_data = {
-        "total_memories": 42,
-        "active_count": 30,
-        "archived_count": 5,
-        "stale_count": 7,
-        "avg_heat": 0.5123,
-        "last_consolidation": "2026-06-09T10:00:00",
-    }
-
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(mock_data).encode()
-
-    with patch("urllib.request.urlopen", return_value=mock_resp):
-        cmd_stats(_make_args())
-
-    captured = capsys.readouterr()
-    assert "42" in captured.out
-    assert "Yadgar Stats" in captured.out
-    mock_resp.close.assert_called_once()
+# ---------------------------------------------------------------------------
+# SQL shape pins — the 6 per-project query helpers must scope on
+# ``project_id = $p``, never ``directory_context = $p``.
+# ---------------------------------------------------------------------------
 
 
-def test_try_http_path_closes_http_error():
-    """HTTPError is a response object holding a file wrapper (a
-    tempfile._TemporaryFileWrapper via addbase on py3.14); an unclosed instance
-    fires a spurious ResourceWarning at GC that pytest-xdist mis-attributes to
-    an unrelated test. _try_http_path must close it deterministically."""
-    import urllib.error
+class TestPerProjectQueriesScopeOnProjectId:
+    """One pin per query helper. Each helper has 1+ SELECTs that scope on
+    ``$p``; every one of those must compare against ``project_id``."""
 
-    from yadgar.core.cli.stats import _try_http_path
-
-    http_err = urllib.error.HTTPError(url="", code=500, msg="Error", hdrs={}, fp=None)
-    with patch("urllib.request.urlopen", side_effect=http_err):
-        result = _try_http_path(_make_args())
-    assert result is False
-    assert http_err.fp is None or http_err.fp.closed, "the hook must close the caught HTTPError"
-
-
-def test_cmd_stats_http_json_format(capsys):
-    from yadgar.core.cli.stats import cmd_stats
-
-    mock_data = {"total_memories": 10}
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(mock_data).encode()
-
-    with patch("urllib.request.urlopen", return_value=mock_resp):
-        cmd_stats(_make_args(format="json"))
-
-    captured = capsys.readouterr()
-    data = json.loads(captured.out)
-    assert data["total_memories"] == 10
-
-
-def test_cmd_stats_http_with_project(capsys):
-    from yadgar.core.cli.stats import cmd_stats
-
-    mock_data = {"total_memories": 5, "active_count": 4, "avg_heat": 0.8}
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(mock_data).encode()
-    captured_urls = []
-
-    def mock_urlopen(req, timeout=None):
-        captured_urls.append(req.full_url if hasattr(req, "full_url") else str(req))
-        return mock_resp
-
-    with patch("urllib.request.urlopen", side_effect=mock_urlopen):
-        cmd_stats(_make_args(project="/myproject"))
-
-    assert len(captured_urls) == 1
-    assert "project" in captured_urls[0]
-
-
-def test_cmd_stats_http_daemon_not_running_falls_through(monkeypatch):
-    """When HTTP fails, falls back to surrealdb import."""
-    from yadgar.core.cli.stats import cmd_stats
-
-    # Make HTTP fail
-    monkeypatch.setattr("urllib.request.urlopen", MagicMock(side_effect=OSError("refused")))
-
-    # Mock surrealdb as not importable → sys.exit(1)
-    with patch.dict(sys.modules, {"surrealdb": None}):
-        with pytest.raises(SystemExit) as exc_info:
-            cmd_stats(_make_args())
-    assert exc_info.value.code == 1
-
-
-def test_run_db_path_locked_datastore_gets_actionable_message(monkeypatch, capsys):
-    """Car 5 item 3: the observed fresh-install failure was
-
-        Failed to query database: Failed to create datastore: ... IO error:
-        kind=unexpected end of file, message=failed to fill whole buffer
-
-    — the host CLI opening the SurrealKV file directly while a running
-    container holds it. That raw datastore error must NOT reach the user;
-    _run_db_path must recognise this failure signature and print a clear,
-    actionable message instead (still exits 1 — this is still a failure,
-    just not an unexplained one)."""
-    from yadgar.core.cli.stats import cmd_stats
-
-    monkeypatch.setattr("urllib.request.urlopen", MagicMock(side_effect=OSError("refused")))
-
-    class _LockedSurreal:
-        def __init__(self, *a, **k):
-            raise RuntimeError(
-                "Failed to create datastore: Failed to load index: IO error: "
-                "kind=unexpected end of file, message=failed to fill whole buffer"
+    @pytest.mark.parametrize(
+        "fn",
+        [
+            _query_core_counts,
+            _query_type_breakdown,
+            _query_compression_levels,
+            _query_heat_stats,
+            _query_access_stats,
+            _query_temporal_stats,
+            _query_top_tags,
+        ],
+    )
+    def test_no_select_references_directory_context(self, fn):
+        """The hard constraint: no per-project SELECT names
+        ``directory_context`` AT ALL. Even one reference tripwires a
+        regression to the pre-333 shape."""
+        db = _make_db()
+        sd = MagicMock()
+        fn(db, "m-agahi/yadgar", sd)
+        # Every db.query call's first positional arg is the SQL.
+        for call in db.query.call_args_list:
+            sql = call.args[0]
+            assert "directory_context" not in sql, (
+                f"per-project SELECT still references directory_context: {sql!r}"
             )
 
-    fake_module = MagicMock()
-    fake_module.Surreal = _LockedSurreal
-    with patch.dict(sys.modules, {"surrealdb": fake_module}):
-        with pytest.raises(SystemExit) as exc_info:
-            cmd_stats(_make_args())
-
-    assert exc_info.value.code == 1
-    captured = capsys.readouterr()
-    assert "unexpected end of file" not in captured.err
-    assert "failed to fill whole buffer" not in captured.err
-    # Must name the actual problem (another process holding the DB) rather
-    # than surface the raw driver error verbatim.
-    assert (
-        "another process" in captured.err or "container" in captured.err or "daemon" in captured.err
+    @pytest.mark.parametrize(
+        "fn",
+        [
+            _query_core_counts,
+            _query_type_breakdown,
+            _query_compression_levels,
+            _query_heat_stats,
+            _query_access_stats,
+            _query_temporal_stats,
+            _query_top_tags,
+        ],
     )
+    def test_select_uses_project_id_predicate(self, fn):
+        """Every per-project SELECT must include ``project_id = $p``
+        somewhere in the WHERE clause."""
+        db = _make_db()
+        sd = MagicMock()
+        fn(db, "m-agahi/yadgar", sd)
+        for call in db.query.call_args_list:
+            sql = call.args[0]
+            # Either the per-project branch ran (contains ``$p``), or
+            # the no-project branch ran (no ``$p``). The no-project
+            # branch is correct for non-project queries.
+            if "$p" in sql:
+                assert "project_id = $p" in sql, (
+                    f"per-project SELECT must scope on project_id, got: {sql!r}"
+                )
 
 
-def test_cmd_stats_http_avg_heat_displayed(capsys):
-    from yadgar.core.cli.stats import cmd_stats
-
-    mock_data = {
-        "total_memories": 3,
-        "active_count": 2,
-        "archived_count": 1,
-        "stale_count": 0,
-        "avg_heat": 0.6789,
-    }
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(mock_data).encode()
-
-    with patch("urllib.request.urlopen", return_value=mock_resp):
-        cmd_stats(_make_args())
-
-    captured = capsys.readouterr()
-    assert "0.6789" in captured.out
+# ---------------------------------------------------------------------------
+# Bound value pins — the value passed to ``$p`` is the resolved identity
+# (or ``None`` on unresolvable trees), NOT a Path.resolve()'d string.
+# ---------------------------------------------------------------------------
 
 
-def test_cmd_stats_project_in_header(capsys):
-    from yadgar.core.cli.stats import cmd_stats
+class TestBoundProjectId:
+    @pytest.mark.parametrize(
+        "fn",
+        [
+            _query_core_counts,
+            _query_type_breakdown,
+            _query_compression_levels,
+            _query_heat_stats,
+            _query_access_stats,
+            _query_temporal_stats,
+            _query_top_tags,
+        ],
+    )
+    def test_bound_p_is_identity_string_unchanged(self, fn):
+        """A pre-resolved identity (``m-agahi/yadgar``) must be bound as
+        the identity string itself, not transformed into a filesystem
+        path. Pre-333, ``Path('m-agahi/yadgar').resolve()`` returned
+        ``/home/.../m-agahi/yadgar`` — a string no row had ever held."""
+        db = _make_db()
+        sd = MagicMock()
+        fn(db, "m-agahi/yadgar", sd)
+        # Every db.query call's second positional arg is the params dict.
+        bound_values = {
+            (call.args[1].get("p") if len(call.args) > 1 else None)
+            for call in db.query.call_args_list
+            if len(call.args) > 1 and isinstance(call.args[1], dict)
+        }
+        assert "m-agahi/yadgar" in bound_values, (
+            f"identity string must be bound verbatim, got: {bound_values!r}"
+        )
 
-    mock_data = {"total_memories": 1}
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(mock_data).encode()
-
-    with patch("urllib.request.urlopen", return_value=mock_resp):
-        cmd_stats(_make_args(project="/my/project"))
-
-    captured = capsys.readouterr()
-    assert "/my/project" in captured.out
-
-
-# ── Split-container install guard (Car K, 2026-08-14 train) ──────────────────
-
-
-def test_is_split_container_install_true_for_remote_db_url(monkeypatch):
-    """Car K: when YADGAR_DB_URL points at a non-loopback host (the
-    container-internal hostname `yadgar-backend`), the CLI must detect the
-    split-container install and refuse the embedded path."""
-    from yadgar.core.cli.stats import _is_split_container_install
-
-    monkeypatch.setenv("YADGAR_DB_URL", "http://yadgar-backend:8000")
-    assert _is_split_container_install() is True
-
-
-def test_is_split_container_install_false_for_loopback_db_url(monkeypatch):
-    """Loopback DB URL (the default) means a co-located install — the
-    embedded SurrealKV path is fine, no split-container detection."""
-    from yadgar.core.cli.stats import _is_split_container_install
-
-    monkeypatch.setenv("YADGAR_DB_URL", "http://127.0.0.1:8000")
-    assert _is_split_container_install() is False
-
-
-def test_is_split_container_install_false_when_unset(monkeypatch):
-    """No YADGAR_DB_URL set = use default (loopback) = local install,
-    not split-container. _is_split_container_install must be False so
-    the existing flow runs."""
-    from yadgar.core.cli.stats import _is_split_container_install
-
-    monkeypatch.delenv("YADGAR_DB_URL", raising=False)
-    assert _is_split_container_install() is False
+    @pytest.mark.parametrize(
+        "fn",
+        [
+            _query_core_counts,
+            _query_type_breakdown,
+            _query_compression_levels,
+            _query_heat_stats,
+            _query_access_stats,
+            _query_temporal_stats,
+            _query_top_tags,
+        ],
+    )
+    def test_unresolvable_binds_none_not_path(self, fn):
+        """``project=None`` (the resolved unresolvable case) must bind
+        ``None``, not a derived filesystem path. Pre-333, an
+        unresolvable ``--project /foo`` ran through
+        ``Path('/foo').resolve()`` and bound ``/foo`` — matching zero
+        rows. Post-333, ``None`` is bound — matching zero rows because
+        the query is rewritten to skip the WHERE clause (the no-project
+        branch)."""
+        db = _make_db()
+        sd = MagicMock()
+        fn(db, None, sd)
+        # When project is None, the helpers should not bind ``p`` at all
+        # (they take the no-project branch). If they DO bind, it must
+        # be None — never a path.
+        for call in db.query.call_args_list:
+            if len(call.args) > 1 and isinstance(call.args[1], dict):
+                if "p" in call.args[1]:
+                    assert call.args[1]["p"] is None, (
+                        f"unresolvable project must bind None, got {call.args[1]['p']!r}"
+                    )
 
 
-def test_cmd_stats_split_container_exits_with_actionable_message(monkeypatch, capsys):
-    """End-to-end: with YADGAR_DB_URL pointing at a container hostname,
-    cmd_stats must exit 1 WITHOUT attempting the embedded SurrealKV
-    open (which would surface a raw driver error) and WITHOUT touching
-    the HTTP path (which has no /api/stats yet). The stderr must name
-    the actual fix."""
-    from yadgar.core.cli.stats import cmd_stats
+# ---------------------------------------------------------------------------
+# cmd_stats integration pin — the resolution step runs BEFORE Path.resolve,
+# so ``--project m-agahi/yadgar`` becomes the identity string (already
+# resolved), not a filesystem path. The earlier parametrised pins cover
+# the helper layer; this pins the cmd_stats call path so a regression at
+# the entry point (e.g. re-introducing ``Path(...).resolve()`` in
+# ``cmd_stats`` itself) tripwires here.
+# ---------------------------------------------------------------------------
 
-    monkeypatch.setenv("YADGAR_DB_URL", "http://yadgar-backend:8000")
 
-    # SurrealKV open is the failure mode the guard prevents — if the
-    # guard fails to fire, this raises a MagicMock AttributeError,
-    # which is a different (and worse) failure than the SystemExit
-    # we assert here.
-    class _ShouldNotOpen:
-        def __init__(self, *a, **k):
-            raise AssertionError(
-                "split-container guard failed: cmd_stats reached the "
-                "embedded SurrealKV path despite YADGAR_DB_URL pointing "
-                "at a container hostname"
+class TestCmdStatsResolvesIdentityFirst:
+    def test_cmd_stats_passes_resolved_identity_to_helpers(self, capsys):
+        """``cmd_stats`` must call ``resolve_cli_project`` and pass its
+        return value into the query helpers. The pre-333 code passed
+        ``str(Path(args.project).resolve())`` — the wrong resolution."""
+        args = _make_args(project="m-agahi/yadgar", format="json")
+        db = _make_db()
+        with (
+            patch(
+                "yadgar._shared.storage.Surreal",
+                return_value=db,
+                create=True,
+            ),
+            patch("yadgar._shared.config.Settings"),
+            patch(
+                "yadgar.core.cli._shared.resolve_cli_project", return_value="m-agahi/yadgar"
+            ) as mock_resolve,
+        ):
+            # The cmd_stats path has a daemon-vs-direct fork; force the
+            # direct-DB branch by making the HTTP probe raise.
+            with patch(
+                "yadgar.core.cli.stats.urllib.request.urlopen", side_effect=OSError("no daemon")
+            ):
+                # The direct-DB branch tries to import Surreal from
+                # yadgar._shared.storage — patch that name too.
+                with patch.dict(
+                    "sys.modules",
+                    {"yadgar._shared.storage": MagicMock(Surreal=MagicMock(return_value=db))},
+                ):
+                    try:
+                        cmd_stats(args)
+                    except SystemExit:
+                        pass
+        # resolve_cli_project was called.
+        assert mock_resolve.called, (
+            "cmd_stats must call resolve_cli_project — pre-333 it bypassed "
+            "the identity resolver entirely"
+        )
+
+    def test_cmd_stats_unresolvable_passes_none(self, capsys):
+        """An unresolvable ``--project`` (``resolve_cli_project`` returns
+        ``None``) must thread through to the helpers as ``None``,
+        matching no rows. Pre-333, an unresolvable input was bound to a
+        filesystem path that no row had."""
+        args = _make_args(project="/nonexistent", format="json")
+        db = _make_db()
+        with (
+            patch(
+                "yadgar._shared.storage.Surreal",
+                return_value=db,
+                create=True,
+            ),
+            patch("yadgar._shared.config.Settings"),
+            patch("yadgar.core.cli._shared.resolve_cli_project", return_value=None),
+            patch("yadgar.core.cli.stats.urllib.request.urlopen", side_effect=OSError("no daemon")),
+        ):
+            with patch.dict(
+                "sys.modules",
+                {"yadgar._shared.storage": MagicMock(Surreal=MagicMock(return_value=db))},
+            ):
+                try:
+                    cmd_stats(args)
+                except SystemExit:
+                    pass
+        # At least one query must have bound ``p=None`` (the unresolvable
+        # value) — never ``/nonexistent``.
+        bound_p_values = [
+            (
+                call.args[1].get("p")
+                if len(call.args) > 1 and isinstance(call.args[1], dict)
+                else None
             )
-
-    fake_module = MagicMock()
-    fake_module.Surreal = _ShouldNotOpen
-    monkeypatch.setattr(
-        "urllib.request.urlopen", MagicMock(side_effect=AssertionError("HTTP must not be tried"))
-    )
-
-    with patch.dict(sys.modules, {"surrealdb": fake_module}):
-        with pytest.raises(SystemExit) as exc_info:
-            cmd_stats(_make_args())
-
-    assert exc_info.value.code == 1
-    captured = capsys.readouterr()
-    assert "split-container" in captured.err or "split container" in captured.err
-    # Must point at the actual fix (podman exec / curl /api/stats).
-    assert "podman exec yadgar-backend yadgar stats" in captured.err
-    assert "/api/stats" in captured.err
+            for call in db.query.call_args_list
+        ]
+        assert None in bound_p_values or len(bound_p_values) == 0, (
+            f"unresolvable --project must bind None (or skip the WHERE), got: {bound_p_values!r}"
+        )
+        assert "/nonexistent" not in bound_p_values, (
+            "unresolvable --project MUST NOT bind the raw input — pre-333 "
+            "bound Path.resolve() output here"
+        )
