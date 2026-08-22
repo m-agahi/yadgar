@@ -63,6 +63,17 @@ from yadgar.core._surreal_runner import (
 # when routed through the unified MCP path (directory-scoped fan-out).
 BENCHMARK_DIRECTORY = "/benchmark/longmemeval"
 
+# Car 8 task 293: identity-train regression. C5 (ADR-0227) made project_id a
+# required field on insert_memory; the directory-only fall path was deleted. The
+# benchmark corpus is itself benchmark-shaped, NOT project-scoped (no project
+# owns the haystack — every project compares against the same fixed dataset).
+# A stable, known identity string is the right answer: cross-run comparability
+# depends on it being identical every invocation; a fresh identity per run
+# would scatter the corpus and break per-question memory-id continuity. The
+# ``benchmark/`` prefix keeps it out of the project namespace (mirrors the
+# ``global`` tag pattern task 50 owns).
+BENCHMARK_PROJECT_ID = "benchmark/longmemeval"
+
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -510,6 +521,15 @@ def ingest_question_haystack(
                     "embedding": embedding,
                     "tags": tags,
                     "directory_context": BENCHMARK_DIRECTORY,
+                    # Car 8 task 293: project_id is REQUIRED since C5/ADR-0227
+                    # deleted the directory-context fallback. Without this,
+                    # _resolve_project_id_for_write raises UnresolvedProjectError
+                    # and every haystack ingest fails — ``make longmemeval``
+                    # then prints 0.000 on every metric, and absence of data is
+                    # read as a real score. The benchmark corpus is global
+                    # (not project-scoped), so a fixed identity string is the
+                    # correct shape (mirrors the ``global`` tag pattern).
+                    "project_id": BENCHMARK_PROJECT_ID,
                     "heat": 1.0,
                     "is_stale": False,
                     "file_hash": None,
