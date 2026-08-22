@@ -290,12 +290,18 @@ class TestMemoryHeatFiltering:
         """Car 3 — the ``memory://stale`` resource had no way to scope.
 
         The predicate was ``is_stale = true`` and nothing else, so the resource
-        served every project's stale rows to whoever read it. Keyed on
-        ``directory_context`` (where C10f's stamp lives), and ``None`` stays
-        corpus-wide — pinned by ``test_get_stale_memories`` above.
+        served every project's stale rows to whoever read it. Task 310 moved the
+        predicate onto the ``project_id`` COLUMN (populated at 2363/2363 rows),
+        so each row names its own owner here rather than sharing the module's
+        ``_PROJECT``. ``None`` stays corpus-wide — pinned by
+        ``test_get_stale_memories`` above.
         """
-        mine = storage.insert_memory(_make_memory(content="mine", directory="mine/repo"))
-        theirs = storage.insert_memory(_make_memory(content="theirs", directory="them/repo"))
+        mine = storage.insert_memory(
+            _make_memory(content="mine", directory="mine/repo", project_id="mine/repo")
+        )
+        theirs = storage.insert_memory(
+            _make_memory(content="theirs", directory="them/repo", project_id="them/repo")
+        )
         storage.update_memory_staleness(mine, True)
         storage.update_memory_staleness(theirs, True)
 
@@ -405,10 +411,18 @@ class TestMemoryStats:
 
 class TestDirectoryMemories:
     def test_get_memories_for_directory(self, storage):
-        storage.insert_memory(_make_memory(content="proj a", directory="/proj/a"))
-        storage.insert_memory(_make_memory(content="proj b", directory="/proj/b"))
+        """Task 310: the predicate is the ``project_id`` COLUMN, so the two rows
+        are separated by their OWNER, not by the retired ``directory_context``
+        path. Sharing one project_id (the module ``_PROJECT``) would make both
+        rows one scope and the isolation this asserts unreachable."""
+        storage.insert_memory(
+            _make_memory(content="proj a", directory="/proj/a", project_id="acme/proj-a")
+        )
+        storage.insert_memory(
+            _make_memory(content="proj b", directory="/proj/b", project_id="acme/proj-b")
+        )
 
-        results = storage.get_memories_for_directory("/proj/a")
+        results = storage.get_memories_for_directory("acme/proj-a")
         assert len(results) == 1
         assert results[0]["content"] == "proj a"
 

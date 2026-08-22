@@ -1082,10 +1082,17 @@ def _check_session_end_sentinel(storage, project_id: str | None) -> dict | None:
     that ADR-0225 exists to delete, and would need a bespoke write path since
     ``memorize`` no longer has any way to stamp a path.
 
-    The column is still ``directory_context`` rather than the ``project_id``
-    column C11 added: ``directory_context`` is what the write path demonstrably
-    stamps today (``_phase_store``), and it keeps this query shaped like its
-    siblings for C7, which re-keys all of ``project_brief`` in one move.
+    Car E1 (task 310): the query now filters on the ``project_id`` column
+    directly rather than ``directory_context``. The bound value here was
+    already the resolved ``project_id`` (Car F9 above); the column name was
+    the lie, not the value. ``directory_context`` is stamped from the
+    resolved project_id only on rows written by the current writer
+    (``_phase_store``) — legacy rows (pre-C10f) still hold a raw filesystem
+    path there, so the old predicate silently missed them. ``project_id`` is
+    populated on every row (verified live 2026-08-21: 0 memory rows with
+    ``store_type='episodic'`` or the ``_anchor``/``_session_end_sentinel``
+    tags have a null/empty ``project_id``), so this predicate matches
+    regardless of when the row was written.
 
     ``project_id=None`` is NOT scoped to something else and NOT derived from a
     directory (ADR-0227). The check is skipped and the skip is logged at
@@ -1107,7 +1114,7 @@ def _check_session_end_sentinel(storage, project_id: str | None) -> dict | None:
         sentinel_rows = storage._q(
             "SELECT id, content, created_at FROM memory "
             "WHERE '_session_end_sentinel' INSIDE tags "
-            "AND directory_context = $project_id "
+            "AND project_id = $project_id "
             "ORDER BY created_at DESC LIMIT 1",
             {"project_id": project_id},
         )

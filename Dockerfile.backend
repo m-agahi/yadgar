@@ -2,10 +2,16 @@
 # embedding service. All three are PROCESSES in this one container — there is no
 # separate MariaDB service and no MariaDB port published (ADR-0195: the backend
 # owns engine #2; core reaches it only through backend admin ops).
+#
+# LAYER ORDER IS LOAD-BEARING (task 331). `COPY . /app` used to sit at line 7,
+# above every expensive instruction in the file, so ANY commit that touched ANY
+# file in the tree re-ran apt, the torch + sentence-transformers install AND the
+# ~1 GB HuggingFace weight download. Everything above the `COPY . /app` below
+# therefore depends on NOTHING from the repo except pyproject.toml + README.md;
+# a source-only change rebuilds two cheap layers instead of the whole image.
 FROM python:3.14-slim-trixie AS backend
 ARG TARGETARCH
 WORKDIR /app
-COPY . /app
 # curl is needed for HEALTHCHECK. Unpinned — base image is pinned to trixie
 # so apt resolves to a single deterministic version per build.
 #
@@ -22,30 +28,38 @@ COPY . /app
 # rest of the image uses.
 RUN apt-get update && apt-get install -y --no-install-recommends curl mariadb-server && \
     rm -rf /var/lib/apt/lists/*
+# SurrealDB v3
+COPY --from=surrealdb/surrealdb:v3.1.5 /surreal /usr/local/bin/surreal
+# ── Dependency layer: the manifests only, never the source tree ───────────────
+# pyproject.toml declares the dependency set; README.md rides along because
+# `readme = "README.md"` makes it a metadata build input — hatchling fails
+# without it. The stub `yadgar/` package is what lets pip resolve and install
+# the DEPENDENCIES of a project whose source is not here yet: hatchling's
+# `packages = ["yadgar"]` is satisfied by an empty __init__.py (verified), so
+# pip builds a placeholder wheel, reads its Requires-Dist and installs the real
+# third-party closure. The actual package is installed further down, after
+# `COPY . /app`, with --no-deps.
+#
+# uv.lock is deliberately NOT copied here. This layer resolves with pip, not
+# uv, for the reason spelled out on the torch install below, so the lock would
+# be a second cache-busting input that buys nothing.
+COPY pyproject.toml README.md /app/
+RUN mkdir -p /app/yadgar && touch /app/yadgar/__init__.py
 # Install torch + sentence-transformers + uvicorn (for embed service).
 # CPU-only torch on BOTH arches: this is a CPU embedding service, so the CUDA
 # wheel set is useless. Plain `pip install torch` on arm64 pulls the full
 # CUDA-bundled aarch64 wheels (>2GB) → the long silent install tripped Docker
 # Build Cloud's gRPC keepalive and failed the arm64 build (v5.57.2). The cpu
 # index has cp314 wheels for both aarch64 and x86_64.
+# This two-step order is also why uv.lock is unusable here: the lock pins torch
+# from PyPI, whose metadata drags in cuda-toolkit / nvidia-* / triton — exactly
+# the closure the cpu index exists to avoid. pip, resolving second, sees the CPU
+# wheel already satisfied and never reaches for it.
 # [sql] is the engine-#2 extra (asyncmy + sqlalchemy + alembic) — backend-only,
 # see the justification on the extra in pyproject.toml.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install "/app[ml,sql]" uvicorn
-# SurrealDB v3
-COPY --from=surrealdb/surrealdb:v3.1.5 /surreal /usr/local/bin/surreal
-# License artifacts, at a conventional path in the image. NOT redundant with the
-# `COPY . /app` above: the surreal binary on the line above arrives WITHOUT its
-# license (a bare-binary COPY --from carries nothing else, and the source image
-# ships no license file at all), and SurrealDB is BUSL-1.1 — not an Open Source
-# license. The image is the copy that gets distributed, so the text has to be in
-# it. Kept before `USER yadgar` below because /usr/share/doc needs root.
-# Enforced by scripts/check_third_party_licenses.py.
-COPY LICENSE NOTICE THIRD-PARTY-LICENSES /usr/share/doc/yadgar/
-COPY third-party /usr/share/doc/yadgar/third-party
-COPY entrypoint-backend.sh /entrypoint-backend.sh
-RUN chmod +x /entrypoint-backend.sh
 EXPOSE 8001
 VOLUME /data
 # SURREAL_USER and SURREAL_PASS are intentionally NOT defaulted here.
@@ -65,6 +79,9 @@ USER yadgar
 # override/cache layer — no longer *required*. HF_HUB_OFFLINE is intentionally
 # NOT set here (the image must still work online / with a mount); it is set only
 # in the offline smoke test.
+#
+# These two layers depend ONLY on the dependency layer above — never on yadgar
+# source (task 331). That is the whole reason the source copy lives below them.
 #
 # Baked set = exactly what prod loads: embed all-MiniLM-L6-v2; CE primary = the
 # swapped Ettin reranker; enrichment = doc2query t5-small. GTE-ModernBERT is baked
@@ -89,6 +106,34 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; \
 AutoTokenizer.from_pretrained('doc2query/msmarco-t5-small-v1'); \
 AutoModelForSeq2SeqLM.from_pretrained('doc2query/msmarco-t5-small-v1'); \
 print('HF weights baked: doc2query/msmarco-t5-small-v1')"
+
+# ── Everything below here is repo content: keep it LAST (task 331) ────────────
+# Back to root for the remaining COPYs and the package install; the final
+# `USER yadgar` at the bottom is what the container actually runs as.
+USER root
+# License artifacts, at a conventional path in the image. NOT redundant with the
+# `COPY . /app` below: the surreal binary copied near the top of this file
+# arrives WITHOUT its license (a bare-binary COPY --from carries nothing else,
+# and the source image ships no license file at all), and SurrealDB is BUSL-1.1
+# — not an Open Source license. The image is the copy that gets distributed, so
+# the text has to be in it. /usr/share/doc needs root, which is why this sits in
+# the root block rather than after the final `USER yadgar`.
+# Enforced by scripts/check_third_party_licenses.py.
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES /usr/share/doc/yadgar/
+COPY third-party /usr/share/doc/yadgar/third-party
+COPY entrypoint-backend.sh /entrypoint-backend.sh
+RUN chmod +x /entrypoint-backend.sh
+# The source tree, and the package installed from it. --no-deps because the
+# third-party closure was already resolved and installed from the manifests
+# above; re-resolving here would defeat the cache split AND could reach for the
+# PyPI torch (CUDA) build. --force-reinstall replaces the placeholder wheel from
+# the dependency layer with the real package. --no-cache-dir rather than a pip
+# cache mount: `ENV HOME=/home/yadgar` above moves pip's cache off
+# /root/.cache/pip, so a mount there would be ignored and the cache would be
+# baked into the image instead.
+COPY . /app
+RUN pip install --no-cache-dir --no-deps --force-reinstall /app
+USER yadgar
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
     CMD curl -f http://localhost:8001/health || exit 1

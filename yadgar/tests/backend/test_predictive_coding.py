@@ -13,6 +13,17 @@ from yadgar.backend.retrieval import Retriever
 #: dict without this key is a hard UnresolvedProjectError at insert.
 _TEST_PROJECT = "m-agahi/yadgar"
 
+#: Task 310 re-keyed ``get_memories_for_directory``'s predicate onto
+#: ``project_id``.  Every gate/model call below therefore addresses a PROJECT
+#: ID, not a filesystem path — the two used to be interchangeable here and are
+#: not any more.  Two extra scopes so the count-exact and empty-scope tests keep
+#: the isolation the old per-directory keys gave them:
+#:   ``_MODEL_PROJECT`` — owned solely by ``TestDirectoryModelBuilds`` (asserts
+#:     an EXACT row count, so a leak from a sibling test must not reach it).
+#:   ``_EMPTY_PROJECT`` — never written to by any test in this file.
+_MODEL_PROJECT = "m-agahi/yadgar-dirmodel"
+_EMPTY_PROJECT = "m-agahi/yadgar-empty"
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -45,15 +56,29 @@ def gate(storage, embeddings, retriever, settings):
     return WriteGate(storage, embeddings, retriever, settings)
 
 
-def _make_memory(storage, embeddings, content, directory="/tmp/project", tags=None, **kwargs):
-    """Helper to insert a memory with real embedding."""
+def _make_memory(storage, embeddings, content, project=_TEST_PROJECT, tags=None, **kwargs):
+    """Insert a memory with a real embedding, owned by *project*.
+
+    ``project`` is the SCOPE KEY, stamped into BOTH ``project_id`` and
+    ``directory_context`` — that is what the production write path does
+    (``write_exec/_memorize_phases/_phase_store.py:168`` sets
+    ``"directory_context": ctx.project_id``).  It used to be a filesystem path
+    named ``directory``, which stopped matching when task 310 re-keyed
+    ``get_memories_for_directory``'s predicate onto ``project_id``.
+    """
     embedding = embeddings.encode(content)
+    if embedding is None:
+        raise RuntimeError(
+            "EmbeddingEngine returned None — the model did not load "
+            "(install the `ml` extra). Seeding an embedding-less corpus makes "
+            "every downstream score a silent fallback constant, not a measurement."
+        )
     mem = {
-        "project_id": _TEST_PROJECT,
+        "project_id": project,
         "content": content,
         "embedding": embedding,
         "tags": tags or ["test"],
-        "directory_context": directory,
+        "directory_context": project,
         "heat": 1.0,
         "is_stale": False,
         "embedding_model": embeddings.get_model_name(),
@@ -71,19 +96,19 @@ class TestHighSurprisalNovelContent:
             storage,
             embeddings,
             "Using Flask for the web API with SQLAlchemy ORM",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
         _make_memory(
             storage,
             embeddings,
             "Configured pytest with coverage reporting",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
 
         # Novel content about a completely different topic
         should_store, surprisal, reason = gate.should_store(
             "Implemented GPU-accelerated matrix multiplication with CUDA kernels",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["cuda", "gpu"],
         )
         assert should_store is True
@@ -98,13 +123,13 @@ class TestLowSurprisalDuplicate:
             storage,
             embeddings,
             "Using Flask for the web API with SQLAlchemy ORM for database access",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
 
         # Very similar content
         should_store, surprisal, reason = gate.should_store(
             "Using Flask for the web API with SQLAlchemy ORM for database queries",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["flask"],
         )
         assert should_store is False
@@ -120,13 +145,13 @@ class TestAlwaysStoreErrors:
             storage,
             embeddings,
             "Database connection configuration for PostgreSQL",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
 
         # Error content about database — even if topic is similar, bypass gate
         should_store, surprisal, reason = gate.should_store(
             "Database connection error: PostgreSQL connection refused on port 5432",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["database"],
         )
         assert should_store is True
@@ -138,11 +163,11 @@ class TestAlwaysStoreErrors:
             storage,
             embeddings,
             "Python function for data processing",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
         should_store, surprisal, reason = gate.should_store(
             "Python exception in data processing pipeline",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["python"],
         )
         assert should_store is True
@@ -152,7 +177,7 @@ class TestAlwaysStoreErrors:
         """Content mentioning tracebacks should bypass."""
         should_store, _, reason = gate.should_store(
             "Traceback most recent call last in main.py",
-            "/tmp/project",
+            _TEST_PROJECT,
             [],
         )
         assert should_store is True
@@ -162,7 +187,7 @@ class TestAlwaysStoreErrors:
         """Content with 'failed' should bypass."""
         should_store, _, reason = gate.should_store(
             "Build failed due to missing dependency",
-            "/tmp/project",
+            _TEST_PROJECT,
             [],
         )
         assert should_store is True
@@ -172,7 +197,7 @@ class TestAlwaysStoreErrors:
         """Content with 'bug' should bypass."""
         should_store, _, reason = gate.should_store(
             "Found a bug in the authentication logic",
-            "/tmp/project",
+            _TEST_PROJECT,
             [],
         )
         assert should_store is True
@@ -182,7 +207,7 @@ class TestAlwaysStoreErrors:
         """Content with 'crash' should bypass."""
         should_store, _, reason = gate.should_store(
             "Application crash on startup after config change",
-            "/tmp/project",
+            _TEST_PROJECT,
             [],
         )
         assert should_store is True
@@ -196,12 +221,12 @@ class TestAlwaysStoreDecisions:
             storage,
             embeddings,
             "Working with the project configuration system",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
 
         should_store, surprisal, reason = gate.should_store(
             "Decided to use Redis instead of Memcached for caching",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["caching"],
         )
         assert should_store is True
@@ -211,7 +236,7 @@ class TestAlwaysStoreDecisions:
         """Content with 'chose' should bypass."""
         should_store, _, reason = gate.should_store(
             "Chose TypeScript over JavaScript for type safety",
-            "/tmp/project",
+            _TEST_PROJECT,
             [],
         )
         assert should_store is True
@@ -221,7 +246,7 @@ class TestAlwaysStoreDecisions:
         """Content with 'switched to' should bypass."""
         should_store, _, reason = gate.should_store(
             "Switched to pnpm from npm for faster installs",
-            "/tmp/project",
+            _TEST_PROJECT,
             [],
         )
         assert should_store is True
@@ -231,7 +256,7 @@ class TestAlwaysStoreDecisions:
         """Content with 'migrated' should bypass."""
         should_store, _, reason = gate.should_store(
             "Migrated database from MySQL to PostgreSQL",
-            "/tmp/project",
+            _TEST_PROJECT,
             [],
         )
         assert should_store is True
@@ -241,7 +266,7 @@ class TestAlwaysStoreDecisions:
         """Content with 'architecture' should bypass."""
         should_store, _, reason = gate.should_store(
             "Redesigned the microservices architecture for better scalability",
-            "/tmp/project",
+            _TEST_PROJECT,
             [],
         )
         assert should_store is True
@@ -255,12 +280,12 @@ class TestImportantTagBypass:
             storage,
             embeddings,
             "Standard project setup with Python and pip",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
 
         should_store, _, reason = gate.should_store(
             "Standard project setup with Python and pip configuration",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["important"],
         )
         assert should_store is True
@@ -270,7 +295,7 @@ class TestImportantTagBypass:
         """Content tagged 'critical' should always be stored."""
         should_store, _, reason = gate.should_store(
             "Routine maintenance task for the project",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["critical"],
         )
         assert should_store is True
@@ -282,7 +307,7 @@ class TestEmptyDirectoryModerateSurprise:
         """A brand new directory with no memories should return ~0.8 surprisal."""
         surprisal = gate.compute_surprisal(
             "Setting up a new Rust project with Cargo",
-            "/tmp/brand-new-project",
+            _EMPTY_PROJECT,
             ["rust"],
         )
         assert surprisal == pytest.approx(0.8, abs=0.01)
@@ -291,7 +316,7 @@ class TestEmptyDirectoryModerateSurprise:
         """Content for a brand new directory should pass the gate."""
         should_store, surprisal, reason = gate.should_store(
             "Initializing a new Go microservice",
-            "/tmp/brand-new-service",
+            _EMPTY_PROJECT,
             ["go"],
         )
         assert should_store is True
@@ -306,7 +331,7 @@ class TestEntityNoveltyNewEntities:
             storage,
             embeddings,
             "def process_data(): pass\ndef validate_input(): pass",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
         # Add known entities to entity table
         storage.insert_entity({"name": "process_data", "type": "function"})
@@ -315,7 +340,7 @@ class TestEntityNoveltyNewEntities:
         # Content with entirely new entity names
         entity_novelty = gate._compute_entity_novelty(
             "def quantum_entangle(): pass\ndef teleport_state(): pass",
-            "/tmp/project",
+            _TEST_PROJECT,
         )
         # New entities should yield high entity novelty
         assert entity_novelty > 0.5
@@ -327,7 +352,7 @@ class TestEntityNoveltyNewEntities:
 
         entity_novelty = gate._compute_entity_novelty(
             "def process_data(): updated\ndef validate_input(): improved",
-            "/tmp/project",
+            _TEST_PROJECT,
         )
         # Existing entities should yield lower novelty
         assert entity_novelty < 0.8
@@ -342,12 +367,12 @@ class TestTemporalNoveltyRecent:
             storage,
             embeddings,
             "Setting up Flask web server with routes",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
 
         temporal_novelty = gate._compute_temporal_novelty(
             "Adding Flask middleware for authentication",
-            "/tmp/project",
+            _TEST_PROJECT,
         )
         # Recent discussion about Flask → low temporal novelty
         assert temporal_novelty <= 0.3
@@ -356,7 +381,7 @@ class TestTemporalNoveltyRecent:
         """Content with no matching entities should have high temporal novelty."""
         temporal_novelty = gate._compute_temporal_novelty(
             "Quantum computing entanglement protocol",
-            "/tmp/empty-project",
+            _EMPTY_PROJECT,
         )
         assert temporal_novelty >= 0.7
 
@@ -394,18 +419,18 @@ class TestDirectoryModelBuilds:
             storage,
             embeddings,
             "Flask web server configuration",
-            directory="/tmp/myproject",
+            project=_MODEL_PROJECT,
             tags=["flask", "web"],
         )
         _make_memory(
             storage,
             embeddings,
             "SQLAlchemy database models and migrations",
-            directory="/tmp/myproject",
+            project=_MODEL_PROJECT,
             tags=["database", "flask"],
         )
 
-        model = gate.get_directory_model("/tmp/myproject")
+        model = gate.get_directory_model(_MODEL_PROJECT)
         assert model["memory_count"] == 2
         assert model["avg_heat"] > 0.0
         assert isinstance(model["common_tags"], list)
@@ -414,7 +439,7 @@ class TestDirectoryModelBuilds:
 
     def test_empty_directory_model(self, gate):
         """Empty directory should return zero-valued model."""
-        model = gate.get_directory_model("/tmp/nonexistent")
+        model = gate.get_directory_model(_EMPTY_PROJECT)
         assert model["memory_count"] == 0
         assert model["entity_count"] == 0
         assert model["avg_heat"] == 0.0
@@ -499,7 +524,7 @@ class TestSurprisalReturnedInResponse:
             if write_gate is not None:
                 surprisal = write_gate.compute_surprisal(
                     "Implementing a brand new quantum error correction algorithm",
-                    "/tmp/surprisal-test",
+                    _TEST_PROJECT,
                     ["quantum"],
                 )
                 assert isinstance(surprisal, float)
@@ -531,7 +556,7 @@ class TestSurprisalReturnedInResponse:
             if write_gate is not None:
                 surprisal = write_gate.compute_surprisal(
                     base_content,
-                    "/tmp/surprisal-block-test",
+                    _TEST_PROJECT,
                     ["flask"],
                 )
                 assert isinstance(surprisal, float)
@@ -555,11 +580,11 @@ class TestSurprisalComputation:
             storage,
             embeddings,
             "Python web development with Django",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
         surprisal = gate.compute_surprisal(
             "Building web apps with Python Django framework",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["python"],
         )
         assert 0.0 <= surprisal <= 1.0
@@ -567,9 +592,9 @@ class TestSurprisalComputation:
     def test_identical_content_low_surprisal(self, gate, storage, embeddings):
         """Identical content should have very low surprisal."""
         content = "Configuring nginx reverse proxy with SSL termination"
-        _make_memory(storage, embeddings, content, directory="/tmp/project")
+        _make_memory(storage, embeddings, content, project=_TEST_PROJECT)
 
-        surprisal = gate.compute_surprisal(content, "/tmp/project", [])
+        surprisal = gate.compute_surprisal(content, _TEST_PROJECT, [])
         assert surprisal < 0.4
 
     def test_novel_content_high_surprisal(self, gate, storage, embeddings):
@@ -578,12 +603,12 @@ class TestSurprisalComputation:
             storage,
             embeddings,
             "Python web application with Flask",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
 
         surprisal = gate.compute_surprisal(
             "Implementing quantum annealing optimization for protein folding",
-            "/tmp/project",
+            _TEST_PROJECT,
             ["quantum"],
         )
         assert surprisal > 0.4
@@ -594,7 +619,7 @@ class TestStructuralNovelty:
         """Content with no extractable entities should return low structural novelty."""
         novelty = gate._compute_structural_novelty(
             "This is a simple note",
-            "/tmp/project",
+            _TEST_PROJECT,
         )
         assert novelty <= 0.2
 
@@ -603,7 +628,7 @@ class TestStructuralNovelty:
         # No existing relationships — any rel context is new
         novelty = gate._compute_structural_novelty(
             "Fixed the ImportError in the main module by updating the package",
-            "/tmp/project",
+            _TEST_PROJECT,
         )
         # resolved_by from the error-fix pattern should be detected
         # If it's a new rel type in the graph → 0.8
@@ -622,7 +647,7 @@ class TestEmbeddingNovelty:
             storage,
             embeddings,
             "Setting up Flask with SQLAlchemy for database access",
-            directory="/tmp/project",
+            project=_TEST_PROJECT,
         )
         novelty = gate._compute_embedding_novelty(
             "Configuring Flask with SQLAlchemy for database operations"
@@ -674,7 +699,7 @@ def test_structural_novelty_under_5s_at_50_entities(structural_novelty_at_scale)
     """
     gate, _engine, content = structural_novelty_at_scale
     t0 = time.monotonic()
-    gate._compute_structural_novelty(content, "/proj")
+    gate._compute_structural_novelty(content, _TEST_PROJECT)
     elapsed = time.monotonic() - t0
     assert elapsed < 5.0, f"_compute_structural_novelty took {elapsed:.1f}s at N=50 (target <5s)"
 
@@ -699,7 +724,7 @@ def test_structural_novelty_correctness_returns_float(tmp_path, settings, embedd
         }
     )
 
-    result = gate._compute_structural_novelty("import alpha\nimport beta", "/proj")
+    result = gate._compute_structural_novelty("import alpha\nimport beta", _TEST_PROJECT)
     assert isinstance(result, float)
     assert 0.0 <= result <= 1.0
     engine.close()

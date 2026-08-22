@@ -68,6 +68,7 @@ def _seed_anchor(
     valid_until: str | None = None,
     *,
     global_reach: bool = False,
+    project_id: str | None = None,
 ) -> int:
     """Insert an anchor memory — is_protected=True, tags=['_anchor'].
 
@@ -75,8 +76,26 @@ def _seed_anchor(
     what ``get_anchored_memories_scoped`` keys its global bucket on since C5.
     It is a separate argument from ``directory_context`` on purpose — §1.4
     splits ownership from reach, and the two are no longer the same fact.
+
+    Task 310: the PROJECT bucket now keys on the ``project_id`` COLUMN, so the
+    scope every call site already spells in ``directory_context`` is what gets
+    stamped there — previously every row shared one hardcoded ``_PROJECT`` and
+    the bucket could not tell two projects apart. Two carve-outs, both needed by
+    tests below rather than by taste:
+
+    * ``global_reach`` rows stay owned by ``_PROJECT``. §1.4 splits ownership
+      from reach: a globally-reaching anchor still has a real owner, and
+      ``'global'`` is never one.
+    * a falsy ``directory_context`` keeps ``_PROJECT`` so the empty-context test
+      reaches the ``directory_context`` schema ASSERT it is pinning, instead of
+      dying earlier on the write-side project_id guard.
+
+    ``project_id=`` overrides both — used by the dedup test, which needs ONE row
+    that matches the global bucket AND the project bucket.
     """
     tags = ["_anchor", "global"] if global_reach else ["_anchor"]
+    if project_id is None:
+        project_id = _PROJECT if global_reach else (directory_context or _PROJECT)
     data: dict[str, Any] = {
         "content": content,
         "tags": tags,
@@ -84,7 +103,7 @@ def _seed_anchor(
         "heat": heat,
         "is_protected": True,
         "is_stale": False,
-        "project_id": _PROJECT,
+        "project_id": project_id,
     }
     if valid_until is not None:
         data["valid_until"] = valid_until
@@ -149,13 +168,24 @@ class TestGetAnchoredMemoriesScoped:
         """An anchor matching both global and project queries appears once.
 
         C13: the global bucket is keyed on the ``global`` TAG since C5, so
-        matching BOTH clauses now needs the tag AND directory_context='global'
-        with directory='global' passed in. Seeding only the directory made this
-        match one bucket, which is not the case it claims to cover.
-        """
-        _seed_anchor(storage, "shared scope anchor", "global", global_reach=True)
+        matching BOTH clauses needs the tag AND a project bucket that also
+        matches. Seeding only the directory made this match one bucket, which is
+        not the case it claims to cover.
 
-        result = storage.get_anchored_memories_scoped(project_id="global", limit=20)
+        Task 310: the project bucket keys on the ``project_id`` COLUMN, so the
+        both-buckets row is now the ``global`` tag PLUS a ``project_id`` equal to
+        the scope being queried — spelled explicitly so the overlap stays real
+        rather than becoming a one-bucket match again.
+        """
+        _seed_anchor(
+            storage,
+            "shared scope anchor",
+            "acme/dedup",
+            global_reach=True,
+            project_id="acme/dedup",
+        )
+
+        result = storage.get_anchored_memories_scoped(project_id="acme/dedup", limit=20)
         matching = [r for r in result if r["content"] == "shared scope anchor"]
         assert len(matching) == 1, f"dedup failed — anchor appeared {len(matching)} times"
 
