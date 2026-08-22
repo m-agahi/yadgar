@@ -33,9 +33,12 @@ def cmd_context(args):
             )
             or []
         )
+        # task 336 (C7): ORDER BY created_at requires the column be in
+        # SELECT (SurrealDB "Missing order idiom"). The row dict only
+        # exposes content; created_at is the sort key, not a payload field.
         anchored = (
             storage._q(
-                "SELECT content FROM memory "
+                "SELECT content, created_at FROM memory "
                 "WHERE is_protected = true AND heat > 0 AND $anchor IN tags "
                 "ORDER BY created_at DESC LIMIT 4",
                 {"anchor": "_anchor"},
