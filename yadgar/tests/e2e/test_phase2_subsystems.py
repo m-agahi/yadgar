@@ -145,7 +145,24 @@ def _memorize_and_find(
 
 
 class TestBCA2_WriteGateSurprise:
-    """BC-A2 / BC-PCd2: the surprise gate stores novel content, gates near-dups."""
+    """BC-A2 / BC-PCd2: the surprise gate stores novel content, gates near-dups.
+
+    The gate's scope key is ``_TEST_PROJECT``, NOT ``yadgar_dir``. Task 310
+    re-keyed ``get_memories_for_directory`` — which ``compute_surprisal`` reads
+    its generative model from — onto ``project_id``, so a filesystem path finds
+    nothing and every score collapses to ``predictive_coding.py:177``'s 0.8
+    "new project" constant. ``near_dup=0.800 novel=0.800`` is that constant on
+    both sides, not a gate that stopped discriminating. The seeds therefore
+    stamp the project into ``directory_context`` too, which is what the
+    production write path does (``_phase_store.py:168``).
+
+    BC-SC6 below is the same defect and moves with it. Sibling seeds that still
+    pass ``yadgar_dir`` are correct as they stand — their reader is
+    ``dominant_directory``, which votes over the raw ``directory_context``
+    column and was not re-keyed. Two conventions therefore coexist in this file
+    ON PURPOSE; do not normalise one into the other without checking which
+    column the reader predicates on.
+    """
 
     def _make_gate(self, e2e_engines, threshold: float):
         import yadgar._shared.runtime.state as _st
@@ -175,13 +192,11 @@ class TestBCA2_WriteGateSurprise:
         identical content still carries non-embedding mass, so the robust
         observable is the RELATIVE ordering, not an absolute boolean.
         """
-        yadgar_dir = e2e_engines["yadgar_dir"]
-
         seeded = (
             "BC-A2 gate: the deployment pipeline pushes the container image to ECR "
             "then triggers a rolling update on the staging cluster xa2seed11001"
         )
-        _insert_mem(e2e_engines, seeded, yadgar_dir, heat=0.9)
+        _insert_mem(e2e_engines, seeded, _TEST_PROJECT, heat=0.9)
 
         gate = self._make_gate(e2e_engines, threshold=0.5)
 
@@ -194,8 +209,8 @@ class TestBCA2_WriteGateSurprise:
             "geomagnetic flux during autumnal navigation xa2novel22002 unrelated"
         )
 
-        s_dup = gate.compute_surprisal(near_dup, yadgar_dir, [])
-        s_novel = gate.compute_surprisal(novel, yadgar_dir, [])
+        s_dup = gate.compute_surprisal(near_dup, _TEST_PROJECT, [])
+        s_novel = gate.compute_surprisal(novel, _TEST_PROJECT, [])
 
         assert s_dup < s_novel, (
             "BC-A2: near-duplicate content MUST be less surprising than novel "
@@ -209,13 +224,11 @@ class TestBCA2_WriteGateSurprise:
         Content carries no bypass triggers (no error/decision keywords, no
         important/critical tags) so the gate does not short-circuit to True.
         """
-        yadgar_dir = e2e_engines["yadgar_dir"]
-
         seeded = (
             "BC-A2 store-gate: nightly backup snapshots the surrealkv dir to the "
             "rotating archive then verifies row counts per table xa2store33003"
         )
-        _insert_mem(e2e_engines, seeded, yadgar_dir, heat=0.9)
+        _insert_mem(e2e_engines, seeded, _TEST_PROJECT, heat=0.9)
 
         gate = self._make_gate(e2e_engines, threshold=0.5)
 
@@ -228,16 +241,16 @@ class TestBCA2_WriteGateSurprise:
             "broth while the orchestra rehearsed a baroque concerto xa2store44004"
         )
 
-        s_dup = gate.compute_surprisal(near_dup, yadgar_dir, [])
-        s_novel = gate.compute_surprisal(novel, yadgar_dir, [])
+        s_dup = gate.compute_surprisal(near_dup, _TEST_PROJECT, [])
+        s_novel = gate.compute_surprisal(novel, _TEST_PROJECT, [])
         # Pick a threshold strictly between the two so the ordering is the
         # discriminator, not the absolute scores.
         mid = (s_dup + s_novel) / 2.0
         gate._threshold = mid
         gate._settings.WRITE_GATE_THRESHOLD = mid
 
-        ok_novel, _, _ = gate.should_store(novel, yadgar_dir, [])
-        ok_dup, _, _ = gate.should_store(near_dup, yadgar_dir, [])
+        ok_novel, _, _ = gate.should_store(novel, _TEST_PROJECT, [])
+        ok_dup, _, _ = gate.should_store(near_dup, _TEST_PROJECT, [])
 
         assert ok_novel is True, (
             f"BC-A2: novel content (surprisal={s_novel:.3f}) MUST be stored when "
@@ -816,22 +829,32 @@ class TestBCSC6_AutoNarrateWritesProjectStory:
         """run_nightly_consolidation sleep cycle SHALL call auto_narrate, which
         generates a narrative_entry row for a directory with hot memories.
 
-        Observable: get_narratives_for_directory(yadgar_dir) returns ≥1 row
-        AFTER the cycle, and the summary field contains the directory path
-        (guaranteed by generate_narrative line: "In {directory}, during ...").
+        Observable: get_narratives_for_directory(_TEST_PROJECT) returns ≥1 row
+        AFTER the cycle, and the summary field contains the project id
+        (guaranteed by generate_narrative line: "In {project_id}, during ...").
 
-        Seeding three memories (heat=0.9) ensures the directory qualifies as
+        The whole chain is PROJECT-keyed after task 310:
+        ``_get_active_directories`` selects distinct ``project_id`` values
+        (``narrative.py:240``), ``auto_narrate`` feeds each one to
+        ``get_narratives_for_directory`` and to ``generate_narrative``, and
+        ``generate_narrative`` reads ``get_memories_for_directory(project_id)``
+        and stamps ``narrative_entry.directory_context = project_id``
+        (``narrative.py:109``).  Seeding a filesystem path made
+        ``_get_active_directories`` yield ``_TEST_PROJECT`` while the test asked
+        for ``yadgar_dir`` — the row was written, just never under the key the
+        assertion looked up.
+
+        Seeding three memories (heat=0.9) ensures the project qualifies as
         active (heat > 0.3 threshold) and provides non-zero memory count in
         the generated summary.
         """
-        yadgar_dir = e2e_engines["yadgar_dir"]
         storage = e2e_engines["storage"]
 
         # Pre-condition: no narrative entries yet in the isolated DB
-        pre_narratives = storage.get_narratives_for_directory(yadgar_dir, limit=10)
+        pre_narratives = storage.get_narratives_for_directory(_TEST_PROJECT, limit=10)
         assert not pre_narratives, (
             "BC-SC6 setup: fresh isolated DB must have no prior narratives for "
-            f"{yadgar_dir!r}. Got {len(pre_narratives)} existing entries."
+            f"{_TEST_PROJECT!r}. Got {len(pre_narratives)} existing entries."
         )
 
         # Seed hot memories — heat=0.9 keeps them active through one decay pass
@@ -840,7 +863,7 @@ class TestBCSC6_AutoNarrateWritesProjectStory:
                 e2e_engines,
                 f"BC-SC6 narrate: the load balancer distributes traffic across "
                 f"healthy backend replicas using round-robin scheduling xsc6narr{i:05d}",
-                yadgar_dir,
+                _TEST_PROJECT,
                 heat=0.9,
             )
 
@@ -848,20 +871,20 @@ class TestBCSC6_AutoNarrateWritesProjectStory:
         # Fresh scheduler: _last_sleep_cycle is None → 6-hour gate opens → cycle fires.
         scheduler.run_nightly_consolidation()
 
-        # Post-condition: at least one narrative_entry row for yadgar_dir
-        post_narratives = storage.get_narratives_for_directory(yadgar_dir, limit=10)
+        # Post-condition: at least one narrative_entry row for the project
+        post_narratives = storage.get_narratives_for_directory(_TEST_PROJECT, limit=10)
         assert post_narratives, (
-            f"BC-SC6 (#37): auto_narrate MUST insert a narrative_entry for directory "
-            f"{yadgar_dir!r} when hot memories are present (heat=0.9 > 0.3 threshold). "
+            f"BC-SC6 (#37): auto_narrate MUST insert a narrative_entry for project "
+            f"{_TEST_PROJECT!r} when hot memories are present (heat=0.9 > 0.3 threshold). "
             "No narrative found — either the sleep cycle did not run, auto_narrate "
-            "skipped the directory, or generate_narrative failed silently."
+            "skipped the project, or generate_narrative failed silently."
         )
 
-        # The summary MUST include the directory path (narrative.py:93 always emits
-        # "In {directory}, during the last N hours: M memories recorded.")
+        # The summary MUST include the project id (narrative.py:95 always emits
+        # "In {project_id}, during the last N hours: M memories recorded.")
         summary = post_narratives[0].get("summary", "")
-        assert yadgar_dir in summary, (
-            f"BC-SC6: narrative summary MUST contain the directory path {yadgar_dir!r}. "
+        assert _TEST_PROJECT in summary, (
+            f"BC-SC6: narrative summary MUST contain the project id {_TEST_PROJECT!r}. "
             f"Got summary: {summary!r}"
         )
 

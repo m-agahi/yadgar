@@ -128,8 +128,10 @@ class TestWritesSucceedWithoutBranchContext:
         # from the resolved ``project_id``. Asserted as an equality against
         # PROJECT_ID (not relaxed away) so this still fails if the stamp is
         # dropped, and so a regression back to the path is caught here too.
-        # ``anchor`` below deliberately still stamps the path: its reader
-        # (``get_anchored_memories_scoped``) has not been re-keyed yet.
+        # ``anchor`` below stamps the path as well. Task 310 DID re-key its
+        # reader (``get_anchored_memories_scoped`` buckets on ``project_id``
+        # now), so the path in ``directory_context`` is no longer what that
+        # reader scopes on — this test reads the raw row, not through it.
         assert rows[0]["directory_context"] == PROJECT_ID
 
     def test_anchor_stores_a_row(self, e2e_engines, monkeypatch, _e2e_backend_drainer):
