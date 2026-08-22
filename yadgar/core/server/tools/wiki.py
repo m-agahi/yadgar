@@ -60,11 +60,19 @@ CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr", "adr_superseded", "wiki_ro
 
 
 @observe(tier="hot", metric="tools.wiki._check_wiki_add_context")
-def _check_wiki_add_context(directory: str | None) -> dict:
+def _check_wiki_add_context(
+    directory: str | None, *, project: str | None = None
+) -> tuple[dict, str | None]:
     """Reject a ``wiki_add`` that names no scope at all.
 
-    Returns ``{}`` when the write may proceed, or the ``UnresolvedProjectError``
-    payload to REJECT.
+    Returns ``({}, resolved_project_id)`` when the write may proceed, or
+    ``(reject_envelope, None)`` to REJECT.
+
+    ``project`` is the caller-supplied override (Car M, 0047 §7/§16.6). When
+    ``directory`` is empty AND ``project`` is a non-empty string, the gate
+    resolves the project BEFORE the directory check — this is what lets an
+    MCP caller pass ``project=`` without also passing ``directory=`` and still
+    land on the registry check below.
 
     ADR-0215/0217: this used to be Car 0's four-flow branch router — it read a
     trusted per-directory git fact and decided branch-scoped vs canonical. Branch
@@ -91,10 +99,42 @@ def _check_wiki_add_context(directory: str | None) -> dict:
     ``result["stored"] is False`` check got ``None`` on this path and ``False``
     on the other. The whole point of the structured error is that an agent gets
     one shape of answer; shipping two defeats it.
+
+    C0 (2026-08-22 train): ``project=`` now satisfies the directory gate.
+    Pre-fix, the gate short-circuited on empty ``directory`` BEFORE the resolver
+    ran, so a ``wiki_add(project=...)`` over MCP transport (which never sees
+    ``directory``) returned the resolver's error envelope in a context where
+    the resolver never got to look at the override. The gate now performs the
+    resolution itself when ``project`` is supplied, and returns the resolved
+    id so the call site below can skip a redundant resolver pass.
+
+    Security: an unregistered project_id still gets rejected at the registry
+    check in ``wiki_add`` (Car 5); the gate's resolve-before-reject only
+    collapses the rejection envelope shape — it does NOT lower the bar.
     """
     if not (directory or "").strip():
-        return {"stored": False, "ok": False, **UnresolvedProjectError("wiki_add").payload}
-    return {}
+        if project is None or not isinstance(project, str) or not project.strip():
+            return {
+                "stored": False,
+                "ok": False,
+                **UnresolvedProjectError("wiki_add").payload,
+            }, None
+        try:
+            _resolved = resolve_effective_project(
+                project=project,
+                directory=None,
+                session_project=None,
+                tool="wiki_add",
+            )
+        except InvalidProjectOverrideError:
+            return {
+                "stored": False,
+                "ok": False,
+                **UnresolvedProjectError("wiki_add").payload,
+            }, None
+        else:
+            return {}, _resolved
+    return {}, None
 
 
 @observe(tier="hot", metric="tools.wiki._wiki_write_canonical")
@@ -531,7 +571,7 @@ def wiki_add(
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
     # Directory enforcement at the MCP boundary — error dict = REJECT.
-    _decision = _check_wiki_add_context(directory)
+    _decision, _gate_resolved_id = _check_wiki_add_context(directory, project=project)
     if "error" in _decision:
         return _decision
 
@@ -544,13 +584,18 @@ def wiki_add(
     # enqueue so the wire payload can carry ``project_id`` (drainer-side
     # routing). Type-level guard runs here so a malformed ``project=``
     # surfaces as a tool error envelope, never as a raised exception.
+    # C0 (2026-08-22 train): if the gate already resolved via ``project=``
+    # alone (no ``directory``), reuse that id and skip the redundant call.
     try:
-        _effective_project_id = resolve_effective_project(
-            project=project,
-            directory=_effective_dir,
-            session_project=None,
-            tool="wiki_add",
-        )
+        if _gate_resolved_id is not None:
+            _effective_project_id = _gate_resolved_id
+        else:
+            _effective_project_id = resolve_effective_project(
+                project=project,
+                directory=_effective_dir,
+                session_project=None,
+                tool="wiki_add",
+            )
         # Car 5 (2026-08-20 train): the real registry check.
         # ``wiki_page.project_id`` had NO registry check on any writer — the
         # "backend-side" one the docstrings named had zero call sites.
