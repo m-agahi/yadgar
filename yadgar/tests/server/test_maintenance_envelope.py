@@ -226,6 +226,81 @@ class TestEnvelopeProse:
         assert "not queued" in resume
         assert "re-issue" in resume.lower(), "the instance needs the recovery recipe"
 
+    def test_message_pins_the_on_disk_artifact_signal(self) -> None:
+        """Step 5 of the plan — on-disk artifacts (``surreal_db.pre-vacuum-*``)
+        are the fourth lying signal the plan names explicitly. The
+        parametrized test above covers three by substring; this pins the
+        fourth literally because the prose names the file globs, and a future
+        edit that drops one of those globs reads as "vacuum isn't running" to
+        an instance greppping for it (task 278, C3)."""
+        msg = self._message()
+        assert "surreal_db.pre-vacuum-" in msg, (
+            "the on-disk artifacts bullet names the pre-vacuum db glob verbatim"
+        )
+        assert "vacuum_export_" in msg, (
+            "the on-disk artifacts bullet names the export glob verbatim"
+        )
+
+    def test_resume_pins_all_four_recipe_steps(self) -> None:
+        """Step 5 of the plan — the four-step recipe in ``_resume`` is the part a
+        caller acts on, so each step must be greppable. ``test_resume_says_writes_
+        were_rejected_not_queued`` covers the 'REJECTED, not queued' preamble but
+        not the four steps themselves (task 278, C3)."""
+        from yadgar._shared.runtime.maintenance import build_maintenance_envelope
+
+        _engage(elapsed=10)
+        resume = build_maintenance_envelope()["resume"]
+        for needle in (
+            "Sleep `retry_after_seconds`, retry the failed call",
+            "Re-issue every write",
+            "Verify each one by RE-READING",
+            "If `elapsed_seconds` exceeds 3x `typical_duration_seconds`",
+        ):
+            assert needle in resume, (
+                f"recipe step {needle!r} drifted from resume prose — callers grep for it"
+            )
+
+    def test_stuck_window_resume_says_stop_and_report(self) -> None:
+        """Step 6 of the plan — ``_resume(looks_stuck=True)`` prepends a STOP
+        clause; ``test_looks_stuck_only_past_three_typical_durations`` proves
+        the BOOLEAN flips but not the literal prose that flips a healthy "wait
+        a minute" into a hard "report the bug" (task 278, C3)."""
+        from yadgar._shared.runtime.maintenance import (
+            STUCK_MULTIPLIER,
+            TYPICAL_DURATION_SECONDS,
+            build_maintenance_envelope,
+        )
+
+        _engage(operation="vacuum", elapsed=TYPICAL_DURATION_SECONDS * STUCK_MULTIPLIER + 5)
+        resume = build_maintenance_envelope()["resume"]
+        assert "STOP retrying and report" in resume, (
+            "the stuck clause must contain the literal phrase — instances grep for it"
+        )
+        assert "`looks_stuck: true`" in resume, (
+            "the stuck clause must quote the boolean key so a grep on the envelope finds it"
+        )
+
+    def test_message_pins_the_post_gate_warmup_floor_verbatim(self) -> None:
+        """Step 7 of the plan — the second-window explanation names the 60s
+        floor verbatim. ``test_retry_after_clears_the_post_gate_backend_warmup``
+        pins the BOUND (``>= 60``) but not the literal in the prose, and the
+        constant could be tightened below the floor in the future without
+        tripping the bound test (task 278, C3)."""
+        from yadgar._shared.runtime.maintenance import (
+            RETRY_AFTER_SECONDS,
+            build_maintenance_envelope,
+        )
+
+        _engage(elapsed=10)
+        msg = build_maintenance_envelope()["message"]
+        assert "`retry_after_seconds` (60s)" in msg, (
+            "the second-window explanation must quote the floor verbatim"
+        )
+        assert RETRY_AFTER_SECONDS == 60, (
+            f"RETRY_AFTER_SECONDS must stay at 60 — the post-gate warm-up floor. "
+            f"got {RETRY_AFTER_SECONDS}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # 2. Delivery — the output-contract class
