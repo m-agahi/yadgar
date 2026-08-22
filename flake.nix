@@ -347,14 +347,18 @@
               Unit = {
                 Description = "Yadgar Backend (SurrealDB + Embeddings)";
                 After = [ "network.target" ];
+                # task 233 / C3 — cap the restart loop so a truly stuck pull
+                # (registry down, disk full) surfaces a `failed` state
+                # instead of looping forever in `activating (start)`.
+                StartLimitBurst = 3;
+                StartLimitIntervalSec = 600;
               };
               Service = {
                 # v5.49 Phase 7: Type=notify + podman --sdnotify=healthy.
                 # Dockerfile HEALTHCHECK isn't propagated by podman build
                 # (known quirk — lands in history.created_by only), so the
                 # healthcheck is passed at run time via --health-cmd. Embed
-                # model warm-up needs --health-start-period=60s;
-                # TimeoutStartSec=180 covers cold model load.
+                # model warm-up needs --health-start-period=60s.
                 Type = "notify";
                 NotifyAccess = "all";
                 Environment = [
@@ -363,7 +367,10 @@
                   "SURREAL_RUNTIME_STACK_SIZE=536870912"
                 ];
                 EnvironmentFile = "-${cfg.secretsEnvFile}";
-                TimeoutStartSec = 180;
+                # task 233 / C3 — bumped from 180 to 300 so a cold 3.68 GB
+                # pull + 40s backend model load fits inside the start budget
+                # without systemd killing the pull mid-copy and looping.
+                TimeoutStartSec = 300;
                 TimeoutStopSec = 45;
                 ExecStartPre = [
                   "-${cfg.runtime} stop yadgar-backend"

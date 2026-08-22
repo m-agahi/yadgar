@@ -238,12 +238,24 @@ class Readiness:
 
     type_directives: tuple[Directive, ...]
     budget: int
+    # Cold-path start ceiling (image pull + warm-up). The warm gate stays
+    # inside ``budget``; the unit as a whole gets ``cold_budget`` from systemd.
+    # Defaults to ``budget`` so callers that don't override it get the prior
+    # behaviour unchanged (task 233, C3).
+    cold_budget: int = 0
     sdnotify: str = ""
     gate: str | None = None
 
+    def __post_init__(self) -> None:
+        # frozen dataclass: object.__setattr__ the defaulted field if zero.
+        if self.cold_budget == 0:
+            object.__setattr__(self, "cold_budget", self.budget)
+
 
 @observe(tier="hot")
-def readiness_for(runtime: str, *, url: str, retries: int, budget: int) -> Readiness:
+def readiness_for(
+    runtime: str, *, url: str, retries: int, budget: int, cold_budget: int | None = None
+) -> Readiness:
     """Readiness for one unit on *runtime*, with a *budget*-second start timeout.
 
     A non-zero ``ExecStartPost`` FAILS the unit and ``Restart=on-failure`` would
@@ -261,10 +273,14 @@ def readiness_for(runtime: str, *, url: str, retries: int, budget: int) -> Readi
         return Readiness(
             type_directives=(Directive("Type", "notify"), Directive("NotifyAccess", "all")),
             budget=budget,
+            cold_budget=cold_budget if cold_budget is not None else budget,
             sdnotify="    --sdnotify=healthy \\\n",
         )
     return Readiness(
-        type_directives=(Directive("Type", "exec"),), budget=budget, gate=_gate(url, retries)
+        type_directives=(Directive("Type", "exec"),),
+        budget=budget,
+        cold_budget=cold_budget if cold_budget is not None else budget,
+        gate=_gate(url, retries),
     )
 
 
@@ -327,6 +343,12 @@ def build_backend_unit(spec: UnitSpec) -> UnitFile:
         url=f"http://127.0.0.1:{spec.backend_embed_port}/health",
         retries=75,
         budget=180,
+        # Cold-path ceiling: a 3.68 GB pull at typical ~30 MB/s = ~120s, plus
+        # 20-40s model load + probe. 300s absorbs the common case with a 50%
+        # safety margin (task 233, C3). Without this, TimeoutStartSec=180
+        # kills the pull mid-copy, Restart=on-failure restarts in 5s, the
+        # runtime re-pulls from byte zero, and the loop never converges.
+        cold_budget=300,
     )
     service: list[Entry] = [*comments(BACKEND_SERVICE_DOC)]
     if ready.sdnotify:  # podman only — see BACKEND_SERVICE_DOC
@@ -345,7 +367,7 @@ def build_backend_unit(spec: UnitSpec) -> UnitFile:
         Directive("Restart", "on-failure"),
         Directive("RestartSec", "5"),
         *ready.type_directives,
-        Directive("TimeoutStartSec", str(ready.budget)),
+        Directive("TimeoutStartSec", str(ready.cold_budget)),
     ]
     return UnitFile(
         name=spec.backend_unit_name,
@@ -355,6 +377,12 @@ def build_backend_unit(spec: UnitSpec) -> UnitFile:
                 (
                     Directive("Description", "Yadgar Backend (SurrealDB + Embeddings)"),
                     Directive("After", "network.target"),
+                    # Cap the restart loop so a truly stuck pull (registry down,
+                    # disk full) surfaces a `failed` state instead of looping
+                    # forever in `activating (start)`. 3 attempts in 10 minutes
+                    # is a stuck pull, not a transient flake (task 233, C3).
+                    Directive("StartLimitBurst", "3"),
+                    Directive("StartLimitIntervalSec", "600"),
                     *comments(BACKEND_UNIT_DOC),
                 ),
             ),
