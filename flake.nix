@@ -585,6 +585,15 @@
                 EnvironmentFile = "-${cfg.secretsEnvFile}";
                 Environment = [
                   "YADGAR_DB_URL=http://127.0.0.1:${toString cfg.backendSurrealPort}"
+                  # task 62 / C3: mirror build_nightly_service — the embed URL
+                  # is required by _forward_admin (yadgar/core/forward.py:115-120)
+                  # for the queue-drain nudge introduced by Car 0113. Without
+                  # it, every systemd-fired vacuum lands on
+                  # _drain_queue_best_effort WARN-and-proceeds at
+                  # vacuum/__init__.py:1812 and the safety mechanism degrades
+                  # to a no-op. Literal port 8001 matches nightly-cycle (L413)
+                  # and the backend's loopback publish (units.py:306).
+                  "YADGAR_EMBED_URL=http://127.0.0.1:8001"
                   "YADGAR_DATA_DIR=${dataDir}"
                 ];
                 ExecStart = "${homeDir}/.local/bin/yadgar vacuum --service-mode=systemd --yes";

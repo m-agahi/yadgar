@@ -295,6 +295,15 @@ def build_vacuum_service(
                     Directive("EnvironmentFile", f"-{secrets_env_file}"),
                     Comment("SurrealDB over the loopback publish from yadgar-backend.service."),
                     Directive("Environment", f"YADGAR_DB_URL=http://127.0.0.1:{surreal_port}"),
+                    # task 62 / C3: mirror build_nightly_service — the embed URL
+                    # is required by _forward_admin (yadgar/core/forward.py:115-120)
+                    # for the queue-drain nudge introduced by Car 0113. Without
+                    # it, every systemd-fired vacuum lands on _drain_queue_best_effort
+                    # WARN-and-proceeds at vacuum/__init__.py:1812 and the safety
+                    # mechanism degrades to a no-op. Literal port 8001 matches
+                    # nightly-cycle (L413) and the backend's loopback publish
+                    # (units.py:306).
+                    Directive("Environment", "YADGAR_EMBED_URL=http://127.0.0.1:8001"),
                     Directive("Environment", f"YADGAR_DATA_DIR={data_dir}"),
                     Directive("ExecStart", f"{vacuum_exec} vacuum --service-mode=systemd --yes"),
                     Directive("TimeoutStartSec", "30min"),
