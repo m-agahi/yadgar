@@ -17,6 +17,7 @@ from yadgar._shared.storage.directory import RecallScope
 # raises, so one ``except`` binds both halves of the guarantee.
 from yadgar._shared.storage.sql.errors import UnknownProjectError
 from yadgar._shared.wiki.policy import is_recall_visible
+from yadgar._shared.wiki.store import WikiSimilarityGateUnavailable
 from yadgar.core.forward import _forward_admin
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
@@ -1218,13 +1219,27 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
         threshold if threshold is not None else getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
     )
 
-    candidates = _st._wiki.find_similar_wiki_pages(
-        title=title,
-        content=content,
-        threshold=effective_threshold,
-        top_k=top_k,
-        directory_context=(directory.strip().rstrip("/") or None) if directory else None,
-    )
+    try:
+        candidates = _st._wiki.find_similar_wiki_pages(
+            title=title,
+            content=content,
+            threshold=effective_threshold,
+            top_k=top_k,
+            directory_context=(directory.strip().rstrip("/") or None) if directory else None,
+        )
+    except WikiSimilarityGateUnavailable as exc:
+        # Car C10 (task 312): read-side stays fail-OPEN — a degraded embedder
+        # surfaces as an empty candidate list with a hint so the caller knows
+        # the query could not evaluate. Distinct from the WRITE gate, which
+        # fails CLOSED on the same exception.
+        return {
+            "candidates": [],
+            "threshold_used": effective_threshold,
+            "warning": (
+                f"similarity check unavailable: {exc}. The dry-run result is "
+                "indeterminate — duplicate-detection requires the embedder."
+            ),
+        }
     return {
         "candidates": candidates,
         "threshold_used": effective_threshold,

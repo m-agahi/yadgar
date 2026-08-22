@@ -38,6 +38,33 @@ from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 logger = logging.getLogger(__name__)
 
 
+class WikiSimilarityGateUnavailable(Exception):
+    """Raised by ``find_similar_wiki_pages`` when the embedder cannot evaluate.
+
+    Car C10 (task 312): the v5.39 similarity gate's contract was "no candidates
+    above threshold → not a duplicate → pass". A typo on the spec: the SAME
+    surface (empty list) was returned when the embedder itself was unavailable
+    (cold start, model unload, transient embed-service outage) — the gate
+    read "no candidates" as "no duplicate" and let the write through silently.
+
+    The fix splits the two cases:
+
+    * Empty list from a clean embedder run → "no duplicate" (gate passes).
+    * ``WikiSimilarityGateUnavailable`` raised when encode_query raises OR
+      returns ``None`` → "gate cannot evaluate" → the WRITE-side caller
+      (``_similarity_gate_for_drainer``) fails CLOSED with
+      ``reason="gate_unavailable"``. The READ-side callers
+      (``wiki_check_duplicate``, ``_autolink_filter_by_similarity``) catch the
+      exception and convert to ``[]`` so a degraded embedder still gives the
+      user a query answer rather than a stack trace.
+
+    The exception name names the embedder because the drainer's DLQ sidecar
+    stamps ``str(exc)`` as the operator-facing failure message — a precise
+    name is the difference between "duplicate_detected" (looks like a content
+    collision) and "gate_unavailable, embedder offline" (looks like infra).
+    """
+
+
 @observe(exempt="pure policy lookup + list append; no I/O")
 def _apply_storage_scope(
     page_type: str | None, effective_dir: str, tags: list[str]
@@ -1270,23 +1297,48 @@ class WikiStore:
         # Embed the new page (same formula as _compute_embedding — must stay in sync).
         # v5.53.1: raised from [:2000] to [:4000] for better near-duplicate recall.
         # Existing stored pages keep their [:2000]-based embeddings until reembed_all.
+        #
+        # Car C10 (task 312): the v5.39 contract was "return [] on embedder
+        # failure" — the WRITE gate read that as "no similar pages" and passed
+        # the duplicate silently. The fix RAISES on embedder failure so the
+        # write-side caller (``_similarity_gate_for_drainer``) fails-closed.
+        # Read-side callers (wiki_check_duplicate, _autolink_filter_by_similarity)
+        # catch the exception and convert to ``[]`` — fail-open is preserved
+        # for queries.
         try:
             text = f"{title}\n{content[:4000]}"
             query_embedding = self._embeddings.encode_query(text)
-        except Exception:
-            logger.debug("find_similar_wiki_pages: embedding failed for '%s'", title)
-            return []
+        except Exception as exc:
+            logger.warning(
+                "find_similar_wiki_pages: embedding failed for '%s' (%s) — raising "
+                "WikiSimilarityGateUnavailable so the write gate fails-closed",
+                title,
+                exc,
+            )
+            raise WikiSimilarityGateUnavailable(
+                f"embedder raised while encoding query for '{title}': {exc}"
+            ) from exc
 
         if query_embedding is None:
-            return []
+            raise WikiSimilarityGateUnavailable(
+                f"embedder returned no embedding for '{title}' — gate cannot evaluate"
+            )
 
         # KNN search — get top_k * 4 candidates so we have room after the
-        # directory + threshold filters
+        # directory + threshold filters. A vector-search exception means the
+        # storage layer is broken; the same fail-closed reasoning applies.
         try:
             vec_results = self._storage.search_wiki_vectors(query_embedding, top_k=top_k * 4)
-        except Exception:
-            logger.debug("find_similar_wiki_pages: vector search failed")
-            return []
+        except Exception as exc:
+            logger.warning(
+                "find_similar_wiki_pages: vector search failed for '%s' (%s) — raising "
+                "WikiSimilarityGateUnavailable so the write gate fails-closed",
+                title,
+                exc,
+            )
+            raise WikiSimilarityGateUnavailable(
+                f"vector search raised while computing candidates for '{title}': {exc}"
+            ) from exc
 
         if not vec_results:
             return []
@@ -1672,13 +1724,25 @@ class WikiStore:
         """
         if threshold <= 0.0:
             return proposals
-        similar = self.find_similar_wiki_pages(
-            page.get("title", ""),
-            page.get("content", "") or "",
-            threshold=threshold,
-            top_k=50,
-            exclude_slug=page.get("slug"),
-        )
+        try:
+            similar = self.find_similar_wiki_pages(
+                page.get("title", ""),
+                page.get("content", "") or "",
+                threshold=threshold,
+                top_k=50,
+                exclude_slug=page.get("slug"),
+            )
+        except WikiSimilarityGateUnavailable as exc:
+            # Car C10 (task 312): autolink stays fail-OPEN — a degraded embedder
+            # must not break the cross-ref pipeline. Distinct from the WRITE
+            # gate (which fails CLOSED on the same exception, because writing
+            # a near-duplicate silently is worse than a noisy error).
+            logger.warning(
+                "_autolink_filter_by_similarity: gate unavailable, "
+                "returning unfiltered proposals: %s",
+                exc,
+            )
+            return proposals
         allowed = {s["slug"] for s in similar}
         return [p for p in proposals if p["target"] in allowed]
 
