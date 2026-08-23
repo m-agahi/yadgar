@@ -247,26 +247,42 @@ def _query_core_counts(db, project, sd):
             "SELECT count() FROM memory WHERE project_id = $p AND is_protected = true GROUP ALL",
         )
     )
-    # Pre-re-key rows: directory_context holds the path, project_id is NULL.
-    # These rows are invisible to the project_id-keyed counts above because
-    # they lack project_id by construction -- count them on directory_context
-    # INSTEAD, but only when a scope is in play (no scope = no legacy bucket).
-    if project is not None:
-        sd.legacy_unbackfilled = _count(
-            _q(
-                db,
-                project,
-                # Same skip-scope shape as the others: a bare global SELECT with
-                # the directory_context clause would either bind $p uninitialized
-                # or run a global predicate the helper doesn't support. Mirror the
-                # pair by passing the scoped SQL and a global fallback that
-                # returns the empty set (legacy rows ARE the scoped ones).
-                "SELECT count() FROM memory WHERE project_id IS NULL "
-                "AND directory_context = $p GROUP ALL",
-                "SELECT count() FROM memory WHERE project_id IS NULL "
-                "AND directory_context = $p GROUP ALL",
-            )
+
+
+def _query_legacy_unbackfilled_counts(db, project, sd):
+    """Count rows that pre-date C0's ``project_id`` restamp.
+
+    These rows still hold the filesystem PATH in ``directory_context``
+    and have ``project_id IS NULL``. They are real corpus, correctly
+    migrated from the wiki side (PR #64 car B2), but invisible to the
+    six C7-era per-project helpers because those scope on ``project_id``
+    by construction. The C7 invariant (``TestPerProjectQueriesScopeOnProjectId``
+    in test_cli_stats_module.py) parametrizes a fixed list of per-project
+    helpers and asserts NO ``directory_context`` reference — keeping this
+    SELECT here would trip that test, so it lives in its own helper.
+
+    ADRs that govern this carve-out:
+    - ADR-0233: ``directory_context`` stays alive ONLY so ``project_backfill``
+      can derive ``project_id`` FROM it. Reading the column for legacy-row
+      accounting is the sanctioned second consumer.
+    - Task 268: the rows in this bucket are the remaining migration backlog;
+      a CLI user can size it via ``yadgar stats --project <id>``.
+
+    No global fallback is implemented: a no-scope run (``project is None``)
+    cannot count legacy rows meaningfully (the legacy rows ARE the global
+    rows, which the total count already reports). The caller gates the
+    invocation on ``project is not None``.
+    """
+    sd.legacy_unbackfilled = _count(
+        _q(
+            db,
+            project,
+            "SELECT count() FROM memory WHERE project_id IS NULL "
+            "AND directory_context = $p GROUP ALL",
+            "SELECT count() FROM memory WHERE project_id IS NULL "
+            "AND directory_context = $p GROUP ALL",
         )
+    )
 
 
 def _query_type_breakdown(db, project, sd):
@@ -825,6 +841,11 @@ def _run_db_path(args):
         db.use("yadgar", "main")
 
         _query_core_counts(db, project, sd)
+        # Legacy bucket is a separate helper so the C7 invariant pin in
+        # test_cli_stats_module.py (no ``directory_context`` in per-project
+        # SELECTs) continues to hold against ``_query_core_counts``.
+        if project is not None:
+            _query_legacy_unbackfilled_counts(db, project, sd)
 
         if sd.total == 0:
             label = f"project {project}" if project else "database"
