@@ -244,7 +244,7 @@ coordinates one more time (this doc's own §0.1 will be ~2 weeks stale by the ti
         echo "$id: $n"; done
       ```
 - [ ] `python scripts/check_test_weakening.py --ci --base origin/master` on a clean tree; record green.
-- [ ] Confirm `docs/plans/0115-pre-migration-backup-2026-08-01.md` is executable — Cars 6, 8, 9 need it.
+- [ ] Confirm `docs/plans/archive/0115-pre-migration-backup-2026-08-01.md` is executable — Cars 6, 8, 9 need it.
 - [ ] Confirm the ADR-0215 train is **merged and its plan archived** (ADR-0081). If not, STOP: §0.3.
 
 **Exit criterion (positive evidence):** a committed table in the CHANGELOG unreleased section

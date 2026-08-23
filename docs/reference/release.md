@@ -82,7 +82,7 @@ writes the `schema_version` row **only on success**. So a migration that raises:
 **Restarting is not a remedy — it is an infinite loop.** The remedy is to restore
 from the pre-migration backup, fix the cause, then deploy again. Take that backup
 **before** any release carrying a new migration (convention:
-`docs/plans/0115-pre-migration-backup-2026-08-01.md`).
+`docs/plans/archive/0115-pre-migration-backup-2026-08-01.md`).
 
 Migrations that mutate data are written to halt *before* their irreversible step
 precisely so the backup is still valid at the point of failure — migration 029
