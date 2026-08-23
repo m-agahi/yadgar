@@ -1087,7 +1087,7 @@ class _WikiMixin:
             "excitability = 1.0, store_type = $store_type, "
             "compression_level = 0, sr_x = 0.0, sr_y = 0.0, "
             "reconsolidation_count = 0, provenance_agent = $agent, "
-            "vector_clock = '{}', is_protected = true;\n"
+            "vector_clock = '{}';\n"
             "COMMIT TRANSACTION",
             {
                 "id": mid,

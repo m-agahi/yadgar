@@ -276,6 +276,25 @@ class TestUpsertsStampTheCallersProjectId:
         )
         assert rows == []
 
+    def test_prelude_marker_is_not_protected(self, storage):
+        """C7a: _dispatch_prelude markers must age out — no decay-proof slot.
+
+        The marker is content-free telemetry ("dispatch_prelude marker"), so
+        holding a permanent ``is_protected`` slot per directory crowds out
+        real anchors (34/106 protected rows in this project were markers).
+        The other two ``is_protected = true`` sites belong to ``upsert_active_work``
+        and ``upsert_project_init`` — different concerns, untouched here.
+        """
+        directory = "/proj/c7a-prelude-not-protected"
+        storage.upsert_dispatch_prelude_marker(directory, project_id=TEST_PROJECT_ID)
+        rows = storage._q(
+            "SELECT is_protected FROM memory WHERE directory_context = $dir "
+            "AND '_dispatch_prelude' INSIDE tags",
+            {"dir": directory},
+        )
+        assert len(rows) == 1, rows
+        assert not rows[0].get("is_protected"), rows[0]
+
 
 class TestPromptUsageBypassIsGone:
     """The fourth bypass had no honest owner, so it was deleted rather than stamped.
