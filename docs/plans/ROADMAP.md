@@ -123,13 +123,13 @@ docs rather than from a clean per-version CHANGELOG cut.
 ### Horizon — v6 / v7 (skeletons + indices, not ready to build)
 | Plan | Theme | Notes |
 |------|-------|-------|
-| [v6-parallel-trains](archive/v6-parallel-trains.md) | v6 index | **DEFERRED — v6 horizon (task #19)** | Index stale (T2/T3/T4 shipped); rebuild fresh when v6 resumes. |
+| [v6-parallel-trains](v6-parallel-trains.md) | v6 index | **DEFERRED — v6 horizon (task #19)** | Index stale (T2/T3/T4 shipped); rebuild fresh when v6 resumes. |
 | [PLAN_V6_QUALITY_FOUNDATION](PLAN_V6_QUALITY_FOUNDATION.md) | v6 north-star | Measurement harness → surprise-gate ON → enrichment/retrieval ablations → consolidation efficacy → LLM synthesis. |
-| [v6-llm-curator](archive/v6-llm-curator.md) | future | LLM curator cycle scaffold. |
-| [v6-extract-on-ingest](archive/v6-extract-on-ingest.md) | future | LLM extract-on-ingest (Adopt-7). |
-| [v7-team-usability](archive/v7-team-usability.md) | future | Team usability / multi-user architecture. |
+| [v6-llm-curator](v6-llm-curator.md) | future | LLM curator cycle scaffold. |
+| [v6-extract-on-ingest](v6-extract-on-ingest.md) | future | LLM extract-on-ingest (Adopt-7). |
+| [v7-team-usability](v7-team-usability.md) | future | Team usability / multi-user architecture. |
 | [saas-feasibility-skeleton-2026-07-13](archive/saas-feasibility-skeleton-2026-07-13.md) | exploratory / business | **DEFERRED — v8+ horizon** | Open-core SaaS feasibility decision-menu. Not an impl spec. |
-| [security-stack-skeleton-2026-07-13](archive/security-stack-skeleton-2026-07-13.md) | exploratory / security | **DEFERRED — v7 (multi-user)** | HTTPS + auth + encryption layered menu. Decision-ready menu, nothing scheduled. |
+| [security-stack-skeleton-2026-07-13](security-stack-skeleton-2026-07-13.md) | exploratory / security | **DEFERRED — v7 (multi-user)** | HTTPS + auth + encryption layered menu. Decision-ready menu, nothing scheduled. |
 | [port-codex](port-codex-2026-07-20.md) / [port-cline](port-cline-2026-07-20.md) / [port-kiro](port-kiro-2026-07-20.md) / [port-windsurf](port-windsurf-2026-07-20.md) / [port-amp](port-amp-2026-07-20.md) | portability / clients (#57) | **PLANNED (deferred), each** | Per-client hook-port plans, each supersedes [port-clients-survey-2026-07-18](archive/port-clients-survey-2026-07-18.md) §Task #57-<letter>. Emitter target for all five: `yadgar/core/install/clients/hooks_render.py` (`_emit_stub` replacement). |
 
 ## Tasks minted from 2026-07-16 triage
