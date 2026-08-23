@@ -114,6 +114,20 @@ fi
 _gen() { python3 -c 'import secrets; print(secrets.token_urlsafe(24))'; }
 _gen32() { python3 -c 'import secrets; print(secrets.token_urlsafe(32))'; }
 
+# Backstop (task 64, car C3 / bug-bag-2 train 2026-08-23): if stdin is not a
+# TTY AND INSTALL_NONINTERACTIVE is not set, the interactive `read` below
+# would block forever or, with `set -e`, terminate with an opaque error at
+# the FIRST credential prompt. Detect that scenario explicitly and tell the
+# caller what to do — yadgar-setup was dying silently at step 3/12 of
+# pipeline runs because of exactly this.
+if [[ "${INSTALL_NONINTERACTIVE:-0}" != "1" ]] && [[ ! -t 0 ]]; then
+    echo "ERROR: bootstrap_secrets.sh requires a TTY (or INSTALL_NONINTERACTIVE=1)." >&2
+    echo "  stdin is not a terminal and INSTALL_NONINTERACTIVE is unset." >&2
+    echo "  Re-run with INSTALL_NONINTERACTIVE=1 (e.g. yadgar-setup --noninteractive" >&2
+    echo "  sets it for you) or attach a TTY for the credential prompts." >&2
+    exit 64  # EX_USAGE
+fi
+
 if [[ "${INSTALL_NONINTERACTIVE:-0}" == "1" ]]; then
     echo "==> Non-interactive mode: generating credentials automatically..."
     ROOT_USER="root"

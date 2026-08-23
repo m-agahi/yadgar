@@ -157,7 +157,12 @@ Python 3.14+ on the host (or use the Docker / Compose path for zero host Python)
 
 **pipx (recommended for isolated install):**
 ```bash
-pipx install yadgar
+# Yadgar needs Python 3.14+ (CPython features used by the package). Stock
+# Debian 13 / Ubuntu LTS ship only 3.11/3.12; pin a 3.14 interpreter via
+# uv before pipx so the venv it creates targets 3.14.
+uv tool install uv                     # one-time: uv itself if missing
+uv python install 3.14                # one-time: 3.14 interpreter
+pipx install --python "$(uv python find 3.14)" yadgar
 yadgar setup
 ```
 
@@ -249,7 +254,7 @@ yadgar daemon configure-mcp
 yadgar update --check   # probes PyPI; prints upgrade command; exit 0
 ```
 
-For `pipx` the suggested command is `pipx upgrade yadgar`; then re-run `yadgar setup` (idempotent) to refresh hooks and units. An opt-in update orchestrator (`yadgar update --install`, default off via `update.install_enabled: false`) coordinates snapshot → image pull → graceful drain → restart → health-check → CLI upgrade, with automatic rollback (`yadgar update --rollback`). See `MIGRATION_NOTES.md`.
+For `pipx` the suggested command is `pipx upgrade yadgar`; then re-run `yadgar setup` (idempotent) to refresh hooks and units. An opt-in update orchestrator (`yadgar update --install`, default off via `update_install_enabled: false`) coordinates snapshot → image pull → graceful drain → restart → health-check → CLI upgrade, with automatic rollback (`yadgar update --rollback`). See `MIGRATION_NOTES.md`.
 
 ---
 

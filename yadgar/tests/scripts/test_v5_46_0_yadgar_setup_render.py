@@ -119,11 +119,60 @@ def test_yadgar_setup_doctor_recognized():
     `*)` case arm — the same one test_yadgar_setup_rejects_unknown_flag
     exercises. The coupling is deliberate: if that message is ever reworded,
     both tests must be updated together.
+
+    Host-coupling fix (task 324, car C3): yadgar-setup.sh now honors
+    YADGAR_TEST_YADGAR_BIN (shim path) + YADGAR_TEST_SETTINGS_JSON (fixture).
+    The shim emulates a yadgar build that DOES carry verify-hooks and prints
+    a known string so the probe's "OK / warn" path is observable without
+    touching the real PATH or settings.json.
     """
-    result = _run_setup("--doctor", "--dryrun")
-    # --doctor may fail if not on macOS — check it doesn't fail on flag parse.
-    # Deliberately NOT asserting returncode: --doctor legitimately warns (and
-    # can exit non-zero) on a host whose units/hooks are not fully wired.
+    import json
+    import tempfile
+    import textwrap
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        shim = tmp_path / "yadgar-shim.sh"
+        # Shim exits rc=1 with a unique marker on stderr so the test can
+        # observe dispatch via the WARN branch (line 891-895 echoes $report
+        # on rc!=0). The OK branch (line 890) swallows $report, so an
+        # rc=0 shim would not surface here even though it was called.
+        shim.write_text(
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env bash
+                # Test shim for yadgar-setup.sh doctor probe (task 324).
+                case "$1" in
+                    verify-hooks)
+                        if [[ "$2" == "--help" ]]; then
+                            echo "usage: yadgar verify-hooks [--settings PATH]"
+                            exit 0
+                        fi
+                        # rc=1 + unique marker → yadgar-setup.sh echoes the
+                        # captured $report to stderr under the WARN branch,
+                        # letting the test prove the shim was actually invoked
+                        # through the host-coupling escape hatches.
+                        echo "SHIM_DISPATCH_MARKER: yadgar verify-hooks invoked via test shim (YADGAR_TEST_YADGAR_BIN honored)" >&2
+                        exit 1
+                        ;;
+                    *) echo "shim: unexpected subcommand $*" >&2; exit 2 ;;
+                esac
+                """
+            ),
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+        settings_fixture = tmp_path / "settings.json"
+        settings_fixture.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+
+        result = _run_setup(
+            "--doctor",
+            "--dryrun",
+            env_extra={
+                "YADGAR_TEST_YADGAR_BIN": str(shim),
+                "YADGAR_TEST_SETTINGS_JSON": str(settings_fixture),
+            },
+        )
     combined = result.stdout + result.stderr
     assert "Unknown flag:" not in combined, f"--doctor flag not recognized:\n{combined}"
     # Not-rejected is weaker than dispatched. Assert the flag actually reached
@@ -131,6 +180,21 @@ def test_yadgar_setup_doctor_recognized():
     # could not pass.
     assert "Doctor: Running verification probes" in combined, (
         f"--doctor parsed but never dispatched to _run_doctor:\n{combined}"
+    )
+    # The shim must have been invoked through the new overrides — proves the
+    # host-coupling escape hatches (YADGAR_TEST_YADGAR_BIN,
+    # YADGAR_TEST_SETTINGS_JSON) actually reach _probe_managed_hooks. Without
+    # this assertion the test could pass on a host where the live settings.json
+    # happens to be wired correctly, masking the regression this car fixes.
+    # The marker is emitted on stderr by the shim; _probe_managed_hooks
+    # captures stderr into $report and echoes $report to stderr under the
+    # WARN branch (rc != 0), so the marker reaches combined output only if
+    # the shim was actually invoked through YADGAR_TEST_YADGAR_BIN.
+    assert "SHIM_DISPATCH_MARKER" in combined, (
+        "doctor did not invoke the injected yadgar shim; "
+        "_probe_managed_hooks is reading PATH / live settings.json instead "
+        "of the test overrides. Combine with the live-claude guard if this "
+        "fails on a host with already-wired hooks:\n" + combined
     )
 
 

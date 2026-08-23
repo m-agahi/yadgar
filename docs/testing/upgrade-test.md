@@ -24,7 +24,7 @@ Before starting:
 - **pipx ≥ 1.0** — `pipx --version`
 - **`~/.config/yadgar/secrets.env` exists** and is sourced — `yadgar daemon status` returns healthy
 - **Daemon currently running** — `yadgar daemon status` shows version X
-- **`update.install_enabled: true`** in `~/.config/yadgar/config.yaml`
+- **`update_install_enabled: true`** in `~/.config/yadgar/config.yaml`
 - **Upgrade available** — `yadgar update --check` reports a newer version on PyPI (current ≠ latest)
 
 If `yadgar update --check` reports "already at latest," use a pinned older version for the test: `pipx install yadgar==<prev>` and pull the older image manually before proceeding.

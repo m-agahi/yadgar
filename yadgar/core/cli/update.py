@@ -1,7 +1,7 @@
 """v5.49.0 Phase 10 — `yadgar update [--check|--install|--finalize|--rollback]`.
 
 v5.48 shipped CHECK-ONLY. Phase 10 adds:
-  --install    Routine-upgrade orchestrator. Gated by update.install_enabled.
+  --install    Routine-upgrade orchestrator. Gated by update_install_enabled.
   --finalize   Re-exec target invoked by orchestrator after pipx upgrade.
                Verifies daemon version, writes DONE to forward_log.json, releases lock.
                Internal-use — invoked via os.execvp by the orchestrator, not by operators.
@@ -13,7 +13,7 @@ v5.48 shipped CHECK-ONLY. Phase 10 adds:
 Usage:
   yadgar update              # same as --check
   yadgar update --check      # probe PyPI, print upgrade command, exit 0
-  yadgar update --install    # run orchestrator (gated by update.install_enabled: true)
+  yadgar update --install    # run orchestrator (gated by update_install_enabled: true)
   yadgar update --finalize --snapshot <path>  # post-exec verification (orchestrator-internal)
   yadgar update --rollback [--snapshot <path>]  # operator recovery
 """
@@ -60,7 +60,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         default=False,
         help=(
             "Run the routine-upgrade orchestrator. "
-            f"Requires update.install_enabled=true in {paths.CONFIG_YAML_PATH}."
+            f"Requires update_install_enabled=true in {paths.CONFIG_YAML_PATH}."
         ),
     )
     parser.add_argument(
@@ -200,7 +200,7 @@ def _install_msg_code(result: object) -> tuple[str, int]:  # noqa: PLR0911
     if fs == S.IDLE and result.error and "disabled" in result.error.lower():
         return (
             "yadgar update --install is disabled.\n"
-            f"To opt in: set update.install_enabled: true in {paths.CONFIG_YAML_PATH}\n"
+            f"To opt in: set update_install_enabled: true in {paths.CONFIG_YAML_PATH}\n"
             "See docs/plans/archive/PLAN_V5_49_0.md § Rollout for prerequisites and risks.",
             3,
         )
