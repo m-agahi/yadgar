@@ -91,15 +91,34 @@ def _drainer_env(tmp_path):
 
 
 def _write_sync(title: str, content: str, **kwargs) -> dict:
-    """Write via is_draining=True (sync path, bypasses queue and gate)."""
-    import yadgar.backend.queue_drainer._locals as _loc
+    """Write via the drainer's replay path (bypasses queue AND sim gate).
 
-    _loc._drain_local.active = True
-    kwargs.setdefault("project", _TEST_PROJECT)
-    try:
-        return server.wiki_add(title=title, content=content, **kwargs)
-    finally:
-        _loc._drain_local.active = False
+    Pre-C11 the helper called ``wiki_add`` with ``_drain_local.active=True``
+    and relied on the wiki enqueue site to honor the flag. The flag was
+    set by ``_ApplyMixin._apply`` "so write tools skip re-enqueueing
+    during this call" (apply.py:47) but the wiki enqueue sites never
+    checked it — every ``_write_sync`` call enqueued a duplicate that the
+    test then asserted as 2 instead of 1.
+
+    Direct ``run_wiki_add_replay`` is what the drainer itself uses to
+    write — same code path the fixture is emulating — so the test no
+    longer needs to fake the drainer flag at all.
+    """
+    from yadgar.backend.write_exec.wiki_add_impl import run_wiki_add_replay
+
+    project = kwargs.pop("project", _TEST_PROJECT)
+    directory = kwargs.pop("directory", "/home/max/git/yadgar")
+    payload = {
+        "title": title,
+        "content": content,
+        "category": kwargs.pop("category", "reference"),
+        "tags": kwargs.pop("tags", None),
+        "directory_context": directory,
+        "page_id": project,
+        "project_id": project,
+        **kwargs,
+    }
+    return run_wiki_add_replay(payload)
 
 
 # ── Phase 1 Tests ─────────────────────────────────────────────────────────────
