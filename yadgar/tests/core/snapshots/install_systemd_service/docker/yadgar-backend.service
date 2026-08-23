@@ -1,6 +1,8 @@
 [Unit]
 Description=Yadgar Backend (SurrealDB + Embeddings)
 After=network.target
+StartLimitBurst=3
+StartLimitIntervalSec=600
 # SurrealDB (:8000) is published on LOOPBACK ONLY. The nightly-cycle and vacuum
 # units execute on the HOST (the vacuum flow interleaves phases needing different
 # daemon states and the container image has no systemctl), and both default
@@ -57,7 +59,7 @@ ExecStop=docker stop yadgar-backend
 Restart=on-failure
 RestartSec=5
 Type=exec
-TimeoutStartSec=180
+TimeoutStartSec=300
 
 [Install]
 WantedBy=default.target

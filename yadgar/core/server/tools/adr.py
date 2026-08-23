@@ -789,14 +789,38 @@ def _build_adr_get_response(
     row_result: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Merge body + row metadata per D5 (additive-only). Reflects row-side
-    status in merged tags. Extracted from ``adr_get`` for I13 cyclomatic."""
+    status in merged tags. Extracted from ``adr_get`` for I13 cyclomatic.
+
+    PR #65 review finding #1: strip leaky wiki-internal ``content_truncated``
+    / ``content_total_bytes`` keys from ``body`` before merging, and surface
+    the truncation status at the TOP level as ``body_truncated: bool`` +
+    ``body_total_bytes: int`` (only when truncated). Pre-fix, a caller
+    reading an over-cap ADR got a truncated ``content`` plus the wiki's own
+    ``content_*`` keys with no signal at the ADR layer that anything was
+    missing -- keys-absent is the unambiguous no-truncation signal (mirrors
+    ``wiki_read``'s contract; emitting ``0`` would be a lie).
+    """
     row_metadata: dict[str, Any] = {}
     if isinstance(row_result, dict):
         row = row_result.get("row")
         if isinstance(row, dict):
             row_metadata = _row_to_response_metadata(row)
-    merged: dict[str, Any] = dict(body)
+    # Strip wiki-internal leakage BEFORE merge so the top-level response
+    # stays wiki-clean. Capture truncation status first -- the merge must
+    # be the SOLE place the caller's adr_get response sees these names.
+    body_was_truncated = bool(body.get("content_truncated"))
+    body_untrimmed_bytes = body.get("content_total_bytes")
+    body_for_merge: dict[str, Any] = {
+        k: v for k, v in body.items() if k not in {"content_truncated", "content_total_bytes"}
+    }
+    merged: dict[str, Any] = dict(body_for_merge)
     merged.update(row_metadata)
+    if body_was_truncated:
+        merged["body_truncated"] = True
+        if isinstance(body_untrimmed_bytes, int) and body_untrimmed_bytes > 0:
+            merged["body_total_bytes"] = body_untrimmed_bytes
+    else:
+        merged["body_truncated"] = False
     if isinstance(merged.get("tags"), list) and isinstance(row_result, dict):
         merged = _reflect_row_status_in_tags(merged, row_result.get("row") or {})
     return merged
@@ -805,12 +829,17 @@ def _build_adr_get_response(
 @observe(tier="stage", metric="tools.adr._row_to_response_metadata")
 def _row_to_response_metadata(row: dict) -> dict[str, Any]:
     """Map ledger row fields onto the D5 additive metadata keys. ADR-0209
-    §14.3: baseline_hash + content_hash keys. Extracted for I13."""
+    §14.3: baseline_hash + content_hash keys. Extracted for I13.
+
+    rationale / alternatives / revisit_trigger live on the body page as flat
+    bullets (task 247, C1) — the adr table has no such columns, so emitting
+    them here with value ``""`` would mislead the caller into reading "" as
+    "this ADR has none". Omit them entirely; key-absent is the unambiguous
+    signal to read the body. D5 additive-only governs ADDITIONS going
+    forward, not retention of never-populated keys.
+    """
     return {
         "date": row.get("decided_on") or "",
-        "rationale": "",  # prose lives on the body page (D4)
-        "alternatives": "",  # ditto
-        "revisit_trigger": "",  # ditto
         "supersedes": _fmt_supersedes(row.get("supersedes")),
         # Ledger task 195: NEW key. ``adr_get`` never emitted it, so the read
         # of a superseded ADR could not say what replaced it. D5's merge is

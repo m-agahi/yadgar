@@ -40,6 +40,12 @@ _REJECTION_TAXONOMY: frozenset[str] = frozenset(
         "wiki_page_locked",  # task 229: WikiImmutableError, mutability="locked"
         "wiki_page_derived",  # task 229: WikiImmutableError, mutability="derived"
         "wiki_page_immutable",  # task 229: WikiImmutableError fallback reason
+        "gate_unavailable",  # PR #65 review finding #10: fail-CLOSED drainer
+        # rejection (task 312) — was emitted as a
+        # rejection ``reason`` but missing here, so a
+        # gate_unavailable row landed in the DLQ but
+        # the admin ``--reason`` filter mis-classified
+        # it as a failure, not a rejection.
     }
 )
 

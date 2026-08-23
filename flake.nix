@@ -123,7 +123,7 @@
 
         yadgar-pkg = python.pkgs.buildPythonApplication {
           pname = "yadgar";
-          version = "5.190.0";
+          version = "5.190.1";
           format = "pyproject";
 
           src = ./.;
@@ -258,13 +258,13 @@
 
             coreVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.190.0";
+              default = "5.190.1";
               description = "Container image tag for the yadgar core service.";
             };
 
             backendVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.82.0";
+              default = "5.83.0";
               description = "Container image tag for the yadgar-backend service.";
             };
 
@@ -347,14 +347,18 @@
               Unit = {
                 Description = "Yadgar Backend (SurrealDB + Embeddings)";
                 After = [ "network.target" ];
+                # task 233 / C3 — cap the restart loop so a truly stuck pull
+                # (registry down, disk full) surfaces a `failed` state
+                # instead of looping forever in `activating (start)`.
+                StartLimitBurst = 3;
+                StartLimitIntervalSec = 600;
               };
               Service = {
                 # v5.49 Phase 7: Type=notify + podman --sdnotify=healthy.
                 # Dockerfile HEALTHCHECK isn't propagated by podman build
                 # (known quirk — lands in history.created_by only), so the
                 # healthcheck is passed at run time via --health-cmd. Embed
-                # model warm-up needs --health-start-period=60s;
-                # TimeoutStartSec=180 covers cold model load.
+                # model warm-up needs --health-start-period=60s.
                 Type = "notify";
                 NotifyAccess = "all";
                 Environment = [
@@ -363,7 +367,10 @@
                   "SURREAL_RUNTIME_STACK_SIZE=536870912"
                 ];
                 EnvironmentFile = "-${cfg.secretsEnvFile}";
-                TimeoutStartSec = 180;
+                # task 233 / C3 — bumped from 180 to 300 so a cold 3.68 GB
+                # pull + 40s backend model load fits inside the start budget
+                # without systemd killing the pull mid-copy and looping.
+                TimeoutStartSec = 300;
                 TimeoutStopSec = 45;
                 ExecStartPre = [
                   "-${cfg.runtime} stop yadgar-backend"
@@ -578,6 +585,15 @@
                 EnvironmentFile = "-${cfg.secretsEnvFile}";
                 Environment = [
                   "YADGAR_DB_URL=http://127.0.0.1:${toString cfg.backendSurrealPort}"
+                  # task 62 / C3: mirror build_nightly_service — the embed URL
+                  # is required by _forward_admin (yadgar/core/forward.py:115-120)
+                  # for the queue-drain nudge introduced by Car 0113. Without
+                  # it, every systemd-fired vacuum lands on
+                  # _drain_queue_best_effort WARN-and-proceeds at
+                  # vacuum/__init__.py:1812 and the safety mechanism degrades
+                  # to a no-op. Literal port 8001 matches nightly-cycle (L413)
+                  # and the backend's loopback publish (units.py:306).
+                  "YADGAR_EMBED_URL=http://127.0.0.1:8001"
                   "YADGAR_DATA_DIR=${dataDir}"
                 ];
                 ExecStart = "${homeDir}/.local/bin/yadgar vacuum --service-mode=systemd --yes";

@@ -348,7 +348,7 @@ class TestWikiAddCreatePath:
         fq = _fake_queue(tmp_path)
         with (
             patch("yadgar.core.server.tools.wiki._st._wiki", object()),
-            patch("yadgar.core.server.tools.wiki._check_wiki_add_context", return_value={}),
+            patch("yadgar.core.server.tools.wiki._check_wiki_add_context", return_value=({}, None)),
             patch("yadgar.core.server.tools.wiki._get_file_queue", return_value=fq),
             patch("yadgar.core.forward._forward_admin", **registry),
         ):

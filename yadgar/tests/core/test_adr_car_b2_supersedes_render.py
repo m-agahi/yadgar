@@ -143,19 +143,35 @@ class TestAdrGetMetadataCarriesTheEdges:
         assert _row_to_response_metadata(_TARGET_ROW)["superseded_by"] == "0025"
 
     def test_the_pre_existing_metadata_keys_survive(self) -> None:
-        """D5 additive-only: pre-migration keys ⊆ post-migration keys."""
+        """D5 additive-only: pre-migration keys ⊆ post-migration keys.
+
+        rationale / alternatives / revisit_trigger were removed in task 247,
+        C1 — the adr table has no such columns and emitting ``""`` misled
+        callers. The remaining pre-migration row-side keys must still
+        survive the merge.
+        """
         keys = set(_row_to_response_metadata(_SUPERSEDER_ROW))
         assert {
             "date",
-            "rationale",
-            "alternatives",
-            "revisit_trigger",
             "supersedes",
             "subsystem",
             "tier",
             "baseline_hash",
             "content_hash",
         } <= keys
+
+    def test_three_empty_prose_keys_are_absent(self) -> None:
+        """Task 247, C1: rationale / alternatives / revisit_trigger live on
+        the body page; emitting them here with value ``""`` would mislead
+        callers into reading "this ADR has none" (the prose is on the body).
+        Key-absent is the unambiguous signal to read the body.
+        """
+        keys = set(_row_to_response_metadata(_SUPERSEDER_ROW))
+        for absent in ("rationale", "alternatives", "revisit_trigger"):
+            assert absent not in keys, (
+                f"{absent!r} must not be in the row-side metadata — "
+                f"the adr table has no such column (task 247, C1)."
+            )
 
 
 @pytest.mark.parametrize("row", [_SUPERSEDER_ROW, _TARGET_ROW])

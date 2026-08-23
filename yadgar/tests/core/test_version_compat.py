@@ -104,3 +104,41 @@ def test_core_handshake_block_reports_own_version_not_backend_constant() -> None
     block = _handshake_block(None)
     assert block["self_version"] == __version__
     assert block["self_version"] != BACKEND_VERSION
+
+
+def test_handshake_block_with_peer_url_keeps_self_and_peer_distinct() -> None:
+    # Companion regression test for task 234 / C4 — covers the NETWORK
+    # branch of ``_handshake_block`` that the existing pinning test (the
+    # one above) does not exercise. The existing test takes the
+    # ``peer_url=None`` no-pee-configured branch; this one stubs the
+    # httpx probe with a peer JSON that advertises a version DIFFERENT
+    # from both ``__version__`` and ``BACKEND_VERSION``, so any code path
+    # that reads the peer's response into ``self_version`` (the original
+    # Car F bug, before the signals-that-lie car corrected it) lights up
+    # immediately.
+    from unittest.mock import MagicMock, patch
+
+    from yadgar import __version__
+    from yadgar.core.server.http import _handshake_block
+
+    _peer_reported = "5.78.0"  # intentionally different from core's __version__
+    _fake_response = MagicMock()
+    _fake_response.status_code = 200
+    _fake_response.json.return_value = {"version": _peer_reported}
+
+    _fake_client = MagicMock()
+    _fake_client.__enter__.return_value.get.return_value = _fake_response
+
+    with patch("httpx.Client", return_value=_fake_client):
+        block = _handshake_block("http://backend.test")
+
+    # self_version is the CORE's own version, not the peer's reported one.
+    assert block["self_version"] == __version__
+    assert block["self_version"] != _peer_reported, (
+        "self_version must never be the peer's probed version — that was "
+        "the original Car F bug (task 234 / C4)"
+    )
+    # peer_version IS the probed value, so the round-trip reaches handshake_status
+    # with (self_version, peer_version) = (core_self, backend_reported) and the
+    # core_compatible / backend_compatible comparison runs against the right axis.
+    assert block["peer_version"] == _peer_reported

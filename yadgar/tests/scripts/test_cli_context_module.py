@@ -245,3 +245,54 @@ class TestProjectIdScoping:
             cmd_context(_make_args(directory="/home/user/project"))
         hot_params = mock_storage._q.call_args_list[0].args[1]
         assert hot_params == {"dir": None}
+
+
+# ---------------------------------------------------------------------------
+# task 336 (C7) — the anchored query ORDER BY created_at requires the
+# column be in SELECT (SurrealDB "Missing order idiom"). The hot query
+# has the same shape risk if a future change tries to ORDER BY a column
+# the SELECT does not name. Pin both seams.
+# ---------------------------------------------------------------------------
+
+
+class TestAnchoredQuerySqlShape:
+    def test_anchored_query_includes_created_at_in_select(self):
+        """ORDER BY created_at needs created_at in SELECT (SurrealDB).
+
+        Pre-fix, ``SELECT content FROM memory ... ORDER BY created_at``
+        raised ``Missing order idiom`` and silently swallowed the query
+        via the except branch — every ``yadgar context`` invocation
+        returned no anchored context with no explanation. The fix selects
+        ``content, created_at``; ``created_at`` is the sort key, not a
+        payload field (the row dict only exposes content).
+        """
+        mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=[])
+        with (
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
+        ):
+            cmd_context(_make_args())
+        # call_args_list[0] is hot, call_args_list[1] is anchored.
+        anchored_query = mock_storage._q.call_args_list[1].args[0]
+        assert "ORDER BY created_at" in anchored_query
+        assert "created_at" in anchored_query.split("FROM", 1)[0], (
+            "created_at must be in SELECT — ORDER BY a non-selected "
+            "column is the SurrealDB 'Missing order idiom' bug."
+        )
+
+    def test_anchored_query_does_not_swallow_surreal_error_via_failing_select(self):
+        """If the SELECT is regressed to omit created_at, the SurrealDB
+        runtime would raise, and the except branch silently prints to
+        stderr. That combination is the failure mode task 336 named.
+        This test pins the SQL shape so any future SELECT-edit tripwires
+        before reaching the runtime."""
+        mock_storage = _make_storage_mock(hot_rows=[], anchored_rows=[])
+        with (
+            patch("yadgar._shared.storage.StorageEngine", return_value=mock_storage),
+            patch("yadgar._shared.config.Settings"),
+        ):
+            cmd_context(_make_args())
+        anchored_query = mock_storage._q.call_args_list[1].args[0]
+        select_clause = anchored_query.split("FROM", 1)[0]
+        # created_at must appear in the SELECT clause
+        assert "created_at" in select_clause

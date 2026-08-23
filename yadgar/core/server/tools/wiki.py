@@ -17,6 +17,7 @@ from yadgar._shared.storage.directory import RecallScope
 # raises, so one ``except`` binds both halves of the guarantee.
 from yadgar._shared.storage.sql.errors import UnknownProjectError
 from yadgar._shared.wiki.policy import is_recall_visible
+from yadgar._shared.wiki.store import WikiSimilarityGateUnavailable
 from yadgar.core.forward import _forward_admin
 
 # R2a Car D2: _get_file_queue moved to yadgar.core.lifecycle (core → core).
@@ -60,11 +61,19 @@ CANONICAL_PAGE_TYPES = frozenset({"task_list", "adr", "adr_superseded", "wiki_ro
 
 
 @observe(tier="hot", metric="tools.wiki._check_wiki_add_context")
-def _check_wiki_add_context(directory: str | None) -> dict:
+def _check_wiki_add_context(
+    directory: str | None, *, project: str | None = None
+) -> tuple[dict, str | None]:
     """Reject a ``wiki_add`` that names no scope at all.
 
-    Returns ``{}`` when the write may proceed, or the ``UnresolvedProjectError``
-    payload to REJECT.
+    Returns ``({}, resolved_project_id)`` when the write may proceed, or
+    ``(reject_envelope, None)`` to REJECT.
+
+    ``project`` is the caller-supplied override (Car M, 0047 §7/§16.6). When
+    ``directory`` is empty AND ``project`` is a non-empty string, the gate
+    resolves the project BEFORE the directory check — this is what lets an
+    MCP caller pass ``project=`` without also passing ``directory=`` and still
+    land on the registry check below.
 
     ADR-0215/0217: this used to be Car 0's four-flow branch router — it read a
     trusted per-directory git fact and decided branch-scoped vs canonical. Branch
@@ -91,10 +100,58 @@ def _check_wiki_add_context(directory: str | None) -> dict:
     ``result["stored"] is False`` check got ``None`` on this path and ``False``
     on the other. The whole point of the structured error is that an agent gets
     one shape of answer; shipping two defeats it.
+
+    C0 (2026-08-22 train): ``project=`` now satisfies the directory gate.
+    Pre-fix, the gate short-circuited on empty ``directory`` BEFORE the resolver
+    ran, so a ``wiki_add(project=...)`` over MCP transport (which never sees
+    ``directory``) returned the resolver's error envelope in a context where
+    the resolver never got to look at the override. The gate now performs the
+    resolution itself when ``project`` is supplied, and returns the resolved
+    id so the call site below can skip a redundant resolver pass.
+
+    Security: an unregistered project_id still gets rejected at the registry
+    check in ``wiki_add`` (Car 5); the gate's resolve-before-reject only
+    collapses the rejection envelope shape — it does NOT lower the bar.
     """
     if not (directory or "").strip():
-        return {"stored": False, "ok": False, **UnresolvedProjectError("wiki_add").payload}
-    return {}
+        if project is None:
+            # Missing identity — caller supplied neither ``directory=`` nor
+            # ``project=``. Different defect from "I passed the wrong thing";
+            # the missing-identity envelope is the right one.
+            return {
+                "stored": False,
+                "ok": False,
+                **UnresolvedProjectError("wiki_add").payload,
+            }, None
+        # PR #65 review finding #3: a non-string / empty / sentinel ``project=``
+        # is an INVALID OVERRIDE — the resolver raises and the gate surfaces
+        # the override's own ``invalid_project_override`` envelope, NOT
+        # ``unresolved_project``. Bundling "I passed a non-string" into the
+        # missing-identity branch above would tell the caller "you forgot to
+        # pass a project" when in fact they passed the wrong thing — pointing
+        # them at the wrong fix. Empty-string ``project=""`` falls into this
+        # branch by the resolver's design: ``_project_param.py`` treats it as
+        # a present-and-invalid override, not as an absent one. Sentinels
+        # (``"global"`` / ``"unresolved"`` / ``"system"``) go through the same
+        # ``_reject_sentinel`` raise.
+        try:
+            _resolved = resolve_effective_project(
+                project=project,
+                directory=None,
+                session_project=None,
+                tool="wiki_add",
+            )
+        except InvalidProjectOverrideError as exc:
+            return {
+                "stored": False,
+                "ok": False,
+                "error": "invalid_project_override",
+                "tool": "wiki_add",
+                "detail": str(exc),
+            }, None
+        else:
+            return {}, _resolved
+    return {}, None
 
 
 @observe(tier="hot", metric="tools.wiki._wiki_write_canonical")
@@ -531,7 +588,7 @@ def wiki_add(
             return {"stored": False, "reason": "invalid_unicode_surrogates"}
 
     # Directory enforcement at the MCP boundary — error dict = REJECT.
-    _decision = _check_wiki_add_context(directory)
+    _decision, _gate_resolved_id = _check_wiki_add_context(directory, project=project)
     if "error" in _decision:
         return _decision
 
@@ -544,13 +601,18 @@ def wiki_add(
     # enqueue so the wire payload can carry ``project_id`` (drainer-side
     # routing). Type-level guard runs here so a malformed ``project=``
     # surfaces as a tool error envelope, never as a raised exception.
+    # C0 (2026-08-22 train): if the gate already resolved via ``project=``
+    # alone (no ``directory``), reuse that id and skip the redundant call.
     try:
-        _effective_project_id = resolve_effective_project(
-            project=project,
-            directory=_effective_dir,
-            session_project=None,
-            tool="wiki_add",
-        )
+        if _gate_resolved_id is not None:
+            _effective_project_id = _gate_resolved_id
+        else:
+            _effective_project_id = resolve_effective_project(
+                project=project,
+                directory=_effective_dir,
+                session_project=None,
+                tool="wiki_add",
+            )
         # Car 5 (2026-08-20 train): the real registry check.
         # ``wiki_page.project_id`` had NO registry check on any writer — the
         # "backend-side" one the docstrings named had zero call sites.
@@ -644,6 +706,14 @@ def wiki_add(
 # (wiki_query bumps r["_retrieval_score"]; read dicts are handed out mutable).
 _WIKI_READ_CACHE_TTL = 120.0
 _WIKI_QUERY_CACHE_TTL = 60.0  # fuzzy search → shorter TTL acceptable
+
+# Car C9 task 70 (paired with task 71): cap the content size returned by
+# wiki_read. Below wiki_add's 65 536 ceiling (line 267, 554) so legacy
+# over-size rows still get truncated; above wiki_find_similar_pages's
+# 4000-byte search window (_shared/wiki/store.py:1239) so full-page reads
+# stay useful. Task 71 sets the WRITE cap to the same value -- both must
+# move in lockstep; if you bump one, bump the other.
+_WIKI_READ_CONTENT_CAP_BYTES = 8_192
 
 
 def _current_wiki_epoch() -> int:
@@ -989,6 +1059,25 @@ def wiki_read(
     if page is None:
         return {"error": f"Wiki page '{slug}' not found"}
     page.pop("embedding", None)
+    # Car C9 task 70: cap the returned `content` to a single-payload window
+    # (task 71 caps the WRITE side to the same value). Mirrors the v5.7.x
+    # uncapped-return class but on the single-page read path; keeps hot
+    # MCP reads under the byte budget so a 50 KB rollup doesn't drag 50 KB
+    # over the boundary. Truncation is applied BEFORE the cache put so a
+    # warm hit returns the same view as the cold hit (consistent across
+    # hits/misses); `content_truncated` lets callers re-fetch with a
+    # version-pinned path if they need the full body.
+    _content = page.get("content") or ""
+    if isinstance(_content, str):
+        # PR #65 review finding #2: cap on UTF-8 BYTES, not chars. A char slice
+        # at 8192 chars on 3-byte CJK returns 24 576 bytes — 3× the promised
+        # cap. Slice on encoded bytes, decode with errors="ignore" so a partial
+        # trailing codepoint is dropped (NOT mid-codepoint garbage).
+        _total = _content.encode("utf-8")
+        if len(_total) > _WIKI_READ_CONTENT_CAP_BYTES:
+            page["content"] = _total[:_WIKI_READ_CONTENT_CAP_BYTES].decode("utf-8", errors="ignore")
+            page["content_truncated"] = True
+            page["content_total_bytes"] = len(_total)
     # Car 2: store the resolved page. deep_copy=True → callers cannot corrupt the
     # cached value, and each hit returns its own isolated copy.
     _wiki_read_cache.put(_r_key, page)
@@ -1003,11 +1092,33 @@ def wiki_delete(slug: str) -> dict:
     # (core's SSE bus + the shared file-queue mirror) — they stay here, after the
     # forward reports the delete succeeded.
     _res = _forward_admin("wiki_delete", {"slug": slug})
-    # The only wiki tool that post-processes the result, so the only one that must
-    # know a refusal: Car J's lock carries no ``deleted``, and calling that "not
-    # found" below would swap the old 500 for a fresh lie.
-    if _res.get("refused"):
-        return _res
+    # Car C9 / task 223 + PR #65 review finding #5: wiki_delete's post-processing
+    # guard must recognise a refusal envelope without swallowing the success
+    # path. The LIVE refusal contract (yadgar/core/forward.py:115-120) keys
+    # ONLY on ``refused`` — a present ``reason`` field is not a refusal marker
+    # (it appears on audit-trail envelopes and on success-shaped responses).
+    #
+    # Two-step guard:
+    #   1. Explicit ``refused=True`` marker → always short-circuit (live
+    #      contract; covers the page-locked case task 223 closed).
+    #   2. ``refused`` key ABSENT (live defence-in-depth: a future envelope
+    #      drops the marker but keeps ``reason``) AND the envelope has no
+    #      success markers AND ``reason`` is a non-empty string → short-circuit.
+    #
+    # The second arm does NOT swallow a success envelope that happens to carry
+    # a ``reason`` field (e.g. ``{"deleted": True, "reason": "audit"}``) —
+    # the ``deleted is True`` check rejects that shape before the guard
+    # considers it a refusal.
+    if isinstance(_res, dict):
+        if _res.get("refused"):
+            return _res
+        if (
+            "refused" not in _res
+            and not _res.get("deleted")
+            and isinstance(_res.get("reason"), str)
+            and _res.get("reason")
+        ):
+            return _res
     if _res.get("deleted", False):
         _push_event({"event": "wiki_deleted", "slug": slug})
         try:
@@ -1173,13 +1284,27 @@ def wiki_check_duplicate(  # secret-gate: skip — read-only dry-run, never writ
         threshold if threshold is not None else getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
     )
 
-    candidates = _st._wiki.find_similar_wiki_pages(
-        title=title,
-        content=content,
-        threshold=effective_threshold,
-        top_k=top_k,
-        directory_context=(directory.strip().rstrip("/") or None) if directory else None,
-    )
+    try:
+        candidates = _st._wiki.find_similar_wiki_pages(
+            title=title,
+            content=content,
+            threshold=effective_threshold,
+            top_k=top_k,
+            directory_context=(directory.strip().rstrip("/") or None) if directory else None,
+        )
+    except WikiSimilarityGateUnavailable as exc:
+        # Car C10 (task 312): read-side stays fail-OPEN — a degraded embedder
+        # surfaces as an empty candidate list with a hint so the caller knows
+        # the query could not evaluate. Distinct from the WRITE gate, which
+        # fails CLOSED on the same exception.
+        return {
+            "candidates": [],
+            "threshold_used": effective_threshold,
+            "warning": (
+                f"similarity check unavailable: {exc}. The dry-run result is "
+                "indeterminate — duplicate-detection requires the embedder."
+            ),
+        }
     return {
         "candidates": candidates,
         "threshold_used": effective_threshold,
@@ -1507,6 +1632,23 @@ def wiki_append_section(
     _gate = gate_or_reject(content, tags=[])
     if _gate is not None:
         return _gate
+
+    # Car C9 task 71 (paired with task 70): cap the section body at the
+    # same 8 192-byte window the read path now uses. Without this, a single
+    # append of a 50 KB dump would have grown the row past the read cap,
+    # so the truncation marker would fire on EVERY subsequent read —
+    # the append "succeeded" but the page was made unreadable by it. The
+    # constant is shared with the read cap (line 700) so the two stay in
+    # lockstep; bump both together. Length is bytes on the UTF-8 encode
+    # to match what crosses the wire — char length would let a 4-byte
+    # payload slip past a 1 KB intended cap.
+    _content_bytes = len((content or "").encode("utf-8"))
+    if _content_bytes > _WIKI_READ_CONTENT_CAP_BYTES:
+        return {
+            "error": "section_content_too_large",
+            "content_bytes": _content_bytes,
+            "max_bytes": _WIKI_READ_CONTENT_CAP_BYTES,
+        }
 
     # R3 Car 3c: slug→page_id resolution stays core (backend has no git/cwd); the
     # section write forwards keyed by page_id.

@@ -110,7 +110,11 @@ def test_empty_directory_rejected_with_the_structured_error(monkeypatch, _unit_b
         content="content written with no directory context at all",
         category="reference",
         directory="",
-        project=TEST_PROJECT_ID,
+        # NO ``project=`` — the C0 (2026-08-22 train) wiki_add gate lets a
+        # valid ``project=`` satisfy an empty directory (MCP transport never
+        # sees directory). To prove the EMPTY-directory rejection path still
+        # fires, the call must omit BOTH — otherwise C0 lets it through.
+        project=None,
     )
     assert result.get("stored") is not True, result
     assert result.get("error") == "unresolved_project", result

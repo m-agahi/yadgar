@@ -9,12 +9,12 @@
 # Version: must track yadgar-ci base version. Bump both together.
 # Base tag is build-arg-wired so the viz image tracks yadgar-ci without a source
 # edit each bump: `podman build --build-arg BASE_TAG=5.136.0 -f Dockerfile.ci-viz .`
-ARG BASE_TAG=5.136.0
+ARG BASE_TAG=5.190.0
 FROM docker.io/openfantasy/yadgar-ci:${BASE_TAG}
 
 LABEL org.opencontainers.image.source="https://github.com/m-agahi/yadgar"
 LABEL org.opencontainers.image.description="yadgar viz CI runner — yadgar-ci + Playwright/Chromium"
-LABEL org.opencontainers.image.version="5.136.0"
+LABEL org.opencontainers.image.version="5.190.0"
 
 # Install Playwright + Chromium system deps.
 # chromium-driver: Selenium/WebDriver binary (Playwright uses it via PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH).

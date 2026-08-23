@@ -128,7 +128,8 @@ class _FakeWikiStore:
         self.dir_calls: list[tuple[str, str | None]] = []
         self.project_calls: list[tuple[str, str | None]] = []
 
-    # §25 keyed on directory: exact directory → 'global' → None.
+    # §25 keyed on directory: exact directory → 'global' (ADR-0171) → $reach IN
+    # tags (Car C9 task 272: mirror the project-side reach rung) → None.
     def read_by_directory(self, slug: str, caller_directory: str | None) -> dict | None:
         self.dir_calls.append((slug, caller_directory))
         rows = [p for p in self.pages if p["slug"] == slug]
@@ -140,6 +141,9 @@ class _FakeWikiStore:
                 return dict(p)
         for p in rows:
             if p["directory_context"] == "global":
+                return dict(p)
+        for p in rows:
+            if _REACH_TAG in (p.get("tags") or []):
                 return dict(p)
         return None
 
@@ -378,6 +382,124 @@ class TestUnscopedAndDirectoryOnlyCallsStillResolve:
 
         assert "error" not in result, f"the unscoped viz path regressed: {result!r}"
         assert result["page_id"] == 11
+
+
+# ── Car C9 task 272: directory-keyed ladder mirrors the project-keyed reach ──
+
+
+class TestDirectoryKeyedLadderReachesTagReach:
+    """The rung-3 widening on ``read_by_directory``.
+
+    The Car C7 reach tag (``GLOBAL_REACH_TAG = "global"``) is the post-ADR-0171
+    way a cross-project page announces itself. Car C9 added the same rung to the
+    directory-keyed ladder so ``wiki_append_section`` / ``wiki_restore`` /
+    ``wiki_history`` / ``wiki_diff`` / ``wiki_read_version`` — all of which
+    fall through to ``read_by_directory`` — can find the same reach rows
+    ``wiki_read`` (project-keyed) and the directory rung already caught for
+    legacy ``directory_context = 'global'`` pages.
+
+    The pre-fix RED shape: a row whose ``directory_context`` is a foreign
+    project path AND whose only reach signal is the tag (e.g. the
+    ``agent-prompt-pr-review`` row tagged ``['global', 'agent-prompt']`` under
+    ``project_id=local/aws-work`` / ``directory_context=local/aws-work``)
+    was unreachable from any tool that fell through to ``read_by_directory``.
+    The wiki browser's positional calls (``http_wiki_versioning.py``'s
+    ``api_wiki_*``) hit this rung and got "Wiki page '...' not found".
+
+    The post-fix GREEN: rung 3 catches the tag-reach row. Rungs 1+2 still
+    win first; rung 3 is additive only.
+    """
+
+    def test_tag_reach_row_resolves_when_directory_ladder_falls_through(self, wiki_tool):
+        """The measured live shape: ``directory_context`` is a foreign project
+        path; the only reach signal is the tag. Pre-fix: not found. Post-fix:
+        rung 3 catches it.
+        """
+        wtool, wire = wiki_tool
+        wire(
+            [
+                _page(
+                    "agent-prompt-pr-review",
+                    "local/aws-work",
+                    "local/aws-work",  # foreign project path; rung 1 misses
+                    page_id=55,
+                    tags=[_REACH_TAG, "agent-prompt"],  # rung 3 hits
+                )
+            ]
+        )
+
+        # Directory-keyed path: no project= on the call, so we exercise the
+        # directory-keyed ladder (the four browser endpoints do this
+        # positionally; Car C9's bug class). The pre-fix RED was
+        # "Wiki page 'agent-prompt-pr-review' not found" — same string the
+        # Car C7 project-side fix had already eliminated on the project-keyed
+        # path.
+        result = wtool.wiki_history("agent-prompt-pr-review", directory=_YADGAR_DIR)
+
+        assert "error" not in result, (
+            f"directory-keyed ladder missed a tag-reach row; rung 3 missing — got {result!r}"
+        )
+        assert result["page_id"] == 55
+
+    def test_own_directory_still_wins_over_tag_reach(self, wiki_tool):
+        """§25 precedence holds: rung 1 > rung 2 > rung 3.
+
+        A page that exists in the caller's own directory AND has the reach tag
+        must resolve to the own-directory row, not the tag-reach page. Pins
+        rung 3's status as FALLBACK, not EQUAL.
+        """
+        wtool, wire = wiki_tool
+        wire(
+            [
+                _page("shared-slug", "local/aws-work", "global", page_id=1, tags=[_REACH_TAG]),
+                _page("shared-slug", _YADGAR_PROJECT, _YADGAR_DIR, page_id=2),
+            ]
+        )
+
+        result = wtool.wiki_history("shared-slug", directory=_YADGAR_DIR)
+
+        assert result.get("page_id") == 2, (
+            f"own-directory rung must win over rung 3 (tag reach); got {result!r}"
+        )
+
+    def test_global_directory_still_wins_over_tag_reach(self, wiki_tool):
+        """§25 precedence: rung 2 ('global' directory) > rung 3 (tag reach).
+
+        A page whose ``directory_context='global'`` is the legacy reach shape;
+        tag reach is the post-ADR-0171 shape. A row that carries BOTH signals
+        resolves via rung 2, not rung 3.
+        """
+        wtool, wire = wiki_tool
+        wire(
+            [
+                # rung-2 row: directory_context='global', NO tag reach
+                _page("dupe", "local/aws-work", "global", page_id=10, tags=[]),
+                # rung-3 row: foreign directory, HAS tag reach
+                _page("dupe", "local/aws-work", "local/aws-work", page_id=11, tags=[_REACH_TAG]),
+            ]
+        )
+
+        result = wtool.wiki_history("dupe", directory=_YADGAR_DIR)
+
+        assert result.get("page_id") == 10, (
+            f"rung 2 (directory='global') must win over rung 3 (tag reach); got {result!r}"
+        )
+
+    def test_absent_page_still_reports_not_found_with_rung_3(self, wiki_tool):
+        """Rung 3 widening must NOT widen the miss to a corpus-wide match.
+
+        A page that exists nowhere — own directory, 'global' directory, AND no
+        tag — still returns the not-found envelope. Pins rung 3 as a SCOPED
+        lookup, not a "find any row anywhere" escape hatch.
+        """
+        wtool, wire = wiki_tool
+        wire([])
+
+        result = wtool.wiki_history("ghost", directory=_YADGAR_DIR)
+
+        assert result.get("error") == "Wiki page 'ghost' not found", (
+            f"rung 3 widening turned a miss into a corpus-wide match: {result!r}"
+        )
 
 
 # ── prove the change reaches all thirteen callers ────────────────────────────

@@ -376,6 +376,26 @@ def hook_prompt_recall() -> None:
         text = result.get("text", "")
         if text:
             print(text)
+        else:
+            # Car 8 task 338: the server emits {skipped, retry_after_seconds}
+            # on the 120s per-dir throttle (http.py:1856) and a bare
+            # {skipped: "session_context_recent"} on the session-context
+            # throttle (http.py:1841). Both arrive with ``text=""``. stdout
+            # must stay clean (it is injected into the prompt verbatim) so
+            # the skip reason goes to stderr — that lets a developer
+            # distinguish "throttled", "session-context-recent", and "empty
+            # recall" (and the dead-daemon case still surfaces via
+            # _log_hook_error on the None branch above). Without this, an
+            # operator debugging "no recall injected" sees a blank stdout and
+            # cannot tell whether the daemon is up, throttled, or returned
+            # zero memories.
+            skipped = result.get("skipped")
+            if skipped:
+                retry = result.get("retry_after_seconds")
+                msg = f"[yadgar prompt-recall] skipped: {skipped}"
+                if retry is not None:
+                    msg += f" (retry in {retry}s)"
+                print(msg, file=sys.stderr)
 
 
 _BLOCKED_EXEC_PATTERNS = (

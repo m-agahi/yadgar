@@ -1288,7 +1288,19 @@ def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
 # ── v5.42.0: DLQ rejection signal ───────────────────────────────────────────
 
 #: failure_reason values treated as "rejections" (must match admin_dlq._REJECTION_TAXONOMY).
-_REJECTION_REASONS: frozenset[str] = frozenset({"duplicate_detected", "policy_rejected"})
+_REJECTION_REASONS: frozenset[str] = frozenset(
+    {
+        "duplicate_detected",
+        "policy_rejected",
+        "gate_unavailable",  # PR #65 review finding #10: _compute_pending_rejections
+        # counts DLQ rows whose failure_reason is in this
+        # set. Pre-fix, gate_unavailable was missing —
+        # a fail-CLOSED drainer rejection (task 312) was
+        # silently under-counted by the vacuum gate.
+        # The two frozensets are commented as "must match"
+        # but had drifted (2 vs 6 members pre-fix).
+    }
+)
 
 
 @observe(tier="stage", metric="tools.project._compute_pending_rejections")

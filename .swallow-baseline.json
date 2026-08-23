@@ -46,20 +46,6 @@
     "log_level": "none",
     "lineno_at_baseline": 282
   },
-  "yadgar/_shared/wiki/store.py:WikiStore.find_similar_wiki_pages:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "list",
-    "log_level": "debug",
-    "lineno_at_baseline": 1272
-  },
-  "yadgar/_shared/wiki/store.py:WikiStore.find_similar_wiki_pages:R1#1": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "list",
-    "log_level": "debug",
-    "lineno_at_baseline": 1283
-  },
   "yadgar/backend/conflict_resolver/conflict_resolver.py:_fetch_similar:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
@@ -163,7 +149,7 @@
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 3134
+    "lineno_at_baseline": 3144
   },
   "yadgar/core/server/tools/audit.py:_fetch_anchored_by_prose_only_archives:R1#0": {
     "category": "pre-existing",
@@ -212,7 +198,7 @@
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "none",
-    "lineno_at_baseline": 1944
+    "lineno_at_baseline": 1951
   },
   "yadgar/core/server/tools/project.py:_fetch_cross_project_candidates_for_signals:R1#0": {
     "category": "pre-existing",

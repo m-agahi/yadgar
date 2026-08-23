@@ -485,7 +485,7 @@ class TestWikiProjectParam:
             ),
             patch(
                 "yadgar.core.server.tools.wiki._check_wiki_add_context",
-                return_value={},
+                return_value=({}, None),
             ),
         ):
             result = wiki_add(
@@ -535,7 +535,7 @@ class TestWikiProjectParam:
             ),
             patch(
                 "yadgar.core.server.tools.wiki._check_wiki_add_context",
-                return_value={},
+                return_value=({}, None),
             ),
         ):
             with patch(
@@ -561,7 +561,7 @@ class TestWikiProjectParam:
             ),
             patch(
                 "yadgar.core.server.tools.wiki._check_wiki_add_context",
-                return_value={},
+                return_value=({}, None),
             ),
         ):
             result = wiki_add(

@@ -97,13 +97,24 @@ class Delta:
 INTENTIONAL_DELTAS: dict[str, list[Delta]] = {
     "yadgar-backend.service": [
         Delta(
-            r"^(Type=(simple|notify|exec)|NotifyAccess=all|TimeoutStartSec=180)$",
+            r"^(Type=(simple|notify|exec)|NotifyAccess=all|TimeoutStartSec=(180|300))$",
             "D4 of the plan: the converged backend takes the READINESS shape. The template "
             "was Type=simple on both runtimes, under which systemd calls the unit started the "
             "instant `podman run` forks — so the core's TimeoutStartSec=120 had the backend's "
             "cold model load inside it, and ADR-0187's 'the backend is already HEALTHY' premise "
             "was false on the documented install path. 180s is flake.nix's field-proven budget "
-            "for this identical unit shape.",
+            "for this identical unit shape; task 233 (C3) bumped it to 300s so a cold 3.68 GB "
+            "pull + 40s model load does not kill the pull mid-copy and Restart=on-failure "
+            "loop the unit forever from byte zero.",
+        ),
+        Delta(
+            r"^StartLimit(Burst|IntervalSec)=\d+$",
+            "task 233 (C3): cap the restart loop so a truly stuck pull (registry down, "
+            "disk full) surfaces a `failed` state instead of looping forever in "
+            "`activating (start)`. 3 attempts in 10 minutes is a stuck pull, not a transient "
+            "flake. The template pre-dates this guard; the converged renderer adds it on the "
+            "backend only (the core's warm-up is fast and silent-restart-loops there are not "
+            "the same class of failure).",
         ),
         Delta(
             r"^    --sdnotify=healthy \\$",
@@ -405,17 +416,21 @@ def test_no_snapshot_carries_the_stamp():
 def test_backend_unit_health_start_period_is_within_measured_window():
     """Car K: --health-start-period must give the backend enough grace for
     cold model load (measured 20-40s on a fresh install) without
-    approaching the unit's TimeoutStartSec=180. Pin a floor of 45s and
-    a ceiling of 180s — below 45s and a slow first start crashes the
-    healthcheck; above 180s and the period itself outlives the start
-    budget, turning a slow start into a Restart=on-failure crashloop."""
+    approaching the unit's cold-path TimeoutStartSec. Pin a floor of 45s
+    and a ceiling of 300s — below 45s and a slow first start crashes the
+    healthcheck; above 300s and the period itself outlives the start
+    budget, turning a slow start into a Restart=on-failure crashloop.
+
+    task 233 (C3) bumped TimeoutStartSec to 300s so a cold 3.68 GB pull
+    + 40s model load fits inside the start budget; the ceiling tracks that.
+    """
     for runtime in RUNTIMES:
         text = _rendered(runtime)["yadgar-backend.service"]
         match = re.search(r"--health-start-period=(\d+)s", text)
         assert match, f"{runtime}/yadgar-backend.service: --health-start-period=Ns missing"
         seconds = int(match.group(1))
-        assert 45 <= seconds <= 180, (
+        assert 45 <= seconds <= 300, (
             f"{runtime}/yadgar-backend.service: --health-start-period={seconds}s "
-            f"is outside the 45s-180s window (measured cold-start 20-40s, "
-            f"TimeoutStartSec=180 budget)."
+            f"is outside the 45s-300s window (measured cold-start 20-40s, "
+            f"TimeoutStartSec=300 cold-path budget, task 233 / C3)."
         )
