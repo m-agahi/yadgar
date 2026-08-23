@@ -391,26 +391,69 @@ class _DLQMixin:
             title,
             exc,
         )
-        try:
-            from yadgar._shared.observability.metrics import (
-                yadgar_wiki_add_rejected_total,  # noqa: PLC0415
-            )
-
-            yadgar_wiki_add_rejected_total.labels(reason="gate_unavailable").inc()
-        except Exception:
-            pass
-        return {
-            "stored": False,
-            "reason": "gate_unavailable",
-            "error": str(exc),
-            "hint": (
+        _DLQMixin._emit_rejection_metric("gate_unavailable")
+        return _DLQMixin._build_rejection(
+            reason="gate_unavailable",
+            hint=(
                 "The similarity check could not evaluate (embedder or "
                 "vector-search unavailable). The write was rejected to "
                 "preserve the gate's contract — a duplicate would have "
                 "landed silently. Retry after the embedder recovers, or "
                 "use force=True to bypass the gate and accept the risk."
             ),
-        }
+            error=str(exc),
+        )
+
+    @staticmethod
+    def _build_rejection(reason: str, hint: str, **extras: object) -> dict:
+        """Stamp the shared DLQ rejection envelope.
+
+        PR #65 review finding #10: ``_gate_unavailable_rejection`` and
+        ``_similarity_gate_for_drainer``'s hard-mode branch each hand-built
+        the same ``{"stored": False, "reason": ..., "hint": ...}`` dict
+        with reason-specific extras (``error`` / ``suggested_update_slug`` /
+        ``candidates``). The shape could drift silently because no single
+        test pinned BOTH rejection envelopes together — the two
+        pre-existing test files assert only ``stored`` + ``reason`` + the
+        reason-specific fields, not the shared ``hint`` / envelope
+        structure.
+
+        Post-fix: this helper is the single source of truth for the envelope.
+        Both rejection sites call it; the ``hint`` and ``stored`` keys come
+        from the helper, the per-reason extras pass through ``**extras``
+        (the caller fills in ``error`` / ``candidates`` / ``suggested_update_slug``
+        / future fields without the helper needing to grow).
+
+        Adding a new rejection reason is now a one-call site change:
+        ``_build_rejection(reason="new_reason", hint="...", extra=...)``.
+        The shape cannot drift because the envelope lives in one place.
+        """
+        return {"stored": False, "reason": reason, "hint": hint, **extras}
+
+    @observe(tier="stage", metric="drainer.dlq.emit_rejection_metric")
+    @staticmethod
+    def _emit_rejection_metric(reason: str) -> None:
+        """Increment ``yadgar_wiki_add_rejected_total{reason=...}``.
+
+        PR #65 review finding #10: the inline ``try / import / labels().inc()
+        / except: pass`` boilerplate appeared at both rejection sites.
+        Extract to keep the metric label name (``reason=...``) consistent
+        across both — a future reason key changed in one place and not the
+        other would split the dashboard silently.
+
+        Failures inside the metric layer (registry uninitialised, missing
+        import) are swallowed by design — the rejection envelope is the
+        observable contract, the counter is a debugging signal. Losing a
+        metric must never lose a write-rejection.
+        """
+        try:
+            from yadgar._shared.observability.metrics import (  # noqa: PLC0415
+                yadgar_wiki_add_rejected_total,
+            )
+
+            yadgar_wiki_add_rejected_total.labels(reason=reason).inc()
+        except Exception:
+            pass
 
     @observe(tier="stage", metric="drainer.dlq.similarity_gate_for_drainer")
     def _similarity_gate_for_drainer(self, payload: dict) -> dict | None:
@@ -471,29 +514,21 @@ class _DLQMixin:
                 title,
                 [c["slug"] for c in candidates],
             )
-            try:
-                from yadgar._shared.observability.metrics import (
-                    yadgar_wiki_add_rejected_total,  # noqa: PLC0415
-                )
-
-                yadgar_wiki_add_rejected_total.labels(reason="duplicate_detected").inc()
-            except Exception:
-                pass
+            _DLQMixin._emit_rejection_metric("duplicate_detected")
             # v5.53.1: surface the best-match slug as a consolidation suggestion.
             # Candidates are sorted desc by similarity; index 0 is the closest match.
             best_slug = candidates[0]["slug"] if candidates else None
-            return {
-                "stored": False,
-                "reason": "duplicate_detected",
-                "suggested_update_slug": best_slug,
-                "candidates": candidates,
-                "hint": (
+            return _DLQMixin._build_rejection(
+                reason="duplicate_detected",
+                hint=(
                     "Near-duplicate detected. "
                     "Update the existing page instead: "
                     f"wiki_add(title=..., content=..., replace_slug={best_slug!r}). "
                     "Use force=True to bypass this gate and create a new page anyway."
                 ),
-            }
+                suggested_update_slug=best_slug,
+                candidates=candidates,
+            )
         except Exception as exc:
             logger.debug("_similarity_gate_for_drainer: gate error (non-fatal): %s", exc)
             return None
