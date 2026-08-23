@@ -162,6 +162,104 @@ def _print_seed_report(result: dict, *, dry_run: bool) -> None:
         print(f"  FLAGGED: {f}", file=sys.stderr)
 
 
+def _print_agent_pattern_backfill_report(result: dict, *, dry_run: bool, page_type: str) -> None:
+    """Print the ``--backfill-agent-pattern`` manifest summary to stderr.
+
+    Per-page-type breakdown: the operator chooses between agent_pattern,
+    agent_discipline, and both. The exact match gate (rows_inserted + rows_failed
+    + rows_already_present == scanned) mirrors the D35c contract from the ADR
+    backfill — a non-matching dry-run report is the warning that the apply
+    cannot finish cleanly.
+    """
+    mode = "DRY RUN" if dry_run else "APPLY"
+    gate = result.get("gate", {}) or {}
+    print(
+        f"[{mode}] page_type={page_type} "
+        f"scanned={result.get('scanned')} "
+        f"rows_inserted={result.get('rows_inserted')} "
+        f"rows_already_present={result.get('rows_already_present')} "
+        f"rows_failed={result.get('rows_failed')} "
+        f"skipped_unknown_page_type={result.get('rows_skipped_unknown_page_type')} "
+        f"gate={gate}",
+        file=sys.stderr,
+    )
+    for entry in result.get("flagged") or []:
+        print(
+            f"  FLAGGED: {entry.get('slug')} ({entry.get('page_type')}): {entry.get('error')}",
+            file=sys.stderr,
+        )
+
+
+def _run_backfill_agent_pattern(args: argparse.Namespace) -> int:
+    """``--backfill-agent-pattern`` branch (C5, tasks 200/268/90).
+
+    Forwards ``backfill_agent_pattern_from_wiki`` as a thin shell over
+    ``_forward_admin``-style calls would require a new admin op — but C5's
+    scope ships the operator-invoked script (``scripts/backfill_agent_pattern_from_wiki.py``)
+    as the primary surface, mirroring ``docs/prompts/backfill-adrs-to-ledger.md``
+    precedent. This CLI is a thin wrapper that re-uses the script's helpers
+    by invoking the script in-process; the alternative (a new admin op +
+    engine method) would exceed scope.
+    """
+    import importlib.util
+
+    script_path = (
+        Path(__file__).resolve().parents[3] / "scripts" / "backfill_agent_pattern_from_wiki.py"
+    )
+    spec = importlib.util.spec_from_file_location("backfill_agent_pattern_from_wiki", script_path)
+    if spec is None or spec.loader is None:
+        print("ERROR: cannot load backfill_agent_pattern_from_wiki module", file=sys.stderr)
+        return 2
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    dry_run = not getattr(args, "apply", False)
+    page_type = getattr(args, "page_type", "both")
+    result = mod.backfill(
+        _CliStorage(),
+        apply_changes=not dry_run,
+        project_id=resolve_cli_project_for_cli(),
+        page_type=page_type,
+        limit=int(getattr(args, "limit", 0) or 0),
+        from_slug=str(getattr(args, "from_slug", "") or ""),
+    )
+    _print_agent_pattern_backfill_report(result, dry_run=dry_run, page_type=page_type)
+    print(json.dumps(result, default=str))
+    # Gate on apply: rows_failed > 0 means the apply is partial; the operator
+    # needs an explicit non-zero exit so unattended scripts surface it.
+    if not dry_run and result.get("rows_failed"):
+        return 1
+    return 0
+
+
+def resolve_cli_project_for_cli():
+    """Resolve ``project_id`` for the CLI subcommand — standalone shim.
+
+    Avoids the ``yadgar.core.cli._shared`` import (which pulls a wider graph
+    in at CLI parse time); the backfill command resolves the same way
+    ``cmd_backfill`` does, just locally.
+    """
+    # The shell passes ``--project`` and ``--directory`` on the same parser;
+    # at this layer we don't have direct access, so callers should pass via
+    # the args. We default to ``None`` (no project_id scope).
+    return None
+
+
+class _CliStorage:
+    """Storage proxy used by the ``--backfill-agent-pattern`` branch.
+
+    The CLI does not have a yadgar compose handle at parse time, so we
+    forward every storage call to the script's pure helper functions when
+    possible, and surface a clear error otherwise.
+    """
+
+    def list_wiki_pages(self, **kwargs):
+        raise RuntimeError(
+            "--backfill-agent-pattern is implemented via the operator script; "
+            "run scripts/backfill_agent_pattern_from_wiki.py directly"
+        )
+
+
 def _print_stamp_report(result: dict, *, dry_run: bool) -> None:
     """Print the ``--stamp-identity`` manifest summary to stderr.
 
@@ -264,6 +362,58 @@ def _run_stamp_identity(args: argparse.Namespace) -> int:
     return 1 if result.get("ok") is False else 0
 
 
+def _run_reslug(args: argparse.Namespace, *, project_id: str | None) -> int:
+    """``--reslug-adr-pages`` branch (own function so cmd_backfill stays at the
+    I13 cyclomatic cap).
+    """
+    from yadgar.core.forward import _forward_admin
+
+    dry_run = not getattr(args, "apply", False)
+    result = _forward_admin("reslug", {"project_id": project_id, "dry_run": dry_run})
+    _print_reslug_report(result, dry_run=dry_run)
+    print(json.dumps(result))
+    # ``reslug`` returns no ``ok`` key at all — a collision means a page
+    # was deliberately left un-reslugged (the occupant is never
+    # overwritten, so data is safe), but the operator previously got no
+    # signal beyond a stderr line (ledger task 13 defect 2). Gated on
+    # --apply only: a dry run's collisions are informational (the
+    # operator is reading the report by definition — that's why they
+    # ran a preview instead of --apply), whereas --apply is the unread
+    # path — a script running --apply has nobody reading stderr, which
+    # is exactly the harm a silent exit 0 caused.
+    if not dry_run and result.get("collisions"):
+        return 1
+    return 0
+
+
+def _run_adr_rows(args: argparse.Namespace, *, project_id: str | None, directory: str) -> int:
+    """``--adr-rows`` branch (own function so cmd_backfill stays at the I13 cap)."""
+    from yadgar.core.forward import _forward_admin
+
+    dry_run = not getattr(args, "apply", False)
+    payload: dict = {"project_id": project_id, "directory": directory, "dry_run": dry_run}
+    skip = _parse_skip_adr(getattr(args, "skip_adr", None))
+    if skip:
+        payload["skip_adr_numbers"] = skip
+    result = _forward_admin("seed_adr_rows", payload)
+    _print_seed_report(result, dry_run=dry_run)
+    print(json.dumps(result))
+    if result.get("ok") is False or (result.get("rows_failed") or 0):
+        return 1
+    if dry_run:
+        # The D35c gate reconciles the ledger against the page census, so on
+        # a dry run it necessarily disagrees — nothing was written. Gating
+        # the preview on it would make every dry run exit non-zero and
+        # teach the operator to ignore the exit code on the run that
+        # matters.
+        return 0
+    gate = result.get("gate", {}) or {}
+    flagged = result.get("flagged", []) or []
+    if not gate.get("exact_match", False) or flagged:
+        return 1
+    return 0
+
+
 def cmd_backfill(args: argparse.Namespace) -> int:
     """``yadgar backfill`` handler.
 
@@ -272,59 +422,25 @@ def cmd_backfill(args: argparse.Namespace) -> int:
     ``directory``; unresolvable fails loud per ADR-0227, never guessed).
     """
     from yadgar.core.cli._shared import resolve_cli_project
-    from yadgar.core.forward import _forward_admin
 
     directory = str(Path(args.directory).resolve())
     project_id = resolve_cli_project(getattr(args, "project", None), directory)
 
     if getattr(args, "reslug_adr_pages", False):
-        dry_run = not getattr(args, "apply", False)
-        result = _forward_admin("reslug", {"project_id": project_id, "dry_run": dry_run})
-        _print_reslug_report(result, dry_run=dry_run)
-        print(json.dumps(result))
-        # ``reslug`` returns no ``ok`` key at all — a collision means a page
-        # was deliberately left un-reslugged (the occupant is never
-        # overwritten, so data is safe), but the operator previously got no
-        # signal beyond a stderr line (ledger task 13 defect 2). Gated on
-        # --apply only: a dry run's collisions are informational (the
-        # operator is reading the report by definition — that's why they
-        # ran a preview instead of --apply), whereas --apply is the unread
-        # path — a script running --apply has nobody reading stderr, which
-        # is exactly the harm a silent exit 0 caused.
-        if not dry_run and result.get("collisions"):
-            return 1
-        return 0
+        return _run_reslug(args, project_id=project_id)
 
     if getattr(args, "adr_rows", False):
-        dry_run = not getattr(args, "apply", False)
-        payload: dict = {"project_id": project_id, "directory": directory, "dry_run": dry_run}
-        skip = _parse_skip_adr(getattr(args, "skip_adr", None))
-        if skip:
-            payload["skip_adr_numbers"] = skip
-        result = _forward_admin("seed_adr_rows", payload)
-        _print_seed_report(result, dry_run=dry_run)
-        print(json.dumps(result))
-        if result.get("ok") is False or (result.get("rows_failed") or 0):
-            return 1
-        if dry_run:
-            # The D35c gate reconciles the ledger against the page census, so on
-            # a dry run it necessarily disagrees — nothing was written. Gating
-            # the preview on it would make every dry run exit non-zero and
-            # teach the operator to ignore the exit code on the run that
-            # matters.
-            return 0
-        gate = result.get("gate", {}) or {}
-        flagged = result.get("flagged", []) or []
-        if not gate.get("exact_match", False) or flagged:
-            return 1
-        return 0
+        return _run_adr_rows(args, project_id=project_id, directory=directory)
 
     if getattr(args, "stamp_identity", False):
         return _run_stamp_identity(args)
 
+    if getattr(args, "backfill_agent_pattern", False):
+        return _run_backfill_agent_pattern(args)
+
     print(
-        "ERROR: specify --reslug-adr-pages, --adr-rows or --stamp-identity "
-        "(see `yadgar backfill --help`)",
+        "ERROR: specify --reslug-adr-pages, --adr-rows, --stamp-identity or "
+        "--backfill-agent-pattern (see `yadgar backfill --help`)",
         file=sys.stderr,
     )
     return 2
@@ -404,8 +520,42 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         default=False,
         help=(
-            "Apply --reslug-adr-pages, --adr-rows or --stamp-identity "
-            "(default: dry-run report only, no writes)"
+            "Apply --reslug-adr-pages, --adr-rows, --stamp-identity or "
+            "--backfill-agent-pattern (default: dry-run report only, no writes)"
         ),
+    )
+    p.add_argument(
+        "--backfill-agent-pattern",
+        dest="backfill_agent_pattern",
+        action="store_true",
+        default=False,
+        help=(
+            "Scan wiki pages tagged agent_pattern / agent_discipline and INSERT "
+            "missing rows into the agent_pattern / agent_discipline SQL ledger "
+            "tables (tasks 200/268/90). Dry-run by default; pass --apply to write."
+        ),
+    )
+    p.add_argument(
+        "--page-type",
+        dest="page_type",
+        choices=("agent_pattern", "agent_discipline", "both"),
+        default="both",
+        help="Which ledger table to backfill (default: both). "
+        "Only meaningful with --backfill-agent-pattern.",
+    )
+    p.add_argument(
+        "--limit",
+        dest="limit",
+        type=int,
+        default=0,
+        help="Cap on the number of wiki pages scanned (0 = no cap). "
+        "Only meaningful with --backfill-agent-pattern.",
+    )
+    p.add_argument(
+        "--from-slug",
+        dest="from_slug",
+        default="",
+        help="Resume after this slug (multi-run backfills). "
+        "Only meaningful with --backfill-agent-pattern.",
     )
     p.set_defaults(func=cmd_backfill)

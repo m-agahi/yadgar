@@ -136,8 +136,8 @@ yadgar/_shared/wiki/wiki_meta.py:85:PLC0415
 yadgar/_shared/wiki/wiki_meta.py:87:PLC0415
 yadgar/_shared/wiki/wiki_meta.py:125:PLC0415
 yadgar/_shared/write_exec/validate.py:140:PLC0415
-yadgar/backend/admin_exec/__init__.py:259:PLC0415
-yadgar/backend/admin_exec/__init__.py:266:PLC0415
+yadgar/backend/admin_exec/__init__.py:260:PLC0415
+yadgar/backend/admin_exec/__init__.py:267:PLC0415
 yadgar/backend/admin_exec/adr_retype.py:71:PLC0415
 yadgar/backend/admin_exec/adr_seed.py:477:PLC0415
 yadgar/backend/admin_exec/adr_seed.py:861:PLC0415
@@ -159,7 +159,7 @@ yadgar/backend/admin_exec/invariants_cross_engine.py:467:PLC0415
 yadgar/backend/admin_exec/invariants_cross_engine.py:649:PLC0415
 yadgar/backend/admin_exec/invariants_cross_engine.py:650:PLC0415
 yadgar/backend/admin_exec/ledger.py:95:PLC0415
-yadgar/backend/admin_exec/ledger.py:624:ARG001
+yadgar/backend/admin_exec/ledger.py:646:ARG001
 yadgar/backend/admin_exec/memory.py:53:PLC0415
 yadgar/backend/admin_exec/memory.py:285:PLC0415
 yadgar/backend/admin_exec/memory.py:289:PLC0415

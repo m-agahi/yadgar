@@ -180,6 +180,7 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "list_adr_rows": ledger.list_adr_rows,
     "get_adr_row": ledger.get_adr_row,
     "list_agent_prompt_rows": ledger.list_agent_prompt_rows,
+    "list_agent_discipline_rows": ledger.list_agent_discipline_rows,
     # Car I additions: uses-DESC list, single-row lookup, composes reads,
     # ledger-row upserts for ``agent_prompt_save`` / ``discipline_save``,
     # and ``uses`` increment over the table (D40).
