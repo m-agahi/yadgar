@@ -1052,10 +1052,16 @@ def wiki_read(
     # hits/misses); `content_truncated` lets callers re-fetch with a
     # version-pinned path if they need the full body.
     _content = page.get("content") or ""
-    if isinstance(_content, str) and len(_content.encode("utf-8")) > _WIKI_READ_CONTENT_CAP_BYTES:
-        page["content"] = _content[:_WIKI_READ_CONTENT_CAP_BYTES]
-        page["content_truncated"] = True
-        page["content_total_bytes"] = len(_content.encode("utf-8"))
+    if isinstance(_content, str):
+        # PR #65 review finding #2: cap on UTF-8 BYTES, not chars. A char slice
+        # at 8192 chars on 3-byte CJK returns 24 576 bytes — 3× the promised
+        # cap. Slice on encoded bytes, decode with errors="ignore" so a partial
+        # trailing codepoint is dropped (NOT mid-codepoint garbage).
+        _total = _content.encode("utf-8")
+        if len(_total) > _WIKI_READ_CONTENT_CAP_BYTES:
+            page["content"] = _total[:_WIKI_READ_CONTENT_CAP_BYTES].decode("utf-8", errors="ignore")
+            page["content_truncated"] = True
+            page["content_total_bytes"] = len(_total)
     # Car 2: store the resolved page. deep_copy=True → callers cannot corrupt the
     # cached value, and each hit returns its own isolated copy.
     _wiki_read_cache.put(_r_key, page)

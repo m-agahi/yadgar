@@ -148,15 +148,14 @@ class TestLargePageTruncates:
 
     def test_truncation_decision_uses_utf8_byte_length(self, wiki_tool):
         """Pin the byte-vs-char choice: 4-byte emoji push the byte length over
-        the cap even when the character count is small. The cap decision MUST
-        compare on ``encode('utf-8')`` (what the cache byte budget tracks),
-        even though the slice itself is char-based (a byte-slice would tear a
-        UTF-8 codepoint in half).
+        the cap even when the character count is small. The cap is enforced
+        on UTF-8 BYTES (what the cache byte budget tracks), NOT on chars.
 
-        Concretely: 3000 emoji = 12 000 utf-8 bytes (4 bytes each), 3000 chars.
-        Char length 3000 (under 8 KB cap) → char-slice is a no-op. Byte length
-        12 000 (over) → marker fires; ``content_total_bytes`` reports the
-        uncut byte length so the caller knows how much was elided.
+        Concretely: 3000 emoji = 12 000 utf-8 bytes (4 bytes each). Byte
+        length 12 000 (over the 8 192-byte cap) → marker fires. The
+        byte-slice lands mid-codepoint; ``errors="ignore"`` drops the
+        partial trailing codepoint cleanly. ``content_total_bytes`` reports
+        the uncut byte length so the caller knows how much was elided.
         """
         wtool, wire = wiki_tool
         # 3000 emoji = 12 000 utf-8 bytes (4 bytes each), 3000 chars.
@@ -172,15 +171,20 @@ class TestLargePageTruncates:
         assert result["content_total_bytes"] == 12_000, (
             f"content_total_bytes must report the uncut byte length; got {result['content_total_bytes']!r}"
         )
-        # Char-based slice is a no-op when char count < cap. Content returned
-        # whole; a byte-slice would have torn the last emoji codepoint.
-        assert result["content"] == big, (
-            "char-based slice must NOT tear UTF-8 codepoints; a byte-slice on "
-            "4-byte chars would land mid-codepoint"
+        # Byte-slice enforces the cap on BYTES, not chars. 8192 bytes / 4
+        # bytes-per-emoji = 2048 complete codepoints; the trailing partial
+        # codepoint is dropped via errors="ignore" — NEVER mid-codepoint
+        # bytes that decode to U+FFFD.
+        assert result["content"] == "🚀" * 2048, (
+            f"4-byte cap is on BYTES; expected 2048 complete emoji "
+            f"(=8192 bytes), got {len(result['content'])} chars"
         )
-        assert len(result["content"].encode("utf-8")) == 12_000, (
-            "byte length must still be over the cap so the next read can fetch the rest"
+        assert len(result["content"].encode("utf-8")) == 8_192, (
+            f"returned content must be exactly at the byte cap; got "
+            f"{len(result['content'].encode('utf-8'))} bytes"
         )
+        # Defensive: errors="ignore" must not produce garbage.
+        result["content"].encode("utf-8").decode("utf-8")  # raises if invalid
 
     def test_warm_hit_returns_same_truncated_view(self, wiki_tool):
         """Consistency: a warm cache hit returns the truncated view too.
@@ -220,3 +224,41 @@ class TestLargePageTruncates:
             f"empty content must not be marked truncated; got {result.get('content_truncated')!r}"
         )
         assert result.get("content") == ""
+
+    def test_over_cap_cjk_slice_is_byte_limited_not_char_limited(self, wiki_tool):
+        """Pin the BYTE slice (not char slice) for multi-byte content over the cap.
+
+        PR #65 review finding #2: the cap guarded on
+        ``len(_content.encode("utf-8")) > _WIKI_READ_CONTENT_CAP_BYTES`` but
+        sliced on ``_content[:_WIKI_READ_CONTENT_CAP_BYTES]``. For CJK content
+        where each char is 3 UTF-8 bytes, 8192 chars = 24 576 bytes — 3× the
+        promised cap. The byte-slice MUST land on a codepoint boundary, so
+        encode once, slice bytes, decode with errors="ignore".
+
+        10 000 CJK chars = 30 000 utf-8 bytes. Char slice at 8192 returns 8192
+        CJK chars = 24 576 bytes — over the 8192-byte cap (the leak). The
+        fix: byte slice at 8192 = up-to 2731 complete CJK chars = ≤ 8192 bytes.
+        """
+        wtool, wire = wiki_tool
+        # 10 000 CJK chars × 3 bytes/char = 30 000 utf-8 bytes — well over cap.
+        big = "中" * 10_000
+        assert len(big.encode("utf-8")) == 30_000, "test setup invariant"
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, "/home/max/quinyx/flux", content=big)])
+
+        result = wtool.wiki_read(_FLUX_SLUG, project=_FLUX_PROJECT)
+
+        assert result.get("content_truncated") is True, (
+            f"over-cap CJK content must trip the cap decision; got {result!r}"
+        )
+        # The CRITICAL pin: returned content's BYTE length must be <= cap.
+        # Pre-fix this fails — 8192 CJK chars = 24 576 bytes.
+        assert len(result["content"].encode("utf-8")) <= 8_192, (
+            f"truncation must be on utf-8 BYTES, not chars; got "
+            f"{len(result['content'].encode('utf-8'))} bytes for "
+            f"{len(result['content'])} CJK chars (cap = 8192 bytes)"
+        )
+        # total_bytes reports the uncut size (defect class requires it).
+        assert result["content_total_bytes"] == 30_000
+        # Decoded content must be valid UTF-8 (errors="ignore" dropped a
+        # partial trailing codepoint, NOT mid-codepoint garbage).
+        result["content"].encode("utf-8").decode("utf-8")  # raises if invalid
