@@ -198,6 +198,7 @@ tool-surface  yadgar/core/server/tools/project.py          # project_brief is ac
 tool-surface  yadgar/core/server/tools/blocks.py           # block_* are accept_project_param and STILL directory-keyed (memory_block)
 tool-surface  yadgar/core/server/tools/audit.py            # audit_anchors is accept_project_param and STILL directory-keyed
 tool-surface  yadgar/core/server/tools/admin_other.py      # get_rules and recent_memories are accept_project_param and STILL directory-keyed
+tool-surface  yadgar/core/server/tools/_recent_memories.py   # Car C7b: recent_memories extracted from admin_other.py to keep that module under the I13 1000-LOC cap; same tool-surface accept_project_param class as admin_other — STILL directory-keyed (block 197 from the same source extraction)
 tool-surface  yadgar/core/server/tools/runtime_config.py   # config_* are accept_project_param; runtime_config is plan §6's knob train
 tool-surface  yadgar/core/server/tools/task.py             # forwards directory= into the still-keyed admin payloads
 tool-surface  benchmarks/run_eval.py                       # drives recall() over the tool surface that still accepts directory
