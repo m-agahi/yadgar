@@ -72,13 +72,64 @@ def test_readiness_for_defaults_cold_budget_to_budget():
 
 
 def test_readiness_cold_budget_default_falls_back_on_construction():
-    """Direct Readiness(cold_budget=0) — the dataclass sentinel — must
-    default to budget via __post_init__ so legacy callers do not regress."""
+    """Readiness() with no cold_budget argument must default to budget via
+    __post_init__ so legacy callers that don't pass cold_budget at all do
+    not regress."""
     ready = Readiness(
         type_directives=(),
         budget=120,
     )
     assert ready.cold_budget == 120
+
+
+def test_readiness_explicit_cold_budget_zero_stays_zero():
+    """PR #65 review finding #7: explicit ``cold_budget=0`` MUST stay 0.
+
+    Pre-fix: the dataclass sentinel ``cold_budget: int = 0`` plus the
+    ``__post_init__`` rewrite (``if self.cold_budget == 0: object.__setattr__(
+    self, "cold_budget", self.budget)``) silently turns a deliberate
+    zero-second "fail-fast" budget into the full warm budget — the
+    ``cold_budget`` field then reads as ``budget``, the unit's
+    TimeoutStartSec is the warm value, and the silent-restart-loop class
+    returns on the unit the caller explicitly asked to fail-fast on.
+
+    Post-fix: ``cold_budget`` is ``int | None = None``. Defaulted callers
+    fall through to ``budget`` via ``__post_init__`` (legacy compatibility);
+    explicit ``cold_budget=0`` (a real value, not a default) survives the
+    constructor untouched.
+
+    Pin: an explicit 0 is a real value and must not be coerced to budget.
+    """
+    ready = Readiness(
+        type_directives=(),
+        budget=120,
+        cold_budget=0,  # deliberate "fail fast" — must stay 0
+    )
+    assert ready.cold_budget == 0, (
+        f"explicit cold_budget=0 is a deliberate fail-fast value, not a "
+        f"sentinel for 'use budget'. The pre-fix __post_init__ rewrites it "
+        f"to {ready.cold_budget} which silently widens the start window on "
+        f"the very unit the caller asked to fail-fast on (PR #65 review "
+        f"finding #7)."
+    )
+
+
+def test_readiness_default_cold_budget_matches_budget_when_omitted():
+    """OMITTING cold_budget (no argument at all) still defaults to budget.
+
+    Pin the OPPOSITE direction: the sentinel rewrite is only fired for the
+    dataclass default value. Callers that pass cold_budget explicitly — even
+    explicitly to 0 — get exactly what they asked for. Legacy callers that
+    omit cold_budget entirely get budget unchanged.
+    """
+    ready = Readiness(
+        type_directives=(),
+        budget=180,
+    )
+    assert ready.cold_budget == 180, (
+        "legacy callers that omit cold_budget must still get budget "
+        "unchanged — no behaviour change for the warm-path core unit."
+    )
 
 
 # ── build_backend_unit: cold-path budget + StartLimit ────────────────────────

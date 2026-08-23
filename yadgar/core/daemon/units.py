@@ -240,15 +240,24 @@ class Readiness:
     budget: int
     # Cold-path start ceiling (image pull + warm-up). The warm gate stays
     # inside ``budget``; the unit as a whole gets ``cold_budget`` from systemd.
-    # Defaults to ``budget`` so callers that don't override it get the prior
-    # behaviour unchanged (task 233, C3).
-    cold_budget: int = 0
+    # PR #65 review finding #7: the prior sentinel ``int = 0`` plus the
+    # ``__post_init__`` rewrite coerced an explicit ``cold_budget=0``
+    # (deliberate fail-fast) to ``budget`` — a silent widening of the start
+    # window on the very unit the caller asked to fail-fast on. The new
+    # ``int | None = None`` sentinel uses Python's own default mechanism;
+    # ``__post_init__`` only rewrites the DEFAULT (None) to ``budget``,
+    # leaving explicit values (including 0) untouched. Legacy callers that
+    # omit ``cold_budget`` entirely get ``budget`` unchanged (no behaviour
+    # change for the warm-path core unit — task 233 / C3).
+    cold_budget: int | None = None
     sdnotify: str = ""
     gate: str | None = None
 
     def __post_init__(self) -> None:
-        # frozen dataclass: object.__setattr__ the defaulted field if zero.
-        if self.cold_budget == 0:
+        # frozen dataclass: only rewrite the DEFAULT (None), never an
+        # explicit value. A passed-in 0 stays 0 (fail-fast); a passed-in
+        # 300 stays 300 (cold path).
+        if self.cold_budget is None:
             object.__setattr__(self, "cold_budget", self.budget)
 
 
