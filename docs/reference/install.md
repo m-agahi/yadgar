@@ -7,7 +7,12 @@ Three install paths. All end with `yadgar-setup` to complete configuration.
 ## 1. pipx (recommended)
 
 ```bash
-pipx install yadgar
+# Yadgar needs Python 3.14+ (CPython features used by the package). Stock
+# Debian 13 / Ubuntu LTS ship only 3.11/3.12; pin a 3.14 interpreter via
+# uv before pipx so its venv targets 3.14.
+uv tool install uv                              # one-time: uv itself if missing
+uv python install 3.14                         # one-time: 3.14 interpreter
+pipx install --python "$(uv python find 3.14)" yadgar
 yadgar-setup
 ```
 
@@ -15,8 +20,10 @@ Installs the CLI in an isolated virtualenv. `yadgar-setup` is on PATH automatica
 
 For non-interactive (CI/automation):
 ```bash
-pipx install yadgar
-yadgar-setup --noninteractive
+uv tool install uv                              # one-time: uv itself if missing
+uv python install 3.14                         # one-time: 3.14 interpreter
+pipx install --python "$(uv python find 3.14)" yadgar
+INSTALL_NONINTERACTIVE=1 yadgar-setup --noninteractive
 ```
 
 ---

@@ -14,6 +14,12 @@
 #   --no-code-graph    Skip the codebase-memory-mcp install AND persist
 #                      code_graph.enabled=false (both halves, coherently).
 #
+# Environment:
+#   INSTALL_NONINTERACTIVE=1   Equivalent to passing --noninteractive. Exported
+#                              to child install scripts (bootstrap_secrets.sh
+#                              etc.) so credential prompts don't try to read
+#                              from a non-TTY stdin (task 64, car C3).
+#
 # Exit codes:
 #   0  success
 #   1  setup failure (message printed to stderr)
@@ -429,7 +435,8 @@ _step_bootstrap_secrets() {
     scripts_dir="$(_locate_setup_scripts)"
 
     if [ -n "$scripts_dir" ] && [ -f "$scripts_dir/bootstrap_secrets.sh" ]; then
-        run_sh "$scripts_dir/bootstrap_secrets.sh"
+        INSTALL_NONINTERACTIVE="$NONINTERACTIVE" \
+            run_sh "$scripts_dir/bootstrap_secrets.sh"
     else
         warn "bootstrap_secrets.sh not found in scripts dir; skipping (run manually)"
         info "Manual: set ANTHROPIC_API_KEY in ~/.config/yadgar/secrets.env"
@@ -844,12 +851,29 @@ _probe_host_cli() {
 # Read-only: `yadgar verify-hooks` REPORTS divergence and never rewrites a hook
 # another tool installed (nix hand-rolls this wiring with jq; reconciling that
 # is a nix-repo change, not something this probe may do behind the user's back).
+#
+# Host-coupling escape hatch (car C3 / task 324, bug-bag-2 train 2026-08-23):
+# the test suite needs to exercise the dispatch arm without depending on
+# whichever yadgar build is on PATH or what the live ~/.claude/settings.json
+# contains. Two env overrides let the test inject its own:
+#   YADGAR_TEST_YADGAR_BIN       path to a yadgar shim the test controls
+#   YADGAR_TEST_SETTINGS_JSON    path to a settings.json fixture
+# Both default unset; production callers see no behaviour change.
 _probe_managed_hooks() {
-    if ! command -v yadgar > /dev/null 2>&1; then
-        warn "yadgar CLI not on PATH - cannot verify managed-hook wiring"
+    local yadgar_bin="${YADGAR_TEST_YADGAR_BIN:-yadgar}"
+    # Absolute path → check it exists directly; bare name → resolve through PATH.
+    # The override is meant to let tests point at a shim that lives outside
+    # PATH, so do not gate it on `command -v`.
+    if [[ "$yadgar_bin" == */* ]]; then
+        [ -x "$yadgar_bin" ] || {
+            warn "YADGAR_TEST_YADGAR_BIN=$yadgar_bin is not executable - cannot verify managed-hook wiring"
+            return
+        }
+    elif ! command -v "$yadgar_bin" > /dev/null 2>&1; then
+        warn "yadgar CLI not on PATH (YADGAR_TEST_YADGAR_BIN=$yadgar_bin) - cannot verify managed-hook wiring"
         return
     fi
-    if ! yadgar verify-hooks --help > /dev/null 2>&1; then
+    if ! "$yadgar_bin" verify-hooks --help > /dev/null 2>&1; then
         warn "this yadgar has no 'verify-hooks' - upgrade to check hook wiring"
         return
     fi
@@ -857,7 +881,11 @@ _probe_managed_hooks() {
     # design, and that must print the report rather than abort the doctor run.
     local report rc
     rc=0
-    report=$(yadgar verify-hooks 2>&1) || rc=$?
+    if [ -n "${YADGAR_TEST_SETTINGS_JSON:-}" ]; then
+        report=$("$yadgar_bin" verify-hooks --settings "$YADGAR_TEST_SETTINGS_JSON" 2>&1) || rc=$?
+    else
+        report=$("$yadgar_bin" verify-hooks 2>&1) || rc=$?
+    fi
     if [ "$rc" -eq 0 ]; then
         info "OK: every yadgar-managed hook is wired"
     else
