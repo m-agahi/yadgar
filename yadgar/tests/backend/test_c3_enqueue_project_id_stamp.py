@@ -179,7 +179,15 @@ class TestCoreWikiAddStampsUnconditionally:
                 "yadgar.core.server.tools.wiki._get_file_queue",
                 return_value=type("FQ", (), {"enqueue": staticmethod(fake_enqueue)})(),
             ),
-            patch("yadgar.core.server.tools.wiki._check_wiki_add_context", return_value={}),
+            patch(
+                "yadgar.core.server.tools.wiki._check_wiki_add_context",
+                # C0 (2026-08-22 train): the gate signature changed from
+                # ``-> dict`` to ``-> tuple[dict, str | None]`` so the call
+                # site can reuse the resolved project_id. Stub returns the
+                # permissive (``{}, None``) tuple — the directory is supplied
+                # so the gate never falls into its empty-directory branch.
+                return_value=({}, None),
+            ),
             patch(
                 "yadgar.core.server.tools.wiki.resolve_effective_project",
                 # C13: ``tool=`` is C5's error label — the double takes it so a
