@@ -239,6 +239,13 @@ class TestStale:
 
 
 class TestDrift:
+    """The drift ratchet. Car C2 (2026-08-23, task 282) tightened
+    DRIFT_TOLERANCE from 0.20 to 0.0 — any growth above the recorded
+    value is a re-review trigger. The previous 20% multiplier let a
+    single re-baseline inflate an entry by +20% in one shot, which is
+    the silent-pass class the ratchet was supposed to prevent.
+    """
+
     def test_matching_metric_no_drift(self):
         entry = _entry(metric="cyclomatic", value=20)
         v = _violation(metric="cyclomatic", actual=20)
@@ -252,20 +259,35 @@ class TestDrift:
         errors = check_drift([entry], [v])
         assert not errors, "Improvement should not trigger drift"
 
-    def test_growth_within_tolerance_no_error(self):
-        """Growth <= 20% → within tolerance, no error."""
+    def test_growth_of_zero_no_drift(self):
+        """Growth = 0 (current == recorded) → no drift."""
         entry = _entry(metric="cyclomatic", value=20)
-        # 20% of 20 = 4, so 24 is exactly at tolerance
-        v = _violation(metric="cyclomatic", actual=24)
+        v = _violation(metric="cyclomatic", actual=20)
         errors = check_drift([entry], [v])
-        assert not errors, "Growth within tolerance should not trigger drift"
+        assert not errors, "Zero growth should not drift"
+
+    def test_growth_of_one_triggers_drift(self):
+        """ANY growth (even +1) triggers drift under the tightened tolerance.
+
+        This is the regression test for the 0.20 → 0.0 tightening: a +5
+        growth on a recorded value of 100 used to pass silently (5% <
+        20%); under the new tolerance it MUST flag.
+        """
+        entry = _entry(metric="cyclomatic", value=20)
+        v = _violation(metric="cyclomatic", actual=21)  # +1, was within 20%
+        errors = check_drift([entry], [v])
+        assert errors, (
+            "any growth must trigger drift under the tightened 0.0 tolerance; "
+            "the previous 20% multiplier was the silent-pass class task 282 named"
+        )
+        assert "DRIFT" in errors[0]
 
     def test_growth_beyond_tolerance_triggers_drift(self):
-        """Growth > 20% → drift error."""
+        """Growth > 0% → drift error (matches the +1 case at scale)."""
         entry = _entry(metric="cyclomatic", value=20)
-        v = _violation(metric="cyclomatic", actual=25)  # 25% growth > 20%
+        v = _violation(metric="cyclomatic", actual=25)  # 25% growth
         errors = check_drift([entry], [v])
-        assert errors, "Growth > 20% should trigger drift"
+        assert errors, "Growth should trigger drift"
         assert "DRIFT" in errors[0]
 
     def test_large_growth_triggers_drift(self):

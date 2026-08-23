@@ -288,6 +288,20 @@ repos:
         # One ruff subprocess.
         always_run: true
 
+      - id: check-ruff-noqa-liveness
+        name: Check inline `# noqa` liveness (no inert-rule or bare code)
+        language: system
+        entry: python scripts/check_ruff_noqa_liveness.py
+        pass_filenames: false
+        # always_run: the read set is pyproject.toml's [tool.ruff.lint]
+        # select PLUS every .py file under yadgar/ — a pure pyproject.toml
+        # change that adds a rule to select with zero staged code is exactly
+        # the input that must make this fail (the previously-inert noqa
+        # sites become inert-flag violations). C2 (2026-08-23) found 309
+        # `# noqa: BLE001` sites silently suppressing a rule ruff does not
+        # run for this project; this hook closes that gap. No subprocess.
+        always_run: true
+
       - id: check-model-id-liveness
         name: Check model-id liveness (config default ↔ image bake ↔ code literal)
         language: system
