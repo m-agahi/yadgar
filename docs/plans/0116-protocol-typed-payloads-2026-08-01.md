@@ -76,7 +76,7 @@ part of this plan. It is the plan.
 
 ### 1.1 The three severe defects the audit named
 
-`docs/plans/bug-cause-audit-203-defects-2026-08-01.md` classified 203 shipped defects.
+`docs/plans/archive/bug-cause-audit-203-defects-2026-08-01.md` classified 203 shipped defects.
 IN-PROCESS-COUPLING is 12 rows / 5.9% — small, but it holds the three the user's complaint
 describes, and all three are untyped dict/positional passing across a module seam.
 
