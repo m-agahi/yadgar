@@ -42,7 +42,7 @@
   "yadgar/core/server/http.py:616": {
     "rationale": "This is core's own /health readiness handler (_probe_dependency) probing a dependency (db or embed) to build the readiness payload. It IS the readiness implementation, not a caller needing liveness."
   },
-  "yadgar/core/server/http.py:749": {
-    "rationale": "Car F (task #61) version-handshake helper _handshake_block reads the `version` and `versions_compatible` fields from the backend's /health response to surface a deploy-window warning to the operator. /health/live does not carry those fields — readiness is the only probe that returns the version payload. The handshake must NOT silently downgrade to liveness when liveness says 'process up' but readiness would say 'wire incompatible'. Task 67 / C4 refactors that extracted the anti-flap helper shifted the probe site from :739 to :752 to :749 across car activity — the URL and the consumer are unchanged."
+  "yadgar/core/server/http.py:762": {
+    "rationale": "Car F (task #61) version-handshake helper _handshake_block reads the `version` and `versions_compatible` fields from the backend's /health response to surface a deploy-window warning to the operator. /health/live does not carry those fields — readiness is the only probe that returns the version payload. The handshake must NOT silently downgrade to liveness when liveness says 'process up' but readiness would say 'wire incompatible'. The probe site moved from :739 → :752 → :749 across car activity (C4 task 67's _apply_readiness_antiflap extraction added adjacent lines, then this train's #6/#9 fixes added a few more comment/docstring lines), landing at :762. URL and consumer are unchanged from the prior :749 entry — same dependency, same consumer, same fields read. Car 0091 governance: this entry replaces the stale :749 one."
   }
 }

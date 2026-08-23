@@ -625,30 +625,43 @@ def _uptime_seconds() -> float:
 
 @observe(tier="stage")
 def _apply_readiness_antiflap(payload: dict, db_ok: bool | None, embed_ok: bool | None) -> None:
-    """Stamp ``status`` / ``db`` / ``embed`` from one counter snapshot (C4 task 67).
+    """Stamp ``status`` from the anti-flap counter; per-field db/embed are RAW probe values.
 
-    Updates the global consecutive-failure counter, then mutates the payload so
-    every field uses the same snapshot. While the counter is below the
-    threshold the verdict is "still ok" and the per-probe booleans stay True;
-    on the Nth consecutive miss the verdict AND the field flip together. A
-    single success resets everything in one call. ``None`` (no probe configured)
-    stays out of the payload — same shape as before.
+    Pre-PR-#65-review: the function anti-flapped ``status`` AND ``db`` / ``embed``
+    together via ``bool(probe) or readiness_healthy``. PR #65 review finding #6
+    splits the two: ``status`` keeps the anti-flap grace (it drives P0 503 —
+    O2 / O1 satisfied; a single transient probe miss must not self-kill the
+    core), BUT per-field ``db`` / ``embed`` are diagnostic and MUST surface the
+    real probe outcome so an operator looking at ``curl /health`` can tell
+    whether the backend is actually down vs. the probe is just anti-flapping.
+
+    Counter still drives the ``status`` field (the only signal that matters
+    to the P0 healthcheck). Counter still resets on a single probe success.
+    ``None`` (no probe configured) stays out of the payload — same shape as
+    before for callers that only check ``status``.
     """
     global _readiness_consecutive_failures
-    threshold = _readiness_fail_threshold()
     dependency_down = db_ok is False or embed_ok is False
     if dependency_down:
+        # PR #65 review finding #9: threshold is only meaningful on the
+        # failure path (the verdict-flip branch). The healthy path is the
+        # common path; calling ``_readiness_fail_threshold`` on every probe
+        # is a hot-path cost with no behavioural benefit — it resolves env
+        # / settings / YAML / default each time. Move the lookup inside the
+        # failure branch so a healthy probe skips it entirely.
+        threshold = _readiness_fail_threshold()
         _readiness_consecutive_failures += 1
         payload["readiness_consecutive_failures"] = _readiness_consecutive_failures
         if _readiness_consecutive_failures >= threshold:
             payload["status"] = "degraded"
     else:
         _readiness_consecutive_failures = 0
-    readiness_healthy = _readiness_consecutive_failures < threshold
+    # PR #65 review finding #6: per-field truth, not anti-flapped. The
+    # diagnostic that tells the operator WHY status still says ok.
     if db_ok is not None:
-        payload["db"] = bool(db_ok) or readiness_healthy
+        payload["db"] = bool(db_ok)
     if embed_ok is not None:
-        payload["embed"] = bool(embed_ok) or readiness_healthy
+        payload["embed"] = bool(embed_ok)
 
 
 @observe(tier="stage")
