@@ -1949,8 +1949,6 @@ Fixes the v5.90.0 offload crash-loop (RCA #74): with offload ON, freeing the loo
 #### Changed
 - **Operational control endpoints moved off the debug gate** (ADR-0013, #60/#65): `/api/control/action/{consolidate,reembed,vacuum}` and `/api/control/restart/*` no longer require `YADGAR_DEBUG_APIS_ENABLED` — they are protected by bearer auth (401 without a token), mirroring the ADR-0011 config carve-out. Only `/api/logs/*` stays debug-gated (dev introspection, not a UI button). The three actions are carved out by exact path (not the whole `/api/control/action/` prefix), so any future action defaults back to gated. `vacuum` (2-5 min daemon downtime) now requires a `{"confirm":"vacuum"}` body server-side (400 otherwise) plus a UI confirm dialog; `consolidate`/`reembed` stay one-click; `restart` keeps its typed-name confirm. Each successful action + restart emits one audit log line. The config editor also now renders booleans consistently lowercase (`true`/`false`) — the POST-save path previously echoed Python's capitalized `str(True)`. (`auth_middleware.py`, `server/routes/control.py`, `static/control.js`)
 
-## [Unreleased]
-
 ### COMET enrichment retired to dormant (ADR-0004)
 
 #### Changed

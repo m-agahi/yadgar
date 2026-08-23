@@ -286,15 +286,20 @@ class TestLauncherKnob:
             monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(fake_runtime))
             monkeypatch.setenv("YADGAR_BACKEND_IMAGE", "example.invalid/backend:test")
 
-            result = _has_side_build_launcher()
+            ok, detail = _has_side_build_launcher()
 
         err = capsys.readouterr().err
-        assert result is False, "a pinned-but-unresolvable host mode must SKIP, not fall through"
+        assert ok is False, "a pinned-but-unresolvable host mode must SKIP, not fall through"
         assert "VACUUM_SIDE_LAUNCHER=host" in err, (
             f"the SKIP reason must name the pin; stderr was:\n{err}"
         )
         assert "container" not in err.lower() or "fall" in err.lower(), (
             f"the message must not suggest the container branch silently ran; stderr:\n{err}"
+        )
+        # task 65 / C1: the returned detail IS the source of truth that gets
+        # propagated into the consolidation-log row, so it must carry the pin.
+        assert "VACUUM_SIDE_LAUNCHER=host" in detail, (
+            f"the returned detail must carry the pin (consolidation row mirror); detail={detail!r}"
         )
 
     def test_default_knob_is_auto_and_preserves_host_first(self, monkeypatch):

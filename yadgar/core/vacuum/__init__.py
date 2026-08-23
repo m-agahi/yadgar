@@ -1420,8 +1420,11 @@ def _has_surreal_binary() -> bool:
 
 
 @observe(tier="stage")
-def _has_side_build_launcher() -> bool:
-    """Return True iff Phase 3 can obtain a SurrealDB to build the side DB with.
+def _has_side_build_launcher() -> tuple[bool, str]:
+    """Return ``(ok, detail)`` — True iff Phase 3 can obtain a SurrealDB to
+    build the side DB with; on False, ``detail`` is a SKIP reason that names
+    the actual cause (the operator's pin if one is set, or the auto fallback
+    when both branches failed un-pinned).
 
     Car 0092 (full fix).  Two ways, tried in that order when
     ``VACUUM_SIDE_LAUNCHER=auto`` (the default):
@@ -1442,6 +1445,15 @@ def _has_side_build_launcher() -> bool:
     unresolvable — an operator who read ADR-0186 and pinned a branch
     explicitly needs the log to say the PIN is what's blocking the run, not
     have it silently swapped for the other branch.
+
+    Task 65 (C1): the returned ``detail`` on False is what the outer
+    :func:`_preflight_skip_reason` propagates into the consolidation-log row
+    and into stderr.  Before this car the inner function printed the
+    pin-specific reason to stderr, but the outer function overwrote it with
+    the generic auto-fallback message — the consolidation log contradicted
+    the operator's pin.  ``detail`` is now the single source of truth for
+    the SKIP reason text, returned to the caller so both stderr and the
+    consolidation row agree.
     """
     from yadgar.core.vacuum.launcher import (  # noqa: PLC0415 — avoid import cycle
         _launcher_mode,
@@ -1453,16 +1465,16 @@ def _has_side_build_launcher() -> bool:
 
     if mode == "host":
         if _has_surreal_binary():
-            return True
-        print(
-            "[vacuum] SKIP: VACUUM_SIDE_LAUNCHER=host is pinned but no usable "
-            "`surreal` binary resolved (checked YADGAR_SURREAL_BIN, PATH, and "
-            "the known install-layout candidate dirs) — refusing to silently "
-            "fall through to the container branch. Fix the pin, or unset it to "
-            "use auto.",
-            file=sys.stderr,
+            return True, ""
+        detail = (
+            "VACUUM_SIDE_LAUNCHER=host is pinned but no usable `surreal` binary "
+            "resolved (checked YADGAR_SURREAL_BIN, PATH, and the known "
+            "install-layout candidate dirs) — refusing to silently fall "
+            "through to the container branch. Fix the pin, or unset it to use "
+            "auto."
         )
-        return False
+        print(f"[vacuum] SKIP: {detail}", file=sys.stderr)
+        return False, detail
 
     if mode == "container":
         if backend_image_present():
@@ -1472,37 +1484,37 @@ def _has_side_build_launcher() -> bool:
                 "container",
                 flush=True,
             )
-            return True
-        print(
-            "[vacuum] SKIP: VACUUM_SIDE_LAUNCHER=container is pinned but the "
-            f"{backend_image()} image is not in the local container-runtime "
-            "store — refusing to silently fall through to a host binary. Pull "
-            "the image (`yadgar daemon pull`), or unset the pin to use auto.",
-            file=sys.stderr,
+            return True, ""
+        detail = (
+            f"VACUUM_SIDE_LAUNCHER=container is pinned but the {backend_image()} "
+            "image is not in the local container-runtime store — refusing to "
+            "silently fall through to a host binary. Pull the image (`yadgar "
+            "daemon pull`), or unset the pin to use auto."
         )
-        return False
+        print(f"[vacuum] SKIP: {detail}", file=sys.stderr)
+        return False, detail
 
     # auto (default)
     if _has_surreal_binary():
-        return True
+        return True, ""
     if backend_image_present():
         print(
             f"[vacuum] preflight: no host `surreal` — the side build will run in a "
             f"one-shot {backend_image()} container",
             flush=True,
         )
-        return True
-    print(
-        "[vacuum] SKIP: no usable `surreal` — none on the host PATH (or the "
-        "known install-layout candidate dirs), and the "
+        return True, ""
+    detail = (
+        "no usable `surreal` — none on the host PATH (or the known "
+        "install-layout candidate dirs), and the "
         f"{backend_image()} image (which carries one) is not in the local "
         "container-runtime store. The Phase 3 side-path build needs one or the "
         "other. Skipping this run (no destructive op performed: no export, no "
         "service stop, no snapshot). Install surreal on the host PATH, set "
-        "YADGAR_SURREAL_BIN, or pull the backend image (`yadgar daemon pull`).",
-        file=sys.stderr,
+        "YADGAR_SURREAL_BIN, or pull the backend image (`yadgar daemon pull`)."
     )
-    return False
+    print(f"[vacuum] SKIP: {detail}", file=sys.stderr)
+    return False, detail
 
 
 @observe(tier="stage")
@@ -1565,12 +1577,12 @@ def _preflight_skip_reason(yadgar_home: Path, before_bytes: int) -> tuple[str, s
     reading either the log or the ``consolidation_log`` row has to be able to
     tell them apart.
     """
-    if not _has_side_build_launcher():
-        return (
-            _SKIP_NO_SURREAL,
-            "no usable `surreal` — none on the host PATH and no backend image "
-            "locally, so the Phase 3 side build cannot be started either way",
-        )
+    has_launcher, launcher_detail = _has_side_build_launcher()
+    if not has_launcher:
+        # Task 65 (C1): propagate the launcher-specific detail so the
+        # consolidation-log row matches the stderr message and names the
+        # operator's pin when one is set, instead of the generic auto-fallback.
+        return _SKIP_NO_SURREAL, launcher_detail
     if not _has_free_space(yadgar_home, before_bytes):
         return (
             _SKIP_LOW_DISK,
