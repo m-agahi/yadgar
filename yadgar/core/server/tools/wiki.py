@@ -114,12 +114,26 @@ def _check_wiki_add_context(
     collapses the rejection envelope shape — it does NOT lower the bar.
     """
     if not (directory or "").strip():
-        if project is None or not isinstance(project, str) or not project.strip():
+        if project is None:
+            # Missing identity — caller supplied neither ``directory=`` nor
+            # ``project=``. Different defect from "I passed the wrong thing";
+            # the missing-identity envelope is the right one.
             return {
                 "stored": False,
                 "ok": False,
                 **UnresolvedProjectError("wiki_add").payload,
             }, None
+        # PR #65 review finding #3: a non-string / empty / sentinel ``project=``
+        # is an INVALID OVERRIDE — the resolver raises and the gate surfaces
+        # the override's own ``invalid_project_override`` envelope, NOT
+        # ``unresolved_project``. Bundling "I passed a non-string" into the
+        # missing-identity branch above would tell the caller "you forgot to
+        # pass a project" when in fact they passed the wrong thing — pointing
+        # them at the wrong fix. Empty-string ``project=""`` falls into this
+        # branch by the resolver's design: ``_project_param.py`` treats it as
+        # a present-and-invalid override, not as an absent one. Sentinels
+        # (``"global"`` / ``"unresolved"`` / ``"system"``) go through the same
+        # ``_reject_sentinel`` raise.
         try:
             _resolved = resolve_effective_project(
                 project=project,
@@ -127,11 +141,13 @@ def _check_wiki_add_context(
                 session_project=None,
                 tool="wiki_add",
             )
-        except InvalidProjectOverrideError:
+        except InvalidProjectOverrideError as exc:
             return {
                 "stored": False,
                 "ok": False,
-                **UnresolvedProjectError("wiki_add").payload,
+                "error": "invalid_project_override",
+                "tool": "wiki_add",
+                "detail": str(exc),
             }, None
         else:
             return {}, _resolved

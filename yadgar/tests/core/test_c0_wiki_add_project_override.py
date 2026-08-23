@@ -95,23 +95,86 @@ class TestDirectoryGateStillRejectsWithoutProject:
 
     def test_sentinel_project_still_rejects_at_resolution(self) -> None:
         """A sentinel ``project=`` must NOT be accepted by the gate — the
-        resolver raises ``InvalidProjectOverrideError`` and we surface it as
-        ``unresolved_project`` (the documented envelope)."""
+        resolver raises ``InvalidProjectOverrideError`` and the gate surfaces
+        it as ``invalid_project_override`` (finding #3: the override's own
+        envelope, not the unrelated ``unresolved_project`` envelope)."""
         from yadgar.core.server.tools.wiki import _check_wiki_add_context
 
         for sentinel in ("global", "unresolved", "system"):
             decision, resolved = _check_wiki_add_context(None, project=sentinel)
-            assert decision.get("error") == "unresolved_project", (
-                f"sentinel {sentinel!r} must reject"
+            assert decision.get("error") == "invalid_project_override", (
+                f"sentinel {sentinel!r} must reject as invalid override; got {decision!r}"
             )
             assert resolved is None
 
     def test_empty_string_project_rejects(self) -> None:
-        """An empty-string ``project=`` is treated as no override — still rejects."""
+        """Empty-string ``project=""`` is "treated as a present-but-invalid
+        override" — the resolver raises ``InvalidProjectOverrideError`` and
+        the gate surfaces it as ``invalid_project_override`` (the override's
+        own envelope, not the missing-identity envelope). Pre-split, this
+        path was bundled with ``project=None`` into the early reject at
+        wiki.py:117; splitting the predicate (PR #65 review finding #3)
+        routes empty-string through the override branch.
+        """
         from yadgar.core.server.tools.wiki import _check_wiki_add_context
 
         decision, resolved = _check_wiki_add_context(None, project="")
-        assert decision.get("error") == "unresolved_project"
+        assert decision.get("error") == "invalid_project_override", (
+            f"empty-string project='' must reject as an invalid override (the "
+            f"callers DID pass it as project=, just with no characters); "
+            f"got {decision!r}"
+        )
+        assert resolved is None
+
+    # Whitespace-only ``project='   '`` is NOT covered by finding #3: the
+    # resolver returns it literally (line 183: ``if not project:`` is False
+    # for "   "), so the gate accepts it as an identity and hands it off to
+    # the registry check. Whitespace handling would be a SEPARATE finding
+    # about ``project_id_value_error`` (which also uses bare ``not value``,
+    # not ``not value.strip()``) — outside the scope of finding #3.
+
+
+class TestInvalidProjectOverrideTypeReportsTypeError:
+    """PR #65 review finding #3: ``project=123`` (non-string) raises
+    ``InvalidProjectOverrideError`` at the resolver; the gate's
+    ``except InvalidProjectOverrideError`` at wiki.py:130 currently catches
+    it AND remaps to ``{"error": "unresolved_project"}``. That's wrong: a
+    caller passing a non-string is a TYPE defect, not an "unresolved
+    project" defect. The caller reads "you forgot to pass a project" and
+    might add the wrong fix.
+
+    The fix: when the override raises, return the override envelope
+    directly (its own error_code), do NOT remap to unresolved_project.
+    """
+
+    def test_non_string_project_does_NOT_report_unresolved_project(self) -> None:
+        from yadgar.core.server.tools.wiki import _check_wiki_add_context
+
+        decision, resolved = _check_wiki_add_context(None, project=123)  # int, not str
+        # Pre-fix bug: assert below passes because the code remaps to
+        # unresolved_project. Post-fix: the error name reflects the actual
+        # defect (invalid override / type / caller's project= wasn't a string).
+        assert decision.get("error") != "unresolved_project", (
+            f"non-string project= must NOT be reported as unresolved_project; "
+            f"a missing project and a wrong-type project are different defects; "
+            f"got {decision!r}"
+        )
+        assert resolved is None
+
+    def test_empty_string_project_does_NOT_report_unresolved_project(self) -> None:
+        """Empty-string ``project=""`` is a present-and-invalid override — the
+        resolver raises ``InvalidProjectOverrideError`` and the gate surfaces
+        ``invalid_project_override``. Same logic as ``project=123``: the
+        override raised, so the override's own envelope wins.
+        """
+        from yadgar.core.server.tools.wiki import _check_wiki_add_context
+
+        decision, resolved = _check_wiki_add_context(None, project="")
+        assert decision.get("error") != "unresolved_project", (
+            f"empty-string project='' must NOT be reported as "
+            f"unresolved_project; it's an invalid override, not a missing "
+            f"identity; got {decision!r}"
+        )
         assert resolved is None
 
 
