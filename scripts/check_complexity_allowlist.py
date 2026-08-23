@@ -53,7 +53,13 @@ from complexity_config import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 MIN_RATIONALE_LEN = 40  # characters; "pre-existing; scheduled for v5.55 wave N refactor" ≈ 51
-DRIFT_TOLERANCE = 0.20  # 20% growth above recorded value triggers re-review
+# Tightened 2026-08-23 by car C2 (task 282, bug-bag-2 train). The previous
+# 0.20 multiplier let a single re-baseline inflate any entry by +20% in
+# one shot — http.py recorded 3300, was 3496, check_complexity exited 0
+# even though file_loc grew +5.9% because 5.9 < 20. The drift ratchet is
+# supposed to catch growth, not absorb it; 0.0 means "any growth above
+# the recorded value is a re-review trigger".
+DRIFT_TOLERANCE = 0.0
 
 # Metric keys used in the allowlist (canonical vocabulary)
 _FN_METRICS = {"cyclomatic", "fn_loc", "params", "nesting"}
