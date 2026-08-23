@@ -91,6 +91,12 @@ class StatsData:
     stale: int = 0
     archived: int = 0
     protected: int = 0
+    # Pre-re-key rows that still hold the filesystem PATH in
+    # directory_context and have ``project_id IS NULL``. They are real
+    # rows in the corpus but invisible to the project_id-keyed counts
+    # above -- surfaced as a separate bucket so callers can size the
+    # remaining migration work (PR #65 review finding #4, car C14).
+    legacy_unbackfilled: int = 0
     # Types
     episodic: int = 0
     semantic: int = 0
@@ -241,6 +247,26 @@ def _query_core_counts(db, project, sd):
             "SELECT count() FROM memory WHERE project_id = $p AND is_protected = true GROUP ALL",
         )
     )
+    # Pre-re-key rows: directory_context holds the path, project_id is NULL.
+    # These rows are invisible to the project_id-keyed counts above because
+    # they lack project_id by construction -- count them on directory_context
+    # INSTEAD, but only when a scope is in play (no scope = no legacy bucket).
+    if project is not None:
+        sd.legacy_unbackfilled = _count(
+            _q(
+                db,
+                project,
+                # Same skip-scope shape as the others: a bare global SELECT with
+                # the directory_context clause would either bind $p uninitialized
+                # or run a global predicate the helper doesn't support. Mirror the
+                # pair by passing the scoped SQL and a global fallback that
+                # returns the empty set (legacy rows ARE the scoped ones).
+                "SELECT count() FROM memory WHERE project_id IS NULL "
+                "AND directory_context = $p GROUP ALL",
+                "SELECT count() FROM memory WHERE project_id IS NULL "
+                "AND directory_context = $p GROUP ALL",
+            )
+        )
 
 
 def _query_type_breakdown(db, project, sd):
@@ -572,6 +598,7 @@ def _build_json_output(sd):
         "stale": sd.stale,
         "archived": sd.archived,
         "protected": sd.protected,
+        "legacy_unbackfilled": sd.legacy_unbackfilled,
         "episodic": sd.episodic,
         "semantic": sd.semantic,
         "compression": {"raw": sd.comp_0, "gist": sd.comp_1, "tag": sd.comp_2},
