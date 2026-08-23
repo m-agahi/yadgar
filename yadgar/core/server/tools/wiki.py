@@ -1092,16 +1092,33 @@ def wiki_delete(slug: str) -> dict:
     # (core's SSE bus + the shared file-queue mirror) — they stay here, after the
     # forward reports the delete succeeded.
     _res = _forward_admin("wiki_delete", {"slug": slug})
-    # Car C9 / task 223: the only wiki tool whose post-processing must recognise a
-    # refusal — PR #54 fixed the same shape on wiki_set_mutability, but a 500
-    # reading as a dead backend is the defect this car closes. The guard keys on
-    # either the explicit ``refused`` marker (live contract,
-    # yadgar/core/forward.py:115-120) OR a present ``reason`` field
-    # (defence-in-depth in case a future envelope drops the marker), and exits
-    # BEFORE the "deleted" branch — which would otherwise mis-classify a locked
-    # page as "not found".
-    if isinstance(_res, dict) and (_res.get("refused") or _res.get("reason")):
-        return _res
+    # Car C9 / task 223 + PR #65 review finding #5: wiki_delete's post-processing
+    # guard must recognise a refusal envelope without swallowing the success
+    # path. The LIVE refusal contract (yadgar/core/forward.py:115-120) keys
+    # ONLY on ``refused`` — a present ``reason`` field is not a refusal marker
+    # (it appears on audit-trail envelopes and on success-shaped responses).
+    #
+    # Two-step guard:
+    #   1. Explicit ``refused=True`` marker → always short-circuit (live
+    #      contract; covers the page-locked case task 223 closed).
+    #   2. ``refused`` key ABSENT (live defence-in-depth: a future envelope
+    #      drops the marker but keeps ``reason``) AND the envelope has no
+    #      success markers AND ``reason`` is a non-empty string → short-circuit.
+    #
+    # The second arm does NOT swallow a success envelope that happens to carry
+    # a ``reason`` field (e.g. ``{"deleted": True, "reason": "audit"}``) —
+    # the ``deleted is True`` check rejects that shape before the guard
+    # considers it a refusal.
+    if isinstance(_res, dict):
+        if _res.get("refused"):
+            return _res
+        if (
+            "refused" not in _res
+            and not _res.get("deleted")
+            and isinstance(_res.get("reason"), str)
+            and _res.get("reason")
+        ):
+            return _res
     if _res.get("deleted", False):
         _push_event({"event": "wiki_deleted", "slug": slug})
         try:

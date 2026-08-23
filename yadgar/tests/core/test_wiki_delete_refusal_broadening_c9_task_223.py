@@ -282,3 +282,50 @@ class TestNarrowContractRegressionGuard:
         )
         assert pusher.events == []
         assert fq.deleted_slugs == []
+
+
+# ── success-with-reason must NOT be mis-classified as a refusal ──────────────
+
+
+class TestSuccessWithReasonNotARefusal:
+    def test_deleted_envelope_with_reason_does_not_short_circuit(self, wiki_tool):
+        """PR #65 review finding #5: the broadened guard keys on
+        ``refused`` OR ``reason``. A hypothetical future success envelope
+        that carries ``deleted=True`` alongside a benign ``reason``
+        string (e.g. an audit-trail field, a stale-reap note) must not
+        be mis-classified as a refusal — the SSE push + file-queue
+        cleanup must fire.
+
+        The refusal contract (refusal.py:107) keys ONLY on ``refused``.
+        Short-circuiting on a stray ``reason`` field in a success
+        envelope invents a contract the live code does not speak.
+        """
+        wtool, wire = wiki_tool
+        envelope = {
+            "ok": True,
+            "deleted": True,
+            "slug": _FREE_SLUG,
+            # Hypothetical future audit field — NOT a refusal marker.
+            # The live refusal contract keys on ``refused`` only; a
+            # success envelope carrying a ``reason`` field must be
+            # processed as a success, not short-circuited.
+            "reason": "auto-stale-cleanup",
+        }
+        _forwarder, pusher, fq = wire(envelope)
+
+        result = wtool.wiki_delete(_FREE_SLUG)
+
+        assert result == {"deleted": True, "slug": _FREE_SLUG}, (
+            f"success-with-reason envelope must NOT be mis-classified; got {result!r}. "
+            f"If you see the audit-shaped envelope echoed back here, the guard "
+            f"short-circuited on a stray 'reason' field on the success path."
+        )
+        assert len(pusher.events) == 1, (
+            f"success-with-reason must push ONE wiki_deleted SSE event; got {pusher.events!r}. "
+            f"A short-circuit would suppress this."
+        )
+        assert pusher.events[0] == {"event": "wiki_deleted", "slug": _FREE_SLUG}
+        assert fq.deleted_slugs == [_FREE_SLUG], (
+            f"success-with-reason must cleanup the file-queue mirror; got {fq.deleted_slugs!r}. "
+            f"A short-circuit would suppress this too."
+        )
