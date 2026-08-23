@@ -3,7 +3,7 @@
   "_comment": "Car F (task #61). Bounds the core<->backend version window. Informational only — the `versions_compatible` field in /health reports the result but nothing gates on it; a peer outside these ranges is still talked to. Major.minor only — a patch release never breaks the wire format. Bump the *_max when the next wire-incompatible change is committed; bump *_min when the oldest still-supported release is retired.",
   "core": {
     "min": "5.170.0",
-    "max": "5.190.1"
+    "max": "5.190.2"
   },
   "backend": {
     "min": "5.65.0",
