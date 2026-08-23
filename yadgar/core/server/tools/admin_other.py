@@ -1,12 +1,15 @@
 """Remaining admin MCP tools: forget, validate_memory, consolidate_now, reembed_all,
-recent_memories, memory_stats, add_rule, get_rules, memory_get, wiki_get, memory_update,
-wiki_update."""
+memory_stats, add_rule, get_rules, memory_get, wiki_get, memory_update,
+wiki_update.
+
+recent_memories was extracted to ``_recent_memories.py`` (Car C7b) to keep this
+module under the 1000-LOC I13 cap; it is re-exported below so existing
+imports keep working.
+"""
 
 from __future__ import annotations
 
 import logging
-import re
-from datetime import UTC, datetime, timedelta
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.config import get_settings
@@ -20,7 +23,9 @@ from yadgar._shared.wiki.wiki_meta import PAGE_TYPE_AGENT_DISCIPLINE
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
 from yadgar.core.server._helpers import _q_with_timeout
-from yadgar.core.server.tools._project_param import accept_project_param, project_id_value_error
+from yadgar.core.server.tools import _memory_update_filter as _memory_update_filter_mod
+from yadgar.core.server.tools._project_param import accept_project_param
+from yadgar.core.server.tools._recent_memories import recent_memories  # noqa: F401 — re-export
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +118,7 @@ def consolidate_now(mode: str = "light") -> dict:
     # Forward to /consolidate; the core orchestrator runs the graph-layout
     # precompute (full) + invariant-check + auto-vacuum tail around the result.
     # Forward-only: backend unreachable → RuntimeError/HTTP error surfaces.
-    from yadgar.core.consolidation import run_consolidate_now  # noqa: PLC0415
+    from yadgar.core.consolidation import run_consolidate_now
 
     stats = run_consolidate_now(mode)
 
@@ -122,7 +127,7 @@ def consolidate_now(mode: str = "light") -> dict:
         cfg = get_settings()
         if cfg.ANCHOR_AUDIT_CONSOLIDATION_ENABLED:
             try:
-                from yadgar.core.server.tools.audit import _run_anchor_audit_pass  # noqa: PLC0415
+                from yadgar.core.server.tools.audit import _run_anchor_audit_pass
 
                 anchor_pass_stats = _run_anchor_audit_pass(_get_storage())
                 stats["anchor_audit_pass"] = anchor_pass_stats
@@ -144,109 +149,6 @@ def reembed_all() -> dict:
     # /admin with a generous timeout so a large backlog does not trip the default
     # 30s HTTP timeout.
     return _forward_admin("reembed_all", {}, timeout_s=1800.0)
-
-
-# ── Duration parser for recent_memories ───────────────────────────────────
-
-_DURATION_RE = re.compile(r"^(\d+)(m|h|d)$", re.IGNORECASE)
-
-_UNIT_SECONDS: dict[str, int] = {"m": 60, "h": 3600, "d": 86400}
-
-
-@observe(tier="hot", metric="tools.admin_other._parse_since_duration")
-def _parse_since_duration(since: str) -> str:
-    """Convert a duration string ('24h', '7d', '30m') or ISO datetime to cutoff ISO string.
-
-    Duration strings: <N>(m|h|d) where m=minutes, h=hours, d=days.
-    ISO strings are returned as-is after validation.
-    Returns an ISO-8601 UTC string.
-    """
-    m = _DURATION_RE.match(since.strip())
-    if m:
-        amount = int(m.group(1))
-        unit = m.group(2).lower()
-        delta = timedelta(seconds=amount * _UNIT_SECONDS[unit])
-        return (datetime.now(UTC) - delta).isoformat()
-    # Try parsing as ISO datetime
-    try:
-        dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-        return dt.isoformat()
-    except ValueError:
-        # Fall back to 24h if unparseable
-        logger.warning("recent_memories: could not parse since=%r, defaulting to 24h", since)
-        return (datetime.now(UTC) - timedelta(hours=24)).isoformat()
-
-
-@_tool()
-def recent_memories(
-    limit: int = 10,
-    since: str = "24h",
-    directory: str = "",
-    *,
-    project: str | None = None,
-) -> dict:
-    """Return recently stored memories, newest first, without classifier dependency.
-
-    Use for quick temporal context ("what did I memorize in the last 24h?") or to
-    recover what the session wrote before a context compaction. For semantic search
-    use recall(); for fetching a single memory by ID use memory_get().
-
-    Args:
-        limit: Max memories to return (default 10, capped at 100).
-        since: How far back to look. Duration string ('24h', '7d', '30m') or
-               ISO-8601 UTC datetime. Default '24h'.
-        directory: Restrict to this project directory. Pass 'global' or omit
-                   to search across all directories.
-
-    Returns:
-        {
-            "memories": [
-                {id, created_at, content (≤300 chars), tags, store_type,
-                 heat, is_protected, directory_context}
-            ],
-            "count": <int>,
-            "since": <ISO cutoff>,
-            "directory": <str>,
-        }
-    """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
-    storage = _get_storage()
-    effective_limit = min(max(1, limit), 100)
-    effective_dir = directory.strip() if directory else ""
-    since_iso = _parse_since_duration(since)
-
-    rows = storage.get_recent_memories_since(
-        since=since_iso,
-        limit=effective_limit,
-        directory=effective_dir if effective_dir else None,
-    )
-
-    memories = []
-    for row in rows:
-        content = row.get("content") or ""
-        if len(content) > 300:
-            content = content[:297] + "..."
-        memories.append(
-            {
-                "id": row.get("id"),
-                "created_at": row.get("created_at"),
-                "content": content,
-                "tags": row.get("tags") or [],
-                "store_type": row.get("store_type"),
-                "heat": row.get("heat"),
-                "is_protected": row.get("is_protected", False),
-                "directory_context": row.get("directory_context"),
-            }
-        )
-
-    return {
-        "memories": memories,
-        "count": len(memories),
-        "since": since_iso,
-        "directory": effective_dir or "global",
-    }
 
 
 @observe(tier="stage", metric="tools.admin_other._ms_per_table_stats")
@@ -313,7 +215,7 @@ def _ms_histogram_p95(hist) -> float:
 def _ms_queue_depth() -> int:
     """Return current queue depth from Prometheus gauge (memory_stats helper)."""
     try:
-        from yadgar._shared.observability.metrics import yadgar_queue_depth  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import yadgar_queue_depth
 
         gauge_samples = list(yadgar_queue_depth.collect()[0].samples)
         for s in gauge_samples:
@@ -394,7 +296,7 @@ def memory_stats() -> dict:
 
     # P11 — metrics summary block (I8: backpressure must be observable via memory_stats)
     try:
-        from yadgar._shared.observability.metrics import (  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import (
             yadgar_drainer_lag_ms,
             yadgar_recall_duration_ms,
         )
@@ -541,18 +443,16 @@ def memory_update(memory_id: int, fields: dict) -> dict:
     registry-checked — by ``project_id_value_error``, which states why.
     Raises ValueError on a disallowed key or a project_id naming no project.
     """
-    unknown = set(fields) - _MEMORY_UPDATE_ALLOWED
-    if unknown:
-        raise ValueError(
-            f"Disallowed field(s) for memory_update: {sorted(unknown)}. "
-            f"Allowed: {sorted(_MEMORY_UPDATE_ALLOWED)}"
-        )
-    if "project_id" in fields and (err := project_id_value_error(fields["project_id"])):
-        raise ValueError(err)
+
+    # Look the helper up at call time (not at module import) so test-side
+    # ``patch.object(_memory_update_filter_mod, '_filter_memory_update_fields',
+    # spy)`` intercepts the call. A module-level ``from ... import`` would bind
+    # the symbol once at import and the patch would miss.
+    filtered = _memory_update_filter_mod._filter_memory_update_fields(fields)
     # R3 Car 3b: allowed-key validation stays core (raises before any state touch);
     # the DB write (update_memory_fields) forwards to backend /admin. The empty-
     # fields read short-circuit is handled by the backend impl too.
-    return _forward_admin("memory_update", {"memory_id": int(memory_id), "fields": fields})
+    return _forward_admin("memory_update", {"memory_id": int(memory_id), "fields": filtered})
 
 
 # Server-side de-anchor defaults so callers never hardcode the magic numbers.
@@ -610,8 +510,12 @@ def de_anchor(memory_id: int) -> dict:
         "tier": _DE_ANCHOR_TIER,
     }
     # Route through the same forward path as memory_update so the DB write lands
-    # backend-side and the fields are filtered by _MEMORY_UPDATABLE_FIELDS.
-    return _forward_admin("memory_update", {"memory_id": mid, "fields": fields})
+    # backend-side. Task 275 / Car C7b: filter through the shared helper so the
+    # _MEMORY_UPDATE_ALLOWED gate applies here too — the backend handler trusts
+    # core's contract and does NOT re-validate, so the gate MUST run in core.
+
+    filtered = _memory_update_filter_mod._filter_memory_update_fields(fields)
+    return _forward_admin("memory_update", {"memory_id": mid, "fields": filtered})
 
 
 # Fallback tier when a renewal names neither ttl_days nor tier AND the row itself
@@ -908,7 +812,7 @@ def vacuum_checkpoints(dry_run: bool = True) -> dict:
             "dry_run": bool,
         }
     """
-    from yadgar._shared.storage.ops import vacuum_checkpoints as _vc  # noqa: PLC0415
+    from yadgar._shared.storage.ops import vacuum_checkpoints as _vc
 
     storage = _get_storage()
     return _vc(storage, dry_run=dry_run)
