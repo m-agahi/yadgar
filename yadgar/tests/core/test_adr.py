@@ -324,6 +324,33 @@ class TestAdrGetList:
             got = adr_get(directory=project_dir, adr_id="ADR-0099", project=TEST_PROJECT_ID)
         assert "error" in got
 
+    def test_adr_get_response_embeds_project_id(self, tmp_path, _ledger_stub):
+        """Bug-bag-2 train 2026-08-23, task 217.
+
+        ``adr.id`` is ONE global AUTO_INCREMENT shared across projects (task
+        177): legacy 0007-0022 were renumbered to 29-44 while ids 7-22 belong
+        to quinyx/flux. Bare ``"ADR-NNNN"`` prose therefore cannot identify
+        which project's decision it names. ``adr_get`` MUST surface
+        ``project_id`` at the TOP level so the caller's prose is unambiguous.
+        """
+        from yadgar.core.server.tools.adr import adr_add, adr_get
+
+        project_dir = str(tmp_path / "getpidproj")
+        __import__("os").makedirs(project_dir, exist_ok=True)
+        with patch("yadgar.core.server.tools.adr._resolve_project_root", return_value=project_dir):
+            adr_add(**dict(_VALID_ADR_PARAMS, directory=project_dir))
+            got = adr_get(directory=project_dir, adr_id="ADR-0001", project=TEST_PROJECT_ID)
+        assert "error" not in got, f"adr_get failed: {got}"
+        # project_id must travel on the merged response — NOT just on the row.
+        # The legacy test (above) checked the body's content; this one
+        # asserts the namespace stamp is observable at the same depth as
+        # `adr_id`, so a caller can render ``{project_id}/{adr_id}`` as the
+        # unambiguous decision name.
+        assert got.get("project_id") == TEST_PROJECT_ID, (
+            f"adr_get response missing project_id; cannot disambiguate 'ADR-0001': "
+            f"keys={sorted(got.keys())}"
+        )
+
     def test_adr_list_all_and_status_filter(self, tmp_path, _ledger_stub):
         from yadgar.core.server.tools.adr import adr_add, adr_list
 

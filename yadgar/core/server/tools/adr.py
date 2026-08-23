@@ -684,7 +684,7 @@ def adr_get(directory: str, adr_id: str, *, project: str | None = None) -> dict:
     # row's authoritative ``body_slug`` instead of deriving one.
     row_result = _fetch_adr_ledger_row(adr_id, adr_id_int, project_id=project_id)
     body = _fetch_adr_body_page(project_id, adr_id_int, row_result)
-    return _build_adr_get_response(body, row_result)
+    return _build_adr_get_response(body, row_result, project_id=project_id)
 
 
 @observe(tier="stage", metric="tools.adr._fetch_adr_body_page")
@@ -787,6 +787,8 @@ def _fetch_adr_ledger_row(
 def _build_adr_get_response(
     body: dict[str, Any],
     row_result: dict[str, Any] | None,
+    *,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """Merge body + row metadata per D5 (additive-only). Reflects row-side
     status in merged tags. Extracted from ``adr_get`` for I13 cyclomatic.
@@ -799,6 +801,13 @@ def _build_adr_get_response(
     ``content_*`` keys with no signal at the ADR layer that anything was
     missing -- keys-absent is the unambiguous no-truncation signal (mirrors
     ``wiki_read``'s contract; emitting ``0`` would be a lie).
+
+    Bug-bag-2 train 2026-08-23, task 217: bare ``"ADR-NNNN"`` prose is
+    ambiguous across projects because ``adr.id`` is ONE global AUTO_INCREMENT
+    (task 177). Legacy 0007-0022 were renumbered to 29-44 while ids 7-22
+    belong to quinyx/flux — the number alone no longer identifies a decision.
+    Surface ``project_id`` at the TOP level (alongside ``adr_id``) so any
+    prose like ``supersedes: ADR-0029`` is unambiguous to the caller.
     """
     row_metadata: dict[str, Any] = {}
     if isinstance(row_result, dict):
@@ -815,6 +824,12 @@ def _build_adr_get_response(
     }
     merged: dict[str, Any] = dict(body_for_merge)
     merged.update(row_metadata)
+    # Task 217: project_id is the namespace stamp on the ledger row. The
+    # ADR id alone cannot identify a decision (see docstring) — embed the
+    # project_id on EVERY merged response, including row-miss cases where
+    # the page still resolved (the caller asked for THIS project's ADR).
+    if project_id:
+        merged["project_id"] = project_id
     if body_was_truncated:
         merged["body_truncated"] = True
         if isinstance(body_untrimmed_bytes, int) and body_untrimmed_bytes > 0:
@@ -957,7 +972,7 @@ def adr_list(
             },
         )
     except Exception as exc:  # noqa: BLE001
-        import logging  # noqa: PLC0415
+        import logging
 
         logging.getLogger(__name__).warning(
             "adr_list forward failed: project_id=%s err=%s", project_id, exc
