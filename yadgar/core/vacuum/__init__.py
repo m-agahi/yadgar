@@ -1577,7 +1577,30 @@ def _preflight_skip_reason(yadgar_home: Path, before_bytes: int) -> tuple[str, s
     reading either the log or the ``consolidation_log`` row has to be able to
     tell them apart.
     """
-    has_launcher, launcher_detail = _has_side_build_launcher()
+    # Defensive belt (C5 follow-up to task 65): even though
+    # ``_has_side_build_launcher`` is annotated ``tuple[bool, str]``, a future
+    # refactor could return something the caller cannot destructure into two
+    # names — and the call site is a hot SKIP path that surfaces in the
+    # consolidation-log row. Normalize here so the type contract is enforced
+    # at the outer boundary, not just promised by an inner annotation.
+    inner = _has_side_build_launcher()
+    if (
+        not isinstance(inner, tuple)
+        or len(inner) != 2
+        or not isinstance(inner[0], bool)
+        or not isinstance(inner[1], str)
+    ):
+        # Treat ANY malformed payload as "no launcher", with a stable detail.
+        # We deliberately do NOT call bool() on a non-bool here — that would
+        # mask truthy non-bools (strings, lists, ints) as "launcher present"
+        # which would let the caller fall through to the disk check on
+        # unverified state.
+        has_launcher = False
+        launcher_detail = "no usable launcher (inner helper returned an unrecognised payload)"
+    else:
+        has_launcher, launcher_detail = inner
+        if not launcher_detail:
+            launcher_detail = "no usable launcher (inner helper returned an empty detail)"
     if not has_launcher:
         # Task 65 (C1): propagate the launcher-specific detail so the
         # consolidation-log row matches the stderr message and names the
@@ -1868,7 +1891,7 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
     # yadgar_home (always present, even when the canonical is absent mid-crash), so
     # there is no chicken-and-egg with recovery.  If a LIVE job already holds it,
     # skip (log + return 0 — skip is not a failure).
-    from yadgar.core.sensitive_lock import sensitive_lock  # noqa: PLC0415
+    from yadgar.core.sensitive_lock import sensitive_lock
 
     if not sensitive_lock.acquire("vacuum"):
         held = sensitive_lock.read() or {}

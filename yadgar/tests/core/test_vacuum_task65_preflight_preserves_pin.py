@@ -162,3 +162,86 @@ def test_preflight_auto_branch_keeps_generic_message(
     assert skip_reason is not None
     assert "PATH" in detail, "auto branch must mention the host PATH search"
     assert "image" in detail.lower(), "auto branch must mention the backend image"
+
+
+def test_preflight_skip_reason_return_contract_is_strict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The return type is ``tuple[str, str] | None``. A caller destructures
+    straight into two names:
+
+        skip_reason, detail = _preflight_skip_reason(home, before_bytes)
+
+    so on the SKIP path the call MUST return a 2-tuple — never a bare string,
+    never a tuple-of-1, never ``None`` where two names were promised.
+    Regression guard for a flake observed on the C5 PR where one runner
+    surfaced ``cannot unpack non-iterable NoneType object`` from this site.
+    """
+    from yadgar.core.vacuum import _preflight_skip_reason
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"
+        home.mkdir()
+        yadgar_home = home / ".yadgar"
+        yadgar_home.mkdir()
+        empty = Path(td) / "empty"
+        empty.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("PATH", str(empty))
+        monkeypatch.delenv("YADGAR_SURREAL_BIN", raising=False)
+        monkeypatch.delenv("YADGAR_VACUUM_SIDE_LAUNCHER", raising=False)
+        # Force the SKIP path: no launcher resolvable, free space irrelevant.
+        fake_runtime = _make_exec(Path(td) / "fake-podman", "#!/bin/sh\nexit 1\n")
+        monkeypatch.setenv("YADGAR_CONTAINER_RUNTIME", str(fake_runtime))
+        monkeypatch.setenv("YADGAR_BACKEND_IMAGE", "example.invalid/backend:test")
+
+        result = _preflight_skip_reason(yadgar_home, before_bytes=10 * 1024 * 1024)
+
+    # Contract: SKIP path returns a 2-tuple of non-empty strings.
+    # (Passing path returns None — that is the other valid arm.)
+    if result is None:
+        pytest.fail("preflight should SKIP in this fixture, got None")
+    assert isinstance(result, tuple), f"expected tuple, got {type(result).__name__}: {result!r}"
+    assert len(result) == 2, f"expected (reason, detail) 2-tuple, got len={len(result)}"
+    skip_reason, detail = result
+    assert isinstance(skip_reason, str) and skip_reason, (
+        f"skip_reason must be a non-empty string, got {skip_reason!r}"
+    )
+    assert isinstance(detail, str) and detail, f"detail must be a non-empty string, got {detail!r}"
+
+
+def test_preflight_skip_reason_defends_against_malformed_inner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C5 follow-up: even if a future refactor of ``_has_side_build_launcher``
+    returns a non-tuple, a tuple-of-1, ``None``, or any other payload the
+    caller cannot destructure into two names, ``_preflight_skip_reason`` MUST
+    still return a real ``(reason, detail)`` tuple on the SKIP path. This is
+    the belt for the ``cannot unpack non-iterable NoneType`` flake observed on
+    the C5 PR's CI run.
+    """
+    import yadgar.core.vacuum as vacuum_mod
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"
+        home.mkdir()
+        yadgar_home = home / ".yadgar"
+        yadgar_home.mkdir()
+
+        # Each malformed payload simulates one shape a sloppy refactor could
+        # emit. The outer function must normalise every one of them into a
+        # valid (reason, detail) tuple.
+        for malformed in (None, ("only_one",), (False, "", ""), ("truthy", "detail-ok")):
+            monkeypatch.setattr(vacuum_mod, "_has_side_build_launcher", lambda m=malformed: m)
+            result = vacuum_mod._preflight_skip_reason(yadgar_home, before_bytes=10 * 1024 * 1024)
+            assert result is not None, f"got None for malformed inner payload {malformed!r}"
+            assert isinstance(result, tuple) and len(result) == 2, (
+                f"expected 2-tuple for inner={malformed!r}, got {result!r}"
+            )
+            reason, detail = result
+            assert isinstance(reason, str) and reason, (
+                f"reason must be non-empty str for inner={malformed!r}, got {reason!r}"
+            )
+            assert isinstance(detail, str) and detail, (
+                f"detail must be non-empty str for inner={malformed!r}, got {detail!r}"
+            )
