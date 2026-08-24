@@ -61,6 +61,11 @@ class _FakeStorage:
         self._scope_versions = ScopeVersions()
         self._next_rel_id = (max(rels) + 1) if rels else 1
         self.full_frontier_queries = 0  # get_relationships_for_frontier DB hits
+        # Car C11-#89: fake's entity table for the FK existence guard. The guard
+        # only checks existence, not content, so pre-seed a wide id range
+        # (this file's tests use 10, 20, 30, 40, 50 as endpoint ids) and let
+        # tests opt in to rejection by removing entries.
+        self._entities: dict[int, dict] = {eid: {"id": eid} for eid in range(1, 100)}
 
     from yadgar._shared.knowledge_graph import KnowledgeGraph
     from yadgar._shared.storage.entity import _EntityMixin
@@ -82,6 +87,8 @@ class _FakeStorage:
     update_relationship_fields = _EntityMixin.update_relationship_fields
     delete_relationship = _EntityMixin.delete_relationship
     _bump_relationship_endpoints = _EntityMixin._bump_relationship_endpoints
+    # Car C11-#89: fake's insert_relationship inherits the FK existence guard.
+    _assert_entity_ids_exist = _EntityMixin._assert_entity_ids_exist
 
     # `KnowledgeGraph._get_adjacent_batch` reads `self._storage` and `self._graph`.
     @property
@@ -120,6 +127,11 @@ class _FakeStorage:
     # -- minimal SurrealQL interpreter for the borrowed write mixins --
     def _q(self, surql: str, params: dict | None = None) -> list:
         params = params or {}
+        # Car C11-#89: entity-id existence check from _assert_entity_ids_exist.
+        # The fake's _entities dict is the source of truth; the IN clause is
+        # inlined in the SQL but the fake just returns the pre-seeded rows.
+        if surql.startswith("SELECT") and "FROM entity" in surql:
+            return [{"id": f"entity:{eid}"} for eid in self._entities]
         if surql.startswith("CREATE") and "relationship" in surql:
             rid = int(params["id"])
             self._rels[rid] = {
