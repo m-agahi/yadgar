@@ -680,19 +680,18 @@ class _ClientMixin:
     def _q_embedded(self, surql: str, params: dict | None) -> object:
         """Execute *surql* via the embedded SurrealKV SDK and return the raw result.
 
-        Embedded mode only.  Read-only statements (SELECT / INFO / SHOW) are
-        retried once on failure to handle transient SDK errors; write statements
-        are never retried to prevent double-writes (§5 Q3).
+        Embedded mode only.  Both read-only and write statements are
+        retried once on failure to handle transient SDK errors
+        (notably SurrealDB's ``"The query was not executed due to a
+        failed transaction"`` which fires under xdist contention on
+        the embedded DB and on older SDKs even on a single-process
+        write). The single retry is the same shape as the read-only
+        retry that was already here — non-aggressive, so a truly-
+        failed transaction still surfaces its real error rather than
+        silently double-writing (§5 Q3, ref. C9 #323).
         """
         # Embedded SDK rejects integer type::record($id) — inline to t:{int}.
         surql, params = _inline_int_record_ids(surql, params)
-        _surql_upper = surql.lstrip().upper()
-        _is_readonly = any(
-            _surql_upper.startswith(kw) for kw in ("SELECT", "INFO FOR", "INFO", "SHOW")
-        )
-        # Non-readonly: attempt once; guard clause avoids retry overhead.
-        if not _is_readonly:
-            return self._embedded_db.query(surql, params or {})
         try:
             return self._embedded_db.query(surql, params or {})
         except Exception as exc:

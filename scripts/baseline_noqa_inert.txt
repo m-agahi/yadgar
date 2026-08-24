@@ -129,9 +129,9 @@ yadgar/_shared/wiki/store.py:167:PLC0415
 yadgar/_shared/wiki/store.py:182:PLC0415
 yadgar/_shared/wiki/store.py:887:PLC0415
 yadgar/_shared/wiki/store.py:920:PLC0415
-yadgar/_shared/wiki/store.py:1181:PLC0415
-yadgar/_shared/wiki/store.py:1514:PLC0415
-yadgar/_shared/wiki/store.py:2765:PLC0415
+yadgar/_shared/wiki/store.py:1250:PLC0415
+yadgar/_shared/wiki/store.py:1583:PLC0415
+yadgar/_shared/wiki/store.py:2834:PLC0415
 yadgar/_shared/wiki/wiki_meta.py:85:PLC0415
 yadgar/_shared/wiki/wiki_meta.py:87:PLC0415
 yadgar/_shared/wiki/wiki_meta.py:125:PLC0415

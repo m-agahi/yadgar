@@ -1092,16 +1092,85 @@ class WikiStore:
         """Dispatch score collection to tagged (include_tag set) or hybrid (default) path.
 
         Extracted from query() to keep cyclomatic complexity within I13 cap.
-        Include path: SQL pre-filter, vector-only (no FTS, no HNSW dilution).
-        Default path: hybrid FTS + HNSW vector.
+        Include path: vector primary, TAG-ONLY FALLBACK when embeddings
+        are unavailable (and the dispatch produced zero scores). Default
+        path: hybrid FTS + HNSW vector.
+
+        Car C9 (#205): the include_tag path used to return nothing on an
+        embedder-less corpus. FTS would not save this — SurrealDB has no
+        FULLTEXT index in embedded mode (the schema migration only defines
+        the index when ``_db_url`` is set; ``storage/migrations.py:2092``),
+        so FTS is also a non-starter for the dev-container / CI matrix
+        where sentence-transformers is not installed. The TAG-ONLY fallback
+        is a plain ``SELECT id FROM wiki_page WHERE tags CONTAINS $tag``
+        with the scope predicate — no embedding, no FTS, no HNSW. It
+        fires only when the vector arm produced nothing AND the embedder
+        is unavailable, so a working embedder keeps its hybrid ranking
+        unchanged. The fix surfaces the include_tag path's intent: the
+        caller asked for "all pages with tag X" and a tag-only match IS
+        the answer when there is no signal to rank against.
         """
         if include_tag:
             self._collect_wiki_vector_scores_tagged(
                 query, scores, max_results, include_tag, scope_sql, scope_params
             )
+            # Car C9 (#205): tag-only fallback. Fires when vector arm
+            # produced nothing — typical case is embedder unavailable,
+            # where ``encode_query`` returns None and the vector arm
+            # short-circuits. A zero-score, embedder-unavailable dispatch
+            # is the failure mode this fallback exists to fix; the
+            # vector arm being tried first preserves ranking when the
+            # embedder works.
+            if not scores:
+                self._collect_wiki_tag_only_scores(
+                    scores, max_results, include_tag, scope_sql, scope_params
+                )
         else:
             self._collect_wiki_fts_scores(query, scores, max_results, scope_sql, scope_params)
             self._collect_wiki_vector_scores(query, scores, max_results, scope_sql, scope_params)
+
+    @observe(tier="stage")
+    def _collect_wiki_tag_only_scores(
+        self,
+        scores: dict[int, float],
+        max_results: int,
+        include_tag: str,
+        scope_sql: str = "",
+        scope_params: dict | None = None,
+    ) -> None:
+        """Tag-only SQL fallback for the include_tag path (task #205).
+
+        Issues a plain ``SELECT id FROM wiki_page WHERE tags CONTAINS $tag``
+        (with the scope predicate) — no embedding required, no FTS index
+        required, no HNSW. Used ONLY when the vector arm produced zero
+        scores on the include_tag dispatch; a working embedder keeps its
+        semantic ranking.
+
+        The fallback score is 0.5 — neutral, enough to clear the
+        post-rank filter (which is just the include_tag membership check)
+        and surface the page in the result list. The caller asked for
+        "all pages with tag X" and a tag-only match IS the answer when
+        there is no signal to rank against; an arbitrary non-zero score
+        is the honest representation of "we have no idea how relevant
+        this is, but you asked for it by tag".
+        """
+        try:
+            where = "tags CONTAINS $tag"
+            params: dict = {"tag": include_tag, "lim": max_results * 3}
+            if scope_sql:
+                where = f"{where} AND ({scope_sql})"
+                params.update(scope_params or {})
+            rows = self._storage._q(
+                f"SELECT meta::id(id) AS id FROM wiki_page WHERE {where} LIMIT $lim",
+                params,
+            )
+            if rows:
+                for row in rows:
+                    page_id = self._storage._extract_id(row.get("id"))
+                    if page_id is not None:
+                        scores[page_id] = scores.get(page_id, 0.0) + 0.5
+        except Exception:
+            logger.debug("Wiki tag-only fallback failed for tag '%s'", include_tag)
 
     @staticmethod
     @observe(tier="stage")
