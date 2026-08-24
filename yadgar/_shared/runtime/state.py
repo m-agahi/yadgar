@@ -125,6 +125,15 @@ _auto_capture_limiter = TokenBucketRateLimiter(max_per_minute=_get_auto_capture_
 # Throttle timestamps: directory → monotonic time (bounded to prevent unbounded growth)
 _last_session_context: OrderedDict[str, float] = OrderedDict()
 _last_prompt_recall: OrderedDict[str, float] = OrderedDict()
+# Car C10 (task #340): content-dedupe gate state. For each directory the
+# hook has recalled into, the last-emitted topic-set (a small list of
+# content-tokens derived from the emitted rows). The PRIMARY throttle now
+# keys on this — a prompt whose topic-set overlaps ≥80% with the prior
+# emission is a redundant injection and gets skipped. The TIME gates
+# above are the SECONDARY hard cap (runaway-hook safety net). Bounded
+# dict like the others so a long-running daemon cannot grow it without
+# limit (a directory that has not emitted in a while gets evicted).
+_last_emitted_topics: OrderedDict[str, list[str]] = OrderedDict()
 
 # ── Visualization event queue ──────────────────────────────────────────────
 # Ring buffer of the last 500 events; SSE clients poll with a sequence cursor.
