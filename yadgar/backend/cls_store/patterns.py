@@ -345,12 +345,26 @@ _SPECIFIC_INDICATORS = re.compile(
 # these BEFORE insert, not after — the cheaper, more reliable fix.
 #
 # Five signal classes pass the gate; a schema that carries none AND has no
-# common_tags is a word salad and must be discarded by the caller.
+# common_tags AND fails the prose-density floor is a word salad and must be
+# discarded by the caller.
 _SALAD_BACKTICK_RE = re.compile(r"`[^`]+`")
 _SALAD_ADR_MR_ISSUE_RE = re.compile(r"\b(?:ADR|MR)-\d+|\B#\d+\b")
 _SALAD_FILE_REF_RE = re.compile(r"\b[\w\-]+\.(?:py|md|yaml|json|toml|sql)\b")
 _SALAD_SNAKE_CASE_RE = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
 _SALAD_CAMEL_CASE_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b")
+
+# C7c-fix (2026-08-24): the original gate (5 regex classes only) rejected
+# legitimate prose consolidations — e.g. 4 paraphrases of "the deployment
+# pipeline publishes container images to ECR..." carry real domain tokens
+# but no identifier-shape token, so the gate returned None and broke the
+# consolidation_cycle contract (BC-CLS2 e2e test). The fix adds a 6th
+# signal: a schema long enough to host ≥ _PROSE_MIN_WORDS distinct
+# meaningful words (post-stopword) is a legitimate consolidation, not a
+# bag-of-words salad. Real word salads (short "pattern across N obs: a b
+# c") still fail because their post-stopword token count is below the
+# floor.
+_PROSE_MIN_LEN = 80  # noqa: PLR2004 — prose-density floor, not a magic # noqa: ERA001
+_PROSE_MIN_WORDS = 4  # noqa: PLR2004 — distinct meaningful-token floor # noqa: ERA001
 
 
 @observe(tier="stage", metric="consolidation.cls._is_word_salad")
@@ -361,10 +375,14 @@ def _is_word_salad(schema: str, common_tags: list[str]) -> bool:
     a memory whose body is the canonical "Recurring pattern across N
     observations: <bag of words>" template AND has no backtick identifier,
     ADR/MR/issue reference, file ref, snake_case identifier, CamelCase
-    identifier, or shared tag is a word salad. Promotion must discard it.
+    identifier, AND does not meet the prose-density floor (length ≥80 +
+    ≥4 distinct post-stopword meaningful tokens), AND has no shared tag,
+    is a word salad. Promotion must discard it.
 
     Conservative: any single recognised signal flips the verdict to "not
-    salad" — this is the only path the validation runs.
+    salad" — this is the only path the validation runs. C7c-fix (2026-08-24)
+    added the prose-density half so legitimate multi-memory prose
+    consolidations (TestBCCLS1_2_3 e2e fixture) are no longer dropped.
     """
     if not isinstance(schema, str) or not schema:
         return True
@@ -380,6 +398,18 @@ def _is_word_salad(schema: str, common_tags: list[str]) -> bool:
         return False
     if _SALAD_CAMEL_CASE_RE.search(schema):
         return False
+    # Prose-density escape hatch: a schema long enough AND diverse enough
+    # in post-stopword tokens is a legitimate consolidation. The two floors
+    # are jointly required so a short single-word schema ("Recurring pattern
+    # across 4 observations: a") still falls through to the rejection path.
+    if len(schema) >= _PROSE_MIN_LEN:
+        meaningful_tokens = {
+            w.strip(_PUNCT_STRIP)
+            for w in schema.lower().split()
+            if len(w.strip(_PUNCT_STRIP)) > 2 and w.strip(_PUNCT_STRIP) not in _SCHEMA_STOP_WORDS
+        }
+        if len(meaningful_tokens) >= _PROSE_MIN_WORDS:
+            return False
     return True
 
 
