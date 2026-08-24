@@ -1,12 +1,18 @@
 """Bug-bag-2 train 2026-08-23, C5 — ``list_agent_discipline_rows`` admin op tests.
 
-The admin op wrapper at ``yadgar/backend/admin_exec/ledger.py`` registered a
-``list_agent_discipline_rows`` op name but the body function was MISSING. The
-``_ADMIN_OPS`` dispatch table carried a reference to a symbol that did not
-exist on the module — a soft no-op error path that surfaces as ``KeyError``
-only on the actual call, not on import. C5's fix adds the body and registers
-it so ``run_admin_op("list_agent_discipline_rows", {})`` returns ``{"rows": ...}``
-the way the sister ``list_agent_prompt_rows`` op already does.
+``save_agent_discipline_row`` landed in Car I but the READ counterpart never
+did: neither the body function in ``yadgar/backend/admin_exec/ledger.py`` nor
+an ``_ADMIN_OPS`` entry existed, so ``run_admin_op("list_agent_discipline_rows",
+{})`` raised ``KeyError`` on the op NAME — the dispatch table simply had no such
+key. C5 adds both halves so the op returns ``{"rows": ...}`` the way the sister
+``list_agent_prompt_rows`` op already does.
+
+The op name was NOT dangling before this car, and it could not have been:
+``_ADMIN_OPS`` is a dict literal whose values are direct attribute references
+(``"list_agent_discipline_rows": ledger.list_agent_discipline_rows``), so an
+entry naming a symbol the module does not define raises ``AttributeError`` at
+IMPORT — the whole backend fails to load, loudly. ``KeyError`` at call time is
+the signature of a MISSING entry, which is what this was.
 
 Pins:
 

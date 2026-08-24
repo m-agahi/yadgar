@@ -13,6 +13,7 @@ Pure string-content tests on the prompt file; no DB / fixture required.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 _PROMPT = (
@@ -24,6 +25,21 @@ _PROMPT = (
     / "anchor_audit_prompt.md"
 )
 _CONTENT = _PROMPT.read_text(encoding="utf-8")
+
+
+def _step_block(n: int) -> str:
+    """Return the text of numbered step ``n`` only, up to step ``n + 1``.
+
+    Whole-file ``in _CONTENT`` assertions cannot fail for any token the prompt
+    mentions anywhere — "scanned" appears in Step 1's return-shape listing, so
+    a Step-2 gate that never reads it still satisfies a file-wide check. Every
+    positional claim in this module is asserted against the block that is
+    supposed to carry it.
+    """
+    start = re.search(rf"^{n}\. ", _CONTENT, flags=re.MULTILINE)
+    assert start is not None, f"step {n} heading not found in prompt"
+    end = re.search(rf"^{n + 1}\. ", _CONTENT, flags=re.MULTILINE)
+    return _CONTENT[start.start() : (end.start() if end else len(_CONTENT))]
 
 
 class TestAnchorAuditPromptNoLongerCallsRecall:
@@ -54,21 +70,67 @@ class TestAnchorAuditPromptCallsAuditAnchors:
 
 
 class TestAnchorAuditPromptReferencesNewFields:
+    """Return-shape fields are pinned INSIDE Step 1, where the call is made.
+
+    A file-wide ``in _CONTENT`` cannot fail once the token appears anywhere,
+    so these assert against ``_step_block(1)``.
+    """
+
     def test_step_1_lists_scanned(self):
-        assert "scanned" in _CONTENT
+        assert "scanned" in _step_block(1)
 
     def test_step_1_lists_action_id_field(self):
         # Field name must match the audit_anchors return shape: actions[i].id
-        assert '"id"' in _CONTENT
+        assert '"id"' in _step_block(1)
 
     def test_step_1_lists_action_type_field(self):
-        assert '"type"' in _CONTENT
+        assert '"type"' in _step_block(1)
 
     def test_step_1_lists_action_tags_field(self):
-        assert '"tags"' in _CONTENT
+        assert '"tags"' in _step_block(1)
 
     def test_step_1_lists_action_rationale_field(self):
-        assert '"rationale"' in _CONTENT
+        assert '"rationale"' in _step_block(1)
+
+
+class TestAnchorAuditPromptStepTwoGateReadsScanned:
+    """Task 206's second half: the empty gate must not conflate two states.
+
+    ``scanned == 0`` (this project has NO anchors at all) and ``scanned > 0``
+    with an empty action list (every anchor is healthy) are different facts and
+    read back to the user differently. Before this test the Step-2 gate never
+    mentioned ``scanned``, so both collapsed into a silent STOP and the user
+    could not tell "nothing to audit" from "audit ran, all clean".
+    """
+
+    def test_step_2_gate_reads_scanned(self):
+        assert "scanned" in _step_block(2)
+
+    def test_step_2_branches_on_zero_scanned(self):
+        block = _step_block(2)
+        assert "scanned == 0" in block
+
+    def test_step_2_branches_on_scanned_with_no_actions(self):
+        block = _step_block(2)
+        assert "scanned > 0" in block
+
+    def test_step_2_keeps_prose_only_conjunct(self):
+        # The prose-only-archive risk census is part of the gate: an empty
+        # action list with a non-zero prose-only count is NOT the healthy
+        # state and must not silence the pass.
+        assert "anchored_by_prose_only" in _step_block(2)
+
+
+class TestAnchorAuditPromptCallSyntaxIsValid:
+    def test_no_definition_site_star_marker_in_a_call(self):
+        # ``audit_anchors("{directory}", dry_run=True, *, project="{project}")``
+        # is not valid Python: the bare ``*`` is a DEFINITION-site keyword-only
+        # marker, illegal in a call. An LLM reads this prompt literally and
+        # will reproduce whatever it is shown.
+        assert ", *, project=" not in _CONTENT
+
+    def test_audit_anchors_calls_still_pass_project_keyword(self):
+        assert 'project="{project}"' in _CONTENT
 
 
 class TestAnchorAuditPromptTruncationAndRerunNote:

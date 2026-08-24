@@ -21,7 +21,7 @@ on the CONTENT IT RETURNS. Do not reconstruct anchor state from memory of an
 earlier turn.
 
 1. GATHER CANDIDATES — dry-run audit.
-   - Call audit_anchors("{directory}", dry_run=True, *, project="{project}"). The
+   - Call audit_anchors("{directory}", dry_run=True, project="{project}"). The
      return shape is:
        {
          "scanned": int,                       # how many _anchor rows were considered
@@ -51,11 +51,22 @@ earlier turn.
      protocol; the dry-run-then-apply flow below uses audit_anchors's dry_run=False
      as its single apply entry point.
 
-2. EMPTY-LIST GATE — NO NAG. If audit_anchors returned no actions AND
-   ``anchored_by_prose_only.count == 0``, this pass is INAPPLICABLE: STOP NOW,
-   do nothing, and simply continue the conversation. Never invent candidates,
-   never ask the user to review an empty list, never nag. An empty action set
-   with no prose-only-archive risk is the healthy state, not a task.
+2. EMPTY-LIST GATE — NO NAG, BUT SAY WHICH EMPTY. If audit_anchors returned no
+   actions AND ``anchored_by_prose_only.count == 0``, this pass is
+   INAPPLICABLE. Before you stop, READ ``scanned`` — an empty action list has
+   two causes and they are not the same fact:
+   - ``scanned == 0`` — this project has NO anchor memories at all. Say
+     exactly that once ("no anchors for {project} — nothing to audit"), then
+     STOP. Nothing was examined, so "all healthy" would be a false report.
+   - ``scanned > 0`` and ``actions`` is empty — the audit DID examine
+     ``scanned`` anchors and every one of them is healthy. Say exactly that
+     once ("{scanned} anchors for {project}, all healthy"), then STOP.
+   Either way: do nothing, then simply continue the conversation. Never invent
+   candidates, never ask the user to review an empty list, never nag, never
+   repeat the line on a later turn. An empty action set with no
+   prose-only-archive risk is the healthy state, not a task — but a silent
+   stop that cannot distinguish "nothing to audit" from "audit ran clean" is
+   the ambiguity this gate exists to remove.
 
 3. JUDGE EACH CANDIDATE (semantic). For each entry in ``actions`` and each
    ``cross_project_redundancy_candidates`` entry, decide its fate from its
@@ -80,7 +91,7 @@ earlier turn.
    are NOT a "RETIRE" — show them separately under their own header.
 
 5. APPLY (confirmed only) — single audit_anchors dry_run=False call.
-   Re-call audit_anchors("{directory}", dry_run=False, *, project="{project}")
+   Re-call audit_anchors("{directory}", dry_run=False, project="{project}")
    with the SAME arguments as Step 1. The tool re-scans, applies the
    forget_expired + merge deletions it deems safe (tier=semantic_immortal and
    legacy is_protected=True rows stay untouched), writes the action_log,
@@ -99,7 +110,7 @@ earlier turn.
 6. TRUNCATION CHECK + RE-RUN. If the dry-run result carried ``"_truncated": True``,
    the action list was capped by ``ANCHOR_AUDIT_MAX_ACTIONS_PER_RUN``. The first
    apply handles the visible candidates; after it returns, re-call
-   audit_anchors("{directory}", dry_run=True, *, project="{project}") once more
+   audit_anchors("{directory}", dry_run=True, project="{project}") once more
    to confirm ``_truncated`` is now False (or to surface the next slice for the
    user's review). Repeat Step 4-5 for any new candidates until the cap is no
    longer hit. A truncated apply that exits without re-running is an INCOMPLETE
