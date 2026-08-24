@@ -16,6 +16,33 @@ logger = logging.getLogger(__name__)
 
 _VALID_TIERS = frozenset({"semantic_immortal", "conditional", "ephemeral"})
 
+# C7c (task #339): a row carrying the consolidation tag is by construction an
+# auto-abstracted schema and MUST NOT be auto-promoted to an anchor, even when
+# ``tier`` is set. Anchoring a word-salad cluster pins zombie noise to the top
+# of recall, the exact phantom-namespace shape §1.4 forbids. Read both the tag
+# and the row-payload flag (the latter is the fast path the audit tool uses).
+_CONSOLIDATION_TAG = "_from_consolidation"
+
+
+@observe(tier="stage", metric="write_exec._should_promote_to_anchor")
+def _should_promote_to_anchor(ctx: MemorizeContext) -> bool:
+    """Return True when *ctx* is eligible for anchor promotion.
+
+    The carve-out is the C7c (task #339) fix: a memory stamped
+    ``_from_consolidation`` (or whose row payload carries the flag) is
+    deliberately NOT promoted even when ``tier`` or ``is_protected`` says
+    otherwise — it is auto-abstracted prose, not a decision or a workflow
+    rule the writer is asking to immortalise.
+
+    Plain (non-consolidation) rows follow the existing rule: ``tier`` is set
+    OR ``is_protected`` is True. The caller (``_apply_tag_injection`` and
+    ``_zero_gap_2_protection``) then handles the tag + storage writes.
+    """
+    tags = ctx.tags or ()
+    if _CONSOLIDATION_TAG in tags:
+        return False
+    return bool(ctx.is_protected or ctx.tier)
+
 
 @trace_span()
 def phase_validate(ctx: MemorizeContext, settings) -> dict | None:
@@ -92,8 +119,16 @@ def _validate_valid_until(ctx: MemorizeContext, settings) -> dict | None:
         except ValueError as exc:
             return {"stored": False, "reason": str(exc)}
 
-    # v5.8.0: tier auto-sets is_protected
-    if ctx.tier is not None:
+    # v5.8.0: tier auto-sets is_protected.
+    # C7c (task #339): the carve-out — a row tagged ``_from_consolidation``
+    # is auto-abstracted prose, not a decision. Auto-promoting it to an
+    # anchor pins zombie noise to the top of recall. Force the row onto the
+    # ephemeral tier with low heat so it ages out under normal decay.
+    if ctx.tier is not None and not _should_promote_to_anchor(ctx):
+        ctx.tier = "ephemeral"
+        ctx.is_protected = False
+        ctx.initial_heat = 0.1
+    elif ctx.tier is not None:
         ctx.is_protected = True
     return None
 
@@ -101,7 +136,7 @@ def _validate_valid_until(ctx: MemorizeContext, settings) -> dict | None:
 @observe(tier="stage")
 def _apply_tag_injection(ctx: MemorizeContext) -> None:
     """Inject _anchor and anchor:<reason> tags when is_protected."""
-    if not ctx.is_protected:
+    if not _should_promote_to_anchor(ctx):
         return
     tags_list = list(ctx.tags)
     if "_anchor" not in tags_list:
@@ -136,9 +171,7 @@ def _validate_gate_and_policy(ctx: MemorizeContext) -> dict | None:
     gate = gate_or_reject(ctx.content, tags=list(ctx.tags) if ctx.tags else [])
     if gate is not None:
         try:
-            from yadgar._shared.observability.metrics import (
-                yadgar_writegate_outcome,  # noqa: PLC0415
-            )
+            from yadgar._shared.observability.metrics import yadgar_writegate_outcome
 
             yadgar_writegate_outcome.labels(outcome="rejected_secret").inc()
         except Exception:

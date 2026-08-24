@@ -334,6 +334,54 @@ _SPECIFIC_INDICATORS = re.compile(
     r")"
 )
 
+# ── C7c (task #339): word-salad gate for auto-abstracted schemas ──────────
+#
+# A schema like "Recurring pattern across 5 observations: token token token"
+# carries NO identifier, ADR, MR, file ref, or shared tag — it is unanchored
+# prose and would, on insertion, get auto-promoted to an anchor (memorize
+# write pipeline sets is_protected=True + _anchor tag when tier is set). Once
+# anchored, it becomes a protected zombie: immune to decay, ranking high on
+# recall, the exact phantom-namespace shape §1.4 forbids. The gate below drops
+# these BEFORE insert, not after — the cheaper, more reliable fix.
+#
+# Five signal classes pass the gate; a schema that carries none AND has no
+# common_tags is a word salad and must be discarded by the caller.
+_SALAD_BACKTICK_RE = re.compile(r"`[^`]+`")
+_SALAD_ADR_MR_ISSUE_RE = re.compile(r"\b(?:ADR|MR)-\d+|\B#\d+\b")
+_SALAD_FILE_REF_RE = re.compile(r"\b[\w\-]+\.(?:py|md|yaml|json|toml|sql)\b")
+_SALAD_SNAKE_CASE_RE = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
+_SALAD_CAMEL_CASE_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b")
+
+
+@observe(tier="stage", metric="consolidation.cls._is_word_salad")
+def _is_word_salad(schema: str, common_tags: list[str]) -> bool:
+    """Return True when *schema* carries no identifier / ADR / file signal.
+
+    The gate is the schema-level half of the C7c anchor defense (task #339):
+    a memory whose body is the canonical "Recurring pattern across N
+    observations: <bag of words>" template AND has no backtick identifier,
+    ADR/MR/issue reference, file ref, snake_case identifier, CamelCase
+    identifier, or shared tag is a word salad. Promotion must discard it.
+
+    Conservative: any single recognised signal flips the verdict to "not
+    salad" — this is the only path the validation runs.
+    """
+    if not isinstance(schema, str) or not schema:
+        return True
+    if common_tags:  # shared tags ARE a real signal even when body is prose
+        return False
+    if _SALAD_BACKTICK_RE.search(schema):
+        return False
+    if _SALAD_ADR_MR_ISSUE_RE.search(schema):
+        return False
+    if _SALAD_FILE_REF_RE.search(schema):
+        return False
+    if _SALAD_SNAKE_CASE_RE.search(schema):
+        return False
+    if _SALAD_CAMEL_CASE_RE.search(schema):
+        return False
+    return True
+
 
 def _collect_word_freq(
     cluster_memories: list[dict],
@@ -455,14 +503,14 @@ class _PatternsMixin:
     # ── Schema Abstraction ────────────────────────────────────────────────
 
     @observe(tier="hot", metric="consolidation.cls.abstract_to_schema")
-    def abstract_to_schema(self, cluster_memories: list[dict]) -> str:
+    def abstract_to_schema(self, cluster_memories: list[dict]) -> str | None:
         """Abstract multiple episodic memories into a semantic schema.
 
         Extracts common words and entities across all memories,
         then builds a generalized statement.
         """
         if not cluster_memories:
-            return ""
+            return None
 
         word_freq, all_contents = _collect_word_freq(cluster_memories)
         n_memories = len(cluster_memories)
@@ -473,9 +521,16 @@ class _PatternsMixin:
         meaningful = common_words - _SCHEMA_STOP_WORDS
 
         if not meaningful:
-            # Fallback: use the shortest memory as representative
+            # Fallback: use the shortest memory as representative.
+            # C7c (task #339): gate the fallback too — when no meaningful
+            # words survive, the shortest-memory string is by construction a
+            # bag of stop-words, exactly the salad the gate rejects. Drop it
+            # before it can be promoted to an anchor.
             shortest = min(all_contents, key=len)
-            return f"Recurring pattern: {shortest}"
+            fallback = f"Recurring pattern: {shortest}"
+            if _is_word_salad(fallback, []):
+                return None
+            return fallback
 
         ordered_common = _build_ordered_common(all_contents[0], meaningful)
         key_phrase = " ".join(ordered_common[:15])  # Cap at 15 words
@@ -485,4 +540,9 @@ class _PatternsMixin:
         if common_tags:
             schema += f" [tags: {', '.join(common_tags[:5])}]"
 
+        # C7c (task #339): drop word-salad schemas BEFORE they can be inserted
+        # and auto-promoted to anchors. The promotion path is the cheap one to
+        # gate; audit-side filtering is the backstop.
+        if _is_word_salad(schema, common_tags):
+            return None
         return schema

@@ -398,9 +398,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1212
+      "file_loc": 1225
     },
-    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split. Car 7 (2026-08-13) resynced file_loc 1006 -> 1182 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 1182 -> 1203 (+21). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size. | Car C11-#88 (task #88, 2026-08-24): +9 for PROJECT_STALENESS_DAYS setting (with explanatory comment). Same single-responsibility pydantic Settings module; the new field belongs co-located. file_loc 1203 -> 1212 (+9).",
+    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split. Car 7 (2026-08-13) resynced file_loc 1006 -> 1182 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 1182 -> 1203 (+21). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size. | Car C11-#88 (task #88, 2026-08-24): +9 for PROJECT_STALENESS_DAYS setting (with explanatory comment). Same single-responsibility pydantic Settings module; the new field belongs co-located. file_loc 1203 -> 1212 (+9). | Car C7c (task #339, 2026-08-24): +13 for _consolidation_anchor_audit_enabled knob helper, the resolve_knob-shaped gate on the audit_anchors consolidation review surface. file_loc 1212 -> 1225 (+13).",
     "added": "2026-07-03",
     "added_by": "feat/obs-p1-recall-readpath"
   },

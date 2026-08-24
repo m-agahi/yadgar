@@ -1210,3 +1210,16 @@ def resolve_knob[T](
         return getattr(get_settings(), field_name)
     except Exception:  # noqa: BLE001 -- never hard-fail a consumer on config surface
         return default
+
+
+# C7c (task #339): gate the consolidation-anchor audit surface. Default True
+# so every newly-emitted consolidation row lands in the review list. Live env
+# (YADGAR_*) wins over the yaml field via resolve_knob.
+def _consolidation_anchor_audit_enabled() -> bool:
+    """Return True when ``audit_anchors`` should surface consolidation-anchored rows."""
+    return resolve_knob(
+        "YADGAR_CONSOLIDATION_ANCHOR_AUDIT_ENABLED",
+        "CONSOLIDATION_ANCHOR_AUDIT_ENABLED",
+        lambda v: v.lower() not in ("0", "false", "no"),
+        True,
+    )
