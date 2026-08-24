@@ -21,6 +21,62 @@ Env knobs:
   YADGAR_SESSION_END_DIR       ~/.local/state/yadgar/session-ends  Override sentinel dir (testing)
 """
 
+# DC2-DECISION: KEEP-CURATED (train-bug-bag-2 DC2, task #35)
+#
+# The session-exit sentinel writes a CURATED snippet, not the raw transcript.
+# The audit considered two paths:
+#
+#   A. KEEP curated + ANNOTATE  (this implementation)  ← chosen
+#   B. SWITCH to raw save with secret-scrub             ← rejected
+#
+# WHY A (kept):
+#   1. The hook fires at process exit, observational-only, and cannot block.
+#      Any secret-scrub has to be regex over arbitrary text — known losing game.
+#   2. Transcripts carry real secrets (Bearer tokens, API keys, customer PII).
+#      Persisting the raw transcript (or a "scrubbed" copy of unknown fidelity)
+#      to ~/.yadgar/session-ends/ and then into memory via memorize() widens
+#      the secret surface across a filesystem marker AND a memory row.
+#   3. The transcript path is already in the sentinel record. The next
+#      session's LLM can re-read the transcript directly when it still exists.
+#   4. The snippet is ROTATION-RESILIENCE context for the synthesising LLM
+#      in the next session, not the primary signal. The primary signal is
+#      the SessionStart `extract_last_session_findings` recommended action
+#      that points at the transcript path.
+#   5. Last human turns have the highest semantic density per byte (encode
+#      intent). Last touched file paths are cheap and high-signal (encode
+#      "we were working on X.py"). Assistant turns and tool names are verbose
+#      and low-density — excluded by design.
+#
+# WHY B was rejected:
+#   - Secret-scrub cannot be made safe enough at hook runtime. The hook is
+#     observational-only (cannot block); the next best alternative is to
+#     store nothing secret-bearing, which the curated path already does.
+#   - The raw path duplicates information already available at the
+#     transcript_path field. Storing it twice widens the blast radius of
+#     any leak without giving the next session's LLM new information.
+#   - A scrubbed-but-still-rich save is the worst of both worlds: large
+#     enough to leak fragments, small enough to be a maintenance burden.
+#
+# CAPS (restated so a maintainer can audit the constants against the decision):
+#   - 5 human turns max (SESSION_END_SNIPPET_TURNS, default 5)
+#   - 500 bytes per turn (max_per, see _cap_turns)
+#   - 4096 bytes total for last_human_turns (max_total, see _cap_turns)
+#
+# REVISIT TRIGGER (when to re-audit this decision):
+#   - The next session's LLM is observed (via recall() of synthesized
+#     findings, or via manual review) to MISS a key fact that was in the
+#     raw transcript but not the snippet. If that happens ≥2 times in a
+#     30-day window, the cap is too tight — raise 4096→8192 and 5→10
+#     turns BEFORE switching to raw. Snippet growth is a one-way ratchet.
+#   - A host-deployable secret-scrub library (not regex) becomes available
+#     AND proves ≥99% recall on a benchmark of real yadgar transcripts.
+#     Until then, B is rejected. (No env-var runtime switch — DC2 spec.)
+#   - SessionEnd gains the ability to BLOCK, changing the threat model.
+#
+# If this block is removed, the audit test in
+# yadgar/tests/core/test_session_end_capture_dc2_audit.py will fail and
+# the next reviewer will be forced to re-decide.
+
 from __future__ import annotations
 
 import datetime
