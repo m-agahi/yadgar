@@ -92,8 +92,10 @@ class _ProjectRegistryMixin:
             raise ValueError(f"project kind must be one of {sorted(_PROJECT_KINDS)}: {kind!r}")
 
         sql = text(
-            "INSERT INTO project (`key`, display_name, kind, remote_url, created_at) "
-            "VALUES (:key, :display_name, :kind, :remote_url, CURRENT_TIMESTAMP)"
+            "INSERT INTO project "
+            "(`key`, display_name, kind, remote_url, created_at, last_validated_at) "
+            "VALUES (:key, :display_name, :kind, :remote_url, "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         )
         params = {
             "key": key,
@@ -118,16 +120,58 @@ class _ProjectRegistryMixin:
         project_id`` mapping against the registry BEFORE applying anything —
         an unregistered target in the mapping is a manifest-review failure,
         not a per-row FK error discovered halfway through the apply.
+
+        ``last_validated_at`` is SELECTed so the staleness surface (C11's
+        ``yadgar project list --stale``) can age rows client-side without
+        a second query.
         """
         from sqlalchemy import text  # noqa: PLC0415
 
         sql = text(
-            "SELECT `key`, display_name, kind, remote_url, created_at "
+            "SELECT `key`, display_name, kind, remote_url, created_at, "
+            "last_validated_at "
             "FROM project ORDER BY `key` ASC"
         )
         async with self._engine.connect() as conn:
             result = await conn.execute(sql)
             return [dict(row._mapping) for row in result]
+
+    @observe(tier="stage", metric="backend.sql.project.list_stale")
+    async def list_stale_projects(self, threshold_days: int) -> dict:
+        """Return project rows whose ``last_validated_at`` is older than *threshold_days*.
+
+        Car C11-#88 (task #88). Powers ``yadgar project list --stale`` so an
+        operator can see how many rows have drifted past the configured
+        threshold without scanning ``list_project_rows`` by hand. NULL is
+        included because "never validated" is the failure mode — a row that
+        pre-dates the column cannot be older than anything but it IS stale
+        in the operator's intent.
+
+        Args:
+            threshold_days: rows with ``last_validated_at`` older than this
+                are surfaced. Comes from ``Settings.PROJECT_STALENESS_DAYS``
+                (env: ``YADGAR_PROJECT_STALENESS_DAYS``, default 90).
+
+        Returns:
+            ``{"projects": [...], "threshold_days": int, "count": int}`` —
+            one row per stale project, sorted by ``key`` for stable output.
+            ``threshold_days`` is echoed so the CLI can print "stale since N
+            days" alongside the row count without re-reading settings.
+        """
+        from sqlalchemy import text
+
+        sql = text(
+            "SELECT `key`, display_name, kind, remote_url, created_at, "
+            "last_validated_at "
+            "FROM project "
+            "WHERE last_validated_at IS NULL "
+            "   OR last_validated_at < (CURRENT_TIMESTAMP - INTERVAL :days DAY) "
+            "ORDER BY `key` ASC"
+        )
+        async with self._engine.connect() as conn:
+            result = await conn.execute(sql, {"days": int(threshold_days)})
+            rows = [dict(row._mapping) for row in result]
+        return {"projects": rows, "threshold_days": int(threshold_days), "count": len(rows)}
 
     @observe(tier="boundary", metric="backend.sql.project.assert_registered")
     async def assert_project_registered(self, project_id: str) -> None:

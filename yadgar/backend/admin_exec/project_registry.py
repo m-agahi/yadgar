@@ -139,8 +139,17 @@ async def _ensure_project_exists_async(project_id: str, *, engine: Any = None) -
             the check could not run at all (see module docstring — this used
             to return silently, which made the guard a no-op).
 
-    MUST NOT issue any INSERT/UPDATE/DELETE — this guard is read-only by
-    contract (see module docstring).
+    STALENESS REFRESH (Car C11-#88 / task #88)
+    ------------------------------------------
+    On a successful registry check, the row's ``last_validated_at`` is
+    bumped to CURRENT_TIMESTAMP. The bump runs in a try/except so a stale
+    refresh can NEVER break the guard — the contract here is read-only,
+    and the threshold query (CLI ``yadgar project list --stale``) only
+    reads ``last_validated_at``, never relies on it being fresh.
+
+    A bump failure is logged at WARNING and swallowed: the registry check
+    has already passed, so the caller still sees the project as
+    registered. The next call bumps again.
     """
     if engine is None:
         engine = _live_engine()
@@ -155,6 +164,24 @@ async def _ensure_project_exists_async(project_id: str, *, engine: Any = None) -
     )
     if not present:
         raise UnknownProjectError(project_id)
+
+    # Staleness refresh — fires only on a confirmed-present row.
+    try:
+        from sqlalchemy import text as _sa_text
+
+        async with engine._engine.begin() as _conn:  # type: ignore[attr-defined]
+            await _conn.execute(
+                _sa_text(
+                    "UPDATE project SET last_validated_at = CURRENT_TIMESTAMP WHERE `key` = :key"
+                ),
+                {"key": project_id},
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "project_registry: last_validated_at refresh failed for %s: %s",
+            project_id,
+            exc,
+        )
 
 
 @observe(tier="boundary", metric="backend.admin._ensure_project_exists_sync")

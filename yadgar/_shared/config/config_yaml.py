@@ -1796,6 +1796,13 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": "Which side-build launcher Phase 3 uses for its throwaway SurrealDB (task 0107): 'auto' (host binary first, container second, SKIP third — default), 'host' (host binary only, fails loud rather than falling through), or 'container' (container only, ignoring any resolvable host binary).",
         "section": "vacuum",
     },
+    "project_staleness_days": {
+        "desc": (
+            "Days before a project row is considered stale for `yadgar project list --stale` (default 90). "
+            "Rows whose `last_validated_at` is NULL or older than this are surfaced."
+        ),
+        "section": "ops",
+    },
 }
 
 

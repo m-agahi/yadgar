@@ -814,3 +814,33 @@ async def list_project_rows(payload: dict) -> dict:
         logger.warning("list_project_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
     return {"rows": rows}
+
+
+@observe(tier="stage", metric="backend.admin.ledger.list_stale_projects")
+async def list_stale_projects(payload: dict) -> dict:
+    """Return project rows whose ``last_validated_at`` is older than threshold.
+
+    Car C11-#88 (task #88). payload: ``{}`` (no parameters — the threshold
+    comes from ``Settings.PROJECT_STALENESS_DAYS``, env
+    ``YADGAR_PROJECT_STALENESS_DAYS``, default 90). Surfacing NULL
+    ``last_validated_at`` is the failure mode: a row that pre-dates the
+    column cannot be older than anything but IS stale in the operator's
+    intent.
+
+    Returns ``{"projects": [...], "threshold_days": int, "count": int}`` on
+    success, or ``{"ok": False, "error": str}`` on a missing engine /
+    raised exception. The CLI prints the threshold alongside the row
+    count so the operator does not need to re-read settings.
+    """
+    from yadgar._shared.config import get_settings
+
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    threshold_days = int(get_settings().PROJECT_STALENESS_DAYS)
+    try:
+        result = await storage.list_stale_projects(threshold_days)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list_stale_projects error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    return result
