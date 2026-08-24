@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -49,6 +50,23 @@ DEFAULT_MAP_PATH = Path.cwd() / ".yadgar" / "project-id-map.tsv"
 # subcommand's output is self-documenting.
 _NON_SEED_VALUES = frozenset({"DROP", "REVIEW"})
 
+# ``project.display_name`` is VARCHAR(64) (see alembic revision
+# ``003_project_registry``: ``sa.Column("display_name", sa.String(length=64),
+# nullable=True)``). The TSV ``note`` column is a free-text field and can
+# exceed that width; the original code used ``note[:255]`` which silently
+# let >64-char notes through and tripped a MariaDB ``DataError(1406)`` at
+# INSERT time. The 2026-08-20 incident showed this surfacing as
+# ``failed: N`` with no per-row reason — task #241, car C8-3. We truncate
+# to the schema's actual width here, BEFORE the backend call, and log the
+# truncation reason so the daemon log has the operator signal the bare
+# counter never carried.
+DISPLAY_NAME_MAX_CHARS = 64
+
+# Module-level logger for the seed path. ``yadgar.*`` namespace so it
+# lands on the same handler as the backend's ``create_project_row``
+# warning (which the operator reads for column-level reasons).
+_logger = logging.getLogger("yadgar.core.cli.project")
+
 
 def read_auth_token() -> str:
     """Read YADGAR_MCP_AUTH_TOKEN via the canonical resolver.
@@ -58,7 +76,7 @@ def read_auth_token() -> str:
     pattern lint hard-fails any hand-rolled ``os.environ.get("YADGAR_MCP_AUTH_TOKEN", ...)``
     so this stays a one-liner, not a copy.
     """
-    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+    from yadgar.core.install.auth_token import resolve_auth_token
 
     return resolve_auth_token()
 
@@ -188,7 +206,7 @@ def seed_row(row: dict, *, auth_token: str) -> str:
     """
     # Imported lazily so the import cost is paid only on use (the
     # ``--help`` path should not require httpx to be importable).
-    from yadgar.core.forward import _forward_admin  # noqa: PLC0415
+    from yadgar.core.forward import _forward_admin
 
     kind = infer_kind(row["project_id"])
     payload = {
@@ -199,8 +217,26 @@ def seed_row(row: dict, *, auth_token: str) -> str:
     # so the operator can correlate later. ``create_project_row``
     # accepts ``display_name``; we use the note (truncated) as a
     # cheap-as-free annotation. Empty notes stay empty.
-    if row.get("note"):
-        payload["display_name"] = row["note"][:255]
+    #
+    # ``project.display_name`` is VARCHAR(64) (alembic revision
+    # ``003_project_registry``: ``sa.String(length=64)``). The original
+    # code used ``note[:255]`` which silently let >64-char notes
+    # through and tripped MariaDB ``DataError(1406)`` at INSERT time.
+    # The 2026-08-20 incident showed this surfacing as ``failed: N``
+    # with no per-row reason — task #241, car C8-3. Truncate to the
+    # schema's actual width BEFORE the backend call, and log the
+    # truncation reason so the daemon log carries the operator signal
+    # the bare counter never did.
+    note = row.get("note") or ""
+    if note:
+        if len(note) > 64:  # noqa: PLR2004 — schema length, not magic
+            _logger.warning(
+                "display_name truncated: project_id=%r note_len=%d -> 64",
+                row["project_id"],
+                len(note),
+            )
+            note = note[:64]
+        payload["display_name"] = note
 
     try:
         result = _forward_admin(
