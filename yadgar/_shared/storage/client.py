@@ -208,6 +208,19 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         # v5.35.1 — were missing since initial implementation (same class as v5.17.0 confidence fix)
         "last_accessed",
         "access_count",
+        # Car C10 (task #318): ``created_at`` was deliberately absent because
+        # production code never overwrites the row's creation time, but the
+        # decay-test helper in ``test_memory_behavior.py`` calls
+        # ``update_memory_fields(memory_id, created_at=past)`` to age rows
+        # for the heat-decay invariants. Pre-C10 the helper silently dropped
+        # ``created_at`` so every backdate since the field was added has been
+        # a no-op — and the existing decay tests passed by coincidence because
+        # they assert on ``compression_level`` / ``content`` (which DO survive),
+        # never on the timestamp itself. Adding it here closes the gap; the
+        # invariant test in ``test_memory_updatable_fields.py`` was already
+        # tagging ``created_at`` as a KNOWN field and INTERNAL_EXCLUDE had to
+        # drop it (see test_c10_memory_created_at_writable for the cross-test).
+        "created_at",
         # v5.54.1 — precomputed graph prior (consolidation phase, additive boost in fusion)
         "graph_prior",
         # v5.54.2 — precomputed co-recall (transition-edge) prior (consolidation phase, additive boost in fusion)
