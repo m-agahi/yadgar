@@ -124,7 +124,12 @@ class _PromotionMixin:
             {
                 "content": schema,
                 "embedding": schema_embedding,
-                "tags": ["semantic", "auto-abstracted"],
+                "tags": ["semantic", "auto-abstracted", "_from_consolidation"],
+                # C7c (task #339): fast-path flag for ``audit_anchors`` and any
+                # downstream consumer that needs to know this row was minted
+                # by the CLS consolidator (vs. by a human memorize). Read from
+                # the row dict directly; the tag is the cross-checking copy.
+                "_from_consolidation": True,
                 "directory_context": primary_dir,
                 "project_id": primary_project,
                 "heat": 0.8,

@@ -18,7 +18,10 @@ class TestAbstractToSchemaUnit:
     """Characterization tests for abstract_to_schema — pure-Python, no DB."""
 
     def test_empty_cluster(self, mixin):
-        assert mixin.abstract_to_schema([]) == ""
+        # C7c (task #339): empty cluster returns None, consistent with the
+        # word-salad gate. The caller (promotion._promote_pattern) handles
+        # ``not schema`` so empty string and None are equivalent.
+        assert mixin.abstract_to_schema([]) is None
 
     def test_meaningful_words_included(self, mixin):
         cluster = [
@@ -40,7 +43,14 @@ class TestAbstractToSchemaUnit:
         assert "devops" in schema.lower()
 
     def test_fallback_no_meaningful_words(self, mixin):
-        """When all common tokens are stop-words, fallback returns shortest memory."""
+        """When all common tokens are stop-words, the gate drops the salad.
+
+        C7c (task #339): a body that survives the degenerate-and-thin
+        guards but carries NO identifier / ADR / file signal AND has no
+        shared tag is a word salad. The gate discards it before it can
+        reach the auto-promotion path. Pre-C7c this asserted the raw
+        fallback string was returned; the new contract is None.
+        """
         # "the", "and", "for" are all stop-words; no meaningful word survives.
         short = "the and for"
         cluster = [
@@ -48,11 +58,16 @@ class TestAbstractToSchemaUnit:
             {"id": 2, "content": "the and for with that", "tags": []},
         ]
         schema = mixin.abstract_to_schema(cluster)
-        assert schema == f"Recurring pattern: {short}"
+        assert schema is None, "word salad fallback must be dropped by C7c gate"
 
     def test_single_memory(self, mixin):
-        """Single-element cluster with unique content should produce a schema."""
+        """Single-element cluster with no identifier signal → word salad → None.
+
+        C7c (task #339): "Use dependency injection for services" carries no
+        backtick identifier, no ADR, no file ref, no shared tag. Pre-C7c
+        the schema string was returned and immediately auto-promoted to
+        an anchor; the new contract is None.
+        """
         cluster = [{"id": 1, "content": "Use dependency injection for services", "tags": []}]
         schema = mixin.abstract_to_schema(cluster)
-        assert isinstance(schema, str)
-        assert len(schema) > 0
+        assert schema is None

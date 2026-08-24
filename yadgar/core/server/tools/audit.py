@@ -21,6 +21,7 @@ import re
 from datetime import UTC, datetime
 
 from yadgar._shared.config import get_settings
+from yadgar._shared.config.config import _consolidation_anchor_audit_enabled
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.forward import _forward_admin
@@ -644,6 +645,65 @@ def _apply_mutations(resolved: str, actions: list[dict]) -> list[dict]:
 # ── Public MCP tool ───────────────────────────────────────────────────────
 
 
+# C7c (task #339): a thin scan that returns anchor rows for a directory as
+# plain dicts. Extracted so ``audit_anchors`` can mix the existing per-dir
+# action builders with a consolidation-anchor review pass without inflating
+# the audit tool's cyclomatic count past the I13 cap.
+@observe(tier="stage", metric="tools.audit._scan_anchor_rows")
+def _scan_anchor_rows(storage, directory: str) -> list[dict]:
+    """Return anchor rows for *directory* as plain dicts."""
+    try:
+        rows = storage._q(
+            "SELECT id, content, tags, is_protected, heat, last_accessed "
+            "FROM memory WHERE '_anchor' INSIDE tags "
+            "AND directory_context = $dir",
+            {"dir": directory},
+        )
+    except Exception:
+        logger.warning("_scan_anchor_rows: scan failed for directory %r", directory, exc_info=True)
+        return []
+    out: list[dict] = []
+    for r in rows:
+        out.append(
+            {
+                "id": r.get("id"),
+                "content": r.get("content", ""),
+                "tags": list(r.get("tags") or []),
+                "is_protected": bool(r.get("is_protected")),
+                "heat": r.get("heat"),
+                "last_seen_at": r.get("last_accessed"),
+            }
+        )
+    return out
+
+
+@observe(tier="stage", metric="tools.audit._consolidation_review")
+def _consolidation_review_for_rows(rows: list[dict]) -> list[dict]:
+    """Filter anchor rows down to those carrying the consolidation flag.
+
+    Returns the entries that need human review: rows with
+    ``_from_consolidation`` in their tag list. Each entry carries the row
+    id, a content preview capped at 200 chars, the full tag list, the
+    is_protected/heat snapshot, and last_seen_at for triage.
+    """
+    review: list[dict] = []
+    for r in rows:
+        if "_from_consolidation" not in r.get("tags", []):
+            continue
+        content = r.get("content", "") or ""
+        review.append(
+            {
+                "memory_id": r.get("id"),
+                "content_preview": content[:200],
+                "tags": r.get("tags", []),
+                "is_protected": r.get("is_protected"),
+                "heat": r.get("heat"),
+                "last_seen_at": r.get("last_seen_at"),
+            }
+        )
+    return review
+
+
 @_tool(power=True)
 def audit_anchors(
     directory: str,
@@ -732,6 +792,20 @@ def audit_anchors(
     }
     if truncated:
         result["_truncated"] = True
+
+    # C7c (task #339): surface any anchor row that also carries the
+    # ``_from_consolidation`` flag. These were minted by the CLS
+    # consolidator; on legacy corpora the tag may be missing (the emit-side
+    # stamping is new), so this list is best-effort. Gated on the knob
+    # ``YADGAR_CONSOLIDATION_ANCHOR_AUDIT_ENABLED`` so a backlog of review
+    # items can be silenced.
+    if _consolidation_anchor_audit_enabled():
+        consolidation_rows: list[dict] = []
+        for audit_dir in [resolved] + (["global"] if include_global else []):
+            consolidation_rows.extend(_scan_anchor_rows(storage, audit_dir))
+        result["consolidation_anchor_review"] = _consolidation_review_for_rows(consolidation_rows)
+    else:
+        result["consolidation_anchor_review"] = []
     return result
 
 
