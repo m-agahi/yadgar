@@ -209,9 +209,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 2220
+      "file_loc": 2227
     },
-    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) — pure data, not logic; the module is a single-responsibility config loader by design. Car 7 (2026-08-13) resynced file_loc 1923 -> 2219 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 2219 -> 2220 (+1). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
+    "rationale": "pre-existing; scheduled for v5.55 wave N refactor. v5.89 #67: +~490 LoC of FIELD_META schema data (desc/section for 67 backfilled knobs draining the I25 Tier-2 grandfathered backlog) — pure data, not logic; the module is a single-responsibility config loader by design. Car 7 (2026-08-13) resynced file_loc 1923 -> 2219 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 2219 -> 2220 (+1). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size. | Car C11-#88 (task #88, 2026-08-24): +7 for `project_staleness_days` FIELD_META entry (the three-way-sync ratchet requires every Settings field to have a corresponding entry). Same pure-data shape as the surrounding schema entries; one desc + one section tag.",
     "added": "2026-06-13",
     "added_by": "complexity-governance-agent"
   },
@@ -398,9 +398,9 @@
     "function": "<file>",
     "lineno": 1,
     "metrics": {
-      "file_loc": 1203
+      "file_loc": 1212
     },
-    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split. Car 7 (2026-08-13) resynced file_loc 1006 -> 1182 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 1182 -> 1203 (+21). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size.",
+    "rationale": "P5 obs-wave: +6 LoC of @observe decorators on _load, get_field_value, _validate_hhmm, _validate_log_format, resolve_knob pushed file from 1000 to 1006. Single-responsibility pydantic Settings module; all fields and validators belong co-located. Scheduled for wave N settings-split. Car 7 (2026-08-13) resynced file_loc 1006 -> 1182 (measured drift, under the 20% gate); the underlying justification was not re-audited at the larger size. | Re-baselined 2026-08-20 on the signals-that-lie train merge: file_loc 1182 -> 1203 (+21). Growth is this train's own (maintenance envelope, registry-check-on-create, enrichment resync, prior rework). Recorded so the newly-ratcheting allowlist catches FUTURE drift; NOT a review-and-approve of the size. | Car C11-#88 (task #88, 2026-08-24): +9 for PROJECT_STALENESS_DAYS setting (with explanatory comment). Same single-responsibility pydantic Settings module; the new field belongs co-located. file_loc 1203 -> 1212 (+9).",
     "added": "2026-07-03",
     "added_by": "feat/obs-p1-recall-readpath"
   },

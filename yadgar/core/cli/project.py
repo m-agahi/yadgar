@@ -228,6 +228,73 @@ def seed_row(row: dict, *, auth_token: str) -> str:
     return "failed"
 
 
+def cmd_project_list(args: argparse.Namespace) -> int:
+    """``yadgar project list [--stale]`` handler.
+
+    With ``--stale``, calls ``list_stale_projects`` (the C11 op) and
+    renders the rows the threshold flagged. Without ``--stale``, calls
+    ``list_project_rows`` and renders every registered project — the same
+    shape the backfill uses internally.
+
+    Failures print to stderr with a leading ``ERROR:`` marker and return
+    1 — same convention as ``cmd_project_seed``. A zero-row result is NOT
+    a failure; an operator running ``--stale`` and finding zero rows is
+    the goal, not an error.
+    """
+    # Lazy import — the ``--help`` path should not require httpx.
+    from yadgar.core.forward import _forward_admin
+
+    auth_token = read_auth_token()
+    if not auth_token:
+        print(
+            "  WARN: YADGAR_MCP_AUTH_TOKEN unset; backend may reject the request.",
+            file=sys.stderr,
+        )
+
+    op = "list_stale_projects" if args.stale else "list_project_rows"
+    payload: dict = {}
+    try:
+        result = _forward_admin(op, payload, timeout_s=30.0)
+    except Exception as exc:  # noqa: BLE001
+        print(f"ERROR: {op}: backend call raised: {exc}", file=sys.stderr)
+        return 1
+
+    # Both ops have the ``{"ok": False, "error": ...}`` failure shape.
+    if result.get("ok") is False:
+        print(
+            f"ERROR: {op}: {result.get('error', 'unknown error')}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.stale:
+        rows = result.get("projects", [])
+        threshold = result.get("threshold_days", "?")
+        print(
+            f"Stale project rows (threshold={threshold} days, count={len(rows)}):",
+            file=sys.stderr,
+        )
+        for row in rows:
+            last = row.get("last_validated_at") or "NEVER"
+            print(
+                f"  {row.get('key')}  kind={row.get('kind')}  last_validated_at={last}",
+                file=sys.stderr,
+            )
+    else:
+        rows = result.get("rows", [])
+        print(f"Registered projects ({len(rows)}):", file=sys.stderr)
+        for row in rows:
+            last = row.get("last_validated_at") or "NEVER"
+            print(
+                f"  {row.get('key')}  kind={row.get('kind')}  last_validated_at={last}",
+                file=sys.stderr,
+            )
+
+    # JSON to stdout for downstream consumption (jq, capture, etc.).
+    print(json.dumps(result))
+    return 0
+
+
 def cmd_project_seed(args: argparse.Namespace) -> int:
     """``yadgar project seed`` handler.
 
@@ -304,3 +371,18 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Path to the project-id map TSV (default: ./.yadgar/project-id-map.tsv)",
     )
     seed_p.set_defaults(func=cmd_project_seed)
+
+    # Car C11-#88 (task #88): staleness surface.
+    # ``yadgar project list [--stale]`` — without the flag, every row;
+    # with ``--stale``, rows older than ``YADGAR_PROJECT_STALENESS_DAYS``.
+    list_p = project_sub.add_parser(
+        "list",
+        help="List registered projects (with --stale: rows older than the threshold)",
+    )
+    list_p.add_argument(
+        "--stale",
+        action="store_true",
+        default=False,
+        help="Show only rows whose last_validated_at is older than YADGAR_PROJECT_STALENESS_DAYS",
+    )
+    list_p.set_defaults(func=cmd_project_list)

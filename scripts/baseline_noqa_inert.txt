@@ -2,7 +2,7 @@ yadgar/_shared/astrocyte_pool/astrocyte_pool.py:128:PLC0415
 yadgar/_shared/config/config.py:24:PLC0415
 yadgar/_shared/config/config_registry.py:85:PLC0415
 yadgar/_shared/config/config_registry.py:115:PLC0415
-yadgar/_shared/config/config_registry.py:602:PLC0415
+yadgar/_shared/config/config_registry.py:606:PLC0415
 yadgar/_shared/contracts/engram.py:56:PLC0415
 yadgar/_shared/contracts/protocols.py:80:ARG002
 yadgar/_shared/contracts/protocols.py:83:ARG002
@@ -122,8 +122,8 @@ yadgar/_shared/storage/sql/migrate.py:267:PLC0415
 yadgar/_shared/storage/sql/registry.py:84:PLC0415
 yadgar/_shared/storage/sql/registry.py:85:PLC0415
 yadgar/_shared/storage/sql/registry.py:87:PLC0415
-yadgar/_shared/storage/sql/registry.py:122:PLC0415
-yadgar/_shared/storage/sql/registry.py:154:PLC0415
+yadgar/_shared/storage/sql/registry.py:128:PLC0415
+yadgar/_shared/storage/sql/registry.py:198:PLC0415
 yadgar/_shared/storage/wiki.py:71:PLC0415
 yadgar/_shared/wiki/store.py:167:PLC0415
 yadgar/_shared/wiki/store.py:182:PLC0415
@@ -136,8 +136,8 @@ yadgar/_shared/wiki/wiki_meta.py:85:PLC0415
 yadgar/_shared/wiki/wiki_meta.py:87:PLC0415
 yadgar/_shared/wiki/wiki_meta.py:125:PLC0415
 yadgar/_shared/write_exec/validate.py:140:PLC0415
-yadgar/backend/admin_exec/__init__.py:259:PLC0415
-yadgar/backend/admin_exec/__init__.py:266:PLC0415
+yadgar/backend/admin_exec/__init__.py:263:PLC0415
+yadgar/backend/admin_exec/__init__.py:270:PLC0415
 yadgar/backend/admin_exec/adr_retype.py:71:PLC0415
 yadgar/backend/admin_exec/adr_seed.py:477:PLC0415
 yadgar/backend/admin_exec/adr_seed.py:861:PLC0415
@@ -186,7 +186,7 @@ yadgar/backend/admin_exec/project_backfill.py:450:SLF001
 yadgar/backend/admin_exec/project_backfill.py:451:S608
 yadgar/backend/admin_exec/project_backfill.py:619:S608
 yadgar/backend/admin_exec/project_backfill.py:628:SLF001
-yadgar/backend/admin_exec/project_registry.py:185:PLC0415
+yadgar/backend/admin_exec/project_registry.py:212:PLC0415
 yadgar/backend/admin_exec/reslug.py:208:PLC0415
 yadgar/backend/admin_exec/rollup.py:43:PLC0415
 yadgar/backend/admin_exec/rollup.py:169:PLC0415

@@ -751,6 +751,15 @@ class Settings(BaseSettings):
     # Hours without agent_dispatch_prelude call (vs active_work) before use_agent_prompt_library fires.
     DISPATCH_PRELUDE_DUE_WARN_HOURS: float = 12.0
 
+    # Car C11-#88 (task #88): project-table staleness threshold.
+    # ``yadgar project list --stale`` surfaces project rows whose
+    # ``last_validated_at`` is older than this many days. Default 90: same
+    # shape as the anchor-conditional TTL and the action-stream archive
+    # sweep — three months of silent drift is the signal this car exists
+    # to catch. Lower via YADGAR_PROJECT_STALENESS_DAYS if an operator
+    # wants a tighter window.
+    PROJECT_STALENESS_DAYS: int = 90
+
     # v5.8.0: anchor hygiene TTL knobs
     # Default valid_until offset (days) for tier=conditional anchors.
     ANCHOR_CONDITIONAL_TTL_DAYS: int = 90

@@ -572,6 +572,10 @@ _REGISTRY: list[ConfigEntry] = [
     ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_START", "19:00", "string"),
     ConfigEntry("YADGAR_VACUUM_AUTO_WINDOW_END", "23:00", "string"),
     ConfigEntry("YADGAR_VACUUM_SIDE_LAUNCHER", "auto", "string"),
+    # ── v5.171 car #88 (C11-#88, 2026-08-24): project-table staleness ─────
+    # Threshold for `yadgar project list --stale`. 90d default mirrors the
+    # anchor-conditional TTL and the action-stream archive sweep.
+    ConfigEntry("YADGAR_PROJECT_STALENESS_DAYS", "90", "int"),
 ]
 
 
