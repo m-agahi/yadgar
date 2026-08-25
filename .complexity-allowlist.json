@@ -1,5 +1,16 @@
 [
   {
+    "path": "yadgar/backend/embed_service/embed_service_routes.py",
+    "function": "recall_route",
+    "lineno": 152,
+    "metrics": {
+      "fn_loc": 153
+    },
+    "rationale": "Car B (task #204, 0047 train): recall_route fn_loc 147 -> 153 (+6) when the landscape call site threads ``tags=pipeline_tags`` into _run_landscape_backend. The +6 is the 4-line comment block naming the C8 superseded-strip contract (so the next reader does not 'simplify' the helper to default ``tags=None`` and silently re-introduce the free-rider leak) plus the kwargs line itself — essential feature surface, not logic branching (cyclomatic unchanged). The pre-existing function already has the rest of its body mass: the C8 superseded-ADR set load (placed on the event-loop side, see Car C8's placement rationale), the ADR-0077 deadline stamping, the slim-engines bootstrap, the schedule_db_write fork/inline backpressure tail, and the RecallScope assembly. Splitting the landscape branch into its own helper would require moving the ``pipeline_tags`` capture out of scope, which would break Car C8's whole free-rider contract — the token MUST stay where it is so the helper receives the already-stripped list. Decomposition tracked as a separate follow-up.",
+    "added": "2026-08-25",
+    "added_by": "car-B-landscape-tags"
+  },
+  {
     "path": "yadgar/core/server/tools/adr_render.py",
     "function": "_assemble_index_rows",
     "lineno": 170,
