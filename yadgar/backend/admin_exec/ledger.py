@@ -357,6 +357,37 @@ async def update_task_row(payload: dict) -> dict:
     return {"id": task_id, **column_payload}
 
 
+@observe(tier="boundary", metric="backend.admin.ledger.update_adr_tier_subsystem")
+async def update_adr_tier_subsystem(payload: dict) -> dict:
+    """UPDATE one ``adr`` row's ``tier`` + ``subsystem`` columns.
+
+    payload: ``{id, tier, subsystem}`` — ``id`` is the ADR primary key,
+    ``tier`` is the D27 enum (``"binding"`` | ``"historical"``),
+    ``subsystem`` is the D28 free-form VARCHAR(128) (may be ``None`` when
+    the row carries no subsystem yet — operator reviews).
+
+    Car B (task #202): the seed op that backfills these columns on the
+    legacy corpus used to write via a direct ``storage._engine.begin()``
+    UPDATE — a D20 chokepoint violation. This admin op is the sanctioned
+    chokepoint surface: every ``adr`` row write goes through
+    ``MariaStorageEngine.update_adr_tier_subsystem``, no exceptions.
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        adr_id = int(payload["id"])
+        tier = str(payload["tier"])
+        subsystem = payload.get("subsystem")
+        if subsystem is not None:
+            subsystem = str(subsystem)
+        await storage.update_adr_tier_subsystem(adr_id, tier, subsystem)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("update_adr_tier_subsystem error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "id": adr_id, "tier": tier, "subsystem": subsystem}
+
+
 @observe(tier="stage", metric="backend.admin.ledger.attach_adr_supersedes")
 async def _attach_supersedes(storage: Any, project_id: str, rows: list[dict]) -> list[dict]:
     """Add ``supersedes`` / ``superseded_by`` id lists to each ``adr`` row.
