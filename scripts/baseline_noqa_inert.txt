@@ -587,9 +587,9 @@ yadgar/core/server/http_wiki_versioning.py:211:PLC0415
 yadgar/core/server/http_wiki_versioning.py:260:PLC0415
 yadgar/core/server/http_wiki_versioning.py:321:PLC0415
 yadgar/core/server/routes/admin_ops.py:57:PLC0415
-yadgar/core/server/routes/control.py:300:PLC0415
-yadgar/core/server/routes/control.py:448:PLC0415
-yadgar/core/server/routes/control.py:789:PLC0415
+yadgar/core/server/routes/control.py:301:PLC0415
+yadgar/core/server/routes/control.py:449:PLC0415
+yadgar/core/server/routes/control.py:790:PLC0415
 yadgar/core/server/routes/control_audit.py:67:PLC0415
 yadgar/core/server/routes/control_update.py:93:PLC0415
 yadgar/core/server/routes/control_update.py:103:PLC0415

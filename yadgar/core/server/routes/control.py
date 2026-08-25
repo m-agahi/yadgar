@@ -70,6 +70,7 @@ SECTION_TO_CATEGORY: dict[str, str] = {
     "core": "ops",
     "daemon": "ops",
     "logging": "ops",
+    "ops": "ops",
     "misc": "config",
     "update": "ops",
     "backend_cache": "ops",
