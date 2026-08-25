@@ -81,10 +81,10 @@ class _ProjectRegistryMixin:
             ValueError: ``kind`` is not ``git`` or ``local``, or ``key`` is empty.
             DuplicateProjectError: the key is already registered.
         """
-        from sqlalchemy import text  # noqa: PLC0415
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy import text
+        from sqlalchemy.exc import IntegrityError
 
-        from yadgar._shared.storage.sql.errors import DuplicateProjectError  # noqa: PLC0415
+        from yadgar._shared.storage.sql.errors import DuplicateProjectError
 
         if not key:
             raise ValueError("project key must be a non-empty string")
@@ -125,7 +125,7 @@ class _ProjectRegistryMixin:
         ``yadgar project list --stale``) can age rows client-side without
         a second query.
         """
-        from sqlalchemy import text  # noqa: PLC0415
+        from sqlalchemy import text
 
         sql = text(
             "SELECT `key`, display_name, kind, remote_url, created_at, "
@@ -195,7 +195,7 @@ class _ProjectRegistryMixin:
         Raises:
             UnknownProjectError: no ``project`` row matches *project_id*.
         """
-        from yadgar._shared.storage.sql.errors import UnknownProjectError  # noqa: PLC0415
+        from yadgar._shared.storage.sql.errors import UnknownProjectError
 
         present = await self.row_exists(table="project", key_column="key", key_value=project_id)
         if not present:

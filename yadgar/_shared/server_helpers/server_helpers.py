@@ -369,7 +369,7 @@ def _bump_epoch_for_context(context: str | None) -> None:
     different, never-read _DIR_EPOCH key (the decorative-epoch bug). Fully guarded:
     instrumentation must never break or block the write path."""
     try:
-        from yadgar._shared.runtime.cache_epoch import bump_epoch  # noqa: PLC0415
+        from yadgar._shared.runtime.cache_epoch import bump_epoch
 
         resolved = _resolve_project_root(context) if context else None
         bump_epoch(resolved)
@@ -438,7 +438,7 @@ def _q_with_timeout(
     http = getattr(storage, "_http", None)
     if http is not None:
         try:
-            import httpx as _httpx  # noqa: PLC0415
+            import httpx as _httpx
         except ImportError:
             return storage._q(surql, params)
         old_timeout = http.timeout

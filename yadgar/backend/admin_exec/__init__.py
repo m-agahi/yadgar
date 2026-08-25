@@ -184,6 +184,7 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "list_adr_rows": ledger.list_adr_rows,
     "get_adr_row": ledger.get_adr_row,
     "list_agent_prompt_rows": ledger.list_agent_prompt_rows,
+    "list_agent_discipline_rows": ledger.list_agent_discipline_rows,
     # Car I additions: uses-DESC list, single-row lookup, composes reads,
     # ledger-row upserts for ``agent_prompt_save`` / ``discipline_save``,
     # and ``uses`` increment over the table (D40).
@@ -260,14 +261,14 @@ def _ensure_engines() -> None:
 
     BLOCKING — every caller must keep it off the event loop.
     """
-    from yadgar.backend.restoration import ensure_restoration_engines  # noqa: PLC0415
+    from yadgar.backend.restoration import ensure_restoration_engines
 
     ensure_restoration_engines()
 
 
 def _resolve_storage():
     """Return the runtime storage engine for ops that take it as a parameter."""
-    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 

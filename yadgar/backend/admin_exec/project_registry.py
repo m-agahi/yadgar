@@ -209,7 +209,7 @@ def _live_engine() -> Any:
     Lazy import keeps this module off the ``sql`` extra on hosts that
     never import engine #2.
     """
-    import yadgar._shared.runtime.state as _st  # noqa: PLC0415
+    import yadgar._shared.runtime.state as _st
 
     return _st._sql_storage
 

@@ -1,0 +1,154 @@
+"""Bug-bag-2 train 2026-08-23, C5 task 206 — anchor-audit prompt tests.
+
+Pins the prompt's protocol against the real ``audit_anchors`` MCP tool:
+the recall(_audit_anchors sentinel anchor hygiene, ...) Step 1 call that
+served as a stand-in for a tool that did not yet exist is gone; the prompt
+now references ``audit_anchors(directory, dry_run=True, *, project=...)``
+and the new return-shape fields (``scanned``, ``actions[].id``,
+``actions[].type``, ``actions[].tags``, ``actions[].rationale``); Step 5
+collapses the per-id de_anchor loop into a single apply call.
+
+Pure string-content tests on the prompt file; no DB / fixture required.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+_PROMPT = (
+    Path(__file__).resolve().parents[3]
+    / "yadgar"
+    / "core"
+    / "hooks"
+    / "templates"
+    / "anchor_audit_prompt.md"
+)
+_CONTENT = _PROMPT.read_text(encoding="utf-8")
+
+
+def _step_block(n: int) -> str:
+    """Return the text of numbered step ``n`` only, up to step ``n + 1``.
+
+    Whole-file ``in _CONTENT`` assertions cannot fail for any token the prompt
+    mentions anywhere — "scanned" appears in Step 1's return-shape listing, so
+    a Step-2 gate that never reads it still satisfies a file-wide check. Every
+    positional claim in this module is asserted against the block that is
+    supposed to carry it.
+    """
+    start = re.search(rf"^{n}\. ", _CONTENT, flags=re.MULTILINE)
+    assert start is not None, f"step {n} heading not found in prompt"
+    end = re.search(rf"^{n + 1}\. ", _CONTENT, flags=re.MULTILINE)
+    return _CONTENT[start.start() : (end.start() if end else len(_CONTENT))]
+
+
+class TestAnchorAuditPromptNoLongerCallsRecall:
+    def test_does_not_mention_recall_with_audit_anchors_sentinel(self):
+        # The old Step 1 was a hack: it called recall() with a literal sentinel
+        # phrase so the keyword search would surface audit_anchors memory rows.
+        # The prompt must not regress to that shape.
+        assert "recall(_audit_anchors sentinel anchor hygiene" not in _CONTENT
+        assert 'recall("_audit_anchors sentinel anchor hygiene' not in _CONTENT
+
+    def test_does_not_mention_max_results_25_with_sentinel(self):
+        # The old recall call had max_results=25 typed in by hand. The new
+        # protocol calls audit_anchors which has no such knob.
+        assert "max_results=25" not in _CONTENT
+
+
+class TestAnchorAuditPromptCallsAuditAnchors:
+    def test_step_1_references_audit_anchors_dry_run_true(self):
+        assert 'audit_anchors("{directory}", dry_run=True' in _CONTENT
+
+    def test_step_1_references_project_keyword(self):
+        # The new tool signature requires project= as a keyword (C5 / C7); the
+        # prompt's Step 1 must carry the same.
+        assert 'project="{project}"' in _CONTENT
+
+    def test_step_5_uses_dry_run_false_apply_call(self):
+        assert 'audit_anchors("{directory}", dry_run=False' in _CONTENT
+
+
+class TestAnchorAuditPromptReferencesNewFields:
+    """Return-shape fields are pinned INSIDE Step 1, where the call is made.
+
+    A file-wide ``in _CONTENT`` cannot fail once the token appears anywhere,
+    so these assert against ``_step_block(1)``.
+    """
+
+    def test_step_1_lists_scanned(self):
+        assert "scanned" in _step_block(1)
+
+    def test_step_1_lists_action_id_field(self):
+        # Field name must match the audit_anchors return shape: actions[i].id
+        assert '"id"' in _step_block(1)
+
+    def test_step_1_lists_action_type_field(self):
+        assert '"type"' in _step_block(1)
+
+    def test_step_1_lists_action_tags_field(self):
+        assert '"tags"' in _step_block(1)
+
+    def test_step_1_lists_action_rationale_field(self):
+        assert '"rationale"' in _step_block(1)
+
+
+class TestAnchorAuditPromptStepTwoGateReadsScanned:
+    """Task 206's second half: the empty gate must not conflate two states.
+
+    ``scanned == 0`` (this project has NO anchors at all) and ``scanned > 0``
+    with an empty action list (every anchor is healthy) are different facts and
+    read back to the user differently. Before this test the Step-2 gate never
+    mentioned ``scanned``, so both collapsed into a silent STOP and the user
+    could not tell "nothing to audit" from "audit ran, all clean".
+    """
+
+    def test_step_2_gate_reads_scanned(self):
+        assert "scanned" in _step_block(2)
+
+    def test_step_2_branches_on_zero_scanned(self):
+        block = _step_block(2)
+        assert "scanned == 0" in block
+
+    def test_step_2_branches_on_scanned_with_no_actions(self):
+        block = _step_block(2)
+        assert "scanned > 0" in block
+
+    def test_step_2_keeps_prose_only_conjunct(self):
+        # The prose-only-archive risk census is part of the gate: an empty
+        # action list with a non-zero prose-only count is NOT the healthy
+        # state and must not silence the pass.
+        assert "anchored_by_prose_only" in _step_block(2)
+
+
+class TestAnchorAuditPromptCallSyntaxIsValid:
+    def test_no_definition_site_star_marker_in_a_call(self):
+        # ``audit_anchors("{directory}", dry_run=True, *, project="{project}")``
+        # is not valid Python: the bare ``*`` is a DEFINITION-site keyword-only
+        # marker, illegal in a call. An LLM reads this prompt literally and
+        # will reproduce whatever it is shown.
+        assert ", *, project=" not in _CONTENT
+
+    def test_audit_anchors_calls_still_pass_project_keyword(self):
+        assert 'project="{project}"' in _CONTENT
+
+
+class TestAnchorAuditPromptTruncationAndRerunNote:
+    def test_prompt_mentions_truncated_flag(self):
+        # audit_anchors returns _truncated=True when the cap is hit; the prompt
+        # must instruct the agent to re-run after apply.
+        assert "_truncated" in _CONTENT
+
+    def test_prompt_mentions_re_run_pattern(self):
+        # The truncation flag is informational — the agent needs a re-run
+        # instruction, otherwise stale candidates stay unapplied forever.
+        lowered = _CONTENT.lower()
+        assert "re-run" in lowered or "rerun" in lowered or "re run" in lowered
+
+
+class TestAnchorAuditPromptDeAnchorStillReferenced:
+    def test_prompt_references_de_anchor_as_lower_level_primitive(self):
+        # Scope: keep de_anchor() mentioned as the lower-level primitive the
+        # dry-run-then-apply flow stands on; an audit reader must not conclude
+        # the primitive was deleted.
+        assert "de_anchor" in _CONTENT

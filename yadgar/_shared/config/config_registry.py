@@ -82,7 +82,7 @@ def _yaml_layer() -> dict[str, str]:
     simply never match — correct (they resolve env-or-default).
     """
     try:
-        from yadgar._shared.config.config_yaml import get_config_path, load_yaml  # noqa: PLC0415
+        from yadgar._shared.config.config_yaml import get_config_path, load_yaml
 
         raw = load_yaml(get_config_path())
     except Exception:  # noqa: BLE001 — a broken/missing yaml means "no yaml layer"
@@ -104,7 +104,8 @@ def clear_config_caches() -> None:
     /api/control/config and tests that swap config files MUST call this.
     """
     _yaml_layer.cache_clear()
-    from yadgar._shared.config import get_settings  # noqa: PLC0415 — avoid import cycle
+    # Local import to avoid import cycle (config -> config_registry -> config).
+    from yadgar._shared.config import get_settings
 
     get_settings.cache_clear()
 
@@ -112,7 +113,7 @@ def clear_config_caches() -> None:
     # call; .cache_clear()/.cache_info() are used externally so a per-call hit/miss
     # wrapper would not be behavior-neutral). Emit the rare structural bust instead
     # — flood-safe and the informative signal for a singleton reload.
-    from yadgar._shared.observability.metrics import record_cache_evict  # noqa: PLC0415
+    from yadgar._shared.observability.metrics import record_cache_evict
 
     record_cache_evict("config_yaml")
     record_cache_evict("config_settings")
@@ -607,7 +608,7 @@ def _set_config_gauges() -> None:
     (if any) are reflected.
     """
     try:
-        from yadgar._shared.observability.metrics import yadgar_config_value  # noqa: PLC0415
+        from yadgar._shared.observability.metrics import yadgar_config_value
     except Exception:
         return  # metrics not available (embed service, tests without metrics)
 
