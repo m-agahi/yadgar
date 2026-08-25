@@ -324,12 +324,20 @@ def normalize_write_context(context: str) -> str:
     - Worktree context → canonical repo root replaces the worktree path.
     - NEVER rejects: any failure → verbatim passthrough + log.
 
+    The `_GLOBAL_SENTINELS` short-circuit (task #21) stops the helper from
+    passing `'global'` (or any other sentinel identity) to ``git -C <sentinel>
+    rev-parse``, which would otherwise fall through to the path heuristic and
+    pick up a CWD-coincidental `.git` file — turning the literal into a
+    directory on the calling process. Sentinels pass through verbatim.
+
     ADR-0215 removed the branch half of this seam (throwaway worktree contexts
     used to additionally pin the write to the repo default branch); the
     directory normalization it exists for is unaffected.
     """
     try:
         if not context:
+            return context
+        if context in _GLOBAL_SENTINELS:
             return context
         root = _worktree_canonical_root(context)
         if root is None:
@@ -341,6 +349,14 @@ def normalize_write_context(context: str) -> str:
             "normalize_write_context failed for %r — storing verbatim", context, exc_info=True
         )
         return context
+
+
+#: Write-context sentinels that name an identity, NOT a filesystem path.
+#: Task #21: passing these into the git subprocess (or the path heuristic
+#: fallback) would let a CWD-coincidental ``.git`` file rewrite the literal
+#: into a directory on the calling process. Verbatim passthrough keeps the
+#: identity intact end-to-end.
+_GLOBAL_SENTINELS: frozenset[str] = frozenset({"global", "system", "unresolved"})
 
 
 @observe(tier="hot", metric="tools.project._bump_epoch_for_context")

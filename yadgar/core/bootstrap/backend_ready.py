@@ -112,6 +112,15 @@ def _probe_backend_health(url: str, timeout_s: float) -> bool:
 def await_backend_ready(settings=None) -> bool:
     """Block until the backend's /health returns 200, or the budget expires.
 
+    Polling cadence (task #61):
+      * sleep doubles after each consecutive failure, starting at
+        ``BACKEND_READY_POLL_SEC`` and capped at ``BACKEND_READY_POLL_MAX_SEC``;
+      * after ``BACKEND_READY_LONG_BAKE_OUT_AFTER`` consecutive failures the
+        loop enters long-bake-out: a single ``BACKEND_READY_LONG_BAKE_OUT_SEC``
+        sleep with one ``long-bake-out`` log line, then re-enters the probe loop.
+        The audit hook makes "backend has been down for minutes" greppable in
+        ``journalctl`` instead of indistinguishable from a probe storm.
+
     Args:
         settings: injected for tests; defaults to ``get_settings()``.
 
@@ -136,9 +145,15 @@ def await_backend_ready(settings=None) -> bool:
         return True
 
     poll_sec = max(float(getattr(_settings, "BACKEND_READY_POLL_SEC", 2.0)), 0.0)
+    poll_max_sec = max(float(getattr(_settings, "BACKEND_READY_POLL_MAX_SEC", 30.0)), 0.0)
+    long_bake_after = max(int(getattr(_settings, "BACKEND_READY_LONG_BAKE_OUT_AFTER", 5)), 1)
+    long_bake_sec = max(float(getattr(_settings, "BACKEND_READY_LONG_BAKE_OUT_SEC", 60.0)), 0.0)
+
     started = time.monotonic()
     deadline = started + budget_sec
     attempt = 0
+    consecutive_failures = 0
+    long_bake_emitted = False
 
     while True:
         attempt += 1
@@ -152,9 +167,47 @@ def await_backend_ready(settings=None) -> bool:
                 )
             return True
 
+        consecutive_failures += 1
         now = time.monotonic()
         if now >= deadline:
             break
+
+        # Long-bake-out: once we've failed enough times in a row, switch to a
+        # single long sleep (with one audit log line) and reset the per-probe
+        # cadence — but NOT consecutive_failures, since the budget still has
+        # the same number of probes left to spend.
+        if consecutive_failures >= long_bake_after:
+            if not long_bake_emitted:
+                logger.info(
+                    "long-bake-out: backend %s unreachable for %.1fs after %d "
+                    "consecutive failures; switching to %.0fs sleeps until the "
+                    "%ds budget expires",
+                    url,
+                    now - started,
+                    consecutive_failures,
+                    long_bake_sec,
+                    int(budget_sec),
+                )
+                long_bake_emitted = True
+            sleep_for = long_bake_sec
+        else:
+            # Exponential backoff from poll_sec → poll_max_sec, doubling each
+            # failure. The cap exists so a long outage doesn't end up with
+            # 30s sleeps back-to-back from attempt 1.
+            #
+            # The exponent is bounded before 2** to avoid overflowing the IEEE-754
+            # double that backs Python float — at poll_sec=2.0 and consecutive=1024
+            # the value crosses 2**1023 (the double max). 30 gives a 1e9 multiplier
+            # which is well beyond any sane poll_max_sec, so the floor/cap below
+            # does the rest of the work.
+            shift = min(consecutive_failures - 1, 30)
+            sleep_for = poll_sec * (2**shift)
+            sleep_for = max(sleep_for, poll_sec)  # floor at poll_sec
+            sleep_for = min(sleep_for, poll_max_sec)  # cap at poll_max_sec
+
+        # Never sleep past the deadline — the deadline check at loop top is the
+        # one that actually terminates the gate.
+        sleep_for = min(sleep_for, max(deadline - now, 0.0))
         # One INFO line per attempt — a support question is answerable from
         # `journalctl` without a rebuild.
         logger.info(
@@ -164,7 +217,7 @@ def await_backend_ready(settings=None) -> bool:
             now - started,
             budget_sec,
         )
-        time.sleep(min(poll_sec, max(deadline - now, 0.0)))
+        time.sleep(sleep_for)
 
     elapsed = time.monotonic() - started
     logger.error(

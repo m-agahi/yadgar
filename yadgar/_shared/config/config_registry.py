@@ -511,6 +511,10 @@ _REGISTRY: list[ConfigEntry] = [
     # core startup readiness gate (task 0027c)
     ConfigEntry("YADGAR_BACKEND_READY_WAIT_SEC", "60", "int"),
     ConfigEntry("YADGAR_BACKEND_READY_POLL_SEC", "2.0", "float"),
+    # task #61 — exponential backoff + long-bake-out
+    ConfigEntry("YADGAR_BACKEND_READY_POLL_MAX_SEC", "30.0", "float"),
+    ConfigEntry("YADGAR_BACKEND_READY_LONG_BAKE_OUT_AFTER", "5", "int"),
+    ConfigEntry("YADGAR_BACKEND_READY_LONG_BAKE_OUT_SEC", "60.0", "float"),
     # circuit breaker + rerank concurrency
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_ENABLED", "true", "bool"),
     ConfigEntry("YADGAR_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "3", "int"),
