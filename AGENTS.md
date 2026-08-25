@@ -36,8 +36,13 @@ yadgar install --client <name> --scope project --project-directory /path/to/repo
 ### Fast path — user install (pipx)
 
 ```bash
-pipx install yadgar          # or: pip install yadgar
-yadgar setup                 # writes ~/.config/yadgar/{config.yaml,secrets.env}
+# Yadgar needs Python 3.14+ (CPython features). Stock Debian 13 / Ubuntu LTS
+# ship only 3.11/3.12; pin a 3.14 interpreter via uv before pipx so its venv
+# targets 3.14.
+uv tool install uv                           # one-time: uv itself if missing
+uv python install 3.14                      # one-time: 3.14 interpreter
+pipx install --python "$(uv python find 3.14)" yadgar   # or: pip install yadgar
+yadgar setup                                 # writes ~/.config/yadgar/{config.yaml,secrets.env}
 set -a && . ~/.config/yadgar/secrets.env && set +a
 yadgar daemon start
 # Claude Code (full harness):
@@ -246,7 +251,7 @@ curl -s http://127.0.0.1:8765/metrics | head
 
 ## Security considerations
 
-- **Upgrade orchestrator is opt-in** (`update.install_enabled: false` by default). Snapshot artefacts at `~/.local/state/yadgar/upgrade-snapshots/` may contain prior systemd unit content — chmod 700, do not commit to VCS.
+- **Upgrade orchestrator is opt-in** (`update_install_enabled: false` by default). Snapshot artefacts at `~/.local/state/yadgar/upgrade-snapshots/` may contain prior systemd unit content — chmod 700, do not commit to VCS.
 - **Never bypass auth.** Bearer middleware guards `/api/*`, `/hooks/*`, `/mcp`. `YADGAR_REQUIRE_AUTH=0` is initial-rollout only — production must run with `1`.
 - **Never log secrets.** Always-on secret patterns block AWS, GCP, Stripe, Slack, OpenAI, Anthropic keys, JWT, GitHub PATs, private keys, DB URIs at write time — adding an exception requires the context-aware allowlist (`~/.config/yadgar/secret-gate-allowlist.yaml`) plus the `check-secret-gate` pre-commit gate.
 - **Never query SurrealDB directly** (no `docker exec` into `yadgar-backend`, no raw `surreal sql`, no opening the surrealkv file). Use MCP tools (`recall`, `memory_stats`, `project_brief`) or the HTTP API.

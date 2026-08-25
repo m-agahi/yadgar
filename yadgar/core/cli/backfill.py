@@ -264,6 +264,58 @@ def _run_stamp_identity(args: argparse.Namespace) -> int:
     return 1 if result.get("ok") is False else 0
 
 
+def _run_reslug(args: argparse.Namespace, *, project_id: str | None) -> int:
+    """``--reslug-adr-pages`` branch (own function so cmd_backfill stays at the
+    I13 cyclomatic cap).
+    """
+    from yadgar.core.forward import _forward_admin
+
+    dry_run = not getattr(args, "apply", False)
+    result = _forward_admin("reslug", {"project_id": project_id, "dry_run": dry_run})
+    _print_reslug_report(result, dry_run=dry_run)
+    print(json.dumps(result))
+    # ``reslug`` returns no ``ok`` key at all — a collision means a page
+    # was deliberately left un-reslugged (the occupant is never
+    # overwritten, so data is safe), but the operator previously got no
+    # signal beyond a stderr line (ledger task 13 defect 2). Gated on
+    # --apply only: a dry run's collisions are informational (the
+    # operator is reading the report by definition — that's why they
+    # ran a preview instead of --apply), whereas --apply is the unread
+    # path — a script running --apply has nobody reading stderr, which
+    # is exactly the harm a silent exit 0 caused.
+    if not dry_run and result.get("collisions"):
+        return 1
+    return 0
+
+
+def _run_adr_rows(args: argparse.Namespace, *, project_id: str | None, directory: str) -> int:
+    """``--adr-rows`` branch (own function so cmd_backfill stays at the I13 cap)."""
+    from yadgar.core.forward import _forward_admin
+
+    dry_run = not getattr(args, "apply", False)
+    payload: dict = {"project_id": project_id, "directory": directory, "dry_run": dry_run}
+    skip = _parse_skip_adr(getattr(args, "skip_adr", None))
+    if skip:
+        payload["skip_adr_numbers"] = skip
+    result = _forward_admin("seed_adr_rows", payload)
+    _print_seed_report(result, dry_run=dry_run)
+    print(json.dumps(result))
+    if result.get("ok") is False or (result.get("rows_failed") or 0):
+        return 1
+    if dry_run:
+        # The D35c gate reconciles the ledger against the page census, so on
+        # a dry run it necessarily disagrees — nothing was written. Gating
+        # the preview on it would make every dry run exit non-zero and
+        # teach the operator to ignore the exit code on the run that
+        # matters.
+        return 0
+    gate = result.get("gate", {}) or {}
+    flagged = result.get("flagged", []) or []
+    if not gate.get("exact_match", False) or flagged:
+        return 1
+    return 0
+
+
 def cmd_backfill(args: argparse.Namespace) -> int:
     """``yadgar backfill`` handler.
 
@@ -272,52 +324,15 @@ def cmd_backfill(args: argparse.Namespace) -> int:
     ``directory``; unresolvable fails loud per ADR-0227, never guessed).
     """
     from yadgar.core.cli._shared import resolve_cli_project
-    from yadgar.core.forward import _forward_admin
 
     directory = str(Path(args.directory).resolve())
     project_id = resolve_cli_project(getattr(args, "project", None), directory)
 
     if getattr(args, "reslug_adr_pages", False):
-        dry_run = not getattr(args, "apply", False)
-        result = _forward_admin("reslug", {"project_id": project_id, "dry_run": dry_run})
-        _print_reslug_report(result, dry_run=dry_run)
-        print(json.dumps(result))
-        # ``reslug`` returns no ``ok`` key at all — a collision means a page
-        # was deliberately left un-reslugged (the occupant is never
-        # overwritten, so data is safe), but the operator previously got no
-        # signal beyond a stderr line (ledger task 13 defect 2). Gated on
-        # --apply only: a dry run's collisions are informational (the
-        # operator is reading the report by definition — that's why they
-        # ran a preview instead of --apply), whereas --apply is the unread
-        # path — a script running --apply has nobody reading stderr, which
-        # is exactly the harm a silent exit 0 caused.
-        if not dry_run and result.get("collisions"):
-            return 1
-        return 0
+        return _run_reslug(args, project_id=project_id)
 
     if getattr(args, "adr_rows", False):
-        dry_run = not getattr(args, "apply", False)
-        payload: dict = {"project_id": project_id, "directory": directory, "dry_run": dry_run}
-        skip = _parse_skip_adr(getattr(args, "skip_adr", None))
-        if skip:
-            payload["skip_adr_numbers"] = skip
-        result = _forward_admin("seed_adr_rows", payload)
-        _print_seed_report(result, dry_run=dry_run)
-        print(json.dumps(result))
-        if result.get("ok") is False or (result.get("rows_failed") or 0):
-            return 1
-        if dry_run:
-            # The D35c gate reconciles the ledger against the page census, so on
-            # a dry run it necessarily disagrees — nothing was written. Gating
-            # the preview on it would make every dry run exit non-zero and
-            # teach the operator to ignore the exit code on the run that
-            # matters.
-            return 0
-        gate = result.get("gate", {}) or {}
-        flagged = result.get("flagged", []) or []
-        if not gate.get("exact_match", False) or flagged:
-            return 1
-        return 0
+        return _run_adr_rows(args, project_id=project_id, directory=directory)
 
     if getattr(args, "stamp_identity", False):
         return _run_stamp_identity(args)

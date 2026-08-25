@@ -486,6 +486,28 @@ async def list_agent_prompt_rows(payload: dict) -> dict:
     return {"rows": rows}
 
 
+@observe(tier="boundary", metric="backend.admin.ledger.list_agent_discipline_rows")
+async def list_agent_discipline_rows(payload: dict) -> dict:
+    """List every ``agent_discipline`` row, ordered by position then name. payload: {}.
+
+    Sister op to ``list_agent_prompt_rows``. Same engine-composed-or-not
+    contract; same error envelope on a storage exception. The admin op
+    surface for the discipline table was the half that never shipped —
+    ``save_agent_discipline_row`` landed in Car I but the read counterpart
+    was not added to the dispatch table, so any caller asking for a list
+    hit ``KeyError`` on the op name. C5 closes the gap.
+    """
+    storage = _get_sql_storage()
+    if storage is None:
+        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
+    try:
+        rows = await storage.list_agent_discipline_rows()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list_agent_discipline_rows error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    return {"rows": rows}
+
+
 # ── Car I additions: uses-DESC list, single-row lookup, composes read ──────
 
 

@@ -100,23 +100,33 @@ def _exit_backend_unreachable(stack: ExitStack, td: str) -> None:
 
 
 def _exit_skip_no_surreal(stack: ExitStack, td: str) -> None:
-    stack.enter_context(patch("yadgar.core.vacuum._has_side_build_launcher", return_value=False))
+    stack.enter_context(
+        patch(
+            "yadgar.core.vacuum._has_side_build_launcher", return_value=(False, "stub-fail-detail")
+        )
+    )
 
 
 def _exit_skip_low_disk(stack: ExitStack, td: str) -> None:
-    stack.enter_context(patch("yadgar.core.vacuum._has_side_build_launcher", return_value=True))
+    stack.enter_context(
+        patch("yadgar.core.vacuum._has_side_build_launcher", return_value=(True, ""))
+    )
     stack.enter_context(patch("yadgar.core.vacuum._has_free_space", return_value=False))
 
 
 def _exit_count_capture_fail(stack: ExitStack, td: str) -> None:
-    stack.enter_context(patch("yadgar.core.vacuum._has_side_build_launcher", return_value=True))
+    stack.enter_context(
+        patch("yadgar.core.vacuum._has_side_build_launcher", return_value=(True, ""))
+    )
     stack.enter_context(
         patch("yadgar.core.vacuum._capture_table_counts", side_effect=RuntimeError("no counts"))
     )
 
 
 def _exit_export_fail(stack: ExitStack, td: str) -> None:
-    stack.enter_context(patch("yadgar.core.vacuum._has_side_build_launcher", return_value=True))
+    stack.enter_context(
+        patch("yadgar.core.vacuum._has_side_build_launcher", return_value=(True, ""))
+    )
     stack.enter_context(
         patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1})
     )
@@ -126,7 +136,9 @@ def _exit_export_fail(stack: ExitStack, td: str) -> None:
 
 
 def _exit_snapshot_fail(stack: ExitStack, td: str) -> None:
-    stack.enter_context(patch("yadgar.core.vacuum._has_side_build_launcher", return_value=True))
+    stack.enter_context(
+        patch("yadgar.core.vacuum._has_side_build_launcher", return_value=(True, ""))
+    )
     stack.enter_context(
         patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1})
     )
@@ -143,7 +155,9 @@ def _exit_snapshot_fail(stack: ExitStack, td: str) -> None:
 
 
 def _exit_phase3_abort(stack: ExitStack, td: str) -> None:
-    stack.enter_context(patch("yadgar.core.vacuum._has_side_build_launcher", return_value=True))
+    stack.enter_context(
+        patch("yadgar.core.vacuum._has_side_build_launcher", return_value=(True, ""))
+    )
     stack.enter_context(
         patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1})
     )
@@ -295,7 +309,9 @@ def test_current_run_export_survives_an_abort(monkeypatch, tmp_path):
         stack.enter_context(patch("yadgar.core.vacuum._maintenance_enter", return_value=False))
         stack.enter_context(patch("yadgar.core.vacuum._maintenance_exit"))
         stack.enter_context(patch("yadgar.core.vacuum._drain_backend_queue"))
-        stack.enter_context(patch("yadgar.core.vacuum._has_side_build_launcher", return_value=True))
+        stack.enter_context(
+            patch("yadgar.core.vacuum._has_side_build_launcher", return_value=(True, ""))
+        )
         stack.enter_context(
             patch("yadgar.core.vacuum._capture_table_counts", return_value={"memory": 1})
         )

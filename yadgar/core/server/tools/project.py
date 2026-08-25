@@ -1287,19 +1287,18 @@ def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
 
 # ── v5.42.0: DLQ rejection signal ───────────────────────────────────────────
 
-#: failure_reason values treated as "rejections" (must match admin_dlq._REJECTION_TAXONOMY).
-_REJECTION_REASONS: frozenset[str] = frozenset(
-    {
-        "duplicate_detected",
-        "policy_rejected",
-        "gate_unavailable",  # PR #65 review finding #10: _compute_pending_rejections
-        # counts DLQ rows whose failure_reason is in this
-        # set. Pre-fix, gate_unavailable was missing —
-        # a fail-CLOSED drainer rejection (task 312) was
-        # silently under-counted by the vacuum gate.
-        # The two frozensets are commented as "must match"
-        # but had drifted (2 vs 6 members pre-fix).
-    }
+#: failure_reason values treated as "rejections".
+#: Single source of truth is ``admin_dlq._REJECTION_TAXONOMY`` (car C4 /
+#: bug-bag-2 train 2026-08-23, task 316). The previous hand-maintained copy
+#: here drifted to 3 members while ``_REJECTION_TAXONOMY`` grew to 7 —
+#: ``_compute_pending_rejections`` silently under-counted every reason that
+#: was added to the wire contract but not mirrored here. The import is
+#: local-only (no network) and admin_dlq imports nothing from project, so
+#: there is no cycle. If the import ever breaks the test that pins the
+#: alias (``test_dlq_rejection_shape::test_gate_unavailable_in_project_rejection_reasons``)
+#: fails closed.
+from yadgar.core.server.tools.admin_dlq import (  # noqa: E402
+    _REJECTION_TAXONOMY as _REJECTION_REASONS,
 )
 
 
@@ -1316,10 +1315,10 @@ def _compute_pending_rejections(resolved: str) -> int:
 
     v5.42.0 plan §3.3 spec.
     """
-    import json as _json  # noqa: PLC0415
+    import json as _json
 
     try:
-        from yadgar.core.lifecycle import _get_file_queue  # noqa: PLC0415
+        from yadgar.core.lifecycle import _get_file_queue
 
         fq = _get_file_queue()
         dlq_dir = fq.dlq_dir
