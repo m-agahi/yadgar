@@ -469,6 +469,7 @@ class CheckpointRestore:
         project_id: str,
         seen_ids: set[int],
         max_memories: int,
+        directory: str = "",
     ) -> list[dict]:
         """Run SR cognitive-map navigation to predict needed memories (step 5 of restore).
 
@@ -519,7 +520,27 @@ class CheckpointRestore:
                 continue
             # The map is corpus-wide; the injection must not be. Same key the
             # other memory-backed sinks use (C10f put the identity here).
-            if mem.get("directory_context") != project_id:
+            #
+            # C308 (#308): the post-C10f corpus stamps ``directory_context`` AND
+            # ``project_id`` with the resolved ``owner/repo``, but 2237 of the
+            # 2352 rows in the live corpus predate that move and still hold the
+            # caller's filesystem path on ``directory_context`` with no
+            # ``project_id``. A path-string vs project_id-string compare drops
+            # the entire legacy corpus — the SR bucket's 95% invisible. Accept
+            # either column, and accept a path-shaped ``directory_context``
+            # whose value is the path THIS restore is running against: a
+            # foreign project's legacy row holds a different path, the
+            # comparison misses, and the leak closes. The caller-supplied path
+            # is the only handle we have on "this project" before Task 310's
+            # column backfill is universal.
+            mem_dir = mem.get("directory_context") or ""
+            mem_proj = mem.get("project_id") or ""
+            in_project = (
+                mem_dir == project_id
+                or mem_proj == project_id
+                or (mem_dir.startswith("/") and mem_dir == directory)
+            )
+            if not in_project:
                 local_seen.add(mid)
                 continue
             mem.pop("embedding", None)
@@ -633,7 +654,7 @@ class CheckpointRestore:
 
         # 5. Predictive retrieval via SR cognitive map
         seen_ids = anchor_ids | recent_ids | {m["id"] for m in hot_memories}
-        predicted = self._predict_memories(checkpoint, scope, seen_ids, max_memories)
+        predicted = self._predict_memories(checkpoint, scope, seen_ids, max_memories, directory)
 
         # 6. Gap detection
         gaps = self._detect_gaps_safe(scope)
