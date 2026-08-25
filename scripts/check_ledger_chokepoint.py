@@ -290,24 +290,47 @@ def _violations_in_string_literal(
     Prose mentions of a table name without that leading keyword do not
     trigger — the guard is targeted at actual SQL strings, not docstrings
     or log messages.
+
+    Car B (task #201): a statement that reads from ``information_schema.``
+    is a schema-metadata lookup (``information_schema.TABLES``,
+    ``information_schema.COLUMNS``, ``information_schema.STATISTICS`` …) — not
+    a row access on a ledger table. ``_read_next_adr_id`` reads
+    ``SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_NAME = 'adr'``
+    and the bare-substring matcher was over-matching on the ``'adr'`` token
+    inside the WHERE clause's string literal, flagging a legitimate metadata
+    read. The fix excludes any SQL string whose source-of-truth read targets
+    the ``information_schema.`` schema — the ledger-table token in the WHERE
+    clause is a string-literal value, not a table reference, so the whole
+    statement is metadata. A plain ``FROM adr`` (or ``FROM information_schema.adr``
+    with the schema-prefixed form) is unchanged.
     """
     if not _is_sql_literal(literal):
+        return []
+    # Car B (task #201): ``information_schema.*`` is a schema-metadata read,
+    # not a row access on a ledger table. The whole statement is
+    # metadata if its source-of-truth read is ``FROM information_schema.``
+    # — the ledger-table token in the WHERE clause (e.g. ``TABLE_NAME = 'adr'``)
+    # is a string-literal value, not a table reference. Skip the whole
+    # string; a ``FROM information_schema.ad`` style query carries no
+    # information beyond the prefix.
+    if re.search(r"\bfrom\s+information_schema\.", literal, re.IGNORECASE) is not None:
         return []
     out: list[Violation] = []
     for table in LEDGER_TABLES:
         pattern = rf"(?<![A-Za-z0-9_])(?:`)?{re.escape(table)}(?:`)?(?![A-Za-z0-9_])"
-        if re.search(pattern, literal, re.IGNORECASE) is not None:
-            snippet = literal.strip().splitlines()[0]
-            if len(snippet) > 120:
-                snippet = snippet[:117] + "..."
-            out.append(
-                Violation(
-                    source_file=src_file,
-                    lineno=lineno,
-                    table=table,
-                    snippet=snippet,
-                )
+        if re.search(pattern, literal, re.IGNORECASE) is None:
+            continue
+        snippet = literal.strip().splitlines()[0]
+        if len(snippet) > 120:
+            snippet = snippet[:117] + "..."
+        out.append(
+            Violation(
+                source_file=src_file,
+                lineno=lineno,
+                table=table,
+                snippet=snippet,
             )
+        )
     return out
 
 

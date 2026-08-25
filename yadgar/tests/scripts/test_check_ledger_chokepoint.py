@@ -514,3 +514,66 @@ def test_list_all_flag_outputs_all_violations(tmp_path):
     assert res.returncode == 1
     assert "task" in res.stdout
     assert "adr" in res.stdout
+
+
+def test_information_schema_metadata_read_not_flagged(tmp_path):
+    """Car B (task #201): ``FROM information_schema.<ledger_table>`` is metadata, not a row access.
+
+    ``adr_seed._read_next_adr_id`` reads
+    ``SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_NAME = 'adr'``
+    — that is a schema-metadata lookup, not a row access on the ``adr`` ledger
+    table. The chokepoint's intent is to catch row reads on the ledger; the
+    bare-substring matcher over-matches and would block this legitimate read.
+    The fix excludes matches where the table is referenced via the
+    ``information_schema.`` schema prefix — same query, no row data touched.
+    """
+    root = _make_root(
+        tmp_path,
+        """\
+        from sqlalchemy import text
+
+        def read_next_adr_id():
+            return text(
+                "SELECT AUTO_INCREMENT FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'adr'"
+            )
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 0, res.stdout
+    assert "information_schema" not in res.stdout or "adr" not in res.stdout
+
+
+def test_information_schema_other_table_not_flagged(tmp_path):
+    """Same exclusion must apply to every ledger table, not just ``adr``."""
+    root = _make_root(
+        tmp_path,
+        """\
+        from sqlalchemy import text
+
+        def read_metadata():
+            return text("SELECT * FROM information_schema.COLUMNS WHERE TABLE_NAME = 'task'")
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 0, res.stdout
+
+
+def test_real_adr_row_read_still_flagged(tmp_path):
+    """After excluding information_schema reads, a real ``FROM adr`` must still trip.
+
+    The exclusion is targeted at the schema prefix — a row read on ``adr`` is
+    unchanged and must still be caught.
+    """
+    root = _make_root(
+        tmp_path,
+        """\
+        from sqlalchemy import text
+
+        def read_adr():
+            return text("SELECT id, title FROM adr ORDER BY id DESC")
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 1, res.stdout
+    assert "adr" in res.stdout
