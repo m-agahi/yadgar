@@ -80,6 +80,7 @@ import logging
 from typing import Any
 
 from yadgar._shared.observability.observe import observe
+from yadgar._shared.refusal import AdminRefusal
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def _get_sql_storage() -> Any:
     ``admin_exec/engine_status.py:58`` and ``invariants_cross_engine.py:136``
     so tests patch one symbol across the admin_exec ledger surface.
     """
-    from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
+    from yadgar._shared.runtime.lifecycle import _get_sql_storage
 
     return _get_sql_storage()
 
@@ -304,6 +305,8 @@ async def create_task_row(payload: dict) -> dict:
             plan_path=payload.get("plan_path"),
             body_slug=payload.get("body_slug"),
         )
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("create_task_row error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -643,7 +646,7 @@ async def increment_agent_pattern_uses(payload: dict) -> dict:
 
 
 @observe(tier="boundary", metric="backend.admin.ledger.get_agent_prompt_toc_updated_at")
-async def get_agent_prompt_toc_updated_at(payload: dict) -> dict:  # noqa: ARG001
+async def get_agent_prompt_toc_updated_at(payload: dict) -> dict:
     """Return ``MAX(agent_pattern.updated_at)`` as a unix timestamp float.
 
     payload: ``{}``. The S6 restore-surface signal that used to read the
@@ -697,6 +700,8 @@ async def create_adr_row(payload: dict) -> dict:
             tier=payload.get("tier"),
             body_slug=payload.get("body_slug"),
         )
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("create_adr_row error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -802,11 +807,14 @@ async def create_project_row(payload: dict) -> dict:
     payload: ``{"key": str, "kind": "git"|"local", "display_name"?: str,
     "remote_url"?: str}``.
 
-    A duplicate key comes back as ``{"ok": False, "error": ...}`` naming the
-    key — NOT swallowed. The storage layer raises ``DuplicateProjectError``
-    rather than issuing ``INSERT OR IGNORE`` (ADR-0202/0223: auto-creating on
-    collision is how a typo mints a phantom namespace); this wrapper converts
-    it to the admin-op error shape like every other failure here.
+    The storage layer raises ``DuplicateProjectError`` on a collision rather
+    than issuing ``INSERT OR IGNORE`` (ADR-0202/0223: auto-creating on
+    collision is how a typo mints a phantom namespace). This wrapper lets
+    that error PROPAGATE — the ``/admin`` route's ``except AdminRefusal`` arm
+    renders it as a structured 409 with ``reason="duplicate_project"``. The
+    prior swallow-to-``{"ok": False, "error": ...}`` shape masked the
+    rejection as a generic op failure; the structured 409 lets the caller
+    distinguish a refused registration from a genuine backend fault.
     """
     storage = _get_sql_storage()
     if storage is None:
@@ -818,6 +826,8 @@ async def create_project_row(payload: dict) -> dict:
             display_name=payload.get("display_name"),
             remote_url=payload.get("remote_url"),
         )
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("create_project_row error key=%s: %s", payload.get("key"), exc)
         return {"ok": False, "error": str(exc)}

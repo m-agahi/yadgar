@@ -36,29 +36,42 @@ NOTHING may be imported here beyond ``__future__``.
 
 from __future__ import annotations
 
+from yadgar._shared.refusal import AdminRefusal
 
-class UnknownProjectError(RuntimeError):
+
+class UnknownProjectError(AdminRefusal, RuntimeError):
     """The given project_id is not present in the ``project`` registry.
 
     Carries the offending ``project_id`` verbatim so the structured-error
     path can surface it in the response payload, and so the caller logs the
     typo at the right call site rather than chasing a foreign-key error
-    later. Subclasses ``RuntimeError`` to match the existing backend
-    structured-error pattern (``RestoreVerificationError``).
+    later. Subclasses ``AdminRefusal`` so the ``/admin`` route renders the
+    rejection as a structured 409 with ``reason="unknown_project"`` instead
+    of a generic 500 (task #346). ``RuntimeError`` is kept as a base so
+    existing ``except RuntimeError`` callers continue to match.
     """
+
+    reason = "unknown_project"
 
     def __init__(self, project_id: str) -> None:
         super().__init__(f"unknown project_id: {project_id!r}")
         self.project_id = project_id
 
 
-class DuplicateProjectError(RuntimeError):
+class DuplicateProjectError(AdminRefusal, RuntimeError):
     """A ``project`` row with this key already exists.
 
     Raised by the registry writer instead of swallowing the collision. The
     seed inserts many rows in one pass, so the key is carried on the
     exception — "a duplicate" without saying which one is not actionable.
+    Subclasses ``AdminRefusal`` so the ``/admin`` route renders the
+    rejection as a structured 409 with ``reason="duplicate_project"``
+    instead of a bare ``{"ok": False, ...}`` (task #346). ``RuntimeError``
+    is kept as a base so existing ``except RuntimeError`` callers continue
+    to match.
     """
+
+    reason = "duplicate_project"
 
     def __init__(self, project_id: str) -> None:
         super().__init__(f"project already registered: {project_id!r}")

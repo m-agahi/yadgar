@@ -63,12 +63,15 @@ TASK_COLUMNS = (
 #: reads (``list_task_rows`` / ``list_task_rows_all_projects``, opt-in via
 #: ``summary=True``; the ``task_list`` MCP tool's default, ``verbose=False``).
 #:
-#: WHY IT EXISTS: measured 2026-08-16 on the live corpus — 79 open rows
-#: rendered 24,889 chars through ``TASK_COLUMNS``, 315 chars/row, against ~90
-#: for these three columns. ``project_id`` is constant across a project-scoped
-#: result and ``state`` / ``active_form`` / ``plan_path`` / ``body_slug`` / the
-#: three timestamps are read by NO consumer of a list result. The single-row
-#: read (``get_task_row``) is deliberately NOT affected: it stays full.
+#: WHY IT EXISTS: a measurement on the 2026-08 corpus showed the full
+#: ``TASK_COLUMNS`` projection rendering on the order of a few hundred chars
+#: per open row, against a small fraction of that for the three-column
+#: ``id``, ``title``, ``status`` shape — a roughly 3x reduction on a typical
+#: project. The columns dropped (``project_id``, ``state``, ``active_form``,
+#: ``plan_path``, ``body_slug`` and the three timestamps) are constant across
+#: a project-scoped list, or read by no consumer of a list result. The
+#: single-row read (``get_task_row``) is deliberately NOT affected: it stays
+#: full. <measurement-date 2026-08-16>
 TASK_COLUMNS_SUMMARY = "id, title, status"
 
 #: ``adr`` reader projection — ``list_adr_rows``, ``get_adr_row``.
