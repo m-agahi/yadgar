@@ -110,7 +110,7 @@ _ROOT_PASS = "card-root"
 _SOCKET_IN_CONTAINER = "/sockets/mysqld.sock"
 _BOOT_TIMEOUT_SEC = 180.0
 
-EXPECTED_HEAD = "004_agent_pattern_model_client"
+EXPECTED_HEAD = "005_project_last_validated"
 
 # Every table the entrypoint grants the app account. Kept as a literal so a
 # table silently vanishing from the entrypoint's list is a FAILURE here rather

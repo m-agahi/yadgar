@@ -26,7 +26,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "005_add_last_validated_at_to_project"
+revision: str = "005_project_last_validated"
 down_revision: str | None = "004_agent_pattern_model_client"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
