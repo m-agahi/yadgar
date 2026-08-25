@@ -142,3 +142,41 @@ def test_normalize_never_raises(monkeypatch, worktree_repo):
         _boom,
     )
     assert sh.normalize_write_context(str(wt)) == str(wt)
+
+
+# ── normalize_write_context: task #21 sentinel guard ────────────────────────
+
+
+@pytest.mark.parametrize("sentinel", ["global", "system", "unresolved"])
+def test_normalize_sentinel_identity_passthrough(sentinel, monkeypatch, tmp_path):
+    """Task #21: ``normalize_write_context('global')`` (and other ADR-0227 sentinels)
+    must pass through verbatim — never reach the git subprocess, never fall
+    through to the path heuristic. Otherwise a CWD-coincidental ``.git`` file
+    rewrites the identity into a directory on the calling process.
+
+    The guard must trigger BEFORE any subprocess is spawned — the sentinel test
+    asserts via ``_worktree_canonical_root`` that the resolver is never invoked.
+    """
+    import yadgar._shared.server_helpers.server_helpers as sh_mod
+
+    called = {"n": 0}
+
+    def _spy(_p: str):
+        called["n"] += 1
+        return None
+
+    monkeypatch.setattr(sh_mod, "_worktree_canonical_root", _spy)
+
+    # Caller CWD = inside a worktree-shaped directory. If the guard were absent,
+    # the path heuristic would return the parent and rewrite the sentinel.
+    cwd = tmp_path / "looks-like-a-worktree"
+    cwd.mkdir()
+    (cwd / ".git").write_text("gitdir: /host/proj/.git/worktrees/agent-1\n", encoding="utf-8")
+    monkeypatch.chdir(cwd)
+
+    out = sh.normalize_write_context(sentinel)
+    assert out == sentinel, f"sentinel {sentinel!r} must pass through verbatim; got {out!r}"
+    assert called["n"] == 0, (
+        f"guard must short-circuit BEFORE _worktree_canonical_root runs; "
+        f"resolver was called {called['n']} times"
+    )

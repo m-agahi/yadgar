@@ -612,10 +612,24 @@ class Settings(BaseSettings):
     # crashloop. 0 disables the gate entirely (escape hatch).
     # NOT a cold-boot mechanism: After=yadgar-backend.service is.
     BACKEND_READY_WAIT_SEC: int = 60
-    # Fixed interval between /health probes. Fixed, not exponential — the wait is
-    # for another process to finish loading a model, so backoff only adds latency
-    # after readiness. 2s matches daemon.py's existing health poll.
+    # Initial interval between /health probes. Doubles each consecutive failure
+    # up to BACKEND_READY_POLL_MAX_SEC. Task #61: the original gate polled
+    # at a fixed interval and a long outage issued ~300 probes in 10 minutes
+    # — backoff + long-bake-out cap the count at ~30 for the same window
+    # without delaying the happy path.
     BACKEND_READY_POLL_SEC: float = 2.0
+    # Upper bound for the exponential backoff between /health probes (task #61).
+    # Defaults to 30s, matching the spec.
+    BACKEND_READY_POLL_MAX_SEC: float = 30.0
+    # After this many consecutive failed probes, the loop enters "long-bake-out"
+    # — a single BACKEND_READY_LONG_BAKE_OUT_SEC sleep with one INFO log line so
+    # a journal audit can distinguish "long outage" from "first few probes" (task #61).
+    BACKEND_READY_LONG_BAKE_OUT_AFTER: int = 5
+    # Sleep duration (seconds) for each long-bake-out cycle after the threshold
+    # is hit. Task #61 default = 60s — a 10-minute outage then issues ~10
+    # bake-out sleeps + ~5 fast backoff probes = ~15 probes total, well under
+    # the ~30-probe spec ceiling.
+    BACKEND_READY_LONG_BAKE_OUT_SEC: float = 60.0
 
     # task:0113 — self-heal deadline (seconds) for the maintenance write-gate the
     # vacuum engages around its count-capture → export → swap window.  The

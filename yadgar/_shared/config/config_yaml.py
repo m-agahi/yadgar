@@ -1488,6 +1488,32 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "backend_timeouts",
     },
+    "backend_ready_poll_max_sec": {
+        "desc": (
+            "Upper bound (seconds) for the exponential backoff between backend /health probes in the "
+            "core startup readiness gate (default 30). Caps the per-probe sleep so a long outage "
+            "stays well inside the core unit's TimeoutStartSec instead of burning the host CPU "
+            "budget on back-to-back 30s sleeps."
+        ),
+        "section": "backend_timeouts",
+    },
+    "backend_ready_long_bake_out_after": {
+        "desc": (
+            "Number of consecutive failed backend /health probes after which the core startup "
+            "readiness gate enters long-bake-out (default 5). After this many failures the loop "
+            "switches to a single BACKEND_READY_LONG_BAKE_OUT_SEC sleep with one audit log line, so "
+            "a host journal can distinguish 'down for minutes' from a probe storm."
+        ),
+        "section": "backend_timeouts",
+    },
+    "backend_ready_long_bake_out_sec": {
+        "desc": (
+            "Sleep duration (seconds) for each long-bake-out cycle after "
+            "BACKEND_READY_LONG_BAKE_OUT_AFTER consecutive probes have failed (default 60). Combined "
+            "with BACKEND_READY_POLL_MAX_SEC=30 a 10-minute outage runs ~30 probes instead of ~300."
+        ),
+        "section": "backend_timeouts",
+    },
     # circuit breaker + rerank concurrency
     "circuit_breaker_enabled": {
         "desc": (
