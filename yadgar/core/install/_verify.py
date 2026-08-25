@@ -49,6 +49,7 @@ import contextlib
 import io
 import json
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,29 @@ STATUS_MISSING = "missing"
 STATUS_FOREIGN = "foreign"
 STATUS_UNEXPECTED = "unexpected"
 STATUS_UNRECOGNIZED = "unrecognized"
+
+# Per-hook probe stdin payloads (task #322).  Each handler in
+# ``core/cli/hook.py`` reads the Claude Code native payload from stdin; the
+# probe sends the smallest payload each one tolerates without raising.
+_PROBE_PAYLOADS: dict[str, str] = {
+    "prompt-recall": json.dumps({"type": "prompt-recall", "prompt": "probe"}),
+    "post-tool-capture": json.dumps({"type": "post-tool-capture", "tool_name": "Bash"}),
+    "session-start-context": json.dumps({"type": "session-start-context", "cwd": "/tmp"}),
+    "post-compact-rehydrate": json.dumps({"type": "post-compact-rehydrate", "cwd": "/tmp"}),
+    "pre-compact-drain": json.dumps({"type": "pre-compact-drain"}),
+    "block-reflect": json.dumps(
+        {"type": "post-tool-capture", "tool_name": "mcp__yadgar__block_create"}
+    ),
+}
+
+# Probe timeout (seconds).  Yields on a hung hook fast enough that the doctor
+# stays responsive while letting a hook that needs the daemon's HTTP
+# GET/POST complete.
+_PROBE_TIMEOUT_SECONDS = 2.0
+
+# Crash-reason capture cap.  Probes return only a short snippet; the full
+# stderr lives in ~/.claude/yadgar-hook-errors.log.
+_PROBE_STDERR_CHARS = 200
 
 
 # ── logical-name extraction ──────────────────────────────────────────────────
@@ -172,7 +196,7 @@ def _harvest_expected(
     The installer prints its preview to stdout; that is swallowed here — it can
     echo a resolved auth env block, which has no business on a verify path.
     """
-    from yadgar.core.install.install_hooks_lib import install_hooks_impl  # noqa: PLC0415
+    from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
     with contextlib.redirect_stdout(io.StringIO()):
         result = install_hooks_impl(
@@ -294,6 +318,67 @@ def _index_file_hooks(
 # ── the verification ─────────────────────────────────────────────────────────
 
 
+@observe(tier="stage")
+def _probe_hook_execution(
+    entries: list[dict[str, Any]],
+    timeout: float = _PROBE_TIMEOUT_SECONDS,
+) -> dict[str, dict[str, Any]]:
+    """Invoke each runner-dispatched *entry* and classify the outcome.
+
+    Returns ``{name: {"status": …, "scope": …, "crash_reason": …?}}``.  Only
+    entries with ``runner_dispatched`` are probed — nix-installed standalone
+    scripts (``yadgar-<name>.py``) are skipped because probing them would
+    double-count hooks that already have a runner-dispatched twin, and the
+    runner IS the canonical shape yadgar installs.
+
+    Status values:
+
+      * ``ran``              — subprocess exited 0
+      * ``crash``            — non-zero exit; ``crash_reason`` carries the
+                               first :data:`_PROBE_STDERR_CHARS` chars of stderr
+      * ``hung``             — ``TimeoutExpired``; the hook did not return in
+                               *timeout* seconds
+      * ``binary-missing``   — ``FileNotFoundError``; the runner binary is not
+                               on disk
+    """
+    results: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        command = entry.get("command", "")
+        # Standalone-script entries are skipped: probing them would double-count
+        # hooks that already have a runner-dispatched twin.
+        if not entry.get("runner_dispatched", False):
+            continue
+        name = _hook_logical_name(command)
+        if name is None or name not in _PROBE_PAYLOADS:
+            continue
+        argv = _command_tokens(command)
+        record: dict[str, Any] = {"scope": entry.get("scope")}
+        try:
+            completed = (
+                subprocess.run(  # arg built from shlex.split + curated payload, not user input
+                    argv,
+                    input=_PROBE_PAYLOADS[name],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+            )
+        except subprocess.TimeoutExpired:
+            record["status"] = "hung"
+        except FileNotFoundError as exc:
+            record["status"] = "binary-missing"
+            record["crash_reason"] = str(exc)[:_PROBE_STDERR_CHARS]
+        else:
+            if completed.returncode == 0:
+                record["status"] = "ran"
+            else:
+                record["status"] = "crash"
+                record["crash_reason"] = (completed.stderr or "")[:_PROBE_STDERR_CHARS]
+        results[name] = record
+    return results
+
+
 @observe(tier="boundary")
 def verify_managed_hooks(
     home_dir: Path,
@@ -398,11 +483,36 @@ def verify_managed_hooks(
             STATUS_UNRECOGNIZED,
         )
     }
+
+    # Probe (task #322): invoke every PRESENT runner-dispatched hook and
+    # classify the outcome.  A registered-but-broken hook (hang, crash,
+    # missing binary) flips ``ok`` to False so the user gets a real signal
+    # rather than "registered but never runs".
+    probe_targets = [
+        {
+            "command": f["command"],
+            "scope": f.get("scope"),
+            "path": None,
+            "runner_dispatched": True,
+        }
+        for f in findings
+        if f["status"] == STATUS_PRESENT
+    ]
+    execution = _probe_hook_execution(probe_targets)
+    execution_failed = any(
+        rec.get("status") in {"hung", "crash", "binary-missing"} for rec in execution.values()
+    )
+
     return {
-        "ok": counts[STATUS_MISSING] == 0 and counts[STATUS_UNRECOGNIZED] == 0,
+        "ok": (
+            counts[STATUS_MISSING] == 0
+            and counts[STATUS_UNRECOGNIZED] == 0
+            and not execution_failed
+        ),
         "scopes_inspected": inspected,
         "findings": findings,
         "counts": counts,
+        "execution": execution,
     }
 
 
