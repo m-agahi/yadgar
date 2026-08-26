@@ -140,8 +140,7 @@ STATUS_SUPERSEDED = "superseded"
 # translates a ``tier`` filter into ``tier = :tier``, and SQL's three-valued
 # logic makes NULL match NEITHER ``'binding'`` NOR ``'historical'`` — so those
 # rows are absent from the DEFAULT ``adr_list`` call, which is the one every
-# consumer makes. Measured on the live corpus 2026-08-19: 237 rows unfiltered,
-# 233 under ``tier='binding'``, 0 under ``tier='historical'``.
+# consumer makes. <measurement-date 2026-08-19>
 #
 # A NULL-tier row is therefore classified by its STATUS, using the SAME D27
 # mapping the write side applies (``core.server.tools.adr._tier_for_status``,

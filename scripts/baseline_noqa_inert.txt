@@ -371,8 +371,9 @@ yadgar/core/cli/hook.py:183:PLC0415
 yadgar/core/cli/hook.py:214:PLC0415
 yadgar/core/cli/hook.py:282:PLC0415
 yadgar/core/cli/hook.py:302:PLC0415
-yadgar/core/cli/hook.py:360:PLC0415
-yadgar/core/cli/hook.py:479:PLC0415
+yadgar/core/cli/hook.py:344:PLC0415
+yadgar/core/cli/hook.py:385:PLC0415
+yadgar/core/cli/hook.py:504:PLC0415
 yadgar/core/cli/install.py:78:PLC0415
 yadgar/core/cli/install.py:98:PLC0415
 yadgar/core/cli/install.py:99:PLC0415

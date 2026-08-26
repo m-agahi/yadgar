@@ -357,6 +357,47 @@ def test_pre_compact_drain_parse_failure_degrades(tmp_path, monkeypatch):
     assert posted[0][1].get("in_flight") is None
 
 
+def test_pre_compact_drain_returns_before_drain_completes():
+    """Car H (ledger task #36): the drain POST is fire-and-forget — the hook
+    must return within a small budget even though the drain is still in flight.
+    Without this, /compact blocks for the full HTTP timeout (1.0 s) on every
+    compaction, which is exactly the regression this car exists to fix.
+    """
+    import threading
+    import time
+
+    posted: list = []
+    posted_event = threading.Event()
+
+    def _slow_post(*a, **kw):
+        # Simulate a heavy drain: block until the test releases us.
+        posted_event.wait(timeout=2.0)
+        posted.append((a, kw))
+        return {"status": "drained"}
+
+    data = {"session_id": "s1", "cwd": "/proj"}
+    with patch.object(hr, "_http_post", side_effect=_slow_post):
+        start = time.monotonic()
+        _run_hook_with_stdin(hr.hook_pre_compact_drain, data)
+        elapsed = time.monotonic() - start
+
+    # The hook returned WITHOUT waiting for the slow POST. 0.2 s budget is
+    # generous; the synchronous path used to block ~1 s on the HTTP timeout.
+    assert elapsed < 0.2, f"hook blocked for {elapsed:.3f}s — drain is not async"
+    # The drain has not completed yet (the fake POST is still blocked).
+    assert posted == []
+
+    # Now release the drain. It runs in the daemon thread spawned by the hook.
+    posted_event.set()
+    # Daemon thread is non-blocking on join with a short timeout; give it a
+    # moment to finish, then assert the POST landed.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not posted:
+        time.sleep(0.02)
+    assert len(posted) == 1, "drain thread never invoked _http_post"
+    assert posted[0][0][0] == "/hooks/pre-compact"
+
+
 # ── hook_prompt_recall ────────────────────────────────────────────────────────
 
 
