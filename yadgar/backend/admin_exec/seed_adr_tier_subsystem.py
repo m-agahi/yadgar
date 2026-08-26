@@ -111,7 +111,7 @@ async def _fetch_body_via_wiki(body_reader: Callable[[str], dict[str, Any]], slu
         page = body_reader(slug)
         if hasattr(page, "__await__"):
             page = await page
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("_fetch_body_via_wiki: reader failed for slug=%s err=%s", slug, exc)
         return ""
     if not isinstance(page, dict):

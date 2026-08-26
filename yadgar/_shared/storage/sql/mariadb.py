@@ -824,7 +824,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         replacing the in-seed SQL with the same engine-level UPDATE the
         ``set_adr_body_slug`` shape already uses.
         """
-        from sqlalchemy import text  # noqa: PLC0415
+        from sqlalchemy import text
 
         sql = text("UPDATE adr SET tier = :tier, subsystem = :subsystem WHERE id = :id")
         async with self._engine.begin() as conn:

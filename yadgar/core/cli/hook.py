@@ -341,7 +341,7 @@ def hook_pre_compact_drain() -> None:
     # — measured peak ~1.2 s on a busy corpus, and a timeout there drops
     # the auto-checkpoint write silently (the very regression this car
     # must not introduce).
-    import threading  # noqa: PLC0415
+    import threading
 
     def _drain() -> None:
         try:
