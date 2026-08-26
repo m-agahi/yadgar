@@ -1126,20 +1126,9 @@ def wiki_delete(slug: str) -> dict:
             _get_file_queue().delete_wiki(slug)
         except Exception as _fq_exc:
             logger.debug("File queue wiki mirror cleanup failed (non-fatal): %s", _fq_exc)
-        # Car-N (ledger #341 / #365): cascade to ``wiki_bookmark`` so a deleted
-        # page never leaves a dangling bookmark row. ``remove_bookmark`` deletes
-        # the row AND compacts positions to keep the dense 0..N invariant the
-        # next ``add_bookmark`` and ``list_bookmarks`` rely on. Idempotent on
-        # missing slug → safe even if the storage DELETE in
-        # ``delete_wiki_page`` already removed the row (defence-in-depth).
-        # Calls ``_st._storage.remove_bookmark`` directly rather than forwarding
-        # to the admin op — cascade is a core-side side-effect (sibling of
-        # _push_event and the file-queue mirror cleanup), not a backend op.
-        try:
-            if _st._storage is not None:
-                _st._storage.remove_bookmark(slug)
-        except Exception as _bm_exc:
-            logger.debug("Bookmark cascade failed (non-fatal): %s", _bm_exc)
+        # Car P: the wiki_bookmark cascade (#341 / #365) lives ONLY in storage
+        # ``delete_wiki_page``; car-N's copy here was dead — the forward above
+        # reached it first, so remove_bookmark short-circuited on a gone row.
         return {"deleted": True, "slug": slug}
     return {"deleted": False, "error": f"Wiki page '{slug}' not found"}
 

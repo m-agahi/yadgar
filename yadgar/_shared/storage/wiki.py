@@ -567,11 +567,11 @@ class _WikiMixin:
                 "DELETE FROM wiki_crossref WHERE from_slug = $slug OR to_slug = $slug",
                 {"slug": slug},
             )
-            # Task #341: cascade wiki_bookmark rows keyed on this slug.  Without
-            # this, delete_wiki_page leaves a wiki_bookmark row whose slug no
-            # longer resolves to a page, and the viz cannot render a remove
-            # control against it.
-            self._q("DELETE FROM wiki_bookmark WHERE slug = $slug", {"slug": slug})
+            # Task #341 / car P: cascade via remove_bookmark, which deletes AND
+            # compacts.  The raw DELETE this replaces left a hole in the dense
+            # 0..N-1 sequence, so the next add_bookmark (position = count())
+            # minted a DUPLICATE.  Sole cascade site — every delete funnels here.
+            self.remove_bookmark(slug)  # type: ignore[attr-defined]
         self._q(
             "DELETE type::record('wiki_page', $id)",
             {"id": pid},

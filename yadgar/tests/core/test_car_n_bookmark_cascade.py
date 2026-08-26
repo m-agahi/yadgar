@@ -5,16 +5,34 @@ wiki page was deleted, its bookmark row remained, pointing at a non-existent
 page. `list_bookmarks` returned those dangling rows and viz could not render
 a remove control against them.
 
-This car closes the cascade at the CORE tool side (the storage DELETE in
-`delete_wiki_page` was partial — it removed the row but did not compact
-positions, so a mid-list cascade left a gap in the 0..N dense position
-sequence that `list_bookmarks` and the next `add_bookmark` rely on).
+Car-N closed the cascade at the CORE tool side; car A had already closed a
+PARTIAL one at the storage layer (a raw ``DELETE FROM wiki_bookmark`` that
+removed the row without compacting positions). The two cancelled out: the
+storage DELETE runs FIRST (core ``wiki_delete`` → ``_forward_admin`` → backend
+``wiki_delete`` → ``WikiStore.delete`` → ``delete_wiki_page``), so by the time
+car-N's ``remove_bookmark`` ran at the core shell the row was already gone and
+its ``get_bookmark(slug) is None -> return False`` guard short-circuited before
+the compaction. Net: a mid-list delete left a HOLE in the dense 0..N-1 position
+sequence, and the next ``add_bookmark`` (``position = count()``) minted a
+DUPLICATE position.
 
-TDD red-first — these tests were written before the fix. They cover:
-  1. Cascade on `wiki_delete` post-success path
-  2. Position compaction after cascade (dense 0..N invariant)
-  3. No cascade on refusal or not-found envelopes
-  4. `_purge_for_slug` idempotency + no-bookmark handling
+Car P (this file's current shape) keeps ONE cascade, at the storage layer in
+``delete_wiki_page`` — the layer every delete path funnels through, including
+backend-initiated deletes the core-side hook never saw.
+
+The pre-car-P tests could not see the corruption because neither exercised the
+COMPOSED path: the ``_shared`` suite calls ``storage.delete_wiki_page`` directly,
+and the cascade tests below stubbed ``_forward_admin``, so car A's DELETE never
+ran. ``TestWikiDeleteCascade`` now drives ``wiki_delete`` end-to-end against the
+real backend op (``admin_backend_bypass``), with no stubbed forwarder.
+
+Coverage:
+  1. End-to-end cascade + position compaction on `wiki_delete` (no stub)
+  2. The dense 0..N-1 invariant survives, and the next `add_bookmark` does not
+     collide with a surviving row
+  3. No cascade on refusal or not-found envelopes (stubbed forwarder — those
+     envelopes are what is under test, not the storage path)
+  4. `remove_bookmark` idempotency + no-bookmark handling
   5. `list_orphan_bookmarks` audit surface
   6. `WikiStore.lint()` surfaces bookmark orphans
 """
@@ -106,25 +124,29 @@ class _StubForwarder:
 
 
 # ---------------------------------------------------------------------------
-# A. Storage layer — _purge_for_slug + list_orphan_bookmarks
+# A. Storage layer — remove_bookmark + list_orphan_bookmarks
 # ---------------------------------------------------------------------------
-class TestPurgeForSlug:
-    """Storage layer cascade primitive. remove_bookmark already does
-    delete + position compact; we wrap it as _purge_for_slug for the
-    one-call wire-up at the wiki tool site.
+class TestRemoveBookmark:
+    """The storage-layer cascade primitive.
+
+    ``remove_bookmark`` deletes the row AND compacts positions in one
+    operation — which is why ``delete_wiki_page`` calls it rather than
+    issuing its own ``DELETE`` (car P). There is no ``_purge_for_slug``
+    wrapper: an earlier revision of this docstring named one, and no such
+    symbol has ever existed in the codebase.
     """
 
-    def test_purge_for_slug_removes_existing_bookmark(self, storage: StorageEngine) -> None:
+    def test_remove_bookmark_removes_existing_bookmark(self, storage: StorageEngine) -> None:
         """Returns True when a bookmark row was deleted."""
         storage.add_bookmark("p-s1")
         assert storage.remove_bookmark("p-s1") is True
         assert storage.get_bookmark("p-s1") is None
 
-    def test_purge_for_slug_no_bookmark_returns_false(self, storage: StorageEngine) -> None:
+    def test_remove_bookmark_no_bookmark_returns_false(self, storage: StorageEngine) -> None:
         """Returns False when no row exists (no error)."""
         assert storage.remove_bookmark("never-bookmarked") is False
 
-    def test_purge_for_slug_idempotent(self, storage: StorageEngine) -> None:
+    def test_remove_bookmark_idempotent(self, storage: StorageEngine) -> None:
         """Calling twice: first True, second False, no error."""
         storage.add_bookmark("p-idem")
         assert storage.remove_bookmark("p-idem") is True
@@ -164,56 +186,115 @@ class TestListOrphanBookmarks:
 # B. wiki_delete cascade (core tool side)
 # ---------------------------------------------------------------------------
 class TestWikiDeleteCascade:
-    """wiki_delete post-success side-effect: cascade to wiki_bookmark."""
+    """``wiki_delete`` end-to-end: the storage cascade must reach the bookmark.
 
-    def test_cascade_no_bookmark_is_noop(self, storage: StorageEngine, monkeypatch) -> None:
-        """Page with no bookmark → delete succeeds, no error."""
+    NO STUBBED FORWARDER on the success-path tests. ``admin_backend_bypass``
+    dispatches ``_forward_admin`` straight into the real backend op, so the
+    call travels the production chain — core ``wiki_delete`` → backend
+    ``wiki_delete`` → ``WikiStore.delete`` → ``storage.delete_wiki_page`` →
+    ``remove_bookmark``. Stubbing the forwarder is exactly what let the
+    pre-car-P suite pass over the position corruption: the stub skipped
+    ``delete_wiki_page``, so only the (then core-side) cascade ran and the
+    partial storage DELETE that shadowed it was never executed.
+
+    The position assertions read the WHOLE table rather than a filtered
+    subset. The module-scoped engine is shared with the other classes here,
+    so a subset assertion would be hostage to test ordering; the dense
+    ``0..N-1`` sequence is the actual invariant ``add_bookmark``
+    (``position = count()``) and ``reorder_bookmark`` depend on, and it is
+    what the bug broke.
+    """
+
+    @staticmethod
+    def _positions(storage: StorageEngine) -> list[int]:
+        """``list_bookmarks`` orders by position ASC — so a dense table reads
+        as ``range(n)`` and any hole or duplicate shows up as a deviation."""
+        return [int(r["position"]) for r in storage.list_bookmarks()]
+
+    def test_cascade_no_bookmark_is_noop(self, storage: StorageEngine) -> None:
+        """Page with no bookmark → delete succeeds, table untouched."""
         from yadgar.core.server.tools import wiki as wtool
 
         _seed_pages(storage, ["c-clean"])
-        stub = _StubForwarder({"deleted": True})
-        monkeypatch.setattr(wtool, "_forward_admin", stub)
+        before = self._positions(storage)
         result = wtool.wiki_delete("c-clean")
         assert result.get("deleted") is True
+        assert self._positions(storage) == before
 
-    def test_cascade_removes_bookmark_at_pos_0(self, storage: StorageEngine, monkeypatch) -> None:
-        """Single bookmark at pos 0 → delete cascade removes it, list returns []."""
+    def test_cascade_removes_bookmark_end_to_end(self, storage: StorageEngine) -> None:
+        """Bookmarked page → delete cascade removes the row, table stays dense."""
         from yadgar.core.server.tools import wiki as wtool
 
         _seed_pages(storage, ["c-only"])
         storage.add_bookmark("c-only")
         assert any(r["slug"] == "c-only" for r in storage.list_bookmarks())
-        stub = _StubForwarder({"deleted": True})
-        monkeypatch.setattr(wtool, "_forward_admin", stub)
         result = wtool.wiki_delete("c-only")
         assert result.get("deleted") is True
         # Cascade must have removed the bookmark row.
         assert storage.get_bookmark("c-only") is None
         assert all(r["slug"] != "c-only" for r in storage.list_bookmarks())
+        positions = self._positions(storage)
+        assert positions == list(range(len(positions))), (
+            f"bookmark positions went sparse after cascade: {positions}"
+        )
 
-    def test_cascade_compacts_positions_when_mid_list(
-        self, storage: StorageEngine, monkeypatch
-    ) -> None:
-        """Delete a page in the middle of 4 bookmarks → remaining compact 0,1,2."""
+    def test_cascade_compacts_positions_when_mid_list(self, storage: StorageEngine) -> None:
+        """The corruption this car fixes, driven through the composed path.
+
+        Four bookmarks; delete the page behind the middle one. Pre-car-P the
+        storage DELETE removed the row without compacting and the core-side
+        ``remove_bookmark`` short-circuited on the already-gone row, so the
+        table went sparse (…, k-1, k+1, …) and the NEXT ``add_bookmark``
+        computed ``position = count()`` — a value a surviving row already
+        held. Two rows then tie on ``position`` and
+        ``list_bookmarks ORDER BY position`` is non-deterministic between
+        them.
+        """
         from yadgar.core.server.tools import wiki as wtool
 
-        _seed_pages(storage, ["c-a", "c-b", "c-mid", "c-d"])
-        storage.add_bookmark("c-a")
-        storage.add_bookmark("c-b")
-        storage.add_bookmark("c-mid")
-        storage.add_bookmark("c-d")
-        # c-mid is at position 2 of 4. After cascade the remaining 3 must
-        # be at positions 0,1,2 (dense, no gap).
-        stub = _StubForwarder({"deleted": True})
-        monkeypatch.setattr(wtool, "_forward_admin", stub)
-        wtool.wiki_delete("c-mid")
-        remaining = {r["slug"]: r["position"] for r in storage.list_bookmarks()}
-        assert "c-mid" not in remaining
-        assert set(remaining.keys()) == {"c-a", "c-b", "c-d"}
-        assert sorted(remaining.values()) == [0, 1, 2]
+        slugs = ["c-a", "c-b", "c-mid", "c-d"]
+        _seed_pages(storage, slugs)
+        for slug in slugs:
+            storage.add_bookmark(slug)
+
+        before = self._positions(storage)
+        assert before == list(range(len(before))), (
+            f"pre-condition violated — table was already sparse: {before}"
+        )
+
+        result = wtool.wiki_delete("c-mid")
+        assert result.get("deleted") is True
+
+        after_rows = storage.list_bookmarks()
+        assert all(r["slug"] != "c-mid" for r in after_rows), "cascade did not remove the row"
+        assert len(after_rows) == len(before) - 1
+        after = [int(r["position"]) for r in after_rows]
+        assert after == list(range(len(after))), (
+            f"positions left sparse after a mid-list cascade: {after} "
+            f"(expected dense 0..{len(after) - 1})"
+        )
+
+        # The consequence assertion: the next add_bookmark must land at the
+        # tail, not collide with a surviving row.
+        _seed_pages(storage, ["c-next"])
+        added = storage.add_bookmark("c-next")
+        assert int(added["position"]) == len(after), (
+            f"add_bookmark minted position {added['position']} on a "
+            f"{len(after)}-row table — duplicate position"
+        )
+        final = self._positions(storage)
+        assert final == list(range(len(final))), f"table not dense after re-add: {final}"
+        assert len(set(final)) == len(final), f"duplicate positions present: {final}"
 
     def test_cascade_does_not_run_on_refusal(self, storage: StorageEngine, monkeypatch) -> None:
-        """Refused envelope → wiki_delete returns envelope, no bookmark touched."""
+        """Refused envelope → wiki_delete returns envelope, no bookmark touched.
+
+        STUBBED FORWARDER on purpose: the envelope is what is under test, and
+        a refusal means the backend op never reached ``delete_wiki_page`` at
+        all. The bookmark assertion is the standing guard that no future car
+        re-adds a cascade at the core shell ABOVE the envelope branch, where
+        it would fire on a write the backend refused.
+        """
         from yadgar.core.server.tools import wiki as wtool
 
         _seed_pages(storage, ["c-locked"])
@@ -226,7 +307,12 @@ class TestWikiDeleteCascade:
         assert storage.get_bookmark("c-locked") is not None
 
     def test_cascade_does_not_run_on_not_found(self, storage: StorageEngine, monkeypatch) -> None:
-        """Not-found envelope → no error, no cascade, no bookmark churn."""
+        """Not-found envelope → no error, no cascade, no bookmark churn.
+
+        STUBBED FORWARDER for the same reason as the refusal case above: the
+        not-found envelope is the subject, and the bookmark assertion pins
+        that an unrelated slug's row is never collateral.
+        """
         from yadgar.core.server.tools import wiki as wtool
 
         _seed_pages(storage, ["c-real"])
