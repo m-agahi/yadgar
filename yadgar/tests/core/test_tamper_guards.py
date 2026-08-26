@@ -15,6 +15,7 @@ Non-e2e (runs under CI `-m 'not e2e'`).
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import textwrap
@@ -934,3 +935,371 @@ class TestLayer4EnvBypassIsGone:
         for rel in (".github/workflows/ci-pr.yml", ".forgejo/workflows/ci-pr.yaml"):
             text = (_REPO_ROOT / rel).read_text(encoding="utf-8")
             assert "ALLOW_TEST_WEAKEN" not in text, f"{rel} still carries the bypass"
+
+
+# ---------------------------------------------------------------------------
+# Layer 4 — the NON-e2e arm (task 379)
+#
+# ADR-0430 names scripts/check_test_weakening.py as the mechanism enforcing
+# "no test may be weakened to reach green".  Its scan scope was
+# `_E2E_PATH_RE` — `yadgar/tests/e2e/**` plus modules with `e2e` in the name —
+# so it could only ever fail on an e2e file.  Measured on PR #68: 29 test files
+# changed, 4,224 lines, ZERO of them e2e.  The guard passed unconditionally
+# while three assertions were relaxed, and `.test-weakening-allowlist.json` was
+# never consulted because nothing in the diff was in scope to consult it for.
+#
+# Correct trigger, correct wiring, scope structurally incapable of covering the
+# files that actually change — the same "gate that checks nothing" shape as the
+# `git diff --cached` defect above, one layer over.
+#
+# The scan is now every `yadgar/tests/**/*.py`.  `_E2E_PATH_RE` stays, but only
+# as layer 3's lockstep declaration (layer 3 still scans e2e alone).
+#
+# Three weakening SHAPES are detected, chosen because they are the shapes that
+# actually occurred and because they are the shapes a net-assert-count rule is
+# blind to (relaxing `assert x == ""` to `assert not x` removes one assert line
+# and adds one — net zero).  Measured over the whole bug-bag-2 train diff
+# (39 test files, 5,644 inserted lines) these three rules produce exactly ONE
+# violation: car K's real relaxation in test_cls_store.py.  Zero false
+# positives on the other 38 files.
+# ---------------------------------------------------------------------------
+
+
+# The REAL diff car K landed (`git diff origin/master...HEAD --
+# yadgar/tests/backend/test_cls_store.py`, train/bug-bag-2-2026-08-23), reduced
+# to the lines the guard reads.  This is the motivating case: if the widened
+# guard cannot flag THIS, it is not done.
+_CAR_K_REAL_DIFF = (
+    "diff --git a/yadgar/tests/backend/test_cls_store.py"
+    " b/yadgar/tests/backend/test_cls_store.py\n"
+    "--- a/yadgar/tests/backend/test_cls_store.py\n"
+    "+++ b/yadgar/tests/backend/test_cls_store.py\n"
+    "@@ -281,9 +281,15 @@ class TestAbstractToSchema:\n"
+    '         assert "jwt" in schema.lower()\n'
+    " \n"
+    "     def test_abstract_empty_cluster(self, cls):\n"
+    '-        """Empty cluster should return empty string."""\n'
+    '+        """Empty cluster returns falsy (None) — caller treats as no-op.\n'
+    "+\n"
+    "+        C7c (task #339): contract is None; ``promotion._promote_pattern``\n"
+    "+        guards with ``if not schema:`` so empty string and None both signal\n"
+    "+        skip.\n"
+    '+        """\n'
+    "         schema = cls.abstract_to_schema([])\n"
+    '-        assert schema == ""\n'
+    "+        assert not schema\n"
+)
+
+_CLS_STORE = "yadgar/tests/backend/test_cls_store.py"
+
+
+class TestLayer4CoversNonE2ETestFiles:
+    """The scope defect itself: a non-e2e test file must be in the scan set."""
+
+    def test_scan_scope_matches_a_non_e2e_test_module(self) -> None:
+        assert ctw._TEST_PATH_RE.search(_CLS_STORE), (
+            "layer 4 must scan every yadgar/tests/**/*.py — scoping it to e2e is "
+            "what let PR #68's 29 changed test files pass unexamined"
+        )
+
+    def test_scan_scope_still_matches_every_e2e_path(self) -> None:
+        """Widening must not drop the files the old scope did cover."""
+        for path in ("yadgar/tests/e2e/test_x.py", "yadgar/tests/core/test_y_e2e.py"):
+            assert ctw._TEST_PATH_RE.search(path), path
+
+    def test_non_test_sources_are_still_out_of_scope(self) -> None:
+        """Production code removing an `assert` is not test weakening."""
+        diff = (
+            "diff --git a/yadgar/core/storage.py b/yadgar/core/storage.py\n"
+            "-        assert rows\n"
+            "+        pass\n"
+        )
+        assert not ctw.check_diff(diff, 5, 5), "only yadgar/tests/ is in scope"
+
+    def test_e2e_arm_is_unchanged(self) -> None:
+        """The pre-existing e2e behaviour must survive the widening verbatim."""
+        diff = _diff_for("yadgar/tests/e2e/test_other.py", removed=1)
+        assert ctw.check_diff(diff, 5, 5, {}), "the e2e net-assert rule must still fire"
+
+
+class TestLayer4WeakeningShapes:
+    """The three shapes a net-assert-count rule cannot see."""
+
+    def test_car_k_real_diff_is_flagged(self) -> None:
+        """THE motivating case — the real relaxation this task was filed for.
+
+        Net assert delta is ZERO (one `assert` line removed, one added), so the
+        pre-existing rule is structurally blind to it. The exact-value rule is
+        what sees it.
+        """
+        errors = ctw.check_diff(_CAR_K_REAL_DIFF, 5, 5, {})
+        assert errors, "the widened guard must flag car K's real relaxation"
+        joined = " ".join(errors)
+        assert _CLS_STORE in joined, errors
+        assert "exact-value" in joined, errors
+
+    def test_car_k_real_diff_has_zero_net_assert_delta(self) -> None:
+        """Proves WHY the old rule could not have caught it, rather than asserting it."""
+        metrics = ctw._per_file_metrics(_CAR_K_REAL_DIFF)
+        assert metrics[_CLS_STORE].asserts == 0, (
+            "fixture guard: if this diff had a negative net assert delta the "
+            "exact-value rule would not be the thing catching it"
+        )
+
+    def test_equality_relaxed_to_truthiness_fires(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            "-        assert count == 3\n"
+            "+        assert count\n"
+        )
+        assert ctw.check_diff(diff, 5, 5, {}), "`== N` relaxed to truthiness is a weakening"
+
+    def test_assertequal_relaxed_to_assertin_fires(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            "-        self.assertEqual(body, expected)\n"
+            "+        self.assertIn(expected, body)\n"
+        )
+        assert ctw.check_diff(diff, 5, 5, {}), "assertEqual -> assertIn is a weakening"
+
+    def test_exact_value_swapped_for_another_exact_value_passes(self) -> None:
+        """A CONTRACT change is not a weakening — `== ""` to `is None` stays exact.
+
+        This is the discriminator that keeps the rule usable: car K's sibling
+        edit in test_patterns_unit.py made exactly this swap on the same
+        function, and flagging it would have been a false positive.
+        """
+        diff = (
+            "diff --git a/yadgar/tests/backend/test_patterns_unit.py"
+            " b/yadgar/tests/backend/test_patterns_unit.py\n"
+            '-        assert mixin.abstract_to_schema([]) == ""\n'
+            "+        assert mixin.abstract_to_schema([]) is None\n"
+        )
+        assert not ctw.check_diff(diff, 5, 5, {}), "exact -> exact is a contract change"
+
+    def test_assert_deleted_from_non_e2e_module_fires(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            "     def test_thing(self):\n"
+            "         result = run()\n"
+            "-        assert result.ok\n"
+        )
+        errors = ctw.check_diff(diff, 5, 5, {})
+        assert errors, "a deleted assertion in a non-e2e test must fire"
+        assert "assert" in " ".join(errors)
+
+    def test_new_skip_in_existing_module_fires(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            "     def test_thing(self):\n"
+            '+        pytest.skip("flaky on CI")\n'
+        )
+        errors = ctw.check_diff(diff, 5, 5, {})
+        assert errors, "a new pytest.skip in an existing test module must fire"
+        assert "skip" in " ".join(errors).lower(), errors
+
+    def test_new_xfail_marker_in_existing_module_fires(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            "+    @pytest.mark.xfail(reason='broken')\n"
+            "     def test_thing(self):\n"
+        )
+        assert ctw.check_diff(diff, 5, 5, {}), "a new xfail marker must fire"
+
+    def test_new_importorskip_in_existing_module_fires(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            '+pytest.importorskip("sqlalchemy")\n'
+        )
+        errors = ctw.check_diff(diff, 5, 5, {})
+        assert errors, "silencing a whole module with importorskip must fire"
+
+    def test_a_brand_new_file_may_carry_a_skip_guard(self) -> None:
+        """`new file mode` — nothing was weakened; there was nothing there before."""
+        diff = (
+            "diff --git a/yadgar/tests/core/test_new.py b/yadgar/tests/core/test_new.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/yadgar/tests/core/test_new.py\n"
+            '+pytest.importorskip("sqlalchemy")\n'
+            "+def test_thing():\n"
+            "+    assert True\n"
+        )
+        assert not ctw.check_diff(diff, 5, 5, {}), "a new file introduces no weakening"
+
+    def test_a_removed_skip_is_never_a_violation(self) -> None:
+        """Deleting a skip guard STRENGTHENS the suite — must never fire."""
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            '-        pytest.skip("flaky")\n'
+            "+        assert result == 3\n"
+        )
+        assert not ctw.check_diff(diff, 5, 5, {}), "removing a skip is not a weakening"
+
+    def test_a_pure_rename_is_not_a_weakening(self) -> None:
+        """A 100%-similar rename has no +/- lines; a partial one must not blame moves."""
+        diff = (
+            "diff --git a/yadgar/tests/core/test_old.py b/yadgar/tests/integration/test_old.py\n"
+            "similarity index 96%\n"
+            "rename from yadgar/tests/core/test_old.py\n"
+            "rename to yadgar/tests/integration/test_old.py\n"
+            "+pytestmark = [pytest.mark.integration]\n"
+        )
+        assert not ctw.check_diff(diff, 5, 5, {}), "a rename is not a weakening"
+
+
+class TestLayer4NonE2EAllowlist:
+    """The new shapes route through the SAME per-entry allowlist, same rules."""
+
+    _STRICT_REASON = (
+        "Sanctioned by car R of train/bug-bag-2 — the exact-value assertion was "
+        "replaced deliberately and the reason is recorded in the diff."
+    )
+
+    def test_strict_removal_can_be_sanctioned(self) -> None:
+        allowlist = {_CLS_STORE: {"allowed_strict_delta": -1, "rationale": self._STRICT_REASON}}
+        assert not ctw.check_diff(_CAR_K_REAL_DIFF, 5, 5, allowlist)
+
+    def test_a_strict_entry_does_not_absorb_further_weakening(self) -> None:
+        """Same no-grandfathering rule as `allowed_delta` — exact, or it fails."""
+        diff = _CAR_K_REAL_DIFF + (
+            "diff --git a/yadgar/tests/backend/test_cls_store.py"
+            " b/yadgar/tests/backend/test_cls_store.py\n"
+            "-        assert other == 7\n"
+            "+        assert other\n"
+        )
+        allowlist = {_CLS_STORE: {"allowed_strict_delta": -1, "rationale": self._STRICT_REASON}}
+        errors = ctw.check_diff(diff, 5, 5, allowlist)
+        assert errors, "an entry grants exactly its recorded delta, never more"
+
+    def test_a_strict_entry_does_not_also_sanction_an_assert_deletion(self) -> None:
+        """The allowances are per-SHAPE — one is not a licence for another."""
+        diff = _CAR_K_REAL_DIFF + (
+            "diff --git a/yadgar/tests/backend/test_cls_store.py"
+            " b/yadgar/tests/backend/test_cls_store.py\n"
+            "-        assert something_else\n"
+        )
+        allowlist = {_CLS_STORE: {"allowed_strict_delta": -1, "rationale": self._STRICT_REASON}}
+        errors = ctw.check_diff(diff, 5, 5, allowlist)
+        assert errors, "allowed_strict_delta must not absorb a plain assert deletion"
+
+    def test_entry_with_no_allowance_key_is_malformed(self) -> None:
+        allowlist = {_CLS_STORE: {"rationale": self._STRICT_REASON}}
+        errors = ctw.check_diff(_CAR_K_REAL_DIFF, 5, 5, allowlist)
+        assert errors, "an entry that grants nothing is a typo, not a sanction"
+        assert any("MALFORMED" in e for e in errors), errors
+
+    def test_positive_strict_allowance_is_malformed(self) -> None:
+        allowlist = {_CLS_STORE: {"allowed_strict_delta": 1, "rationale": self._STRICT_REASON}}
+        assert any("MALFORMED" in e for e in ctw.check_diff("", None, None, allowlist))
+
+    def test_negative_skip_allowance_is_malformed(self) -> None:
+        allowlist = {_CLS_STORE: {"allowed_new_skips": -1, "rationale": self._STRICT_REASON}}
+        assert any("MALFORMED" in e for e in ctw.check_diff("", None, None, allowlist))
+
+    def test_stale_warning_surfaces_a_non_e2e_entry(self) -> None:
+        """The stale scan must see the new metrics too, or every non-e2e entry
+        would be reported 'not in the branch diff' the moment it was added."""
+        allowlist = {_CLS_STORE: {"allowed_strict_delta": -1, "rationale": self._STRICT_REASON}}
+        assert not ctw.stale_allowlist_entries(_CAR_K_REAL_DIFF, allowlist), (
+            "an entry that exactly describes the diff is not stale"
+        )
+        assert ctw.stale_allowlist_entries("", allowlist), "absent from the diff IS stale"
+
+
+class TestLayer4ShippedAllowlistRecordsCarK:
+    """The sanction is recorded in the repo, in the diff — not by narrowing the guard."""
+
+    def test_shipped_allowlist_sanctions_the_cls_store_relaxation(self) -> None:
+        allowlist = ctw.load_allowlist(_REPO_ROOT / ctw._ALLOWLIST_NAME)
+        assert _CLS_STORE in allowlist, (
+            "car K's relaxation is real and the widened guard flags it; it must be "
+            "RECORDED in .test-weakening-allowlist.json with a reason, not made to "
+            "disappear by re-narrowing the scan"
+        )
+        entry = allowlist[_CLS_STORE]
+        assert entry.get("allowed_strict_delta") == -1, entry
+        assert len(entry.get("rationale", "")) >= ctw._MIN_RATIONALE, entry
+
+    def test_the_shipped_allowlist_is_still_wellformed(self) -> None:
+        allowlist = ctw.load_allowlist(_REPO_ROOT / ctw._ALLOWLIST_NAME)
+        errors = ctw.check_diff("", head_green=None, staged_green=None, allowlist=allowlist)
+        assert not errors, errors
+
+
+class TestLayer4SkipRuleIsAnchored:
+    """A skip guard is a STATEMENT, not a substring — quoting one must not fire.
+
+    Found by running the widened guard over its own commit: the diff fixtures in
+    this very file contain lines like ``"+        pytest.skip(...)\\n"`` inside
+    string literals, and the unanchored pattern counted all five as newly added
+    skip guards. Any meta-test, doc example, or error message that QUOTES a skip
+    would trip the same way, so the fix is the pattern, not an exemption for
+    this file.
+    """
+
+    def test_a_quoted_skip_inside_a_string_literal_does_not_fire(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/core/test_meta.py b/yadgar/tests/core/test_meta.py\n"
+            "+            '+        pytest.skip(\"flaky on CI\")\\n'\n"
+            "+            '+pytest.importorskip(\"sqlalchemy\")\\n'\n"
+        )
+        assert not ctw.check_diff(diff, 5, 5, {}), (
+            "a skip call quoted inside a fixture string is not a new skip guard"
+        )
+
+    def test_a_real_indented_skip_still_fires(self) -> None:
+        """Anchoring must not cost detection of the real thing."""
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            '+        pytest.skip("flaky on CI")\n'
+        )
+        assert ctw.check_diff(diff, 5, 5, {}), "an indented pytest.skip is still a skip"
+
+    def test_a_module_level_pytestmark_skip_fires(self) -> None:
+        diff = (
+            "diff --git a/yadgar/tests/core/test_x.py b/yadgar/tests/core/test_x.py\n"
+            '+pytestmark = pytest.mark.skip(reason="later")\n'
+        )
+        assert ctw.check_diff(diff, 5, 5, {}), "a module-wide pytestmark skip must fire"
+
+    def test_every_skip_match_in_this_module_is_inside_a_string_literal(self) -> None:
+        """The regression in situ, checked precisely rather than by proxy.
+
+        This module is dense with skip markers that are FIXTURE TEXT — layer 3's
+        tests build sample sources with ``textwrap.dedent`` and layer 4's build
+        diff bodies, so ``@pytest.mark.xfail(...)`` appears at what looks like
+        statement position on a dozen lines. None of them silence anything.
+
+        So: parse the module, collect the line spans of every string literal,
+        and assert every ``_SKIP_RE`` hit falls inside one. Hermetic (no git, no
+        merge-base, cannot pass vacuously) and it still fails loudly the day a
+        REAL skip marker is added to this file — which is the outcome the rule
+        exists to make visible.
+
+        Deliberately written without a ``pytest.skip`` fallback: a skip
+        statement here would itself be the thing the rule counts.
+        """
+        rel = "yadgar/tests/core/test_tamper_guards.py"
+        source = (_REPO_ROOT / rel).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        literal_lines: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                end = node.end_lineno or node.lineno
+                literal_lines.update(range(node.lineno, end + 1))
+
+        hits = [
+            (n, line) for n, line in enumerate(source.splitlines(), 1) if ctw._SKIP_RE.search(line)
+        ]
+        assert hits, (
+            "fixture guard: this module contains skip markers in its fixtures, so "
+            "zero regex hits means _SKIP_RE stopped matching and every assertion "
+            "below would pass vacuously"
+        )
+        outside = [(n, line.strip()) for n, line in hits if n not in literal_lines]
+        assert not outside, (
+            f"{outside} are real skip markers in the guard's own meta-test module, "
+            "not fixture text — either the anchor regressed or a test was silenced"
+        )
