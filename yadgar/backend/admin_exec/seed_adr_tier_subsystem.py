@@ -136,7 +136,7 @@ async def _apply_row_update(
     the D20 chokepoint surface for ``adr`` row writes. Car B (task #202)
     closed the previous direct-``_engine`` UPDATE that bypassed the engine.
 
-    Three call paths, in priority order:
+    Two call paths, in priority order:
 
     1. *updater* (test seam) — invoked with kwargs ``adr_id``, ``tier``,
        ``subsystem``. Tests use this to assert the route without booting
@@ -144,11 +144,6 @@ async def _apply_row_update(
     2. *storage.update_adr_tier_subsystem* — the live engine method. This
        is the path the seed's runtime call takes; it keeps the row write
        inside the engine's chokepoint surface.
-    3. Direct call to the ``update_adr_tier_subsystem`` admin op in
-       ``ledger.py`` — used when the caller wants the admin-envelope
-       return shape (``{"ok": True, "id": ..., ...}``) rather than the
-       engine method's bare-None. (The seed's helper does not currently
-       need this path; it stays available for an op-driven caller.)
 
     The direct ``storage._engine.begin()`` UPDATE that Car B replaced is
     gone. The chokepoint script proves it: ``scripts/check_ledger_chokepoint.py``
@@ -158,7 +153,7 @@ async def _apply_row_update(
         await updater(adr_id=adr_id, tier=tier, subsystem=subsystem)
         return
     if storage is None:
-        from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
+        from yadgar._shared.runtime.lifecycle import _get_sql_storage
 
         storage = _get_sql_storage()
     if storage is None:
@@ -259,7 +254,7 @@ async def seed_adr_tier_subsystem(
         return {"ok": False, "error": "project_id is required"}
 
     if storage is None:
-        from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
+        from yadgar._shared.runtime.lifecycle import _get_sql_storage
 
         storage = _get_sql_storage()
     if storage is None:
