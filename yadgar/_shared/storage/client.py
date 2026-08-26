@@ -208,6 +208,19 @@ _MEMORY_UPDATABLE_FIELDS = frozenset(
         # v5.35.1 — were missing since initial implementation (same class as v5.17.0 confidence fix)
         "last_accessed",
         "access_count",
+        # Car C10 (task #318): ``created_at`` was deliberately absent because
+        # production code never overwrites the row's creation time, but the
+        # decay-test helper in ``test_memory_behavior.py`` calls
+        # ``update_memory_fields(memory_id, created_at=past)`` to age rows
+        # for the heat-decay invariants. Pre-C10 the helper silently dropped
+        # ``created_at`` so every backdate since the field was added has been
+        # a no-op — and the existing decay tests passed by coincidence because
+        # they assert on ``compression_level`` / ``content`` (which DO survive),
+        # never on the timestamp itself. Adding it here closes the gap; the
+        # invariant test in ``test_memory_updatable_fields.py`` was already
+        # tagging ``created_at`` as a KNOWN field and INTERNAL_EXCLUDE had to
+        # drop it (see test_c10_memory_created_at_writable for the cross-test).
+        "created_at",
         # v5.54.1 — precomputed graph prior (consolidation phase, additive boost in fusion)
         "graph_prior",
         # v5.54.2 — precomputed co-recall (transition-edge) prior (consolidation phase, additive boost in fusion)
@@ -667,19 +680,18 @@ class _ClientMixin:
     def _q_embedded(self, surql: str, params: dict | None) -> object:
         """Execute *surql* via the embedded SurrealKV SDK and return the raw result.
 
-        Embedded mode only.  Read-only statements (SELECT / INFO / SHOW) are
-        retried once on failure to handle transient SDK errors; write statements
-        are never retried to prevent double-writes (§5 Q3).
+        Embedded mode only.  Both read-only and write statements are
+        retried once on failure to handle transient SDK errors
+        (notably SurrealDB's ``"The query was not executed due to a
+        failed transaction"`` which fires under xdist contention on
+        the embedded DB and on older SDKs even on a single-process
+        write). The single retry is the same shape as the read-only
+        retry that was already here — non-aggressive, so a truly-
+        failed transaction still surfaces its real error rather than
+        silently double-writing (§5 Q3, ref. C9 #323).
         """
         # Embedded SDK rejects integer type::record($id) — inline to t:{int}.
         surql, params = _inline_int_record_ids(surql, params)
-        _surql_upper = surql.lstrip().upper()
-        _is_readonly = any(
-            _surql_upper.startswith(kw) for kw in ("SELECT", "INFO FOR", "INFO", "SHOW")
-        )
-        # Non-readonly: attempt once; guard clause avoids retry overhead.
-        if not _is_readonly:
-            return self._embedded_db.query(surql, params or {})
         try:
             return self._embedded_db.query(surql, params or {})
         except Exception as exc:

@@ -147,4 +147,32 @@ export function renderHelp(config, container) {
     hDesc.textContent = legend.heat.description || '';
     container.appendChild(hDesc);
   }
+
+  // ── CLI cheat-sheet (DC3, task #38) ──────────────────────────────────────
+  // The full top-10 verb table lives at docs/reference/cli-cheatsheet.md and
+  // is linked from the Help menu in index.html. Render a compact in-tab
+  // reminder so operators do not have to leave the viz to remember the verbs.
+  _section('CLI cheat-sheet');
+  const cheatNote = document.createElement('p');
+  cheatNote.className = 'help-note';
+  cheatNote.textContent =
+    'Top 10 yadgar CLI verbs — full reference: ' +
+    'docs/reference/cli-cheatsheet.md (also linked in the Help menu).';
+  container.appendChild(cheatNote);
+
+  const cheatRows = [
+    ['yadgar setup',                'first-run config + secrets + MCP registration'],
+    ['yadgar daemon start|status',   'manage the background daemon'],
+    ['yadgar viz',                   'launch knowledge graph at :42069'],
+    ['yadgar stats [--project DIR]', 'memory counts + heat distribution'],
+    ['yadgar seed DIR',              'bootstrap memory for an existing project'],
+    ['yadgar vacuum --yes',          'compact the SurrealKV store'],
+    ['yadgar export duckdb',         'analytics snapshot (pip install yadgar[analytics])'],
+    ['yadgar config get|set KEY',    'manage configuration knobs'],
+    ['yadgar update --check',        'probe PyPI for a newer version'],
+    ['yadgar install --client NAME', 'wire MCP + rules + hooks for a client'],
+  ];
+  for (const [verb, desc] of cheatRows) {
+    _row(null, verb, desc, 'help-row-cli');
+  }
 }
