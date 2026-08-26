@@ -178,18 +178,30 @@ def await_backend_ready(settings=None) -> bool:
         # the same number of probes left to spend.
         if consecutive_failures >= long_bake_after:
             if not long_bake_emitted:
+                # Car-J (ledger #367): name both the configured cadence
+                # (long_bake_sec, what the operator wrote) AND the actual
+                # ceiling (poll_max_sec, what the loop honours) so a journal
+                # reader can tell a configured 60s cadence from a 1s ceiling
+                # that the loop silently imposed.
                 logger.info(
                     "long-bake-out: backend %s unreachable for %.1fs after %d "
-                    "consecutive failures; switching to %.0fs sleeps until the "
-                    "%ds budget expires",
+                    "consecutive failures; configured cadence=%.0fs, actual "
+                    "sleep clamped to poll_max_sec=%.1fs until the %ds budget expires",
                     url,
                     now - started,
                     consecutive_failures,
                     long_bake_sec,
+                    poll_max_sec,
                     int(budget_sec),
                 )
                 long_bake_emitted = True
-            sleep_for = long_bake_sec
+            # Car-J (ledger #367): long_bake_sec is INTENTIONALLY large to keep
+            # the audit hook coarse ("backend has been down for minutes"); the
+            # actual time.sleep is capped at poll_max_sec so the host's CPU
+            # budget is not drained by a single 60s sleep. The audit line
+            # still names long_bake_sec so the journal entry is honest about
+            # the configured cadence.
+            sleep_for = min(long_bake_sec, poll_max_sec)
         else:
             # Exponential backoff from poll_sec → poll_max_sec, doubling each
             # failure. The cap exists so a long outage doesn't end up with

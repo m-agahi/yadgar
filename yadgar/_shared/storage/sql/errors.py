@@ -1,4 +1,4 @@
-"""``project`` registry error classes — STDLIB ONLY, importable without engine #2.
+"""``project`` registry error classes — NO engine #2 imports.
 
 C6 of the 0047 spine train. Three failures the registry can produce, kept as
 three distinct classes because the call sites act on them differently:
@@ -26,42 +26,37 @@ The classes are raised by ``mariadb.py`` (which reaches sqlalchemy) and
 caught/re-exported by ``yadgar/backend/admin_exec/project_registry.py``, whose
 own docstring promises it stays importable on hosts that never install the
 ``sql`` extra. If the guard imported them from ``mariadb`` directly, that
-promise would depend on ``mariadb``'s module-level imports staying stdlib
-forever — a property no test in an extra-carrying venv can observe breaking.
-A separate stdlib-only module makes the guarantee structural, and
-``test_errors_module_is_stdlib_only`` asserts it at the source level.
+promise would depend on ``mariadb``'s module-level imports staying engine-#2-
+free forever — a property no test in an extra-carrying venv can observe
+breaking. A separate module that does not pull engine #2 makes the guarantee
+structural, and ``test_errors_module_is_stdlib_only`` asserts it at the source
+level (it allows the canonical ``yadgar._shared.refusal`` import because that
+module does not reach engine #2 either).
 
-NOTHING may be imported here beyond ``__future__``.
+The marker ``AdminRefusal`` is imported from ``yadgar._shared.refusal`` so
+the same class identity is shared with every other call site in the codebase
+(``yadgar/backend/embed_service/embed_service_routes.py``'s ``except
+AdminRefusal`` arm, ``yadgar/backend/admin_exec/ledger.py``'s refusal
+re-raise). Inlining the class here — as Car-G did to satisfy the older
+"stdlib only" header — broke that identity: ``isinstance(UnknownProjectError,
+yadgar._shared.refusal.AdminRefusal)`` returned False, so the ``/admin``
+route's refusal arm did not catch registry refusals and the wrapper's
+``except AdminRefusal: raise`` did not re-raise either. Both classes are
+re-exported below so existing ``from yadgar._shared.storage.sql.errors
+import AdminRefusal`` callers keep working.
 """
 
 from __future__ import annotations
 
-# 409 Conflict: the request was well-formed and understood, and the current
-# state of the system is what refuses it. Deliberately in the 4xx band — the
-# whole point is that it is NOT a 5xx. Inlined from yadgar._shared.refusal
-# because this module is STDLIB ONLY (see test_errors_module_is_stdlib_only).
-REFUSAL_STATUS = 409
+from yadgar._shared.refusal import REFUSAL_STATUS, AdminRefusal
 
-
-class AdminRefusal(Exception):
-    """Marker base: this exception is a decision, not a failure.
-
-    Inlined from ``yadgar._shared.refusal`` so this stdlib-only module
-    (``test_errors_module_is_stdlib_only`` pins it) does not depend on that
-    module's import chain. Behavior is verbatim: ``reason = "refused"`` class
-    attribute, ``refusal_report()`` returns ``{}``. Any op that needs the
-    structured-envelope / parser helpers still imports them from
-    ``yadgar._shared.refusal`` — those helpers do not live on the stdlib-only
-    error path, so this module's stdlib guarantee is preserved.
-    """
-
-    #: Machine-readable rejection code. Never collapsed across distinct causes —
-    #: an operator (and an automated caller) must be able to tell them apart.
-    reason = "refused"
-
-    def refusal_report(self) -> dict:
-        """Structured evidence spliced into the envelope's top level."""
-        return {}
+__all__ = [
+    "AdminRefusal",
+    "DuplicateProjectError",
+    "ProjectRegistryUnavailableError",
+    "REFUSAL_STATUS",
+    "UnknownProjectError",
+]
 
 
 class UnknownProjectError(AdminRefusal, RuntimeError):
@@ -118,10 +113,3 @@ class ProjectRegistryUnavailableError(RuntimeError):
             f"cannot verify project_id: {project_id!r}"
         )
         self.project_id = project_id
-
-
-__all__ = [
-    "DuplicateProjectError",
-    "ProjectRegistryUnavailableError",
-    "UnknownProjectError",
-]
