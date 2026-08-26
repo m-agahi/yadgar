@@ -54,6 +54,7 @@ from yadgar._shared.runtime.state import (  # noqa: F401
     _project_roots,
     _last_session_context,
     _last_prompt_recall,
+    _last_emitted_topics,
     _event_queue,
     _system_metrics_cache,
     _last_recalled_ids,

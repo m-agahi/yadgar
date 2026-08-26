@@ -1819,6 +1819,197 @@ def _drop_anchor_rows(results: list[dict]) -> list[dict]:
     return kept
 
 
+# Car C10 (task #340): tokeniser for the content-dedupe throttle. Lives at
+# module scope so both the pre-recall gate and the post-emit recording path
+# can call it. Light-weight on purpose — this runs once per UserPromptSubmit
+# event, allocation-light via str.translate + set, no new dependencies.
+_PROMPT_RECALL_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "this",
+        "that",
+        "these",
+        "those",
+        "i",
+        "you",
+        "we",
+        "they",
+        "it",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "for",
+        "with",
+        "by",
+        "from",
+        "as",
+        "into",
+        "about",
+        "up",
+        "out",
+        "so",
+        "no",
+        "not",
+        "do",
+        "does",
+        "did",
+        "if",
+        "then",
+        "than",
+        "how",
+        "what",
+        "when",
+        "where",
+        "why",
+        "who",
+        "which",
+        "should",
+        "would",
+        "could",
+        "can",
+        "will",
+        "shall",
+        "may",
+        "might",
+        "must",
+    }
+)
+_PROMPT_RECALL_TOKEN_RE = __import__("re").compile(r"[a-z0-9][a-z0-9-]{1,}")
+
+
+def _prompt_recall_topic_tokens(text: str) -> set[str]:
+    """Lower-cased, stopword-stripped alphanumeric tokens for dedupe comparison.
+
+    Hyphenated words are kept whole (``co-recall``) so the gate can tell two
+    prompts apart on a domain-specific term even when the loose tokens would
+    overlap. Tokens shorter than 3 chars are dropped — they show up in every
+    prompt (``let``, ``get``, ``use``, ``run``) and would silently inflate the
+    overlap score.
+    """
+    raw = _PROMPT_RECALL_TOKEN_RE.findall(text.lower())
+    return {t for t in raw if t not in _PROMPT_RECALL_STOPWORDS and len(t) >= 3}
+
+
+# Car C10 (task #340): the throttle gates and emission recorder are extracted
+# from ``hook_prompt_recall`` so the route handler stays under the 150-line
+# fn_loc HARD cap. Each helper has ONE job: return ``None`` when the caller
+# should proceed, or a ``JSONResponse`` to short-circuit.
+_PROMPT_RECALL_DEDUPE_THRESHOLD = 0.80
+_PROMPT_RECALL_RATE_LIMIT_S = 120
+_PROMPT_RECALL_INJECT_MAX_CHARS = 3000
+
+
+@observe(tier="stage", metric="hooks.prompt_recall.content_dedupe")
+def _prompt_recall_content_dedupe_check(query: str, throttle_key: str) -> JSONResponse | None:
+    """Primary throttle gate (task #340).
+
+    Returns ``None`` when the prompt should proceed to recall, or a
+    ``JSONResponse`` carrying ``{"skipped": "content_dedupe", "overlap": <j>}``
+    when the current prompt's topic-set overlaps ≥80% (Jaccard) with the last
+    emission's topic-set for this directory.
+
+    The first emission in a session (no prior emission stored) always
+    proceeds — there is no prior content to dedupe against, and silently
+    skipping would waste a perfectly good recall on the session's first
+    prompt.
+    """
+    current_tokens = _prompt_recall_topic_tokens(query)
+    prior_topics = _st._last_emitted_topics.get(throttle_key)
+    if not (prior_topics and current_tokens):
+        return None
+    prior_set = set(prior_topics)
+    intersection = len(prior_set & current_tokens)
+    union = len(prior_set | current_tokens)
+    jaccard = intersection / union if union else 0.0
+    if jaccard < _PROMPT_RECALL_DEDUPE_THRESHOLD:
+        return None
+    return JSONResponse({"text": "", "skipped": "content_dedupe", "overlap": round(jaccard, 2)})
+
+
+@observe(tier="stage", metric="hooks.prompt_recall.rate_limit")
+def _prompt_recall_rate_limit_check(throttle_key: str) -> JSONResponse | None:
+    """Secondary hard cap (task #340).
+
+    Stays as a runaway-hook safety net — an operator's session looping on
+    submit must not hammer the backend. Returns ``None`` when the call is
+    within the rate limit, or the pre-existing ``{"skipped": "rate_limited",
+    "retry_after_seconds": <n>}`` envelope otherwise.
+
+    Same shape as the pre-C10 envelope so client-side retry-after accounting
+    keeps working.
+    """
+    now = time.monotonic()
+    last = _st._last_prompt_recall.get(throttle_key, 0)
+    if now - last >= _PROMPT_RECALL_RATE_LIMIT_S:
+        return None
+    retry_after = max(0, int(_PROMPT_RECALL_RATE_LIMIT_S - (now - last)))
+    logger.warning(
+        "prompt-recall throttled for directory=%s retry_after=%ds",
+        throttle_key or "<empty>",
+        retry_after,
+    )
+    return JSONResponse({"text": "", "skipped": "rate_limited", "retry_after_seconds": retry_after})
+
+
+@observe(tier="stage", metric="hooks.prompt_recall.record_emission")
+def _prompt_recall_record_emission(results: list[dict], throttle_key: str) -> None:
+    """Record the emitted topic-set so the NEXT call's dedupe gate has data.
+
+    Car C10 (task #340). Tokens come from the EMITTED CONTENT (not the query)
+    because the dedupe is "would I inject the same thing again" — two
+    queries can share a vocabulary while their emitted memory sets have
+    nothing in common, and a tokeniser on the query would falsely dedupe them.
+    """
+    emitted_text = " ".join(m.get("content", "") for m in results)
+    _bounded_set(
+        _st._last_emitted_topics,
+        throttle_key,
+        _prompt_recall_topic_tokens(emitted_text),
+    )
+
+
+@observe(tier="stage", metric="hooks.prompt_recall.format_injection")
+def _prompt_recall_format_injection(results: list[dict], directory: str | None) -> list[str]:
+    """Render the recall rows into the markdown lines that the hook injects.
+
+    Car C10 (task #340) extracted this from ``hook_prompt_recall`` to keep
+    that handler under the fn_loc HARD cap (150). The formatting is identical
+    to the pre-extraction inline block — 3000-char budget, per-row
+    project-name suffix, trailing count footer.
+    """
+    max_chars = _PROMPT_RECALL_INJECT_MAX_CHARS
+    lines = ["# Yadgar — Auto-Recall\n"]
+    total_chars = 0
+    for m in results:
+        content = m.get("content", "")
+        if total_chars + len(content) > max_chars:
+            remaining = max_chars - total_chars
+            if remaining > 50:
+                content = content[:remaining] + "..."
+            else:
+                break
+        mem_dir = m.get("directory_context", "")
+        proj = f" [{Path(mem_dir).name}]" if mem_dir and mem_dir != directory else ""
+        lines.append(f"- {content}{proj}")
+        total_chars += len(content)
+    lines.append(f"\n*{len(results)} memories surfaced for: {directory}*")
+    return lines
+
+
 @mcp_server.custom_route("/hooks/prompt-recall", methods=["GET"])
 @trace_span()
 async def hook_prompt_recall(request: Request) -> JSONResponse:
@@ -1847,27 +2038,18 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if not query or len(query) < 2:
             return JSONResponse({"text": ""})
 
-        # Throttle: skip if session-context ran < 3 min ago (already loaded context)
-        now = time.monotonic()
+        # Throttle (C10 task #340): primary gate is CONTENT-DEDUPE, with the
+        # time-only gate demoted to a secondary hard cap. Both checks live in
+        # module-scope helpers so hook_prompt_recall stays under the fn_loc
+        # HARD cap (150) — see ``_prompt_recall_content_dedupe_check`` /
+        # ``_prompt_recall_rate_limit_check`` for the rationale.
         throttle_key = directory or ""
-        if now - _st._last_session_context.get(throttle_key, 0) < 180:
-            return JSONResponse({"text": "", "skipped": "session_context_recent"})
-        # Throttle: max 1 recall per 2 minutes per directory
-        if now - _st._last_prompt_recall.get(throttle_key, 0) < 120:
-            # 2026-08-14 Car G (task #63): include ``retry_after_seconds`` so the
-            # client can distinguish a throttle hit from a real empty recall
-            # (today both return ``{"text":""}`` and the operator can't tell
-            # the difference during testing). Also log a WARN — silent throttle
-            # hits make recall regressions look like backend bugs.
-            retry_after = max(0, int(120 - (now - _st._last_prompt_recall.get(throttle_key, 0))))
-            logger.warning(
-                "prompt-recall throttled for directory=%s retry_after=%ds",
-                throttle_key or "<empty>",
-                retry_after,
-            )
-            return JSONResponse(
-                {"text": "", "skipped": "rate_limited", "retry_after_seconds": retry_after}
-            )
+        _dedupe = _prompt_recall_content_dedupe_check(query, throttle_key)
+        if _dedupe is not None:
+            return _dedupe
+        _rate = _prompt_recall_rate_limit_check(throttle_key)
+        if _rate is not None:
+            return _rate
 
         try:
             # v5.113.0 (#166) forwarded this hook; ADR-0078 now forwards ALL THREE
@@ -1922,29 +2104,14 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
         if not results:
             return JSONResponse({"text": ""})
 
-        max_chars = 3000
-        lines = ["# Yadgar — Auto-Recall\n"]
-        total_chars = 0
-        for m in results:
-            content = m.get("content", "")
-            if total_chars + len(content) > max_chars:
-                remaining = max_chars - total_chars
-                if remaining > 50:
-                    content = content[:remaining] + "..."
-                else:
-                    break
-            mem_dir = m.get("directory_context", "")
-            proj = f" [{Path(mem_dir).name}]" if mem_dir and mem_dir != directory else ""
-            lines.append(f"- {content}{proj}")
-            total_chars += len(content)
-        lines.append(f"\n*{len(results)} memories surfaced for: {directory}*")
-
+        lines = _prompt_recall_format_injection(results, directory)
         # Prepend DLQ alerts if any items are stuck
         dlq_text = _build_dlq_alert_text()
         if dlq_text:
             lines = [dlq_text, ""] + lines
 
         _bounded_set(_st._last_prompt_recall, throttle_key, time.monotonic())
+        _prompt_recall_record_emission(results, throttle_key)
         return JSONResponse({"text": "\n".join(lines)})
     except Exception as _exc:
         _caught_exc = _exc

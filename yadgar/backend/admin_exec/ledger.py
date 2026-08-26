@@ -85,6 +85,43 @@ from yadgar._shared.refusal import AdminRefusal
 logger = logging.getLogger(__name__)
 
 
+class TaskEdgePartialStateError(AdminRefusal, RuntimeError):
+    """The row was created/updated, but one of its edge directions did not write.
+
+    Car C10 (task #319): pre-C10 the ledger ops caught ``Exception`` around
+    the entire body and returned ``{"ok": False, "error": "..."}`` at HTTP
+    200 — operationally identical to a fully-failed create/update. The
+    /admin route catches ``AdminRefusal`` → 409, so the row+missing-edge
+    partial state had no way to reach that seam.
+
+    Subclasses BOTH ``AdminRefusal`` and ``RuntimeError`` so:
+      - the /admin route's ``except AdminRefusal`` arm renders it as 409 +
+        a structured envelope (``refused``, ``reason``, ``task_id``,
+        ``edge_kind``, ``edge_error``);
+      - any pre-existing ``except RuntimeError`` catchers keep working
+        (e.g. forwarder-side handlers that key off RuntimeError for retry).
+
+    Carries ``task_id`` and ``edge_kind`` so the caller can decide whether
+    to roll back the row, retry the edge sync, or accept the partial state
+    — D39 partial state is a deliberate outcome, not a fault.
+    """
+
+    reason = "task_edge_partial_state"
+
+    def __init__(self, *, task_id: int, kind: str, reason: str) -> None:
+        super().__init__(reason)
+        self.task_id = int(task_id)
+        self.edge_kind = str(kind)
+        self.edge_error = str(reason)
+
+    def refusal_report(self) -> dict:
+        return {
+            "task_id": self.task_id,
+            "edge_kind": self.edge_kind,
+            "edge_error": self.edge_error,
+        }
+
+
 def _get_sql_storage() -> Any:
     """The composed ``MariaStorageEngine``, or None when engine #2 is absent.
 
@@ -164,13 +201,26 @@ async def _reconcile_edges(
 
 
 @observe(tier="stage", metric="backend.admin.ledger.sync_task_edges")
-async def _sync_task_edges(storage: Any, task_id: int, payload: dict) -> str | None:
-    """Reconcile both edge directions named in ``payload``; message on failure.
+async def _sync_task_edges(storage: Any, task_id: int, payload: dict) -> None:
+    """Reconcile both edge directions named in ``payload``.
 
-    Returns ``None`` when there was nothing to do or everything was written,
-    and a HUMAN-READABLE tail (the caller prefixes what survived) when a
-    direction failed. Absent keys are left alone — ``blocked_by`` missing
-    means "the caller did not mention dependencies", never "clear them".
+    Car C10 (task #319): pre-C10 this returned ``f"its {key} edges were
+    not written: {exc}"`` on partial state — a string the caller prefixed
+    with the row that WAS created. That surface lived inside an
+    ``{"ok": False}`` envelope at HTTP 200, indistinguishable from "row
+    did not create at all". The route catches ``AdminRefusal`` → 409, so
+    raising ``TaskEdgePartialStateError`` is the only way the partial
+    state reaches the 409 seam.
+
+    Absent keys are left alone — ``blocked_by`` missing means "the caller
+    did not mention dependencies", never "clear them".
+
+    Raises:
+        TaskEdgePartialStateError: a direction's reconcile raised. The row
+            (created by ``create_task_row`` or mutated by
+            ``update_task_row``) is left in place — the caller decides
+            whether to roll back, retry the edge sync, or accept the
+            partial state. The error carries ``task_id`` and ``edge_kind``.
     """
     for key, inverse in (("blocked_by", False), ("blocks", True)):
         desired = payload.get(key)
@@ -178,10 +228,16 @@ async def _sync_task_edges(storage: Any, task_id: int, payload: dict) -> str | N
             continue
         try:
             await _reconcile_edges(storage, task_id, desired, inverse=inverse)
+        except TaskEdgePartialStateError:
+            # Already-typed refusal from the inner reconcile — propagate as-is.
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("task %s %s edge sync error: %s", task_id, key, exc)
-            return f"its {key} edges were not written: {exc}"
-    return None
+            raise TaskEdgePartialStateError(
+                task_id=task_id,
+                kind=key,
+                reason=f"its {key} edges were not written: {exc}",
+            ) from exc
 
 
 @observe(tier="boundary", metric="backend.admin.ledger.list_task_rows")
@@ -312,19 +368,14 @@ async def create_task_row(payload: dict) -> dict:
         return {"ok": False, "error": str(exc)}
     # D39: optionally reconcile ``task_blocked_by`` join edges on CREATE.
     inserted_id = int(result.get("id", 0))
-    edge_error = await _sync_task_edges(storage, inserted_id, payload) if inserted_id else None
-    if edge_error is not None:
-        # Car E: this used to be a ``logger.warning`` followed by ``return
-        # result`` — a dropped edge and a written edge were the SAME answer to
-        # the caller, and the 2026-08-15 backfill wrote six edges it could not
-        # confirm. The row IS created and its id is carried on the envelope:
-        # the honest report of partial state is partial state, not a rollback
-        # spanning two statements this op cannot make atomic.
-        return {
-            "ok": False,
-            "id": inserted_id,
-            "error": f"task row {inserted_id} was created, but {edge_error}",
-        }
+    if inserted_id:
+        # Car C10 (task #319): partial-state edge sync raises
+        # ``TaskEdgePartialStateError`` (an AdminRefusal) so the /admin route
+        # renders it as 409 + a structured envelope, instead of swallowing it
+        # into ``{"ok": False, ...}`` at HTTP 200. The row IS still created
+        # and its id is carried on the envelope so the caller can decide
+        # whether to roll back, retry, or accept the partial state.
+        await _sync_task_edges(storage, inserted_id, payload)
     return result
 
 
@@ -346,14 +397,9 @@ async def update_task_row(payload: dict) -> dict:
         logger.warning("update_task_row error: %s", exc)
         return {"ok": False, "error": str(exc)}
     # D39: optionally reconcile ``task_blocked_by`` join edges on UPDATE.
-    edge_error = await _sync_task_edges(storage, task_id, payload)
-    if edge_error is not None:
-        # Car E: was a warning + ``ok`` on the way out — see ``create_task_row``.
-        return {
-            "ok": False,
-            "id": task_id,
-            "error": f"task row {task_id} columns were updated, but {edge_error}",
-        }
+    # Car C10 (task #319): see create_task_row — partial-state edge sync now
+    # raises TaskEdgePartialStateError so the route renders it as 409.
+    await _sync_task_edges(storage, task_id, payload)
     return {"id": task_id, **column_payload}
 
 
