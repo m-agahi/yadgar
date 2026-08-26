@@ -67,7 +67,9 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = rows
 
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             result = recent_memories(limit=10, since="24h", directory="/home/user/project")
 
         assert "memories" in result
@@ -83,7 +85,9 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = rows[:3]
 
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             result = recent_memories(limit=3, since="24h", directory="/home/user/project")
 
         assert len(result["memories"]) <= 3
@@ -107,7 +111,9 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = rows
 
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             result = recent_memories(limit=10, since="24h", directory="/home/user/project")
 
         assert result["memories"], "Should have at least one entry"
@@ -126,7 +132,9 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = rows
 
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             result = recent_memories(limit=10, since="24h", directory="/home/user/project")
 
         entry = result["memories"][0]
@@ -139,7 +147,9 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             result = recent_memories(limit=10, since="24h", directory="global")
 
         assert "memories" in result
@@ -159,7 +169,9 @@ class TestRecentMemoriesTool:
         mock_storage.get_recent_memories_since.return_value = []
 
         before = datetime.now(UTC)
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             recent_memories(limit=10, directory="/home/user/project")
         after = datetime.now(UTC)
 
@@ -186,7 +198,9 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             # These should not raise
             recent_memories(limit=5, since="1h", directory="/home/user/project")
             recent_memories(limit=5, since="7d", directory="/home/user/project")
@@ -199,7 +213,9 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             recent_memories(limit=9999, since="24h", directory="/home/user/project")
 
         # Check storage was called with limit <= 100
@@ -214,7 +230,9 @@ class TestRecentMemoriesTool:
         mock_storage = MagicMock()
         mock_storage.get_recent_memories_since.return_value = []
 
-        with patch("yadgar.core.server.tools.admin_other._get_storage", return_value=mock_storage):
+        with patch(
+            "yadgar.core.server.tools._recent_memories._get_storage", return_value=mock_storage
+        ):
             result = recent_memories(limit=10, since="24h", directory="/home/user/project")
 
         assert result["memories"] == []

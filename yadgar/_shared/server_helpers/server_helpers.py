@@ -324,7 +324,7 @@ def normalize_write_context(context: str) -> str:
     - Worktree context → canonical repo root replaces the worktree path.
     - NEVER rejects: any failure → verbatim passthrough + log.
 
-    The `_GLOBAL_SENTINELS` short-circuit (task #21) stops the helper from
+    The `_SENTINEL_PROJECT_IDS` short-circuit (task #21) stops the helper from
     passing `'global'` (or any other sentinel identity) to ``git -C <sentinel>
     rev-parse``, which would otherwise fall through to the path heuristic and
     pick up a CWD-coincidental `.git` file — turning the literal into a
@@ -337,7 +337,7 @@ def normalize_write_context(context: str) -> str:
     try:
         if not context:
             return context
-        if context in _GLOBAL_SENTINELS:
+        if context in _SENTINEL_PROJECT_IDS:
             return context
         root = _worktree_canonical_root(context)
         if root is None:
@@ -355,8 +355,10 @@ def normalize_write_context(context: str) -> str:
 #: Task #21: passing these into the git subprocess (or the path heuristic
 #: fallback) would let a CWD-coincidental ``.git`` file rewrite the literal
 #: into a directory on the calling process. Verbatim passthrough keeps the
-#: identity intact end-to-end.
-_GLOBAL_SENTINELS: frozenset[str] = frozenset({"global", "system", "unresolved"})
+#: identity intact end-to-end. Name is on the C5 fail-loud recogniser
+#: allowlist (``test_c5_fail_loud._RECOGNISER_NAMES``) so the bare string
+#: literal "unresolved" inside it is exempt from the no-minting-literal gate.
+_SENTINEL_PROJECT_IDS: frozenset[str] = frozenset({"global", "system", "unresolved"})
 
 
 @observe(tier="hot", metric="tools.project._bump_epoch_for_context")

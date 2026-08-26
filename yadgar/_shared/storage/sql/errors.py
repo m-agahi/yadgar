@@ -36,7 +36,32 @@ NOTHING may be imported here beyond ``__future__``.
 
 from __future__ import annotations
 
-from yadgar._shared.refusal import AdminRefusal
+# 409 Conflict: the request was well-formed and understood, and the current
+# state of the system is what refuses it. Deliberately in the 4xx band — the
+# whole point is that it is NOT a 5xx. Inlined from yadgar._shared.refusal
+# because this module is STDLIB ONLY (see test_errors_module_is_stdlib_only).
+REFUSAL_STATUS = 409
+
+
+class AdminRefusal(Exception):
+    """Marker base: this exception is a decision, not a failure.
+
+    Inlined from ``yadgar._shared.refusal`` so this stdlib-only module
+    (``test_errors_module_is_stdlib_only`` pins it) does not depend on that
+    module's import chain. Behavior is verbatim: ``reason = "refused"`` class
+    attribute, ``refusal_report()`` returns ``{}``. Any op that needs the
+    structured-envelope / parser helpers still imports them from
+    ``yadgar._shared.refusal`` — those helpers do not live on the stdlib-only
+    error path, so this module's stdlib guarantee is preserved.
+    """
+
+    #: Machine-readable rejection code. Never collapsed across distinct causes —
+    #: an operator (and an automated caller) must be able to tell them apart.
+    reason = "refused"
+
+    def refusal_report(self) -> dict:
+        """Structured evidence spliced into the envelope's top level."""
+        return {}
 
 
 class UnknownProjectError(AdminRefusal, RuntimeError):
