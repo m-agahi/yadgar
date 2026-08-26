@@ -7,10 +7,12 @@
 # an entry's presence here as evidence that its noqa was reviewed and
 # approved.
 #
-# Every row names a rule ruff does NOT run for this project, so the
-# suppression silences nothing today — it is dead code that would spring to
-# life, silently, the moment someone adds that rule to `[tool.ruff.lint]
-# select`. That is the cleanup backlog this file IS.
+# Every row names a rule ruff does NOT run for this project — either absent
+# from `[tool.ruff.lint] select`, or selected by family prefix and then
+# ignore-overridden (this project selects `BLE` and ignores `BLE001`). The
+# suppression silences nothing today: it is dead code that would spring to
+# life, silently, the moment someone makes that rule live. That is the
+# cleanup backlog this file IS.
 #
 # THIS IS A RATCHET. Counts may be REMOVED or LOWERED freely — fix a site,
 # drop the row. A count may NEVER RISE, and a new (file, code) pair may never
@@ -29,21 +31,27 @@ yadgar/_shared/config/config.py:PLC0415:1
 yadgar/_shared/contracts/engram.py:PLC0415:1
 yadgar/_shared/contracts/protocols.py:ARG002:6
 yadgar/_shared/embeddings/embeddings.py:PLC0415:4
+yadgar/_shared/enrichment/_seq2seq.py:BLE001:1
 yadgar/_shared/knowledge_graph/knowledge_graph.py:PLC0415:1
 yadgar/_shared/observability/exception_telemetry.py:PLC0415:2
 yadgar/_shared/observability/log_config.py:PLC0415:5
+yadgar/_shared/observability/metrics.py:BLE001:12
 yadgar/_shared/observability/metrics.py:PLC0415:6
+yadgar/_shared/observability/tracing.py:BLE001:1
 yadgar/_shared/observability/tracing.py:PLC0415:4
 yadgar/_shared/restoration/transcript_parse.py:PLC0415:1
 yadgar/_shared/runtime/cache_epoch.py:PLC0415:2
+yadgar/_shared/runtime/lifecycle.py:BLE001:4
 yadgar/_shared/runtime/lifecycle.py:PLC0415:9
 yadgar/_shared/runtime/offload.py:PLC0415:1
 yadgar/_shared/runtime/recall_session.py:PLC0415:1
+yadgar/_shared/runtime/recall_side_effects_fork.py:BLE001:1
 yadgar/_shared/runtime/session_bind.py:PLC0415:1
 yadgar/_shared/runtime/session_map.py:PLC0415:2
 yadgar/_shared/security/allowlist.py:PLC0415:1
 yadgar/_shared/security/enforcement.py:PLC0415:1
 yadgar/_shared/security/secrets.py:PLC0415:3
+yadgar/_shared/server_helpers/server_helpers.py:E501:1
 yadgar/_shared/storage/_project_id_writer.py:PLC0415:1
 yadgar/_shared/storage/bitemporal.py:ARG001:1
 yadgar/_shared/storage/blocks.py:PLC0415:1
@@ -59,29 +67,39 @@ yadgar/_shared/wiki/store.py:PLC0415:6
 yadgar/_shared/wiki/wiki_meta.py:PLC0415:3
 yadgar/backend/admin_exec/adr_retype.py:PLC0415:1
 yadgar/backend/admin_exec/adr_seed.py:PLC0415:3
+yadgar/backend/admin_exec/adr_seed_storage.py:BLE001:1
 yadgar/backend/admin_exec/adr_seed_storage.py:PLC0415:1
 yadgar/backend/admin_exec/audit.py:PLC0415:1
+yadgar/backend/admin_exec/blocks.py:BLE001:5
+yadgar/backend/admin_exec/bookmarks.py:BLE001:2
 yadgar/backend/admin_exec/drain.py:PLC0415:1
 yadgar/backend/admin_exec/engine_status.py:PLC0415:1
 yadgar/backend/admin_exec/identity_stamp.py:PLC0415:2
 yadgar/backend/admin_exec/identity_stamp.py:S608:2
 yadgar/backend/admin_exec/identity_stamp.py:SLF001:2
 yadgar/backend/admin_exec/invariants.py:PLC0415:1
+yadgar/backend/admin_exec/invariants_cross_engine.py:BLE001:7
 yadgar/backend/admin_exec/invariants_cross_engine.py:PLC0415:5
+yadgar/backend/admin_exec/ledger.py:BLE001:26
 yadgar/backend/admin_exec/memory.py:PLC0415:5
 yadgar/backend/admin_exec/nightly_sweep.py:PLC0415:2
 yadgar/backend/admin_exec/project.py:PLC0415:2
 yadgar/backend/admin_exec/project_backfill.py:PLC0415:2
 yadgar/backend/admin_exec/project_backfill.py:S608:7
 yadgar/backend/admin_exec/project_backfill.py:SLF001:8
+yadgar/backend/admin_exec/project_registry.py:BLE001:1
 yadgar/backend/admin_exec/reslug.py:PLC0415:1
+yadgar/backend/admin_exec/restore_sql.py:BLE001:5
+yadgar/backend/admin_exec/rollup.py:BLE001:3
 yadgar/backend/admin_exec/rollup.py:PLC0415:3
+yadgar/backend/admin_exec/runtime_config.py:BLE001:4
 yadgar/backend/admin_exec/seed_adr_tier_subsystem.py:PLC0415:2
 yadgar/backend/cache/cache.py:ARG002:3
 yadgar/backend/cache/cache.py:PLC0414:1
 yadgar/backend/cache/cache.py:PLC0415:2
 yadgar/backend/cache/cache_budgets.py:PLC0414:1
 yadgar/backend/cache/cache_budgets.py:PLC0415:6
+yadgar/backend/cache/lru.py:BLE001:1
 yadgar/backend/cache/lru.py:PLC0415:4
 yadgar/backend/conflict_resolver/conflict_resolver.py:PLC0415:3
 yadgar/backend/consolidation/cleanup.py:PLC0415:3
@@ -94,6 +112,7 @@ yadgar/backend/curation/__init__.py:PLC0415:2
 yadgar/backend/embed_service/embed_service.py:PLC0415:15
 yadgar/backend/embed_service/embed_service_config.py:PLC0415:8
 yadgar/backend/embed_service/embed_service_lifecycle.py:PLC0415:11
+yadgar/backend/embed_service/embed_service_metrics.py:BLE001:1
 yadgar/backend/embed_service/embed_service_metrics.py:PLC0415:6
 yadgar/backend/embed_service/embed_service_routes.py:PLC0415:15
 yadgar/backend/graph/graph_layout.py:PLC0415:4
@@ -102,6 +121,7 @@ yadgar/backend/ml_client/circuit_breaker.py:PLC0415:2
 yadgar/backend/ml_client/local_ml_client.py:PLC0415:6
 yadgar/backend/ml_client/ml_client.py:PLC0414:2
 yadgar/backend/ml_client/remote_ml_client.py:PLC0415:3
+yadgar/backend/queue_drainer/__init__.py:BLE001:2
 yadgar/backend/queue_drainer/__init__.py:PLC0415:12
 yadgar/backend/queue_drainer/apply.py:PLC0415:2
 yadgar/backend/queue_drainer/dlq.py:PLC0415:4
@@ -110,6 +130,7 @@ yadgar/backend/restoration/checkpoint_restore.py:PLC0415:1
 yadgar/backend/retrieval/compare.py:PLC0415:2
 yadgar/backend/retrieval/compose.py:PLC0415:3
 yadgar/backend/retrieval/core.py:PLC0415:4
+yadgar/backend/retrieval/pipeline.py:BLE001:3
 yadgar/backend/retrieval/pipeline.py:PLC0415:15
 yadgar/backend/retrieval/recall_pipeline.py:ARG001:1
 yadgar/backend/retrieval/recall_pipeline.py:PLC0415:5
@@ -122,79 +143,105 @@ yadgar/backend/write_exec/__init__.py:PLC0415:6
 yadgar/backend/write_exec/_memorize_phases/_phase_embed.py:PLC0415:1
 yadgar/backend/write_exec/_memorize_phases/_phase_post_write.py:PLC0415:1
 yadgar/backend/write_exec/_memorize_phases/_phase_post_write.py:PLW0603:1
+yadgar/backend/write_exec/_memorize_phases/_phase_soft_gate.py:BLE001:1
 yadgar/backend/write_exec/action_log_impl.py:PLC0415:1
 yadgar/core/auth_middleware/auth_middleware.py:PLC0415:1
 yadgar/core/cache/cache.py:PLC0415:4
 yadgar/core/cli/daemon.py:PLC0415:5
 yadgar/core/cli/hook.py:PLC0415:7
 yadgar/core/cli/install.py:PLC0415:8
+yadgar/core/cli/project.py:BLE001:2
 yadgar/core/cli/seed.py:PLC0415:1
 yadgar/core/cli/seed.py:S310:3
 yadgar/core/cli/setup.py:PLC0415:1
 yadgar/core/cli/stats.py:PLC0415:1
 yadgar/core/cli/stats.py:S310:1
 yadgar/core/cli/update.py:ARG001:1
+yadgar/core/cli/update.py:BLE001:4
 yadgar/core/cli/update.py:PLC0415:18
 yadgar/core/cli/update.py:PLR0911:1
 yadgar/core/cli/verify_hooks.py:PLC0415:1
 yadgar/core/config_sync/sync.py:PLC0415:6
 yadgar/core/consolidation/orchestrator.py:PLC0415:4
 yadgar/core/daemon/daemon.py:PLC0415:4
+yadgar/core/daemon/daemons.py:BLE001:3
 yadgar/core/daemon/daemons.py:PLC0415:7
+yadgar/core/daemon/drain.py:BLE001:1
 yadgar/core/daemon/drain.py:PLC0415:2
 yadgar/core/daemon/runtime.py:PLC0415:2
 yadgar/core/daemon/runtime.py:PLW0603:1
 yadgar/core/daemon/runtime.py:S310:1
+yadgar/core/daemon/system_metrics.py:BLE001:1
 yadgar/core/daemon/system_metrics.py:PLC0415:2
 yadgar/core/daemon/systemd.py:PLC0415:1
 yadgar/core/export/duckdb_exporter.py:S608:4
 yadgar/core/forward.py:PLC0415:8
 yadgar/core/hooks/findings_capture.py:PLC0415:6
 yadgar/core/hooks/post-tool-capture.py:PLC0415:1
+yadgar/core/hooks/session-start-context.py:BLE001:1
 yadgar/core/install/clients/detect.py:PLC0415:1
 yadgar/core/install/clients/install.py:PLC0415:11
 yadgar/core/install/clients/rules_render.py:PLC0415:2
 yadgar/core/install/code_graph_provision.py:PLC0415:4
 yadgar/core/install/install_subagents_lib.py:PLC0415:1
+yadgar/core/lifecycle/lifecycle.py:BLE001:3
 yadgar/core/lifecycle/lifecycle.py:PLC0415:7
 yadgar/core/migrations/rekey_corpus.py:PLC0415:3
 yadgar/core/runtime_config_client.py:PLC0415:1
 yadgar/core/seed/_generate.py:PLC0415:1
 yadgar/core/server/__init__.py:PLC0415:2
+yadgar/core/server/_app.py:BLE001:6
 yadgar/core/server/_app.py:PLC0415:24
 yadgar/core/server/_helpers.py:PLC0415:1
 yadgar/core/server/_startup.py:PLC0415:1
+yadgar/core/server/http.py:BLE001:6
 yadgar/core/server/http.py:PLC0415:58
 yadgar/core/server/http_bookmarks.py:PLC0415:4
 yadgar/core/server/http_wiki_versioning.py:PLC0415:4
 yadgar/core/server/routes/admin_ops.py:PLC0415:1
 yadgar/core/server/routes/control.py:PLC0415:3
 yadgar/core/server/routes/control_audit.py:PLC0415:1
+yadgar/core/server/routes/control_update.py:BLE001:1
 yadgar/core/server/routes/control_update.py:PLC0415:3
 yadgar/core/server/routes/debug_dlq.py:PLC0415:2
+yadgar/core/server/routes/debug_query.py:BLE001:1
 yadgar/core/server/routes/debug_query.py:PLC0415:1
+yadgar/core/server/routes/logs.py:BLE001:1
 yadgar/core/server/routes/logs.py:PLC0415:1
 yadgar/core/server/routes/traces.py:PLC0415:1
 yadgar/core/server/tools/_project_param.py:PLC0415:2
 yadgar/core/server/tools/_project_registry.py:PLC0415:1
 yadgar/core/server/tools/_runtime_config.py:PLC0415:2
 yadgar/core/server/tools/admin_vacuum.py:PLC0415:1
+yadgar/core/server/tools/adr.py:BLE001:7
 yadgar/core/server/tools/adr.py:PLC0415:3
 yadgar/core/server/tools/adr_render.py:PLC0415:1
+yadgar/core/server/tools/agent_prompts.py:BLE001:2
 yadgar/core/server/tools/agent_prompts.py:PLC0415:4
+yadgar/core/server/tools/db_inspect.py:BLE001:1
 yadgar/core/server/tools/db_inspect.py:PLC0415:1
+yadgar/core/server/tools/dispatch_helper.py:BLE001:5
 yadgar/core/server/tools/dispatch_helper.py:PLC0415:13
+yadgar/core/server/tools/memorize.py:BLE001:2
 yadgar/core/server/tools/memorize.py:PLC0415:1
+yadgar/core/server/tools/misc.py:BLE001:1
 yadgar/core/server/tools/misc.py:PLC0415:3
+yadgar/core/server/tools/project.py:BLE001:4
 yadgar/core/server/tools/project.py:PLC0415:8
 yadgar/core/server/tools/recall.py:PLC0415:10
+yadgar/core/server/tools/task.py:BLE001:3
+yadgar/core/server/tools/wiki.py:BLE001:1
 yadgar/core/staleness/staleness.py:PLC0415:1
 yadgar/core/update/orchestrator.py:ARG001:2
+yadgar/core/update/orchestrator.py:BLE001:2
 yadgar/core/update/orchestrator.py:PLC0415:11
 yadgar/core/vacuum/__init__.py:PLC0415:1
 yadgar/core/vacuum/launcher.py:PLC0415:5
+yadgar/core/viz/viz_daemon_health.py:BLE001:5
 yadgar/core/viz/viz_daemon_health.py:PLC0415:3
 yadgar/core/viz/viz_server.py:ANN001:1
+yadgar/core/viz/viz_server.py:BLE001:1
+yadgar/tests/_backend_harness.py:BLE001:1
 yadgar/tests/_shared/test_adr_car_b1_ledger_sql.py:S608:3
 yadgar/tests/_shared/test_adr_car_b2_ledger_sql.py:S608:2
 yadgar/tests/_shared/test_mariadb_migrations.py:PLC0415:1
@@ -219,6 +266,7 @@ yadgar/tests/backend/test_ptc_cache_namespaces.py:PLC0415:2
 yadgar/tests/clients/test_install.py:PLC0415:1
 yadgar/tests/conftest.py:PLC0415:6
 yadgar/tests/core/conftest.py:PLC0415:1
+yadgar/tests/core/test_adr.py:BLE001:1
 yadgar/tests/core/test_agent_prompt_discovery_s6.py:ARG001:1
 yadgar/tests/core/test_api_bookmarks.py:ANN001:1
 yadgar/tests/core/test_archive_retention.py:PLC0415:2
@@ -238,6 +286,7 @@ yadgar/tests/core/test_dispatch_helper_contract.py:ARG001:1
 yadgar/tests/core/test_dispatch_helper_contract.py:PLC0415:1
 yadgar/tests/core/test_export_duckdb.py:S608:2
 yadgar/tests/core/test_memory_update_wiki_update.py:PLC0415:1
+yadgar/tests/core/test_offload_thread_safety.py:BLE001:5
 yadgar/tests/core/test_process_metrics_bridge.py:SIM115:1
 yadgar/tests/core/test_runtime_config_forward.py:PLC0415:3
 yadgar/tests/core/test_seed_agent_prompts.py:ARG001:1
@@ -252,8 +301,10 @@ yadgar/tests/core/test_wiki_slug_family_car_w4_project_scope.py:ARG004:1
 yadgar/tests/core/test_wire_recall_caches_metrics.py:ANN001:3
 yadgar/tests/e2e/conftest.py:TRY301:1
 yadgar/tests/e2e/test_backend_cache_invalidation_e2e.py:PLC0415:1
+yadgar/tests/e2e/test_phase2_subsystems.py:BLE001:1
 yadgar/tests/e2e/test_phase2_subsystems.py:PLC0415:3
 yadgar/tests/e2e/test_type_param_e2e.py:A002:6
+yadgar/tests/e2e/test_vacuum_backup_safety.py:BLE001:1
 yadgar/tests/integration/test_adr_seed_ledger_ids.py:PLC0415:3
 yadgar/tests/integration/test_cross_engine_invariants.py:PLC0415:3
 yadgar/tests/integration/test_mariadb_migrations.py:PLC0415:7

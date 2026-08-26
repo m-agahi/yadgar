@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Guard: inline `# noqa: XXXX` comments must target rules that are actually
-in the resolved pyproject `[tool.ruff.lint] select` set, and must state a rule.
+"""Guard: inline `# noqa: XXXX` comments must target rules ruff actually runs
+under the resolved pyproject `[tool.ruff.lint]` config, and must state a rule.
 
 WHY THIS EXISTS (Car C2 / task 313, bug-bag-2 train 2026-08-23)
 --------------------------------------------------------------
@@ -15,10 +15,14 @@ rung deeper.
 
 Two failure classes caught here:
 
-  (a) INERT-RULE — ``# noqa: XXXX`` where ``XXXX`` is not in the resolved
-      ``select``. The named rule is dead, so the suppression silences
-      nothing — but a developer who later adds the rule to ``select``
-      would suddenly find it suppressed with no audit trail.
+  (a) INERT-RULE — ``# noqa: XXXX`` where ruff does not run ``XXXX``: it is
+      absent from ``select``, OR it is selected by a family prefix and then
+      ignore-overridden by a more specific ``ignore`` entry (see ``is_live``
+      — this project selects ``BLE`` and ignores ``BLE001``, so BLE001 is
+      OFF and all 155 of its noqa sites are decorative). The named rule is
+      dead, so the suppression silences nothing — but a developer who later
+      makes the rule live would suddenly find it suppressed with no audit
+      trail.
 
   (b) BARE / EMPTY — ``# noqa`` or ``# noqa:`` with no rule code stated.
       A blanket suppression is too coarse to audit; the gate requires a
@@ -28,8 +32,8 @@ A third class (VACUOUS — noqa: XXXX where XXXX IS in select but the line
 below doesn't trigger XXXX) is left to ``check_ruff_ignores_liveness``'s
 spirit and is intentionally NOT checked here: it would require running
 ruff per-site, which is O(lines) subprocesses for marginal signal — the
-named-rule match against ``select`` already catches the silent-suppression
-class the audit found.
+named-rule resolution against ``select``/``ignore`` already catches the
+silent-suppression class the audit found.
 
 THE BASELINE IS KEYED ON (relpath, code) + A COUNT — NOT ON LINE NUMBERS
 ------------------------------------------------------------------------
@@ -115,10 +119,12 @@ _BASELINE_HEADER = """\
 # an entry's presence here as evidence that its noqa was reviewed and
 # approved.
 #
-# Every row names a rule ruff does NOT run for this project, so the
-# suppression silences nothing today — it is dead code that would spring to
-# life, silently, the moment someone adds that rule to `[tool.ruff.lint]
-# select`. That is the cleanup backlog this file IS.
+# Every row names a rule ruff does NOT run for this project — either absent
+# from `[tool.ruff.lint] select`, or selected by family prefix and then
+# ignore-overridden (this project selects `BLE` and ignores `BLE001`). The
+# suppression silences nothing today: it is dead code that would spring to
+# life, silently, the moment someone makes that rule live. That is the
+# cleanup backlog this file IS.
 #
 # THIS IS A RATCHET. Counts may be REMOVED or LOWERED freely — fix a site,
 # drop the row. A count may NEVER RISE, and a new (file, code) pair may never
@@ -168,11 +174,28 @@ def load_baseline(repo_root: Path) -> BaselineCounts:
     return out
 
 
-def load_select(pyproject_path: Path) -> set[str] | None:
-    """Return the resolved ``select`` set, or None if pyproject is missing.
+def _selector_set(lint: dict, *keys: str) -> set[str]:
+    """Union the named selector lists from a ``[tool.ruff.lint]`` table."""
+    raw: set[str] = set()
+    for key in keys:
+        raw.update(lint.get(key, []) or [])
+    return {code.strip() for code in raw if code and isinstance(code, str)}
 
-    Reads BOTH top-level ``select`` AND ``extend-select`` — both contribute
-    to which rules ruff runs.
+
+def load_lint_config(pyproject_path: Path) -> tuple[set[str], set[str]] | None:
+    """Return ``(select, ignore)``, or None if pyproject is missing.
+
+    Reads ``select`` + ``extend-select`` and ``ignore`` + ``extend-ignore``.
+
+    ``ignore`` USED TO BE UNREAD, and that was a real defect in this gate
+    (2026-08-26). This project's pyproject selects the ``BLE`` family and
+    then ignores ``BLE001``; ruff therefore does not run BLE001 at all, so
+    every ``# noqa: BLE001`` in the tree suppresses nothing. Reading only
+    ``select``, the gate called all 155 of them LIVE — and then reported that
+    conclusion to a human, who repeated it. A liveness guard that cannot see
+    an ignore-override mislabels every rule in that position, which is the
+    same failure family as the gates this car exists to fix: a guard
+    reporting a state it did not actually check.
 
     None is the missing-config sentinel: callers must pass it through (a
     repo with no pyproject has nothing to gate against, so this gate is
@@ -181,42 +204,56 @@ def load_select(pyproject_path: Path) -> set[str] | None:
     if not pyproject_path.is_file():
         return None
     data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    ruff = data.get("tool", {}).get("ruff", {})
-    lint = ruff.get("lint", {})
-    raw = set(lint.get("select", []) or [])
-    raw.update(lint.get("extend-select", []) or [])
-    return {code.strip() for code in raw if code and isinstance(code, str)}
+    lint = data.get("tool", {}).get("ruff", {}).get("lint", {})
+    return (
+        _selector_set(lint, "select", "extend-select"),
+        _selector_set(lint, "ignore", "extend-ignore"),
+    )
 
 
-def _select_expands(select: set[str]) -> set[str]:
-    """Expand ``select`` to include all rule shapes any family would match.
+def _match_specificity(code: str, selectors: set[str]) -> int:
+    """Length of the longest selector in *selectors* that prefixes *code*.
 
-    Given ``select = {"E", "W", "BLE", "C901", "PLR0913"}``, this returns
-    the original set PLUS every legal rule code that begins with a family
-    prefix in the set. Used by the gate to decide if ``# noqa: E402`` is
-    live when ``select = {"E"}`` — yes, because E402 matches the E-family.
-
-    This deliberately over-generates — there is no rule ``E0001`` today,
-    but the gate should still accept a hypothetical ``# noqa: E0001``
-    against ``select = {"E"}`` rather than flag it inert, because ruff
-    itself would accept that suppression. False negatives at the INERT
-    boundary are worse than false positives.
+    ``-1`` when nothing matches. ``ALL`` matches every code at specificity 0
+    (it is ruff's least-specific selector).
     """
-    expanded = set(select)
-    families = {code for code in select if code.rstrip("0123456789") == code}
-    if not families:
-        return expanded
-    for prefix in families:
-        for n in range(0, 1000):  # 3-digit rules
-            expanded.add(f"{prefix}{n:03d}")
-        for n in range(0, 10000):  # 4-digit rules
-            expanded.add(f"{prefix}{n:04d}")
-    return expanded
+    best = -1
+    for sel in selectors:
+        if sel == "ALL":
+            best = max(best, 0)
+        elif code.startswith(sel):
+            best = max(best, len(sel))
+    return best
+
+
+def is_live(code: str, select: set[str], ignore: set[str]) -> bool:
+    """True when ruff would actually RUN *code* under this select/ignore pair.
+
+    Ruff resolves the two lists by SELECTOR SPECIFICITY — the longest matching
+    prefix wins — and on an exact tie ``ignore`` wins. Measured against ruff
+    0.16 rather than assumed (a bare ``except Exception`` probe file):
+
+        select=["BLE"]     ignore=["BLE001"]  -> All checks passed  (off)
+        select=["BLE001"]  ignore=["BLE"]     -> Found 1 error      (on)
+        select=["BLE001"]  ignore=["BLE001"]  -> All checks passed  (off)
+        select=["BLE"]     ignore=[]          -> Found 1 error      (on)
+
+    Prefix matching also subsumes what the retired ``_select_expands`` did by
+    materialising 11 000 codes per family: ``is_live("E0001", {"E"}, set())``
+    is True because ``"E0001".startswith("E")``, so a hypothetical future code
+    in a selected family is still treated as live — the deliberate
+    over-generation is preserved, without the set.
+    """
+    selected = _match_specificity(code, select)
+    if selected < 0:
+        return False
+    return selected > _match_specificity(code, ignore)
 
 
 def scan_file(
     path: Path,
     select: set[str],
+    ignore: set[str],
     repo_root: Path,
 ) -> tuple[list[str], dict[str, list[int]]]:
     """Scan one Python file for BARE noqa sites and inert-rule sites.
@@ -271,12 +308,14 @@ def scan_file(
                     "or ruff silently ignores it."
                 )
                 continue
-            if code not in select:
+            if not is_live(code, select, ignore):
                 inert_sites[code].append(lineno)
     return hard_errors, dict(inert_sites)
 
 
-def collect_inert(repo_root: Path, select: set[str]) -> tuple[list[str], BaselineCounts]:
+def collect_inert(
+    repo_root: Path, select: set[str], ignore: set[str]
+) -> tuple[list[str], BaselineCounts]:
     """Walk ``yadgar/`` and return ``(hard_errors, {(relpath, code): count})``.
 
     The counts are the OBSERVED state of the tree — the same shape the
@@ -289,7 +328,7 @@ def collect_inert(repo_root: Path, select: set[str]) -> tuple[list[str], Baselin
     if not yadgar.is_dir():
         return hard_errors, counts
     for path in sorted(yadgar.rglob("*.py")):
-        errs, inert = scan_file(path, select, repo_root)
+        errs, inert = scan_file(path, select, ignore, repo_root)
         hard_errors.extend(errs)
         try:
             rel = path.relative_to(repo_root).as_posix()
@@ -304,10 +343,12 @@ def _format_growth(rel: str, code: str, observed: int, allowed: int) -> str:
     if allowed == 0:
         return (
             f"INERT-RULE: {rel}: {observed} `# noqa: {code}` site(s) suppress a "
-            f"rule ruff does not run for this project (not in pyproject "
-            f"`[tool.ruff.lint] select`), and this (file, rule) pair is not in "
-            f"the baseline. The suppression is a silent no-op today — drop the "
-            f"noqa, or add the rule to `select` with a stated reason."
+            f"rule ruff does not run for this project — it is either absent from "
+            f"pyproject `[tool.ruff.lint] select` or selected and then "
+            f"ignore-overridden — and this (file, rule) pair is not in the "
+            f"baseline. The suppression is a silent no-op today — drop the noqa, "
+            f"or make the rule live (`select` it, and drop any more-specific "
+            f"`ignore` entry) with a stated reason."
         )
     return (
         f"INERT-RULE: {rel}: {observed} inert `# noqa: {code}` site(s), but the "
@@ -329,21 +370,20 @@ def check(repo_root: Path | None = None) -> list[str]:
     """
     repo_root = repo_root or _REPO_ROOT
     pyproject = repo_root / "pyproject.toml"
-    select = load_select(pyproject)
-    if select is None:
+    lint = load_lint_config(pyproject)
+    if lint is None:
         # No pyproject → no resolved select → nothing to gate. This is the
         # sentinel the tests pin to ensure the gate doesn't false-positive
         # on a sub-project with its own ruff config (none today, but the
         # contract is future-proof).
         return []
-    # Expand families (`select = ["E"]` enables all E-codes) so the INERT
-    # check matches ruff's own resolution rules. Without this, every
-    # `# noqa: E402` site would be falsely flagged against `select = ["E"]`.
-    select_expanded = _select_expands(select)
-    # If select is empty (`select = []`), all named rules are inert. The
-    # script still scans; every named code becomes an INERT-RULE report.
+    select, ignore = lint
+    # Liveness follows ruff's own select/ignore precedence (see `is_live`):
+    # family prefixes count, and an ignore-override beats a less specific
+    # select. If select is empty (`select = []`), all named rules are inert.
+    # The script still scans; every named code becomes an INERT-RULE report.
     baseline = load_baseline(repo_root)
-    errors, observed = collect_inert(repo_root, select_expanded)
+    errors, observed = collect_inert(repo_root, select, ignore)
     for (rel, code), count in sorted(observed.items()):
         allowed = baseline.get((rel, code), 0)
         if count > allowed:
@@ -364,10 +404,10 @@ def write_baseline(repo_root: Path | None = None) -> tuple[int, int]:
     written and the total number of inert sites they account for.
     """
     repo_root = repo_root or _REPO_ROOT
-    select = load_select(repo_root / "pyproject.toml")
-    if select is None:
+    lint = load_lint_config(repo_root / "pyproject.toml")
+    if lint is None:
         return 0, 0
-    _errors, counts = collect_inert(repo_root, _select_expands(select))
+    _errors, counts = collect_inert(repo_root, *lint)
     path = repo_root / "scripts" / _BASELINE_FILENAME
     path.write_text(render_baseline(counts), encoding="utf-8")
     return len(counts), sum(counts.values())

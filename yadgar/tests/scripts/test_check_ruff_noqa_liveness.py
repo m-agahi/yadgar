@@ -46,6 +46,7 @@ def _make_repo(
     *,
     select: list[str],
     sources: dict[str, str],
+    ignore: list[str] | None = None,
     pyproject_extra: str = "",
     baseline: dict[tuple[str, str], int] | None = None,
     baseline_text: str | None = None,
@@ -64,7 +65,8 @@ def _make_repo(
     repo = tmp_path
     (repo / "yadgar").mkdir(parents=True, exist_ok=True)
     select_lit = "[" + ", ".join(f'"{s}"' for s in select) + "]"
-    pyproject = f"[tool.ruff.lint]\nselect = {select_lit}\n{pyproject_extra}"
+    ignore_lit = "[" + ", ".join(f'"{s}"' for s in (ignore or [])) + "]"
+    pyproject = f"[tool.ruff.lint]\nselect = {select_lit}\nignore = {ignore_lit}\n{pyproject_extra}"
     (repo / "pyproject.toml").write_text(pyproject, encoding="utf-8")
     for relpath, body in sources.items():
         full = repo / relpath
@@ -421,3 +423,122 @@ class TestShippedBaselineIsWellFormed:
             "unparsed row grants no allowance and would fail the gate invisibly"
         )
         assert all(count > 0 for count in parsed.values())
+
+
+# ---------------------------------------------------------------------------
+# (h) IGNORE-OVERRIDE — `ignore` beats a less specific `select` (2026-08-26)
+# ---------------------------------------------------------------------------
+
+
+class TestIgnoreOverride:
+    """Liveness is `select` MINUS `ignore`, resolved by selector specificity.
+
+    The gate used to read `select` alone. This project selects the ``BLE``
+    family and then ignores ``BLE001``, so ruff does not run BLE001 at all —
+    yet the gate called all 155 ``# noqa: BLE001`` sites LIVE, and a human
+    repeated that conclusion because the gate asserted it. A liveness guard
+    blind to an ignore-override mislabels every rule in that position.
+
+    The four expectations below were measured against ruff itself, not
+    assumed — a bare ``except Exception`` probe under each config:
+
+        select=["BLE"]     ignore=["BLE001"]  -> All checks passed  (off)
+        select=["BLE001"]  ignore=["BLE"]     -> Found 1 error      (on)
+        select=["BLE001"]  ignore=["BLE001"]  -> All checks passed  (off)
+        select=["BLE"]     ignore=[]          -> Found 1 error      (on)
+    """
+
+    def test_family_selected_member_ignored_is_not_live(self) -> None:
+        assert nql.is_live("BLE001", {"BLE"}, {"BLE001"}) is False
+
+    def test_specific_select_beats_family_ignore(self) -> None:
+        assert nql.is_live("BLE001", {"BLE001"}, {"BLE"}) is True
+
+    def test_exact_tie_goes_to_ignore(self) -> None:
+        assert nql.is_live("BLE001", {"BLE001"}, {"BLE001"}) is False
+
+    def test_family_selected_nothing_ignored_is_live(self) -> None:
+        assert nql.is_live("BLE001", {"BLE"}, set()) is True
+
+    def test_unselected_code_is_not_live(self) -> None:
+        assert nql.is_live("PLC0415", {"E", "F", "PLR0913"}, set()) is False
+
+    def test_sibling_in_the_family_stays_live(self) -> None:
+        """Ignoring BLE001 must not take the whole BLE family down."""
+        assert nql.is_live("BLE002", {"BLE"}, {"BLE001"}) is True
+
+    def test_unmaterialised_code_in_a_selected_family_is_live(self) -> None:
+        """Preserved from the retired set-expansion: over-generate at the
+        INERT boundary rather than flag a hypothetical future code."""
+        assert nql.is_live("E0001", {"E"}, set()) is True
+
+    def test_all_selector_is_least_specific(self) -> None:
+        assert nql.is_live("BLE001", {"ALL"}, set()) is True
+        assert nql.is_live("BLE001", {"ALL"}, {"BLE"}) is False
+
+    def test_end_to_end_ignored_member_is_flagged_inert(self, tmp_path: Path) -> None:
+        """The whole gate, not just the predicate: an ignore-overridden noqa
+        must be reported."""
+        body = (
+            "def f():\n    try:\n        pass\n"
+            + "    except Exception:  # noqa: "
+            + "BLE001\n        pass\n"
+        )
+        repo = _make_repo(
+            tmp_path,
+            select=["BLE", "E", "F"],
+            ignore=["BLE001"],
+            sources={"yadgar/core/mod.py": body},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "BLE001" in e], (
+            f"BLE001 is ignore-overridden, so the noqa suppresses nothing "
+            f"and must be flagged; got {errors}"
+        )
+
+    def test_end_to_end_specific_select_is_not_flagged(self, tmp_path: Path) -> None:
+        body = (
+            "def f():\n    try:\n        pass\n"
+            + "    except Exception:  # noqa: "
+            + "BLE001\n        pass\n"
+        )
+        repo = _make_repo(
+            tmp_path,
+            select=["BLE001", "E", "F"],
+            ignore=["BLE"],
+            sources={"yadgar/core/mod.py": body},
+        )
+        assert not [e for e in nql.check(repo) if "BLE001" in e], (
+            "a more specific select beats a family ignore — flagging this would be a false positive"
+        )
+
+
+class TestShippedConfigLivenessPin:
+    """Pin the real pyproject's resolution so this cannot silently invert.
+
+    Recorded because the gate got this exact question wrong and reported the
+    wrong answer to a human. If someone un-ignores BLE001 (ledger task #313 —
+    993 bare `except Exception` handlers, only ~296 carrying a noqa), this
+    test fails and names the decision, rather than the baseline quietly
+    shrinking by 154 rows.
+    """
+
+    def test_ble001_is_ignore_overridden_today(self) -> None:
+        from yadgar.tests._paths import REPO_ROOT
+
+        lint = nql.load_lint_config(REPO_ROOT / "pyproject.toml")
+        assert lint is not None
+        select, ignore = lint
+        assert "BLE" in select, "precondition: the BLE family is selected"
+        assert "BLE001" in ignore, "precondition: BLE001 is ignore-overridden"
+        assert nql.is_live("BLE001", select, ignore) is False, (
+            "BLE001 is selected by family and then ignored, so ruff does not "
+            "run it and every `# noqa: BLE001` in the tree is decorative"
+        )
+
+    def test_a_plainly_selected_rule_is_live(self) -> None:
+        from yadgar.tests._paths import REPO_ROOT
+
+        lint = nql.load_lint_config(REPO_ROOT / "pyproject.toml")
+        assert lint is not None
+        assert nql.is_live("F401", *lint) is True
