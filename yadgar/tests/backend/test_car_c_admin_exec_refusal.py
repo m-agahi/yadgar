@@ -35,8 +35,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from yadgar._shared.refusal import AdminRefusal
 from yadgar._shared.storage.sql.errors import (
+    AdminRefusal,
     DuplicateProjectError,
     UnknownProjectError,
 )

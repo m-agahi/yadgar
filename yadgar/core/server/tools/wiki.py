@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import yadgar._shared.runtime.state as _st
 from yadgar._shared.errors import UnresolvedProjectError
@@ -420,7 +421,7 @@ def _wiki_add_wait_path(payload: dict, new_slug: str, title: str) -> dict:
             logger.warning("wiki_add wait: drain_now() failed (non-fatal): %s", exc)
 
     try:
-        from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
+        from yadgar._shared.config import get_settings as _get_settings
 
         timeout = getattr(_get_settings(), "WIKI_WRITE_WAIT_TIMEOUT_SECONDS", 15.0)
     except Exception:
@@ -630,7 +631,7 @@ def wiki_add(
         }
 
     # v5.39.0 slug generation (O(1), needed for enqueue payload and wait path).
-    import re as _re_slug  # noqa: PLC0415
+    import re as _re_slug
 
     _title_slug = (_re_slug.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "untitled")[:64]
     # Car C (#83): explicit slug overrides title derivation. The drainer
@@ -721,7 +722,7 @@ def _current_wiki_epoch() -> int:
     so a wiki mutation busts every cached wiki read/query regardless of dir/branch
     normalization (the bump is global; see storage.wiki._bump_wiki_epoch)."""
     try:
-        from yadgar._shared.runtime.cache_epoch import _current_epoch  # noqa: PLC0415
+        from yadgar._shared.runtime.cache_epoch import _current_epoch
 
         return _current_epoch(None)
     except Exception:
@@ -730,7 +731,7 @@ def _current_wiki_epoch() -> int:
 
 @observe(tier="stage", metric="tools.wiki._make_wiki_read_cache")
 def _make_wiki_read_cache():
-    from yadgar.core.cache import (  # noqa: PLC0415
+    from yadgar.core.cache import (
         TTL,
         Cache,
         _core_cache_ram_pct,
@@ -751,7 +752,7 @@ def _make_wiki_read_cache():
 
 @observe(tier="stage", metric="tools.wiki._make_wiki_query_cache")
 def _make_wiki_query_cache():
-    from yadgar.core.cache import (  # noqa: PLC0415
+    from yadgar.core.cache import (
         TTL,
         Cache,
         _core_cache_ram_pct,
@@ -887,7 +888,7 @@ def wiki_query(
     unified fan-out path with CE fusion and per-type quotas. This function
     remains fully functional for one release cycle as a thin alias.
     """
-    import time as _time  # noqa: PLC0415
+    import time as _time
 
     # v5.65 Fix D: hard-require directory — MUST be first check (before any store access).
     # Container-safe: do NOT fall back to os.getcwd().
@@ -972,7 +973,7 @@ def wiki_query(
         # P11: observe wiki_query total duration in finally so it fires on all paths.
         try:
             from yadgar._shared.observability.metrics import (
-                yadgar_wiki_query_duration_ms,  # noqa: PLC0415
+                yadgar_wiki_query_duration_ms,
             )
 
             yadgar_wiki_query_duration_ms.observe((_time.monotonic() - _wiki_query_t0) * 1000)
@@ -1371,6 +1372,171 @@ def _resolve_slug_scope_project(
         return None
 
 
+# ── Car M (0047 §7 row M) — WRITE-SIDE cross-project scope gate ──────────────
+#
+# ``wiki_query`` (the read path) filters by ``project_id``; every wiki write
+# path also takes ``page_id`` but until this car did NOT consult the page's
+# stored ``project_id``. The defect: a caller holding auth for project A could
+# read any page's ``page_id`` (e.g. via ``wiki_read`` on a global-reach slug)
+# and pass it to ``wiki_update`` / ``wiki_replace_text`` / ``wiki_delete`` /
+# etc. — those funnels trusted the integer. Today the page's ``project_id``
+# is compared against the caller's resolved identity and a mismatch is
+# REFUSED, the same shape Car J used for the mutability lock and Car 5 used
+# for the registry check. HTTP 409 on the wire (``REFUSAL_STATUS``).
+#
+# The two helpers below are called from EVERY wiki write shell — the page_id-
+# keyed family (10 tools) and the slug-keyed all-rows family (2 tools). The
+# restamp carve-out on ``wiki_set_metadata(field="project_id")`` is the only
+# hole punched, and it is a deliberate one (Car 9 retired every other restamp
+# route, so this tool is now the SOLE mechanism by which a mis-stamped page
+# is corrected — blocking it on the very field it sets would freeze the drift).
+#
+# Car C7's global-reach tag is the OTHER carve-out: pages carrying ``"global"``
+# in their ``tags`` are explicitly cross-project-writable, per ADR-0171/0159
+# (the agent-prompt library surface).
+
+
+@observe(tier="hot", metric="tools.wiki._cross_project_page_refusal")
+def _cross_project_page_refusal(
+    *,
+    tool: str,
+    slug: str,
+    caller_project_id: str | None,
+    page: dict[str, Any] | None,
+) -> dict | None:
+    """Return a refusal envelope if a write to *slug* would cross project.
+
+    Returns ``None`` when the write may proceed. Returns the structured refusal
+    envelope (suitable for direct return from a tool shell) otherwise.
+
+    ``page`` is the resolved page from ``_resolve_page_id_by_slug`` (may be
+    None when the caller's project / directory rung does not match). When
+    ``page`` is None, the helper looks up the unscoped row and checks THAT
+    page's ``project_id`` against the caller's declared identity — that is
+    the discovery path for the explicit-attack shape (caller A, page B).
+
+    THE CALLER-DECLARES-PRINCIPLE. The gate runs only when the caller has
+    declared a project identity (the ``project=`` kwarg, a session project, or
+    a directory-derived one). An UNRESOLVED caller identity (``None``) is the
+    browser-endpoint form (the four viz endpoints in ``http_wiki_versioning``)
+    and the integration test form (``test_wiki_edit_primitives``, which
+    pre-dates car M and never named a project). Failing loud there would take
+    the viz's history / diff / restore surfaces offline to fix a defect that
+    is structurally about ``project=`` being IGNORED WHEN SUPPLIED — the same
+    tolerance the slug-scope resolver ships with (car W4 docstring).
+
+    Once the caller declares, the page's stored ``project_id`` MUST match —
+    otherwise the explicit-attack shape (caller A, page B) reaches the seam.
+    The global-reach tag is the documented carve-out: agent-prompt library
+    pages carry ``"global"`` in their ``tags`` and are explicitly writable
+    from every project, per ADR-0171 / Car C7.
+    """
+    if page is None:
+        # The slug→page_id resolver returned None for the caller's project —
+        # the page either does not exist OR belongs to another project. Try
+        # the unscoped lookup to discover which.
+        gate_page = _resolve_page_unscoped(slug)
+        if gate_page is None:
+            return None  # truly does not exist — let the tool return not-found
+        page = gate_page
+    page_project_id = page.get("project_id")
+    if caller_project_id is None:
+        return None  # unscoped caller — see docstring; out of scope for this car
+    if page_project_id == caller_project_id:
+        return None
+    # Cross-project. The reach tag is the ONLY sanctioned cross-project write.
+    if "global" in (page.get("tags") or []):
+        return None
+    return {
+        "ok": False,
+        "refused": True,
+        "reason": "cross_project_write_refused",
+        "error": (
+            f"{tool}: caller project_id={caller_project_id!r} cannot write to "
+            f"page stamped project_id={page_project_id!r} (slug {slug!r})"
+        ),
+        "tool": tool,
+        "caller_project_id": caller_project_id,
+        "page_project_id": page_project_id,
+    }
+
+
+@observe(tier="hot", metric="tools.wiki._cross_project_slug_refusal")
+def _cross_project_slug_refusal(
+    *,
+    tool: str,
+    caller_project_id: str | None,
+    slug: str,
+    field: str,
+    restamp_carve_out: bool = False,
+) -> dict | None:
+    """Slug-keyed write gate: refuse if the slug's row set spans a foreign project.
+
+    ``wiki_set_metadata`` and ``wiki_set_mutability`` reach EVERY row for a
+    slug (BC-G10, Car 9) — including rows that may belong to another project.
+    A caller whose identity does not own every row in the set cannot write
+    any of them. ``restamp_carve_out=True`` allows ``project_id`` restamps
+    (the only sanctioned cross-project write on these tools, because the
+    restamp IS the documented correction path for a mis-stamped page).
+
+    Returns ``None`` when the write may proceed; the structured refusal envelope
+    otherwise.
+    """
+    if restamp_carve_out and field == "project_id":
+        return None
+    # The caller-declares principle (same as the page-keyed helper): an
+    # UNRESOLVED caller identity is the browser-endpoint / pre-Car-M
+    # integration-test form; failing loud there would break existing flows.
+    # The defect this car closes is the EXPLICIT attack where a caller
+    # declaring A would mutate rows owned by B. A follow-up car that closes
+    # the browser-endpoint rung would refuse here.
+    if caller_project_id is None:
+        return None
+    if _st._wiki is None:
+        # Mirror the storage-down behaviour every other wiki tool ships: refuse
+        # loud rather than fall through to a permissive default. The same
+        # reason as Car 5's registry-unavailable branch.
+        return {
+            "ok": False,
+            "refused": True,
+            "reason": "cross_project_write_refused",
+            "error": f"{tool}: WikiStore not initialised; cannot scope slug {slug!r}",
+            "tool": tool,
+        }
+    rows = _st._wiki._storage.get_wiki_page_ids_by_slug(slug)  # type: ignore[attr-defined]
+    if not rows:
+        return None  # slug not found — let the impl return its own not-found
+    storage = _st._wiki._storage
+    # Every row's project_id must be either None (legacy), "global" reach, or
+    # owned by the caller. ANY foreign row blocks the write — a single slug
+    # touching N projects is no one's to rewrite unilaterally.
+    for row_id in rows:
+        row = storage.get_wiki_page(int(row_id))
+        if row is None:
+            continue
+        row_project = row.get("project_id")
+        if row_project is None:
+            continue
+        if "global" in (row.get("tags") or []):
+            continue
+        if caller_project_id is not None and row_project == caller_project_id:
+            continue
+        return {
+            "ok": False,
+            "refused": True,
+            "reason": "cross_project_write_refused",
+            "error": (
+                f"{tool}: slug {slug!r} spans a foreign project "
+                f"(row project_id={row_project!r}, caller "
+                f"project_id={caller_project_id!r})"
+            ),
+            "tool": tool,
+            "row_project_id": row_project,
+            "caller_project_id": caller_project_id,
+        }
+    return None
+
+
 @observe(tier="stage", metric="tools.wiki._resolve_page_id_by_slug")
 def _resolve_page_id_by_slug(
     slug: str,
@@ -1416,6 +1582,28 @@ def _resolve_page_id_by_slug(
     if page is None:
         return None, None
     return page.get("id"), page
+
+
+@observe(tier="stage", metric="tools.wiki._resolve_page_unscoped")
+def _resolve_page_unscoped(slug: str) -> dict | None:
+    """Resolve *slug* WITHOUT caller scoping — used only by the cross-project gate.
+
+    Car M (0047 §7 row M). The write-side gate needs to inspect a page that
+    may not belong to the caller's project. The public
+    ``_resolve_page_id_by_slug`` would return None in that case (rung 1
+    filters on the caller's project), and the gate would never see the row
+    it's supposed to refuse — the attacker just gets a "not found" envelope,
+    which leaks no signal but also writes nothing.
+
+    This helper returns the page dict the slug resolves to under the
+    UNSCOPED rung (which, on a unique-corpus slug, is the only row for that
+    slug). The gate then reads its ``project_id`` and compares to the caller's
+    declared identity. The public resolver keeps its same-project behaviour
+    so the ``if page_id is None: not-found`` semantics are unchanged for
+    everything else.
+    """
+    assert _st._wiki is not None, "WikiStore not initialized"
+    return _st._wiki.read_by_directory(slug, None)
 
 
 @_tool()
@@ -1486,7 +1674,7 @@ def wiki_read_version(
         project=project, directory=directory, tool="wiki_read_version"
     )
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.read_version(page_id, version)
@@ -1526,7 +1714,7 @@ def wiki_diff(
     # discarded, so ``project=`` never reached the lookup.
     _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_diff")
     assert _st._wiki is not None, "WikiStore not initialized"
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     result = _st._wiki.diff(page_id, v1, v2, fmt=fmt)
@@ -1580,7 +1768,16 @@ def wiki_restore(
     # R3 Car 3c: slug→page_id resolution stays CORE (backend has a different cwd,
     # so backend-side resolution would resolve the wrong row); the restore write
     # forwards keyed by page_id.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_restore", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
     return _forward_admin("wiki_restore", {"page_id": page_id, "version": version, "slug": slug})
@@ -1665,8 +1862,19 @@ def wiki_append_section(
         }
 
     # R3 Car 3c: slug→page_id resolution stays core (backend has no git/cwd); the
-    # section write forwards keyed by page_id.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # section write forwards keyed by page_id. Car M reads the resolved page
+    # dict (second tuple slot) so the cross-project gate needs no extra
+    # storage round-trip.
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_append_section", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"error": f"Wiki page '{slug}' not found"}
 
@@ -1781,6 +1989,22 @@ def wiki_set_metadata(
         }
     # R3 Car 3c: slug-keyed all-rows metadata write forwards to backend /admin.
     # No §25 page_id resolution needed (impl reaches every row for the slug).
+    #
+    # Car M (0047 §7 row M): slug-keyed cross-project scope gate. The all-rows
+    # pattern means a single slug can touch N projects; if ANY row is foreign
+    # the caller cannot rewrite any of them. The ``project_id`` field is the
+    # restamp carve-out (Car 9) — the documented correction for a mis-stamped
+    # page must not be blocked by the same gate that exists to enforce it.
+    _pid = accept_project_param(project, directory)
+    _slug_refusal = _cross_project_slug_refusal(
+        tool="wiki_set_metadata",
+        caller_project_id=_pid,
+        slug=slug,
+        field=field,
+        restamp_carve_out=True,
+    )
+    if _slug_refusal is not None:
+        return _slug_refusal
     return _forward_admin("wiki_set_metadata", {"slug": slug, "field": field, "value": value})
 
 
@@ -1820,12 +2044,22 @@ def wiki_set_mutability(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    _pid = accept_project_param(project, directory)
     if not reason or not reason.strip():
         return {
             "ok": False,
             "error": "reason is required for mutability_override audit log",
         }
+    # Car M (0047 §7 row M): slug-keyed cross-project scope gate.
+    _slug_refusal = _cross_project_slug_refusal(
+        tool="wiki_set_mutability",
+        caller_project_id=_pid,
+        slug=slug,
+        field="mutability_override",
+        restamp_carve_out=False,
+    )
+    if _slug_refusal is not None:
+        return _slug_refusal
     return _forward_admin(
         "wiki_set_mutability",
         {"slug": slug, "value": value, "reason": reason},
@@ -1883,7 +2117,16 @@ def wiki_replace_text(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_replace_text", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1937,7 +2180,16 @@ def wiki_delete_text(
     )
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     # No secret gate (nothing new is written).
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_delete_text", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -1985,7 +2237,16 @@ def wiki_insert_after(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_insert_after", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -2033,7 +2294,16 @@ def wiki_insert_before(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_insert_before", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -2093,7 +2363,16 @@ def wiki_replace_at(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_replace_at", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -2153,7 +2432,16 @@ def wiki_delete_at(
     _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_delete_at")
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
     # No secret gate (nothing new is written).
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_delete_at", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -2215,7 +2503,16 @@ def wiki_insert_at(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_insert_at", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 
@@ -2282,7 +2579,16 @@ def wiki_replace_markdown_block(
         return _gate
 
     # R3 Car 3c: page_id resolved core (backend has no git/cwd); write forwards.
-    page_id, _ = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    page_id, _page = _resolve_page_id_by_slug(slug, directory=directory, project_id=_pid)
+    # Car M (0047 §7 row M): write-side cross-project scope gate. Runs BEFORE
+    # the not-found branch so the gate can fall back to the unscoped slug
+    # resolver — the explicit-attack shape (caller A, page B) would otherwise
+    # get a generic "not found" and the gate would never see the row.
+    _refusal = _cross_project_page_refusal(
+        tool="wiki_replace_markdown_block", slug=slug, caller_project_id=_pid, page=_page
+    )
+    if _refusal is not None:
+        return _refusal
     if page_id is None:
         return {"ok": False, "error": f"Wiki page '{slug}' not found"}
 

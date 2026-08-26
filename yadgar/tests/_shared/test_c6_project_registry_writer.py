@@ -74,6 +74,13 @@ def test_errors_module_is_stdlib_only():
     it stays off the ``sql`` extra). A third-party import here would make the
     guard module drag sqlalchemy in at import time — invisible in a venv that
     HAS the extra, which is every venv this suite runs in.
+
+    Car-J relaxes the rule for ``yadgar._shared.refusal``: that module does
+    NOT reach engine #2 (it pulls opentelemetry lazily, not sqlalchemy), and
+    re-using its ``AdminRefusal`` is the only way to keep class identity with
+    the rest of the codebase. The structural invariant — "importable on a
+    host that never installs the ``sql`` extra" — still holds, because
+    ``yadgar._shared.refusal`` is importable without sqlalchemy.
     """
     tree = ast.parse(_ERRORS_PATH.read_text(encoding="utf-8"))
     imported: list[str] = []
@@ -82,8 +89,11 @@ def test_errors_module_is_stdlib_only():
             imported.extend(a.name for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.append(node.module)
-    forbidden = [m for m in imported if m.split(".")[0] not in {"__future__"}]
-    assert not forbidden, f"sql/errors.py must be stdlib-only; imports: {forbidden}"
+    allowed_yadgar = frozenset({"yadgar._shared.refusal"})
+    forbidden = [
+        m for m in imported if m.split(".")[0] not in {"__future__"} and m not in allowed_yadgar
+    ]
+    assert not forbidden, f"sql/errors.py must be engine-#2-free; imports: {forbidden}"
 
 
 def test_duplicate_project_error_carries_the_key():
@@ -128,7 +138,7 @@ def test_backend_guard_reexports_the_same_class_object():
     name would let a real rejection pass through an ``except`` block that
     looks correct.
     """
-    import yadgar.backend.admin_exec.project_registry as pr  # noqa: PLC0415
+    import yadgar.backend.admin_exec.project_registry as pr
 
     assert pr.UnknownProjectError is UnknownProjectError
 
@@ -202,7 +212,7 @@ def test_registry_ops_are_registered_on_the_admin_dispatch():
     a table every ledger write FKs to — the deployment is bricked with a
     correct schema.
     """
-    from yadgar.backend.admin_exec import admin_ops  # noqa: PLC0415
+    from yadgar.backend.admin_exec import admin_ops
 
     ops = admin_ops()
     assert "create_project_row" in ops
@@ -216,7 +226,7 @@ def test_registry_seed_op_is_not_registry_guarded():
     be registered. Pinned as a source assertion because the deadlock only
     shows up on a genuinely empty deployment, which no test fixture is.
     """
-    from yadgar.backend.admin_exec import ledger  # noqa: PLC0415
+    from yadgar.backend.admin_exec import ledger
 
     src = inspect.getsource(ledger.create_project_row)
     assert "assert_project_registered" not in src
@@ -331,7 +341,7 @@ async def test_create_project_row_raises_duplicate_project_error_on_collision():
     rather than as a source grep: re-seeding an existing project must tell
     the operator which key already existed.
     """
-    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+    from sqlalchemy.exc import IntegrityError
 
     integrity = IntegrityError("INSERT INTO project", {}, Exception("duplicate"))
     engine = _engine_with(_FakeConn(raise_on_execute=integrity))
