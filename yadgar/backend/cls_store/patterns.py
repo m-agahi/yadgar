@@ -334,84 +334,6 @@ _SPECIFIC_INDICATORS = re.compile(
     r")"
 )
 
-# ── C7c (task #339): word-salad gate for auto-abstracted schemas ──────────
-#
-# A schema like "Recurring pattern across 5 observations: token token token"
-# carries NO identifier, ADR, MR, file ref, or shared tag — it is unanchored
-# prose and would, on insertion, get auto-promoted to an anchor (memorize
-# write pipeline sets is_protected=True + _anchor tag when tier is set). Once
-# anchored, it becomes a protected zombie: immune to decay, ranking high on
-# recall, the exact phantom-namespace shape §1.4 forbids. The gate below drops
-# these BEFORE insert, not after — the cheaper, more reliable fix.
-#
-# Five signal classes pass the gate; a schema that carries none AND has no
-# common_tags AND fails the prose-density floor is a word salad and must be
-# discarded by the caller.
-_SALAD_BACKTICK_RE = re.compile(r"`[^`]+`")
-_SALAD_ADR_MR_ISSUE_RE = re.compile(r"\b(?:ADR|MR)-\d+|\B#\d+\b")
-_SALAD_FILE_REF_RE = re.compile(r"\b[\w\-]+\.(?:py|md|yaml|json|toml|sql)\b")
-_SALAD_SNAKE_CASE_RE = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
-_SALAD_CAMEL_CASE_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b")
-
-# C7c-fix (2026-08-24): the original gate (5 regex classes only) rejected
-# legitimate prose consolidations — e.g. 4 paraphrases of "the deployment
-# pipeline publishes container images to ECR..." carry real domain tokens
-# but no identifier-shape token, so the gate returned None and broke the
-# consolidation_cycle contract (BC-CLS2 e2e test). The fix adds a 6th
-# signal: a schema long enough to host ≥ _PROSE_MIN_WORDS distinct
-# meaningful words (post-stopword) is a legitimate consolidation, not a
-# bag-of-words salad. Real word salads (short "pattern across N obs: a b
-# c") still fail because their post-stopword token count is below the
-# floor.
-_PROSE_MIN_LEN = 80  # noqa: PLR2004 — prose-density floor, not a magic # noqa: ERA001
-_PROSE_MIN_WORDS = 4  # noqa: PLR2004 — distinct meaningful-token floor # noqa: ERA001
-
-
-@observe(tier="stage", metric="consolidation.cls._is_word_salad")
-def _is_word_salad(schema: str, common_tags: list[str]) -> bool:
-    """Return True when *schema* carries no identifier / ADR / file signal.
-
-    The gate is the schema-level half of the C7c anchor defense (task #339):
-    a memory whose body is the canonical "Recurring pattern across N
-    observations: <bag of words>" template AND has no backtick identifier,
-    ADR/MR/issue reference, file ref, snake_case identifier, CamelCase
-    identifier, AND does not meet the prose-density floor (length ≥80 +
-    ≥4 distinct post-stopword meaningful tokens), AND has no shared tag,
-    is a word salad. Promotion must discard it.
-
-    Conservative: any single recognised signal flips the verdict to "not
-    salad" — this is the only path the validation runs. C7c-fix (2026-08-24)
-    added the prose-density half so legitimate multi-memory prose
-    consolidations (TestBCCLS1_2_3 e2e fixture) are no longer dropped.
-    """
-    if not isinstance(schema, str) or not schema:
-        return True
-    if common_tags:  # shared tags ARE a real signal even when body is prose
-        return False
-    if _SALAD_BACKTICK_RE.search(schema):
-        return False
-    if _SALAD_ADR_MR_ISSUE_RE.search(schema):
-        return False
-    if _SALAD_FILE_REF_RE.search(schema):
-        return False
-    if _SALAD_SNAKE_CASE_RE.search(schema):
-        return False
-    if _SALAD_CAMEL_CASE_RE.search(schema):
-        return False
-    # Prose-density escape hatch: a schema long enough AND diverse enough
-    # in post-stopword tokens is a legitimate consolidation. The two floors
-    # are jointly required so a short single-word schema ("Recurring pattern
-    # across 4 observations: a") still falls through to the rejection path.
-    if len(schema) >= _PROSE_MIN_LEN:
-        meaningful_tokens = {
-            w.strip(_PUNCT_STRIP)
-            for w in schema.lower().split()
-            if len(w.strip(_PUNCT_STRIP)) > 2 and w.strip(_PUNCT_STRIP) not in _SCHEMA_STOP_WORDS
-        }
-        if len(meaningful_tokens) >= _PROSE_MIN_WORDS:
-            return False
-    return True
-
 
 def _collect_word_freq(
     cluster_memories: list[dict],
@@ -552,15 +474,8 @@ class _PatternsMixin:
 
         if not meaningful:
             # Fallback: use the shortest memory as representative.
-            # C7c (task #339): gate the fallback too — when no meaningful
-            # words survive, the shortest-memory string is by construction a
-            # bag of stop-words, exactly the salad the gate rejects. Drop it
-            # before it can be promoted to an anchor.
             shortest = min(all_contents, key=len)
-            fallback = f"Recurring pattern: {shortest}"
-            if _is_word_salad(fallback, []):
-                return None
-            return fallback
+            return f"Recurring pattern: {shortest}"
 
         ordered_common = _build_ordered_common(all_contents[0], meaningful)
         key_phrase = " ".join(ordered_common[:15])  # Cap at 15 words
@@ -570,9 +485,4 @@ class _PatternsMixin:
         if common_tags:
             schema += f" [tags: {', '.join(common_tags[:5])}]"
 
-        # C7c (task #339): drop word-salad schemas BEFORE they can be inserted
-        # and auto-promoted to anchors. The promotion path is the cheap one to
-        # gate; audit-side filtering is the backstop.
-        if _is_word_salad(schema, common_tags):
-            return None
         return schema

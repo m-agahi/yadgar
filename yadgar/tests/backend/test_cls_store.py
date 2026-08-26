@@ -283,10 +283,9 @@ class TestAbstractToSchema:
     def test_abstract_empty_cluster(self, cls):
         """Empty cluster returns falsy (None) — caller treats as no-op.
 
-        C7c (task #339): contract is None; ``promotion._promote_pattern``
-        guards with ``if not schema:`` so empty string and None both signal
-        skip. Mirrors the unit-test contract at
-        ``tests/backend/test_patterns_unit.py:test_empty_cluster``.
+        ``promotion._promote_pattern`` guards with ``if not schema:`` so
+        empty string and None both signal skip. Mirrors the unit-test
+        contract at ``tests/backend/test_patterns_unit.py:test_empty_cluster``.
         """
         schema = cls.abstract_to_schema([])
         assert not schema
