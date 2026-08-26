@@ -1,7 +1,12 @@
 # Train bug-bag-2 — 2026-08-23
 
 **Branch:** `train/bug-bag-2-2026-08-23`
-**Head of train:** Car C1 (vacuum + service polish)
+**Head of train (as of 2026-08-26):** Car N, commit `650ba791` ("Merge train
+tip 391c9c9f into car/N-bookmark-cascade"). Superseded the original "Head of
+train: Car C1" line below — see "Second wave" for everything that landed
+after the C1–C11 + DC1–DC4 wave this doc originally tracked. Car
+`O-version-and-contract` is in flight on its own branch, not yet merged into
+the train.
 **Style:** ONE train branch. Each car branches off the train, merges BACK
 to the train. **One final PR at the train tip** — no per-car PRs. Single push
 of the merged tip per `multi-car-train-single-push` memory.
@@ -34,6 +39,62 @@ of the merged tip per `multi-car-train-single-push` memory.
 | DC2 | audit session-exit hook — 4KB vs raw save | #35 | 1 | ~80 |
 | DC3 | yadgar keyword cheat-sheet (viz + docs) | #38 | 2 | ~100 |
 | DC4 | corpus corrections from 2026-08-16 cost measurement | #93 | 1 | ~40 |
+
+## Second wave (undocumented until now — cars A through N)
+
+The C1–C11 + DC1–DC4 wave above landed on `origin/master` through its own PR
+(#68) before this branch's own history shows it: merge commit `16c895b3`
+("train: merge origin/master — C1-C10 #65 + C5 #67 + plan-archive #66,
+resolves CONFLICTING on PR #68") is where C1, C5, C6, C9, and C10 enter this
+branch's log — they never appear as standalone commits here because they
+arrived pre-merged from master. C2, C3, C4, C7a, C7b, C7c, C7c-revert-1,
+C8-3, and the two C11 splits (#88, #89, plus a later C11-cross-cutting) do
+appear as individual commits on this branch, each wrapped in its own
+`train: merge car ...` commit.
+
+After `16c895b3`, a second, previously undocumented wave of lettered cars
+landed directly on this branch (oldest → newest; task/ledger IDs are the
+ones the commit messages name — not verified against the ledger beyond
+that):
+
+| Car | Commit(s) | Title | Task/ledger IDs |
+|-----|-----------|-------|------------------|
+| A | `302cd661` | cascade wiki_delete to wiki_bookmark | #341 |
+| B | `35fb0676`, `05492d44`, `3d61490b` | landscape-mode tags filter; seed_adr_tier_subsystem D20 routing; chokepoint excludes information_schema | #204, #202, #201 |
+| — | `35d139c4` | bump backend_version 5.84.0 → 5.84.1, closing car A + car B-tags + a master merge | — |
+| C | `e09c6167` (test-only), `c291bb28` (source) | docstring corpus numbers + admin_exec retype + noqa cleanup | #345, #346 |
+| — | `1d0ea125` | ci-followup: SECTION_TO_CATEGORY self-map for 'ops' | #354 (closes #356 as a side effect) |
+| — | `009afe39` | ci-followup: alembic 005 migration filename/revision shortened to fit version_num(32) | #357 (closes #358) |
+| — | `97cd54cb` | c10g-followup: restore() SR bucket accepts legacy directory_context paths | #308 |
+| E | `70c92e85` | drain-local docstring describes defensive flag accurately | #342 |
+| D | `21a927c8` | verify-hooks execution probe: run each hook, classify hang/crash/binary-missing, flip ok on failure | #322 |
+| F | `31a8f597` | task-296 NULL-OUT floor gets unit + integration coverage | #296 |
+| G | `b1a493be` | train-tip CI pass: stdlib-only errors module, sentinel rename, recent-memories fixture patch-path fix | (no task ID in commit message) |
+| — | `9c7d7aec` | empty commit, message "test-empty", zero files changed | — |
+| H | `c5df33fc` | ledger_columns docstring refresh, pre-compact async, validate.yml edited trigger | #345, #36, #301 |
+| I | `0d62d7c8`, `6cec7f75` | retire two C10 #319 sibling swallows in adr.py; ship dispatch_prelude marker audit script | #346, #347 |
+| J | `1c50c24a` | backend-startup backoff cap holds at poll_max_sec; AdminRefusal class identity restored (car G had inlined a copy) | #367, #368 |
+| K | `ab417b6e` | test_abstract_empty_cluster assertion — see this train's Car O for the ADR-0430 follow-up | #376 |
+| L | `0310af47` | audit marker only — task #94 resync already shipped, no code change | #94, #296 |
+| M | `391c9c9f` | cross-project gate wired into 10 page_id-keyed + 2 slug-keyed wiki write tools | #50, #364 |
+| N | `4ed9f107` | wiki_delete cascades to wiki_bookmark + lint surfaces orphans | #341 |
+
+Notes on the table above:
+
+- **Car A and Car N both cite task #341** ("wiki_delete cascades to
+  wiki_bookmark"). They touch different modules — car A edits
+  `yadgar/_shared/storage/wiki.py`; car N edits `yadgar/_shared/wiki/store.py`,
+  `yadgar/_shared/storage/bookmarks.py`, and `yadgar/core/server/tools/wiki.py`
+  — but the relationship between the two (car N supersedes car A, extends it,
+  or the module layout changed underneath both) has not been verified here.
+  Flagged, not resolved.
+- Rows without a car letter (`35d139c4`, the two `ci-followup` commits,
+  `c10g-followup`) are follow-up fixes that never got a car letter of their
+  own in their commit messages — listed for completeness, not renamed into
+  the lettered scheme.
+- `9c7d7aec` changed no files; it is not a car.
+- Car O (`car/O-version-and-contract`, this branch) is not in the table above
+  — it is not merged into the train.
 
 ## Out of scope (deferred)
 
