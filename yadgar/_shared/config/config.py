@@ -625,10 +625,10 @@ class Settings(BaseSettings):
     # — a single BACKEND_READY_LONG_BAKE_OUT_SEC sleep with one INFO log line so
     # a journal audit can distinguish "long outage" from "first few probes" (task #61).
     BACKEND_READY_LONG_BAKE_OUT_AFTER: int = 5
-    # Sleep duration (seconds) for each long-bake-out cycle after the threshold
-    # is hit. Task #61 default = 60s — a 10-minute outage then issues ~10
-    # bake-out sleeps + ~5 fast backoff probes = ~15 probes total, well under
-    # the ~30-probe spec ceiling.
+    # Nominal sleep (seconds) per long-bake-out cycle. Car-J clamps the actual
+    # sleep to BACKEND_READY_POLL_MAX_SEC, so at the 60s/30s defaults a
+    # 10-minute outage issues ~5 backoff probes + ~19 clamped ones = ~24 total,
+    # under the ~30 ceiling. Values BELOW poll_max_sec do shorten the sleep.
     BACKEND_READY_LONG_BAKE_OUT_SEC: float = 60.0
 
     # task:0113 — self-heal deadline (seconds) for the maintenance write-gate the
