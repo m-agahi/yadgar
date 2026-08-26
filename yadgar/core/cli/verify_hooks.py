@@ -7,11 +7,20 @@ than a flag on ``yadgar install`` — a verify flag on a command whose default
 action writes files is one typo away from an unwanted install, and this is
 meant to be safe to wire into an unattended probe.
 
+Read-only by default. ``--probe`` opts in to EXECUTING the wired hooks, which
+writes to the live store — see the flag's help text and
+``_verify.verify_managed_hooks``. Task 385: the probe used to run
+unconditionally, so the command that advertises itself as safe for an
+unattended monitor filed a real ``action_log`` row and ran a real queue drain
+on every invocation.
+
 Exit codes:
   0 — every managed hook is wired (foreign-shaped and unexpected entries are
-      reported but do not fail; see ``_verify`` for why).
+      reported but do not fail; see ``_verify`` for why). With ``--probe``,
+      every wired hook also ran.
   1 — at least one managed hook is absent from every settings file inspected,
-      i.e. it never fires.
+      i.e. it never fires. With ``--probe``, also when a wired hook hung,
+      crashed, or has no binary on disk.
 
 Runs on the HOST.  The daemon is containerized and cannot see the user's
 ``~/.claude/settings.json``, which is why this is not an MCP tool or a
@@ -34,7 +43,11 @@ def cmd_verify_hooks(args) -> None:
     home = Path(args.home) if getattr(args, "home", "") else Path.home()
     project = args.project_directory or str(Path.cwd())
 
-    report = verify_managed_hooks(home_dir=home, project_directory=project)
+    report = verify_managed_hooks(
+        home_dir=home,
+        project_directory=project,
+        probe=bool(getattr(args, "probe", False)),
+    )
 
     if args.json:
         print(json.dumps(report, indent=2))
@@ -50,7 +63,8 @@ def register(subparsers) -> None:
         "verify-hooks",
         help=(
             "Report which yadgar-managed Claude Code hooks are actually wired "
-            "into the live settings.json (read-only; exits 1 on divergence)"
+            "into the live settings.json (read-only unless --probe; exits 1 on "
+            "divergence)"
         ),
     )
     p.add_argument(
@@ -64,6 +78,16 @@ def register(subparsers) -> None:
         default="",
         metavar="PATH",
         help="Home directory to inspect (default: the current user's)",
+    )
+    p.add_argument(
+        "--probe",
+        action="store_true",
+        help=(
+            "Also EXECUTE each wired hook to check it actually runs. NOT "
+            "read-only: the post-tool-capture probe writes a real action_log "
+            "row and the pre-compact-drain probe runs a real queue drain. Off "
+            "by default so an unattended run cannot mutate the store."
+        ),
     )
     p.add_argument(
         "--json",

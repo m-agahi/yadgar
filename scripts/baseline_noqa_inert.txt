@@ -411,7 +411,7 @@ yadgar/core/cli/update.py:394:PLC0415
 yadgar/core/cli/update.py:427:PLC0415
 yadgar/core/cli/update.py:428:PLC0415
 yadgar/core/cli/update.py:448:PLC0415
-yadgar/core/cli/verify_hooks.py:29:PLC0415
+yadgar/core/cli/verify_hooks.py:38:PLC0415
 yadgar/core/config_sync/sync.py:26:PLC0415
 yadgar/core/config_sync/sync.py:36:PLC0415
 yadgar/core/config_sync/sync.py:58:PLC0415
