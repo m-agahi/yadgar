@@ -541,15 +541,15 @@ class Settings(BaseSettings):
     # episodic memory scan to at most this many most-recently-accessed memories.
     CLS_PATTERN_MAX_CANDIDATES: int = 2000
 
-    # action-stream memory retention — _memify_prune Pass 5 deletes unaccessed
-    # memories tagged "_action_stream" that are older than this many days.
-    # These summaries start at heat=0.4, too warm for Pass 1 (heat<0.01).
-    # Set to 0 to disable the action-stream age cap.
+    # action-stream retention — _memify_prune Pass 5 deletes "_action_stream"
+    # rows older than this. These start at heat=0.4, too warm for Pass 1
+    # (heat<0.01), so this is their ONLY cap: a HARD one (task 386), no
+    # recent-access reprieve. Set to 0 to disable the action-stream age cap.
     ACTION_STREAM_MAX_AGE_DAYS: int = 14
 
-    # auto-generated memory retention — _memify_prune deletes cold unaccessed
-    # memories tagged "auto-generated" that are older than this many days.
-    # Set to 0 to disable the auto-generated prune pass.
+    # auto-generated retention — _memify_prune deletes "auto-generated" rows
+    # older than this that are ALSO below COLD_THRESHOLD. Heat is the recency
+    # signal (it decays); last_accessed is not consulted (task 386). 0 disables.
     AUTO_GENERATED_MEMORY_MAX_AGE_DAYS: int = 30
 
     # auto-abstracted retention — _memify_prune deletes "auto-abstracted" rows

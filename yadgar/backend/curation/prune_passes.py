@@ -52,16 +52,31 @@ def _prune_auto_generated_old(
 ) -> None:
     """Pass 2: delete cold, stale, old auto-generated memories.
 
-    v5.66: replaced "ever-accessed = immortal" with recency check.
-    Purge when created_at < cutoff AND last_accessed < cutoff (old AND
-    not recently accessed).  A memory accessed within the max-age window
-    is still in active use and is spared; one accessed 32+ days ago with
-    a 30-day max-age is genuinely stale and eligible.
+    v5.66 replaced "ever-accessed = immortal" with a ``last_accessed``
+    recency reprieve.  Ledger task 386 deletes the reprieve: HEAT is this
+    pass's recency signal and it already covers the case, so the second
+    check was dead at defaults and a live self-renewing loop away from them.
 
-    Rationale: recall() bumps access_count AND last_accessed on every hit.
-    access_count>0 alone meant a single accidental recall granted immortality
-    forever, causing zombie accumulation (e.g. memory:1110: 38d old, heat=0,
-    access_count=2, last_accessed 32d ago — never purged under old guard).
+    THE ARITHMETIC (measured 2026-08-26, default settings)
+    -----------------------------------------------------
+    ``boost_memories_access`` — the ONE live writer of ``last_accessed``
+    (``update_memory_last_accessed`` has no production caller) — sets
+    ``heat = min(heat + 0.1, 1.0)`` and ``last_accessed`` in the SAME
+    statement.  So a recalled row leaves recall at heat >= 0.1, and at
+    ``DECAY_FACTOR=0.9995`` it needs ~134 days to decay under
+    ``COLD_THRESHOLD=0.02``.  Any row cold enough to clear the heat gate
+    above has therefore not been recalled in ~134 days — more than 4x the
+    30-day window the reprieve tested.  The branch could not be reached.
+
+    Away from defaults it was not merely dead, it was pass 3's bug: set
+    ``AUTO_GENERATED_MEMORY_MAX_AGE_DAYS`` above ~134 and a cold row read
+    inside its own cap spares itself, indefinitely, because ``recall()`` is
+    what wrote the timestamp it is judged by.
+
+    Heat is kept as the gate because heat is a DECAYING quantity — a single
+    recall buys ~134 days and then expires on its own.  A raw timestamp
+    comparison buys the full cap and renews in full on the next hit, which
+    is the difference between a reprieve and immortality.
     """
     max_age_days = settings.AUTO_GENERATED_MEMORY_MAX_AGE_DAYS
     cold_threshold = settings.COLD_THRESHOLD
@@ -78,9 +93,6 @@ def _prune_auto_generated_old(
         created_at = mem.get("created_at") or ""
         if created_at > age_cutoff:
             continue  # too recent — spare it
-        last_accessed = mem.get("last_accessed") or created_at
-        if last_accessed > age_cutoff:
-            continue  # accessed recently — still in use, spare it
         storage.delete_memory(mem["id"])
         stats["pruned"] += 1
 
@@ -186,10 +198,21 @@ def _prune_action_stream_aged(
     One access (access_count=1) blocked Pass 5 forever under the old guard,
     so stale summaries piled up indefinitely.
 
-    v5.66: replaced "ever-accessed = immortal" with recency check.
-    Purge when created_at < cutoff AND last_accessed < cutoff.  An action-
-    stream summary accessed within the 90-day window is still potentially
-    useful; one last accessed 120d ago is genuinely stale.
+    v5.66 replaced "ever-accessed = immortal" with a ``last_accessed``
+    recency reprieve.  Ledger task 386 deletes it: this pass has NO heat
+    gate — the paragraph above says so, pass 1's gate needs ~300 days — so
+    the age cap is the ONLY cap an ``_action_stream`` row has, and a
+    reprieve on the only cap does not defer the deletion, it cancels it.
+
+    That is pass 3's defect verbatim, and it ran the same way: ``recall()``
+    writes ``last_accessed``, so a summary that kept matching queries kept
+    pushing its own cutoff forward and no age could ever reach it.  Unlike
+    pass 2 there was no heat gate behind it to make the branch unreachable,
+    so this one was live at the shipped defaults.
+
+    An action-stream summary past ``ACTION_STREAM_MAX_AGE_DAYS`` is now
+    deleted regardless of when it was last read.  ``is_protected`` remains
+    the one escape, as in passes 3 and 4.
     """
     action_stream_max_age = settings.ACTION_STREAM_MAX_AGE_DAYS
     if action_stream_max_age <= 0:
@@ -205,9 +228,6 @@ def _prune_action_stream_aged(
         created_at = mem.get("created_at") or ""
         if created_at > as_age_cutoff:
             continue  # too recent — spare it
-        last_accessed = mem.get("last_accessed") or created_at
-        if last_accessed > as_age_cutoff:
-            continue  # accessed recently — still in use, spare it
         storage.delete_memory(mem["id"])
         stats["pruned"] += 1
 
