@@ -101,9 +101,12 @@ from yadgar.backend.admin_exec.refusals import TaskEdgePartialStateError
 
 logger = logging.getLogger(__name__)
 
-# Re-exported: the class moved to ``refusals`` when this file hit its I13 file
-# cap. ``from ...ledger import TaskEdgePartialStateError`` keeps working.
-__all__ = ["TaskEdgePartialStateError"]
+# ``TaskEdgePartialStateError`` moved to ``refusals`` when this file hit its
+# I13 file cap. The import above re-binds the name here, so
+# ``from ...ledger import TaskEdgePartialStateError`` keeps working. NO
+# ``__all__``: this module's public surface is its ~26 op functions, which
+# ``admin_exec/__init__`` reaches as ``ledger.<op>``, and declaring one name
+# would read as "this module exports one thing".
 
 
 def _get_sql_storage() -> Any:
