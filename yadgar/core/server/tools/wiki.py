@@ -1086,8 +1086,16 @@ def wiki_read(
 
 
 @_tool(power=True)
-def wiki_delete(slug: str) -> dict:
-    """Delete a wiki page by slug."""
+def wiki_delete(slug: str, directory: str | None = None, *, project: str | None = None) -> dict:
+    """Delete a wiki page by slug. Car P: ``directory`` / ``project`` are the
+    caller's IDENTITY for the cross-project gate below, never page selectors.
+    """
+    # Car P gate — refuses BEFORE _forward_admin (no torn state). No ``page=``:
+    # the helper's unscoped lookup IS the row this slug-keyed delete removes.
+    _pid = _resolve_slug_scope_project(project=project, directory=directory, tool="wiki_delete")
+    _rf = _cross_project_page_refusal(tool="wiki_delete", slug=slug, caller_project_id=_pid)
+    if _rf is not None:
+        return _rf
     # R3 Car 3c: the DB delete (+ epoch bump) forwards to the backend /admin op.
     # The SSE push_event and file-queue mirror cleanup are CORE-side side-effects
     # (core's SSE bus + the shared file-queue mirror) — they stay here, after the
@@ -1391,7 +1399,7 @@ def _cross_project_page_refusal(
     tool: str,
     slug: str,
     caller_project_id: str | None,
-    page: dict[str, Any] | None,
+    page: dict[str, Any] | None = None,
 ) -> dict | None:
     """Return a refusal envelope if a write to *slug* would cross project.
 
@@ -1420,6 +1428,8 @@ def _cross_project_page_refusal(
     pages carry ``"global"`` in their ``tags`` and are explicitly writable
     from every project, per ADR-0171 / Car C7.
     """
+    if caller_project_id is None:
+        return None  # car P: checked FIRST so an unscoped caller pays no storage read
     if page is None:
         # The slug→page_id resolver returned None for the caller's project —
         # the page either does not exist OR belongs to another project. Try
@@ -1429,8 +1439,6 @@ def _cross_project_page_refusal(
             return None  # truly does not exist — let the tool return not-found
         page = gate_page
     page_project_id = page.get("project_id")
-    if caller_project_id is None:
-        return None  # unscoped caller — see docstring; out of scope for this car
     if page_project_id == caller_project_id:
         return None
     # Cross-project. The reach tag is the ONLY sanctioned cross-project write.
@@ -1890,7 +1898,7 @@ def wiki_set_metadata(
     value: str | None,
     directory: str | None = None,
     *,
-    project: str | None = None,  # noqa: ARG001 — kept for API back-compat
+    project: str | None = None,
 ) -> dict:
     """Set ``project_id`` / ``directory_context`` on ALL rows sharing a slug.
 
@@ -1945,16 +1953,19 @@ def wiki_set_metadata(
     Args:
         slug: Wiki page slug.
         field: ``'project_id'`` (current) or ``'directory_context'`` (legacy).
-        value: New value. This is what stamps the page — the ``project``
-            keyword below is an ignored back-compat parameter, not the stamp.
-        directory: Kept for API back-compat (unused — all-rows path needs no §25 resolution).
+        value: New value — what stamps the page. ``project`` is the CALLER's
+            identity (car P), not the stamp; ``directory`` feeds that same
+            identity ladder and is not a lookup key (all-rows path).
 
     Returns: {ok, slug, rows_updated, page_ids} or {ok: False, error}.
     Preserved keys for back-compat callers that inspect {ok, slug}.
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    # Car P: full identity ladder. ``accept_project_param`` (the previous call)
+    # returned ``None`` whenever ``project is None``, inverting the gate below —
+    # honest declarers refused, omitters permitted. BEFORE field validation.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_set_metadata"
+    )
     # ADR-0215: 'branch' left the allowed-field set with the rest of branch
     # scoping. Rejected here at the MCP boundary; Car 9 also removed it from
     # WikiStore._METADATA_FIELDS, which closes the privileged POST /admin path
@@ -1984,7 +1995,6 @@ def wiki_set_metadata(
     # the caller cannot rewrite any of them. The ``project_id`` field is the
     # restamp carve-out (Car 9) — the documented correction for a mis-stamped
     # page must not be blocked by the same gate that exists to enforce it.
-    _pid = accept_project_param(project, directory)
     _slug_refusal = _cross_project_slug_refusal(
         tool="wiki_set_metadata",
         caller_project_id=_pid,
@@ -2004,7 +2014,7 @@ def wiki_set_mutability(
     reason: str,
     directory: str | None = None,
     *,
-    project: str | None = None,  # noqa: ARG001 — kept for API back-compat
+    project: str | None = None,
 ) -> dict:
     """Set ``mutability_override`` on ALL rows sharing *slug* (Car J).
 
@@ -2027,13 +2037,14 @@ def wiki_set_mutability(
         slug: Wiki page slug.
         value: New mutability value, or None to clear the override.
         reason: Required audit reason (logged per row).
-        directory: Kept for API back-compat (unused — all-rows path).
+        directory: Feeds the caller-identity ladder (car P), not a lookup key.
 
     Returns: ``{ok, slug, rows_updated, page_ids}`` or ``{ok: False, error}``.
     """
-    # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
-    # this tool's scope from ``directory`` onto the resolved project_id.
-    _pid = accept_project_param(project, directory)
+    # Car P: full identity ladder — see wiki_set_metadata for why.
+    _pid = _resolve_slug_scope_project(
+        project=project, directory=directory, tool="wiki_set_mutability"
+    )
     if not reason or not reason.strip():
         return {
             "ok": False,

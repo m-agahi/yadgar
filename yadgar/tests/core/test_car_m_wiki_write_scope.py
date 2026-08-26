@@ -272,10 +272,23 @@ class TestPageIdKeyedWritesRefuseCrossProject:
         assert not forwarded, (
             f"{tool_name} reached the forward seam despite a cross-project caller: {forwarded!r}"
         )
-        # The structural assertion: the page's project_id never leaks to the
-        # caller through the refusal envelope (defence against log scraping).
+        # The structural assertion: the refusal envelope carries no page_id.
+        # The INTERNAL integer is what stays out — a caller who guessed a slug
+        # must not walk away holding the row id it resolves to.
+        #
+        # ``page_project_id`` IS in the envelope, deliberately, and so is the
+        # ``error`` string that interpolates it (see the refusal envelope in
+        # ``tools/wiki.py``). That is operator diagnostics: a refusal whose
+        # message cannot say WHICH project owns the page is unactionable. An
+        # earlier revision of this comment claimed the project_id never leaks,
+        # which the code beside it contradicted. Narrowing the envelope would
+        # be a policy change and needs its own ADR — this assertion pins what
+        # the code actually guarantees.
         assert "page_id" not in result, (
             f"{tool_name} leaked the B-owned page_id to the caller: {result!r}"
+        )
+        assert result.get("page_project_id") == _FLUX_PROJECT, (
+            f"{tool_name} refusal must name the owning project for the operator: {result!r}"
         )
 
     def test_own_project_write_still_succeeds(self, wiki_tool):
@@ -507,28 +520,266 @@ class TestSlugKeyedAllRowsWritesRefuseForeignSlug:
         assert not forwarded
 
 
-# ── out-of-scope notes (car M half-heal boundaries) ──────────────────────────
+# ── Car P: the three tools car M named and did not gate ─────────────────────
 
 
-class TestWikiUpdateIsOutOfScope:
-    """The ``wiki_update`` page_id-only path is a known gap.
+@pytest.fixture
+def session_identity():
+    """Bind the per-request session ContextVar, the way the ASGI middleware does.
 
-    ``wiki_update`` (in ``admin_other.py``, not ``wiki.py``) takes a raw
-    ``page_id`` integer — no slug, no ``project=`` argument. A caller who
-    learned a page_id from a prior read can pass it directly. The full fix
-    requires extending the tool's signature (adding a ``project=`` kwarg),
-    which conflicts with the master branch's call sites and is broader than
-    this half-heal car wants to take on.
+    This is the tier that ``accept_project_param`` never consulted and
+    ``_resolve_slug_scope_project`` does. Tests that need a caller identity
+    WITHOUT passing ``project=`` use it — that combination is exactly the
+    inversion car P fixes on the slug-keyed tools, and it is the ONLY way
+    ``wiki_update`` (which has no ``project=`` argument at all) can have one.
+    """
+    from yadgar._shared.runtime.session_project import (
+        reset_current_session_project,
+        set_current_session_project,
+    )
 
-    The slug-keyed family this car fixes (10 page_id-keyed tools +
-    ``wiki_set_metadata`` + ``wiki_set_mutability``) covers the cross-
-    project exposure on the SURGICAL EDIT path and the METADATA path —
-    every operational write shape except the legacy content-replace
-    tool. A follow-up car can close ``wiki_update`` once the call-site
-    inventory is done.
+    tokens: list[object] = []
+
+    def _bind(project_id: str) -> None:
+        tokens.append(set_current_session_project(project_id))
+
+    yield _bind
+
+    for token in reversed(tokens):
+        reset_current_session_project(token)
+
+
+class TestWikiDeleteRefusesCrossProject:
+    """``wiki_delete`` was named in car M's threat model and had NO gate.
+
+    Car M's own header states the defect as "a caller holding auth for project
+    A could read any page's page_id … and pass it to ``wiki_update`` /
+    ``wiki_replace_text`` / ``wiki_delete``". Of those three only
+    ``wiki_replace_text`` was gated. ``wiki_delete`` was ``@_tool(power=True)``
+    taking only ``slug`` — it had no caller identity to compare against, so the
+    gate could not exist there. Car P adds the optional ``directory`` /
+    ``project`` parameters (approved signature change) and the gate.
+
+    Delete is the highest-severity member of the family: the other tools
+    corrupt content a version row can restore, this one removes the page.
     """
 
-    def test_placeholder_does_not_regress(self, wiki_tool):
-        """A sanity check that the test class itself runs."""
+    def test_declared_project_cannot_delete_a_foreign_page(self, wiki_tool):
         wtool, wire, forwarded = wiki_tool
-        assert wtool is not None  # wiki_update gap is documented, not silently closed
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+
+        result = wtool.wiki_delete(_FLUX_SLUG, directory=_YADGAR_DIR, project=_YADGAR_PROJECT)
+
+        assert result.get("refused") is True, f"wiki_delete deleted a foreign page: {result!r}"
+        assert result.get("reason") == "cross_project_write_refused"
+        # ORDERING: the refusal must precede the forward, or the page is
+        # already gone by the time the caller reads the envelope.
+        assert not forwarded, f"wiki_delete forwarded despite refusing: {forwarded!r}"
+
+    def test_own_project_delete_still_forwards(self, wiki_tool):
+        wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+
+        wtool.wiki_delete(_FLUX_SLUG, directory=_FLUX_DIR, project=_FLUX_PROJECT)
+
+        assert any(op == "wiki_delete" for op, _ in forwarded), (
+            f"same-project delete did not reach the forward seam: {forwarded!r}"
+        )
+
+    def test_unscoped_delete_still_forwards(self, wiki_tool):
+        """The caller-declares policy is unchanged: no identity → allowed.
+
+        Pinning this is what keeps the policy a DECISION rather than an
+        accident — narrowing it is a separate ADR, not a side effect of
+        adding the gate.
+        """
+        wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+
+        result = wtool.wiki_delete(_FLUX_SLUG)
+
+        assert "refused" not in (result or {}), f"unscoped delete was refused: {result!r}"
+        assert any(op == "wiki_delete" for op, _ in forwarded)
+
+    def test_global_reach_page_is_deletable_cross_project(self, wiki_tool):
+        """The reach-tag carve-out applies to delete like every other write."""
+        wtool, wire, forwarded = wiki_tool
+        wire([_page(_GLOBAL_SLUG, _FLUX_PROJECT, "global", page_id=99, tags=[_REACH_TAG])])
+
+        result = wtool.wiki_delete(_GLOBAL_SLUG, directory=_YADGAR_DIR, project=_YADGAR_PROJECT)
+
+        assert "refused" not in (result or {}), f"global-reach delete was refused: {result!r}"
+        assert any(op == "wiki_delete" for op, _ in forwarded)
+
+
+class TestSlugKeyedToolsResolveTheFullIdentityLadder:
+    """The inversion: the gate used to refuse declarers and permit omitters.
+
+    ``wiki_set_metadata`` / ``wiki_set_mutability`` sourced their caller
+    identity from ``accept_project_param``, which opens with
+    ``if project is None: return None`` — it consults neither the session
+    ContextVar nor the hook-authored directory map. So a caller who declared
+    ``project=`` was gated (the classes above pin that) while a caller with a
+    real bound session identity who simply OMITTED the argument sailed
+    through, because the gate saw ``caller_project_id is None`` and applied
+    the unscoped-caller allowance to someone who was not unscoped.
+
+    The other twelve wiki write shells use ``_resolve_slug_scope_project``,
+    which walks the whole ladder. Car P switches these two to match.
+    """
+
+    def test_set_metadata_gates_a_session_bound_caller_who_omits_project(
+        self, wiki_tool, session_identity
+    ):
+        wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+        session_identity(_YADGAR_PROJECT)
+
+        # NO project= and NO directory= — the identity is the bound session.
+        result = wtool.wiki_set_metadata(_FLUX_SLUG, "directory_context", "/new/dir")
+
+        assert result.get("refused") is True, (
+            f"a session-bound yadgar caller rewrote a flux slug by omitting project=: {result!r}"
+        )
+        assert result.get("reason") == "cross_project_write_refused"
+        assert not forwarded
+
+    def test_set_mutability_gates_a_session_bound_caller_who_omits_project(
+        self, wiki_tool, session_identity
+    ):
+        wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+        session_identity(_YADGAR_PROJECT)
+
+        result = wtool.wiki_set_mutability(_FLUX_SLUG, "locked", "audit reason")
+
+        assert result.get("refused") is True, (
+            f"a session-bound yadgar caller locked a flux slug by omitting project=: {result!r}"
+        )
+        assert not forwarded
+
+    def test_set_metadata_restamp_carve_out_survives_the_ladder(self, wiki_tool, session_identity):
+        """The ``project_id`` restamp must stay reachable from a bound session.
+
+        Widening which callers the gate SEES must not narrow which writes it
+        LETS THROUGH — the restamp is the documented repair for a mis-stamped
+        page, and blocking it would freeze every drift in place.
+        """
+        wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+        session_identity(_YADGAR_PROJECT)
+
+        result = wtool.wiki_set_metadata(_FLUX_SLUG, "project_id", _YADGAR_PROJECT)
+
+        assert result.get("ok") is True, f"restamp was refused: {result!r}"
+        assert any(op == "wiki_set_metadata" for op, _ in forwarded)
+
+    def test_unscoped_slug_keyed_caller_is_still_allowed(self, wiki_tool):
+        """No ContextVar, no project=, no directory map hit → still allowed."""
+        wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+
+        result = wtool.wiki_set_metadata(_FLUX_SLUG, "directory_context", "/new/dir")
+
+        assert "refused" not in (result or {}), f"unscoped caller was refused: {result!r}"
+        assert any(op == "wiki_set_metadata" for op, _ in forwarded)
+
+    def test_malformed_project_still_raises_before_field_validation(self, wiki_tool):
+        """Collapsing the two resolve calls must not move the boundary raise.
+
+        ``wiki_set_metadata`` used to call ``accept_project_param`` twice — once
+        before the field-validation early return and once after. Car P keeps the
+        single resolve at the FIRST position: a malformed ``project=`` is a
+        caller bug and must surface as ``InvalidProjectOverrideError``, not be
+        masked by the invalid-field envelope that a bad ``field`` returns.
+        """
+        from yadgar.core.server.tools._project_param import InvalidProjectOverrideError
+
+        wtool, wire, _forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+
+        with pytest.raises(InvalidProjectOverrideError):
+            wtool.wiki_set_metadata(_FLUX_SLUG, "not-a-real-field", "x", project="")
+
+
+class TestWikiUpdateIsGated:
+    """``wiki_update`` — the page_id-only shell — is no longer the open door.
+
+    ``wiki_update`` lives in ``admin_other.py`` and takes a RAW ``page_id``
+    integer: no slug, and no ``project=`` argument to declare an identity
+    with. Car M named it in its threat model and left it ungated, documenting
+    the gap as "a follow-up car can close ``wiki_update`` once the call-site
+    inventory is done".
+
+    Car P closes it WITHOUT a signature change: the caller identity comes from
+    the ambient ladder (session ContextVar → ``session_project`` → the
+    hook-authored directory map), and an unresolved identity keeps the
+    caller-declares allowance every sibling ships. The gate runs after the I26
+    secret gate and BEFORE the ADR-0208 discipline check, so a refused caller
+    receives no discipline rule-line diffs, and before ``_forward_admin``, so
+    no mutation is torn.
+    """
+
+    def test_session_bound_caller_cannot_update_a_foreign_page_id(
+        self, wiki_tool, session_identity
+    ):
+        from yadgar.core.server.tools import admin_other as _aot
+
+        _wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+        session_identity(_YADGAR_PROJECT)
+
+        result = _aot.wiki_update(7952, {"content": "rewritten by a foreign caller"})
+
+        assert result.get("refused") is True, (
+            f"wiki_update let a yadgar session rewrite a flux page by raw page_id: {result!r}"
+        )
+        assert result.get("reason") == "cross_project_write_refused"
+        assert not forwarded, f"wiki_update forwarded despite refusing: {forwarded!r}"
+
+    def test_own_project_update_still_forwards(self, wiki_tool, session_identity):
+        from yadgar.core.server.tools import admin_other as _aot
+
+        _wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+        session_identity(_FLUX_PROJECT)
+
+        _aot.wiki_update(7952, {"content": "same-project edit"})
+
+        assert any(op == "wiki_update" for op, _ in forwarded), (
+            f"same-project wiki_update did not reach the forward seam: {forwarded!r}"
+        )
+
+    def test_unscoped_update_still_forwards(self, wiki_tool):
+        """No bound identity → allowed, exactly as before car P."""
+        from yadgar.core.server.tools import admin_other as _aot
+
+        _wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+
+        result = _aot.wiki_update(7952, {"content": "unscoped edit"})
+
+        assert "refused" not in (result or {}), f"unscoped wiki_update was refused: {result!r}"
+        assert any(op == "wiki_update" for op, _ in forwarded)
+
+    def test_unknown_page_id_is_not_refused_by_the_gate(self, wiki_tool, session_identity):
+        """A page_id that resolves to nothing must reach the forward.
+
+        The gate must not manufacture a refusal for a row it cannot see — the
+        forward owns the not-found answer, and a gate that answered first would
+        turn "no such page" into "cross-project", which is both wrong and a
+        weaker signal for the operator.
+        """
+        from yadgar.core.server.tools import admin_other as _aot
+
+        _wtool, wire, forwarded = wiki_tool
+        wire([_page(_FLUX_SLUG, _FLUX_PROJECT, _FLUX_DIR, page_id=7952)])
+        session_identity(_YADGAR_PROJECT)
+
+        result = _aot.wiki_update(999999, {"content": "no such page"})
+
+        assert "refused" not in (result or {}), (
+            f"gate refused an unknown page_id instead of letting the forward "
+            f"report not-found: {result!r}"
+        )
+        assert any(op == "wiki_update" for op, _ in forwarded)
