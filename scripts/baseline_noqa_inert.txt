@@ -102,12 +102,12 @@ yadgar/backend/admin_exec/adr_seed_storage.py:51:PLC0415
 yadgar/backend/admin_exec/audit.py:146:PLC0415
 yadgar/backend/admin_exec/drain.py:38:PLC0415
 yadgar/backend/admin_exec/engine_status.py:66:PLC0415
-yadgar/backend/admin_exec/identity_stamp.py:158:PLC0415
-yadgar/backend/admin_exec/identity_stamp.py:166:PLC0415
-yadgar/backend/admin_exec/identity_stamp.py:433:SLF001
-yadgar/backend/admin_exec/identity_stamp.py:433:S608
+yadgar/backend/admin_exec/identity_stamp.py:159:PLC0415
+yadgar/backend/admin_exec/identity_stamp.py:167:PLC0415
 yadgar/backend/admin_exec/identity_stamp.py:434:SLF001
-yadgar/backend/admin_exec/identity_stamp.py:653:S608
+yadgar/backend/admin_exec/identity_stamp.py:434:S608
+yadgar/backend/admin_exec/identity_stamp.py:435:SLF001
+yadgar/backend/admin_exec/identity_stamp.py:654:S608
 yadgar/backend/admin_exec/invariants.py:907:PLC0415
 yadgar/backend/admin_exec/invariants_cross_engine.py:142:PLC0415
 yadgar/backend/admin_exec/invariants_cross_engine.py:279:PLC0415
@@ -142,8 +142,7 @@ yadgar/backend/admin_exec/project_backfill.py:450:SLF001
 yadgar/backend/admin_exec/project_backfill.py:451:S608
 yadgar/backend/admin_exec/project_backfill.py:619:S608
 yadgar/backend/admin_exec/project_backfill.py:628:SLF001
-yadgar/backend/admin_exec/project_registry.py:185:PLC0415
-yadgar/backend/admin_exec/reslug.py:208:PLC0415
+yadgar/backend/admin_exec/reslug.py:211:PLC0415
 yadgar/backend/admin_exec/rollup.py:43:PLC0415
 yadgar/backend/admin_exec/rollup.py:169:PLC0415
 yadgar/backend/admin_exec/rollup.py:285:PLC0415
@@ -602,7 +601,7 @@ yadgar/core/server/routes/logs.py:201:PLC0415
 yadgar/core/server/routes/traces.py:67:PLC0415
 yadgar/core/server/tools/_project_param.py:204:PLC0415
 yadgar/core/server/tools/_project_param.py:239:PLC0415
-yadgar/core/server/tools/_project_registry.py:120:PLC0415
+yadgar/core/server/tools/_project_registry.py:121:PLC0415
 yadgar/core/server/tools/_runtime_config.py:57:PLC0415
 yadgar/core/server/tools/_runtime_config.py:86:PLC0415
 yadgar/core/server/tools/admin_other.py:116:PLC0415
@@ -790,7 +789,7 @@ yadgar/tests/core/test_bookmarks_versions.py:323:PLC0415
 yadgar/tests/core/test_bookmarks_versions.py:325:PLC0415
 yadgar/tests/core/test_c0_wiki_add_project_override.py:197:ARG001
 yadgar/tests/core/test_c3_project_param_surface.py:149:A002
-yadgar/tests/core/test_car5_project_id_create_enforcement.py:226:ARG001
+yadgar/tests/core/test_car5_project_id_create_enforcement.py:227:ARG001
 yadgar/tests/core/test_car6_forward_result_propagation.py:74:ARG001
 yadgar/tests/core/test_car6_forward_result_propagation.py:96:ARG001
 yadgar/tests/core/test_car6_forward_result_propagation.py:108:ARG001

@@ -1,16 +1,17 @@
 """CREATE-path ``project`` registry enforcement for the MCP tool surface.
 
 Car 5 (2026-08-20 train). Before this module the registry check was a claim,
-not a mechanism: ``backend/admin_exec/project_registry._ensure_project_exists_sync``
-had ZERO production call sites — a definition, an ``__all__`` entry, and ~12
-docstrings across ``adr.py`` / ``memorize.py`` / ``recall.py`` / ``task.py`` /
-``wiki.py`` / ``_project_param.py`` asserting that "the deep registry check is
+not a mechanism: a standalone backend guard under ``admin_exec`` had ZERO
+production call sites — a definition, an ``__all__`` entry, and ~12 docstrings
+across ``adr.py`` / ``memorize.py`` / ``recall.py`` / ``task.py`` / ``wiki.py``
+/ ``_project_param.py`` asserting that "the deep registry check is
 backend-side" at a write path that never called it. The only real enforcement
 was ``MariaStorageEngine.assert_project_registered``, reached from
 ``create_task_row`` / ``create_adr_row`` — the engine-#2 LEDGER tables only.
 ``memory.project_id`` and ``wiki_page.project_id`` had no registry check on any
 writer, so ``memorize(project="typo/repo")`` minted a phantom namespace exactly
-as ADR-0202 said the registry existed to prevent.
+as ADR-0202 said the registry existed to prevent. (Task 384 deleted that dead
+guard outright; ``assert_project_registered`` is now the only one there is.)
 
 WHY THE CHECK LIVES IN CORE AND TRAVELS OVER ``_forward_admin``
 ---------------------------------------------------------------
@@ -34,8 +35,8 @@ Three placements were available. Two are closed by facts in this repo:
   down three times (``backend/retrieval/superseded.py``: *"Do not move this
   call downstream"*; ``backend/admin_exec/invariants_cross_engine.py``;
   ``backend/embed_service/embed_service_lifecycle.py``) and it is precisely why
-  ``_ensure_project_exists_sync``'s ``asyncio.run`` wrapper never acquired a
-  caller: it is unusable from every process that would want it.
+  the deleted guard's ``asyncio.run`` wrapper never acquired a caller: it was
+  unusable from every process that would want it.
 
 * **In core, forwarded to the backend ``/admin`` route** — this module. The
   query runs on the backend's own event loop, so neither problem exists, and
@@ -54,8 +55,8 @@ the cache, so the steady-state cost of the guard is zero round-trips.
 
 ENGINE #2 ABSENT — DEGRADE, LOUDLY, TO THE SHAPE GATE
 -----------------------------------------------------
-``_ensure_project_exists_sync`` raises ``ProjectRegistryUnavailableError`` when
-the registry cannot be consulted. Propagating that here would make every
+``ProjectRegistryUnavailableError`` is what a registry that cannot be consulted
+at all raises. Propagating that here would make every
 memory and wiki write impossible on any deployment without engine #2 —
 including the in-process test bypass, where ``YADGAR_EMBED_URL`` is unset and
 ``_forward_admin`` raises. That trade is not available: refusing to write the

@@ -29,7 +29,7 @@ iterates — so extending the tuple to satisfy the test also makes the preflight
 run the new guard. It cannot be satisfied cosmetically.
 
 Known limit, stated rather than hidden: a future guard written as a
-module-level call (``_ensure_project_exists_async(pid, engine=self)``) rather
+module-level call (``some_guard(pid, engine=self)``) rather
 than a ``self.`` method call escapes the AST rule. The invariant is deliberately
 scoped to the ADR seed's write path; it does not police ``create_task_row``.
 

@@ -22,13 +22,13 @@ three distinct classes because the call sites act on them differently:
 
 WHY THIS MODULE EXISTS AT ALL
 -----------------------------
-The classes are raised by ``mariadb.py`` (which reaches sqlalchemy) and
-caught/re-exported by ``yadgar/backend/admin_exec/project_registry.py``, whose
-own docstring promises it stays importable on hosts that never install the
-``sql`` extra. If the guard imported them from ``mariadb`` directly, that
-promise would depend on ``mariadb``'s module-level imports staying engine-#2-
-free forever — a property no test in an extra-carrying venv can observe
-breaking. A separate module that does not pull engine #2 makes the guarantee
+The classes are raised by the engine-#2 side (``mariadb.py`` /
+``sql/registry.py``, which reach sqlalchemy) and CAUGHT by core-side callers
+that must stay importable on hosts which never install the ``sql`` extra —
+chiefly ``core/server/tools/_project_registry``. If a catcher imported them
+from ``mariadb`` directly, that promise would depend on ``mariadb``'s
+module-level imports staying engine-#2-free forever — a property no test in an
+extra-carrying venv can observe breaking. A separate module that does not pull engine #2 makes the guarantee
 structural, and ``test_errors_module_is_stdlib_only`` asserts it at the source
 level (it allows the canonical ``yadgar._shared.refusal`` import because that
 module does not reach engine #2 either).

@@ -28,7 +28,8 @@ The original-format discovery regex ``^yadgar-adr-(\\d+)$`` is exported as
 ``ADR_BODY_RE``; the slug template ``{project_id}_adr-{n:04d}`` is exported
 as ``NEW_SLUG_TEMPLATE``. The sync MariaStorageEngine bridge
 (``_sync_set_adr_body_slug``) wraps the async ``set_adr_body_slug`` via
-``asyncio.run`` — the same pattern used by ``project_registry.py``.
+``asyncio.run`` — sound for a one-shot admin op, unsound on a hot write path
+(see ``_sync_set_adr_body_slug``'s own docstring).
 """
 
 from __future__ import annotations
@@ -195,10 +196,12 @@ def _sync_set_adr_body_slug(adr_id: int, body_slug: str) -> None:
     """Sync bridge to ``MariaStorageEngine.set_adr_body_slug`` (async).
 
     The admin-op dispatch is sync; ``MariaStorageEngine.set_adr_body_slug``
-    is async (asyncmy is async-only). Same pattern as
-    ``yadgar/backend/admin_exec/project_registry.py:_ensure_project_exists_sync``
-    — a private event loop per call, fine for a slow admin op that runs
-    at most once per project bootstrap + once per Car L rollout.
+    is async (asyncmy is async-only). A private event loop per call — fine for
+    a slow admin op that runs at most once per project bootstrap + once per
+    Car L rollout, and NOT fine on a hot write path: the same ``asyncio.run``
+    shape is why task 384's deleted ``admin_exec`` registry guard never
+    acquired a caller (its pool would cache connections bound to a loop that
+    dies with the call).
 
     Failures: the call is BEST-EFFORT. A transient connection failure
     on the SQL leg is logged and swallowed so the surreal-side writes

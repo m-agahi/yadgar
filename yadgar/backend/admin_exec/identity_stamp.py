@@ -97,8 +97,9 @@ the apply fails is worthless. :data:`_WRITE_PATH_GUARDS` and
 difference that matters: this op derives MANY distinct targets, so the guard
 runs over the WHOLE set on both paths, and the set it checked is recorded in
 the manifest. The guard is ``MariaStorageEngine.assert_project_registered``
-— the one that actually runs inside the ledger write, NOT
-``_ensure_project_exists_sync``, which Car 5 proved has no call site.
+— the one that actually runs inside the ledger write. It is now the only one
+there is: task 384 deleted the standalone ``admin_exec`` guard Car 5 proved
+had no call site.
 """
 
 from __future__ import annotations

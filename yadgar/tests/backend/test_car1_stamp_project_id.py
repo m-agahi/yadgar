@@ -95,8 +95,8 @@ class _LedgerFake:
 
     ``assert_project_registered`` is the ADR-0078 gate that lives INSIDE the
     row write (``MariaStorageEngine.assert_project_registered``) — the
-    reachable one, not ``_ensure_project_exists_sync``, which Car 5 proved
-    unusable by construction.
+    reachable one, and since task 384 the only one: the standalone
+    ``admin_exec`` guard Car 5 proved unusable by construction is deleted.
     """
 
     def __init__(self, known: list[str]) -> None:

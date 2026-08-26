@@ -268,9 +268,10 @@ def cmd_project_list(args: argparse.Namespace) -> int:
     """``yadgar project list [--stale]`` handler.
 
     With ``--stale``, calls ``list_stale_projects`` (the C11 op) and
-    renders the rows the threshold flagged. Without ``--stale``, calls
-    ``list_project_rows`` and renders every registered project — the same
-    shape the backfill uses internally.
+    renders the rows the threshold flagged, ``last_validated_at`` included.
+    Without ``--stale``, calls ``list_project_rows`` and renders every
+    registered project — the same shape the backfill uses internally, which
+    since task 384 no longer carries ``last_validated_at``.
 
     Failures print to stderr with a leading ``ERROR:`` marker and return
     1 — same convention as ``cmd_project_seed``. A zero-row result is NOT
@@ -317,12 +318,15 @@ def cmd_project_list(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
     else:
+        # ``last_validated_at`` is NOT rendered here: task 384 dropped it from
+        # the ``list_project_rows`` projection so the create gate that forwards
+        # the same SELECT cannot be broken by an optional column. ``--stale``
+        # is the surface for that value; it selects the column itself.
         rows = result.get("rows", [])
         print(f"Registered projects ({len(rows)}):", file=sys.stderr)
         for row in rows:
-            last = row.get("last_validated_at") or "NEVER"
             print(
-                f"  {row.get('key')}  kind={row.get('kind')}  last_validated_at={last}",
+                f"  {row.get('key')}  kind={row.get('kind')}",
                 file=sys.stderr,
             )
 

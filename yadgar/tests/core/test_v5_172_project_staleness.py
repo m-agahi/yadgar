@@ -5,8 +5,11 @@ drift on the canonical repo, this car makes the staleness computable:
 
   1. ``project`` carries a ``last_validated_at`` column (migration 005).
   2. New INSERTs stamp it via ``create_project_row``.
-  3. The runtime guard ``_ensure_project_exists_async`` bumps it on every
-     successful registry check.
+  3. The runtime guard ``MariaStorageEngine.assert_project_registered`` bumps
+     it on every successful registry check. Task 384 re-homed the bump here
+     from a standalone ``admin_exec`` guard that had no call site — where it
+     would never have fired, leaving 005's backfill as the last write to the
+     column and every project permanently stale from day 91.
   4. A new admin op ``list_stale_projects`` returns rows older than
      ``YADGAR_PROJECT_STALENESS_DAYS`` (default 90), plus rows whose
      ``last_validated_at`` is NULL.
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -149,35 +153,70 @@ async def test_create_project_row_stamps_last_validated_at():
     )
 
 
-def test_list_project_rows_selects_last_validated_at():
-    """The READ must include ``last_validated_at`` for the staleness surface."""
+def _strip_docstring(src: str) -> str:
+    """Return *src* with the leading function docstring removed.
+
+    The assertion below is about the SQL the method ISSUES, not the prose
+    explaining why the column is absent — which necessarily names it.
+    """
+    node = ast.parse(textwrap.dedent(src)).body[0]
+    assert isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    body = node.body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        node.body = body[1:]
+    return ast.unparse(node)
+
+
+def test_list_project_rows_does_not_select_last_validated_at():
+    """The generic READ must NOT name the column (task 384).
+
+    ``list_project_rows`` is what ``core/server/tools/_project_registry``
+    forwards to answer the create gate on every ``memorize`` / ``wiki_add``.
+    Naming an optional column there couples the gate to it: after 005's
+    ``downgrade()`` the SELECT fails with MySQL 1054 and the gate silently
+    degrades to a shape check. ``list_stale_projects`` is the surface that
+    ages rows and selects the column itself.
+    """
     src = inspect.getsource(MariaStorageEngine.list_project_rows)
-    assert "last_validated_at" in src, (
-        "list_project_rows must SELECT last_validated_at so callers can age rows"
+    assert "last_validated_at" not in _strip_docstring(src), (
+        "list_project_rows must not SELECT last_validated_at — the create gate "
+        "forwards this statement and must survive the column being absent"
     )
+
+
+def test_list_stale_projects_selects_last_validated_at():
+    """The staleness surface selects the column it filters on."""
+    src = inspect.getsource(MariaStorageEngine.list_stale_projects)
+    assert "last_validated_at" in src
 
 
 # ── runtime guard bumps last_validated_at ───────────────────────────────────
 
 
-def test_ensure_project_exists_async_bumps_last_validated_at():
+def test_assert_project_registered_bumps_last_validated_at():
     """After the registry check passes, the staleness column must be bumped.
 
-    A non-bumping check would mean the column exists but is never refreshed,
-    and every row goes stale on day-zero — the exact failure the car exists
-    to fix.
+    Task 384: the bump lives on the guard that is actually REACHED — the
+    in-engine one inside ``create_task_row`` / ``create_adr_row``. It used to
+    sit on a standalone ``admin_exec`` function with zero call sites, which
+    means it would never have fired: 005's day-zero backfill would have been
+    the last write to the column, and ``yadgar project list --stale`` would
+    have reported EVERY project stale from day 91 onward, forever.
     """
-    from yadgar.backend.admin_exec.project_registry import _ensure_project_exists_async
-
-    src = inspect.getsource(_ensure_project_exists_async)
+    src = inspect.getsource(MariaStorageEngine.assert_project_registered)
     assert "last_validated_at" in src, (
-        "_ensure_project_exists_async must bump last_validated_at after the row_exists check"
+        "assert_project_registered must bump last_validated_at after the row_exists check"
     )
     # The bump must NEVER break the guard — wrapped so a failed UPDATE is
-    # logged, not propagated.
+    # logged, not propagated. The guard's contract to its callers is the raise.
     assert "try" in src and "except" in src, (
         "the last_validated_at bump must be wrapped in try/except so it cannot "
-        "break the registry check (read-only contract — see module docstring)"
+        "break the registry check callers depend on"
     )
 
 
