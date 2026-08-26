@@ -571,7 +571,24 @@ class _WikiMixin:
             # this, delete_wiki_page leaves a wiki_bookmark row whose slug no
             # longer resolves to a page, and the viz cannot render a remove
             # control against it.
-            self._q("DELETE FROM wiki_bookmark WHERE slug = $slug", {"slug": slug})
+            #
+            # Car P: this used to be a raw ``DELETE FROM wiki_bookmark`` that
+            # removed the row WITHOUT compacting positions, leaving a hole in the
+            # dense 0..N-1 sequence that ``add_bookmark`` (``position = count()``)
+            # and ``reorder_bookmark`` (dense-integer shift) both rely on.  The
+            # next ``add_bookmark`` then minted a DUPLICATE position and
+            # ``list_bookmarks ORDER BY position`` became non-deterministic
+            # between the tied pair.  ``remove_bookmark`` deletes AND compacts in
+            # one operation, so the deletion can no longer half-happen.
+            #
+            # The cascade lives HERE, at the storage layer, and nowhere else:
+            # every delete path funnels through ``delete_wiki_page`` — including
+            # backend-initiated deletes, which a core-side hook never saw.  A
+            # second cascade at the core ``wiki_delete`` shell used to exist and
+            # was inert: this DELETE ran first, so ``remove_bookmark``'s
+            # ``get_bookmark(slug) is None -> return False`` guard short-circuited
+            # before its compaction could run.
+            self.remove_bookmark(slug)  # type: ignore[attr-defined]
         self._q(
             "DELETE type::record('wiki_page', $id)",
             {"id": pid},

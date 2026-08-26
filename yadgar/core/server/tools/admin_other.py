@@ -857,6 +857,49 @@ def _reject_discipline_content_removal(page_id: int, fields: dict) -> dict | Non
     }
 
 
+@observe(tier="hot", metric="tools.admin_other._cross_project_page_id_refusal")
+def _cross_project_page_id_refusal(page_id: int) -> dict | None:
+    """Car P: cross-project write gate for the page_id-only ``wiki_update`` path.
+
+    ``wiki_update`` is the one wiki write shell keyed on a bare integer — no
+    slug, and (unlike its twelve siblings in ``tools/wiki.py``) no ``project``
+    or ``directory`` argument to declare a caller identity with. So the caller
+    is resolved from the ambient ladder only: the per-request session
+    ContextVar, then the legacy ``session_project``, then the hook-authored
+    directory map. ``_resolve_slug_scope_project`` degrades an unresolved
+    identity to ``None``, and ``None`` means "unscoped caller — allow", which
+    is the policy the whole gate family ships (four ``http_wiki_versioning``
+    endpoints call the tools positionally with no project; changing that
+    policy needs its own ADR).
+
+    Returns the refusal envelope when the caller's identity does not own the
+    page, else ``None``. A page_id that resolves to nothing also returns
+    ``None`` — the forward gets to produce its own not-found rather than the
+    gate inventing one from an empty slug.
+    """
+    from yadgar.core.server.tools.wiki import (  # noqa: PLC0415 — avoids an import cycle
+        _cross_project_page_refusal,
+        _resolve_slug_scope_project,
+    )
+
+    caller_project_id = _resolve_slug_scope_project(
+        project=None, directory=None, tool="wiki_update"
+    )
+    if caller_project_id is None:
+        return None  # unscoped caller — allow, and pay no storage read
+    if _st._wiki is None:
+        return None  # store not initialised — the forward reports its own failure
+    page = _st._wiki._storage.get_wiki_page(int(page_id))  # type: ignore[attr-defined]
+    if page is None:
+        return None  # unknown page_id — let the forward return not-found
+    return _cross_project_page_refusal(
+        tool="wiki_update",
+        slug=str(page.get("slug") or ""),
+        caller_project_id=caller_project_id,
+        page=page,
+    )
+
+
 @_tool(power=True)
 def wiki_update(page_id: int, fields: dict, wait: bool = False) -> dict:
     """Patch selected fields on a wiki page record.
@@ -882,6 +925,28 @@ def wiki_update(page_id: int, fields: dict, wait: bool = False) -> dict:
     _gate = gate_or_reject(_content_val)
     if _gate is not None:
         return _gate
+
+    # Car P: the cross-project write gate. Car M's header names ``wiki_update``
+    # as one of the three tools its threat model covers, and its own test file
+    # documented this shell as a "known gap" — it takes a RAW ``page_id``, so a
+    # caller who learned an id from any prior read could rewrite a page owned
+    # by another project.
+    #
+    # The tool's signature is unchanged (no ``project=`` / ``directory=``
+    # kwarg): the caller's identity comes from the same ladder every other
+    # gated wiki shell walks, minus the two arguments this tool does not have —
+    # the session ContextVar, ``session_project``, then the hook-authored
+    # directory map. An unresolved identity degrades to ``None`` and the write
+    # proceeds, which is the caller-declares policy the other twelve shells
+    # ship (four ``http_wiki_versioning`` endpoints depend on it).
+    #
+    # Placed AFTER the secret gate but BEFORE the discipline-removal check: a
+    # foreign caller must not get discipline rule-line diffs back in the
+    # rejection envelope, and the refusal must precede ``_forward_admin`` so no
+    # mutation is torn.
+    _refusal = _cross_project_page_id_refusal(int(page_id))
+    if _refusal is not None:
+        return _refusal
 
     # Task 23 / ADR-0208: wiki_update is the ONE edit path that never enters
     # WikiStore — the backend op calls storage.update_wiki_page directly, so the
