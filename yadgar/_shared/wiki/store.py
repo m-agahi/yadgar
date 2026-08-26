@@ -1598,6 +1598,28 @@ class WikiStore:
                 format_violation_count += len(fmt)
                 issues.extend(fmt)
 
+        # Car-N (ledger #341 / #365): audit ``wiki_bookmark`` rows whose slug
+        # has no matching ``wiki_page``. Each dangling row is emitted as a
+        # warning-level ``bookmark_orphan`` issue so an operator can review and
+        # call ``bookmark_repair`` (which invokes ``remove_bookmark`` per row)
+        # to clean them up. Counter lands in stats under
+        # ``bookmark_orphan_count`` so dashboards can graph the regression
+        # independently of the per-page checks above.
+        bookmark_orphans = self._storage.list_orphan_bookmarks()
+        bookmark_orphan_count = len(bookmark_orphans)
+        for orphan in bookmark_orphans:
+            issues.append(
+                {
+                    "slug": orphan.get("slug"),
+                    "severity": "warning",
+                    "type": "bookmark_orphan",
+                    "message": (
+                        f"Bookmark points at non-existent page "
+                        f"'{orphan.get('slug')}'; call bookmark_repair to clean up"
+                    ),
+                }
+            )
+
         return {
             "issues": issues,
             "stats": {
@@ -1607,6 +1629,7 @@ class WikiStore:
                 "broken_ref_count": broken_ref_count,
                 "low_confidence_count": low_confidence_count,
                 "format_violation_count": format_violation_count,
+                "bookmark_orphan_count": bookmark_orphan_count,
             },
         }
 
@@ -2762,7 +2785,7 @@ class WikiStore:
         of being silently swallowed. The WIKI_EMBED_FAILURE_BLOCKS_WRITE knob
         (default False) controls whether a failure aborts the write or is tolerated.
         """
-        from yadgar._shared.config import get_settings  # noqa: PLC0415
+        from yadgar._shared.config import get_settings
 
         try:
             # v5.53.1: raised from [:2000] to [:4000] for better similarity matching.
