@@ -153,9 +153,20 @@ run_leg() {
   leg_mem="$(_leg_mem_max)"
   echo "==> [$name leg] queued (mem cap ${leg_mem}, log: $log): $*"
   (
+    # --extra sql is NOT optional decoration (task 380): the yadgar-ci image
+    # bakes `--extra test --extra ml --extra sql` (Dockerfile.ci), so a CI group
+    # RUNS the 15 test modules that open with
+    # `pytest.importorskip("sqlalchemy")` while this leg — which exists to
+    # reproduce that group locally — silently SKIPPED every one of them. Nothing
+    # reported the difference: `sqlalchemy not installed (sql extra)` is a
+    # sanctioned reason in yadgar/tests/skip_inventory.json, so the skip gate
+    # stays green either way. Local/CI parity is the whole point of this runner;
+    # a leg that installs a smaller dependency set than the group it mirrors is
+    # not mirroring it. (`make test` deliberately keeps the smaller set —
+    # asyncmy is a compiled driver and that is the everyday target.)
     if TEST_TIMEOUT="${TEST_TIMEOUT:-5400}" TEST_MEM_MAX="$leg_mem" \
         "$script_dir/test-capped.sh" \
-        uv run --extra test --extra ml python -m pytest "$@" \
+        uv run --extra test --extra ml --extra sql python -m pytest "$@" \
           -q -rs --tb=short -n 4 --dist loadgroup --reruns 2 --reruns-delay 2 \
           -m "$CI_LOCAL_MARKER" ${PYTEST_ARGS:-} > "$log" 2>&1; then
       echo pass > "$status_file"

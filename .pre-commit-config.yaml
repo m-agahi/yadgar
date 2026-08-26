@@ -386,7 +386,7 @@ repos:
         always_run: true
 
       - id: check-test-weakening
-        name: Block silent test weakening (e2e assert removal / ✅ regression) (#52)
+        name: Block silent test weakening in yadgar/tests/ (deleted, relaxed or skipped assertions / ✅ regression) (#52, 379)
         language: system
         entry: python scripts/check_test_weakening.py
         pass_filenames: false

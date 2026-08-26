@@ -349,9 +349,15 @@ test:
 ## test-ci: CI-visible selection (-m "not integration and not e2e"), locked + parallel.
 ## Use this for a local pre-merge preflight — mirrors what CI runs, serialized so it
 ## never collides with a concurrent e2e/pre-push run.
+## --extra sql (task 380): mirrors Dockerfile.ci's `--extra test --extra ml --extra sql`
+## bake. Without it this "mirrors what CI runs" target silently SKIPPED the 15 modules
+## opening with pytest.importorskip("sqlalchemy") — and the skip gate could not say so,
+## because 'sqlalchemy not installed (sql extra)' is a sanctioned reason. Plain `make
+## test` keeps the smaller set on purpose: asyncmy is a compiled driver and install is
+## this repo's worst surface (see the `sql` extra's own note in pyproject.toml).
 test-ci:
 	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
-	  scripts/test-capped.sh uv run --extra test --extra ml python -m pytest yadgar/tests/ \
+	  scripts/test-capped.sh uv run --extra test --extra ml --extra sql python -m pytest yadgar/tests/ \
 	    -m "not integration and not e2e" -p no:randomly -n auto -q $(PYTEST_ARGS)'
 
 ## ci-local: Reproduce CI's test groups (the `tests` matrix in .github/workflows/ci-pr.yml) as ONE

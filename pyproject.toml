@@ -207,9 +207,12 @@ ml = [
 # `sqlalchemy` + `alembic` travel with it: alembic is the migration arm this
 # split buys (ADR-0195 rationale — it moots task 0051's surrealmigrate fork),
 # and alembic depends on sqlalchemy regardless.
-# NOTE: the yadgar-ci image bakes `--extra test --extra ml` (Dockerfile.ci:116)
-# and has no auto-sync pipeline — it must be rebuilt with `--extra sql` before
-# any test may import these.
+# NOTE: the yadgar-ci image bakes `--extra test --extra ml --extra sql`
+# (Dockerfile.ci) and has no auto-sync pipeline — a change to this list needs an
+# image rebuild before any test may import the new dependency. The local legs
+# (`make test-ci`, scripts/ci-local-legs.sh) install the same three extras so
+# they mirror what the image runs; plain `make test` deliberately does not,
+# because asyncmy is compiled.
 sql = [
     "asyncmy>=0.2.11",
     "sqlalchemy>=2.0",

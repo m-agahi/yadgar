@@ -1,9 +1,58 @@
 #!/usr/bin/env python3
-"""Layer 4 tamper-protection: branch-diff guard (task #52).
+"""Layer 4 tamper-protection: branch-diff guard (task #52, widened task 379).
 
-Fails if the branch introduces a NET removal of ``assert`` statements in ANY
-SINGLE file of the e2e scan set (``_E2E_PATH_RE``) OR a decrease in the ✅ count
-in ``docs/contracts/BEHAVIOR_CONTRACT.md``.
+Fails if the branch WEAKENS any test file under ``yadgar/tests/`` (see
+``_TEST_PATH_RE``) OR decreases the ✅ count in
+``docs/contracts/BEHAVIOR_CONTRACT.md``.
+
+SCOPE — WHY THIS IS NOT E2E-ONLY ANY MORE (task 379, 2026-08-26)
+----------------------------------------------------------------
+This guard used to scan ``_E2E_PATH_RE`` alone: ``yadgar/tests/e2e/**`` plus
+modules with ``e2e`` in the filename.  ADR-0430 names this script as THE
+mechanism enforcing "no test may be weakened to reach green", and the scan
+could only ever fail on an e2e file.  Measured on PR #68: 29 test files
+changed, 4,224 lines, ZERO of them e2e.  The guard passed unconditionally while
+three assertions were relaxed, and ``.test-weakening-allowlist.json`` was never
+consulted — there was nothing in scope to consult it for.  Correct trigger,
+correct wiring, scope structurally incapable of covering the files that
+actually change: the same defect class as the ``git diff --cached`` blindness
+described below, one layer up.
+
+``_E2E_PATH_RE`` survives, but ONLY as layer 3's lockstep declaration — layer 3
+(``check_e2e_assertions``) still scans e2e alone, and
+``test_tamper_guards.py::TestLayer3Layer4ScopeLockstep`` still asserts the two
+agree.  Layer 4's own scan set is ``_TEST_PATH_RE``.
+
+THE THREE WEAKENING SHAPES
+---------------------------
+A net-``assert``-count rule is structurally blind to the relaxation that
+motivated this widening.  ``assert schema == ""`` rewritten to
+``assert not schema`` removes one ``assert`` line and adds one: net ZERO.  So
+three metrics are netted per file, not one:
+
+  ``asserts``  net change in ``assert`` / ``assertX(`` lines.  Negative = an
+               assertion was deleted from a module that kept its name.
+  ``strict``   net change in EXACT-VALUE assertions — those carrying ``==``,
+               ``!=``, ``is None`` / ``is not None`` / ``is True`` / ``is
+               False``, or ``assertEqual`` / ``assertNotEqual`` / ``assertIs*``.
+               Negative = an exact-value check was relaxed to a looser one
+               (``== ""`` → ``not x``, ``== N`` → ``>= N``, ``assertEqual`` →
+               ``assertIn``).
+  ``skips``    net change in ``pytest.skip(`` / ``pytest.xfail(`` /
+               ``pytest.importorskip(`` / ``mark.skip`` / ``mark.skipif`` /
+               ``mark.xfail``.  POSITIVE = a test that used to run was silenced.
+
+``strict`` deliberately treats ``is None`` as exact, so swapping ``== ""`` for
+``is None`` — a CONTRACT change, not a weakening — does not fire.  That
+discriminator is what keeps the rule usable: measured over the whole
+``train/bug-bag-2-2026-08-23`` diff (39 test files, 5,644 inserted lines) these
+three rules produce exactly ONE violation, the real relaxation in
+``yadgar/tests/backend/test_cls_store.py``, and zero false positives on the
+other 38 files.
+
+A file added by the branch (``new file mode``) is exempt from the ``skips``
+rule and a rename is exempt from all three: neither weakens anything that
+previously ran.
 
 The per-file netting is load-bearing, not a detail — see
 ``_per_file_assert_deltas``.  Summing globally lets an addition in one e2e module
@@ -57,6 +106,12 @@ A sanctioned deletion is instead recorded per file, in the repo, in the diff:
     {"yadgar/tests/e2e/test_foo_e2e.py": {"allowed_delta": -12,
                                           "rationale": "...why, citing the ADR"}}
 
+An entry carries at least one allowance key, one per shape — ``allowed_delta``
+(negative, ``asserts``), ``allowed_strict_delta`` (negative, ``strict``),
+``allowed_new_skips`` (positive, ``skips``).  They are INDEPENDENT: sanctioning
+a relaxed comparison is not a licence to delete an assertion from the same
+file.  An entry granting nothing at all is a typo and hard-fails.
+
 Governance mirrors the sibling allowlists (``.health-endpoint-allowlist.json``,
 ``.urllib-httperror-close-allowlist.json``, ``.container-runtime-allowlist.json``):
 rationale >= 40 chars, malformed entries hard-fail.  Two rules are specific to
@@ -105,6 +160,55 @@ _MIN_RATIONALE = 40
 # asserts the agreement mechanically.
 _E2E_PATH_RE = re.compile(r"yadgar/tests/(?:e2e/[^\s]*\.py|[^\s]*e2e[^\s]*\.py)")
 
+# LAYER 4's OWN scan set (task 379) — every test module, not just the e2e ones.
+# `_E2E_PATH_RE` above is now purely layer 3's lockstep declaration; scoping
+# layer 4 to it made the guard incapable of failing on the 29 non-e2e test files
+# PR #68 changed. See the module docstring.
+_TEST_PATH_RE = re.compile(r"yadgar/tests/[^\s]*\.py")
+
+# An `assert` statement, or a unittest `assertX(...)` call.  `\bassert\b` alone
+# cannot match `assertEqual` (no word boundary before a word character), so the
+# unittest family needs its own alternative.
+_ASSERT_RE = re.compile(r"\bassert\b|\bassert[A-Z]\w*\s*\(")
+
+# An EXACT-VALUE assertion.  `is None` / `is True` / `is False` count as exact
+# on purpose: rewriting `== ""` to `is None` is a contract change, not a
+# weakening, and flagging it would make this rule unusable (car K's sibling edit
+# in test_patterns_unit.py is precisely that swap).
+_STRICT_ASSERT_RE = re.compile(
+    r"==|!="
+    r"|\bis\s+(?:not\s+)?(?:None|True|False)\b"
+    r"|\bassert(?:Equal|NotEqual|Is|IsNot|IsNone|IsNotNone)\b"
+)
+
+# Anything that stops a test from running.
+#
+# ANCHORED to statement/decorator position (`^\s*`), unlike the two assert
+# patterns.  A skip guard is always a bare statement or a decorator, never a
+# substring of prose — whereas a meta-test that BUILDS a diff fixture writes
+# lines like `"+        pytest.skip(\"flaky\")\n"` inside a string literal, and
+# an unanchored pattern counts those as real added skips.  Found by running the
+# widened guard over this car's own commit: the five diff fixtures in
+# test_tamper_guards.py below were reported as five new skip guards.  Anchoring
+# is the precise fix (the fixture line starts with whitespace then a quote),
+# and it costs no real detection: `        pytest.skip(...)` still matches.
+_SKIP_RE = re.compile(
+    r"^\s*(?:"
+    r"pytest\.(?:skip|xfail|importorskip)\s*\("
+    r"|@\s*pytest\.mark\.(?:skip|skipif|xfail)\b"
+    r"|pytestmark\s*=.*\bmark\.(?:skip|skipif|xfail)\b"
+    r")"
+)
+
+# Allowance keys, one per shape.  (json key, metric attribute, sign, label)
+# `sign` is the direction that means WORSE: -1 for the count metrics (fewer
+# assertions is worse), +1 for skips (more silencing is worse).
+_SHAPES = (
+    ("allowed_delta", "asserts", -1),
+    ("allowed_strict_delta", "strict", -1),
+    ("allowed_new_skips", "skips", +1),
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -127,40 +231,100 @@ def _git(args: list[str]) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
-def _per_file_assert_deltas(diff_text: str) -> dict[str, int]:
-    """Return {e2e_path: lines_added - lines_removed} for 'assert' in *diff_text*.
+class FileMetrics:
+    """The three netted weakening metrics for ONE file in the diff.
+
+    ``asserts`` and ``strict`` are added-minus-removed (negative = worse);
+    ``skips`` is added-minus-removed too, but POSITIVE is worse — a skip guard
+    that was not there before silences a test that used to run.
+
+    Deliberately a plain class, NOT a ``@dataclass``: the meta-tests load this
+    script with ``importlib.util.module_from_spec`` without registering it in
+    ``sys.modules``, and ``dataclasses`` resolves annotations through
+    ``sys.modules[cls.__module__]`` — which is ``None`` under that loader, so a
+    dataclass here fails at import with an AttributeError.
+    """
+
+    __slots__ = ("asserts", "strict", "skips", "is_new", "is_rename")
+
+    def __init__(self) -> None:
+        self.asserts = 0
+        self.strict = 0
+        self.skips = 0
+        self.is_new = False
+        self.is_rename = False
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"FileMetrics(asserts={self.asserts:+d}, strict={self.strict:+d}, "
+            f"skips={self.skips:+d}, is_new={self.is_new}, is_rename={self.is_rename})"
+        )
+
+
+def _per_file_metrics(diff_text: str) -> dict[str, FileMetrics]:
+    """Return ``{test_path: FileMetrics}`` for every ``yadgar/tests/`` file in *diff_text*.
 
     PER FILE, not one global sum.  A removal in test A is NOT compensated by an
     addition in test B — they are different tests.  This matters far more under
     branch-diff mode than it did under the old staged-only mode: a commit window
     is narrow so offsetting was rare, but over a whole branch it is the norm.
-    Measured while running this car's own mutation test: a `-1` in
+    Measured while running this guard's own mutation test: a `-1` in
     ``test_consolidation_embedded_e2e.py`` was masked by a `+5` in
     ``test_code_graph_e2e.py`` earlier on the branch, global net `+4`, guard
     green.  Global-net over a branch window degrades the guard to "the branch's
-    total e2e assert count went down", which is weaker than what it replaced.
+    total assert count went down", which is weaker than what it replaced.
 
-    Only counts files in the e2e scan set (see ``_E2E_PATH_RE``).
+    Scope is ``_TEST_PATH_RE`` — every test module (task 379), not the e2e
+    subset the guard used to be pinned to.
     """
-    deltas: dict[str, int] = {}
+    metrics: dict[str, FileMetrics] = {}
     current: str | None = None
     for line in diff_text.splitlines():
         if line.startswith("diff --git"):
-            # Is this file in the e2e scan set? (widened 2026-07-29 — the old
-            # `yadgar/tests/e2e/` pin missed six *e2e* modules living elsewhere)
-            m = _E2E_PATH_RE.search(line)
+            m = _TEST_PATH_RE.search(line)
             current = m.group(0) if m else None
             if current is not None:
-                deltas.setdefault(current, 0)
+                metrics.setdefault(current, FileMetrics())
+            continue
         if current is None:
             continue
-        if line.startswith("+") and not line.startswith("+++"):
-            if re.search(r"\bassert\b", line):
-                deltas[current] += 1
-        elif line.startswith("-") and not line.startswith("---"):
-            if re.search(r"\bassert\b", line):
-                deltas[current] -= 1
-    return deltas
+        # File-level headers, read before the +/- body lines they describe.
+        if line.startswith("new file mode"):
+            metrics[current].is_new = True
+            continue
+        if line.startswith(("rename from", "rename to")):
+            metrics[current].is_rename = True
+            continue
+        if line.startswith(("+++", "---")):
+            continue
+        if line.startswith("+"):
+            sign = 1
+        elif line.startswith("-"):
+            sign = -1
+        else:
+            continue
+        body = line[1:]
+        entry = metrics[current]
+        if _ASSERT_RE.search(body):
+            entry.asserts += sign
+            if _STRICT_ASSERT_RE.search(body):
+                entry.strict += sign
+        if _SKIP_RE.search(body):
+            entry.skips += sign
+    return metrics
+
+
+def _measured(entry: FileMetrics, attr: str) -> int:
+    return int(getattr(entry, attr))
+
+
+def _per_file_assert_deltas(diff_text: str) -> dict[str, int]:
+    """Back-compat view: ``{test_path: net assert delta}``.
+
+    Kept because it is the shape the guard's own error text and several
+    meta-tests reason about; ``_per_file_metrics`` is the full record.
+    """
+    return {path: m.asserts for path, m in _per_file_metrics(diff_text).items()}
 
 
 def _green_count_from_text(text: str) -> int | None:
@@ -227,20 +391,42 @@ def load_allowlist(path: Path) -> dict:
 
 
 def _allowlist_entry_errors(path: str, meta: object) -> list[str]:
-    """Validate one entry's shape. A malformed entry grants nothing and hard-fails."""
+    """Validate one entry's shape. A malformed entry grants nothing and hard-fails.
+
+    An entry carries at least one allowance key (``_SHAPES``), each validated
+    independently.  The signs are NOT interchangeable: the count allowances must
+    be negative (they sanction a REMOVAL), the skip allowance positive (it
+    sanctions an ADDITION).  A zero/wrong-signed value is either a typo or an
+    attempt to register a file that needs no entry.
+    """
     if not isinstance(meta, dict):
         return [f"MALFORMED allowlist entry {path!r}: value must be an object"]
     errors: list[str] = []
-    delta = meta.get("allowed_delta")
-    if not isinstance(delta, int) or isinstance(delta, bool):
-        errors.append(f"MALFORMED allowlist entry {path!r}: 'allowed_delta' must be an integer")
-    elif delta >= 0:
-        # An entry only ever sanctions a REMOVAL. A zero/positive allowance is
-        # either a typo or an attempt to register a file that needs no entry.
+
+    present = [key for key, _attr, _sign in _SHAPES if key in meta]
+    if not present:
         errors.append(
-            f"MALFORMED allowlist entry {path!r}: 'allowed_delta' must be negative "
-            f"(got {delta}) — an entry sanctions a removal, nothing else"
+            f"MALFORMED allowlist entry {path!r}: grants nothing — name at least one of "
+            + ", ".join(key for key, _a, _s in _SHAPES)
         )
+    for key, _attr, sign in _SHAPES:
+        if key not in meta:
+            continue
+        value = meta.get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            errors.append(f"MALFORMED allowlist entry {path!r}: {key!r} must be an integer")
+            continue
+        if sign < 0 and value >= 0:
+            errors.append(
+                f"MALFORMED allowlist entry {path!r}: {key!r} must be negative "
+                f"(got {value}) — an entry sanctions a removal, nothing else"
+            )
+        elif sign > 0 and value <= 0:
+            errors.append(
+                f"MALFORMED allowlist entry {path!r}: {key!r} must be positive "
+                f"(got {value}) — an entry sanctions an added skip, nothing else"
+            )
+
     rationale = meta.get("rationale", "")
     if not isinstance(rationale, str) or len(rationale.strip()) < _MIN_RATIONALE:
         got = len(rationale.strip()) if isinstance(rationale, str) else 0
@@ -251,34 +437,74 @@ def _allowlist_entry_errors(path: str, meta: object) -> list[str]:
     return errors
 
 
+def _granted(meta: object, key: str, sign: int) -> int | None:
+    """Return the well-formed allowance *meta* records under *key*, else None."""
+    if not isinstance(meta, dict):
+        return None
+    value = meta.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    if sign < 0 and value >= 0:
+        return None
+    if sign > 0 and value <= 0:
+        return None
+    return value
+
+
 def stale_allowlist_entries(diff_text: str, allowlist: dict) -> list[str]:
     """Return warning strings for entries that no longer describe reality.
 
     Two shapes, both meaning "this entry over-grants and should be removed or
     tightened": the file is no longer in the diff at all (the post-merge shape),
-    or its measured delta is BETTER than the recorded allowance.
+    or its measured delta is BETTER than the recorded allowance — checked per
+    SHAPE, so an entry that is still accurate about one metric and stale about
+    another says so.
 
     Warnings, not errors — see the module docstring: the baseline is a moving
     merge-base, so a correct entry goes stale on merge through nobody's fault.
     """
-    deltas = _per_file_assert_deltas(diff_text)
+    metrics = _per_file_metrics(diff_text)
     warnings: list[str] = []
     for path, meta in sorted(allowlist.items()):
-        if not isinstance(meta, dict) or not isinstance(meta.get("allowed_delta"), int):
-            continue  # malformed — already reported as a hard error by check_diff
-        allowed = meta["allowed_delta"]
-        measured = deltas.get(path)
-        if measured is None:
-            warnings.append(
-                f"STALE allowlist entry {path!r}: the file is not in the branch diff "
-                f"at all — remove it from {_ALLOWLIST_NAME}"
-            )
-        elif measured > allowed:
-            warnings.append(
-                f"STALE allowlist entry {path!r}: measured delta {measured:+d} is better "
-                f"than the allowed {allowed:+d} — tighten or remove it in {_ALLOWLIST_NAME}"
-            )
+        entry = metrics.get(path)
+        if entry is None:
+            if any(_granted(meta, key, sign) is not None for key, _a, sign in _SHAPES):
+                warnings.append(
+                    f"STALE allowlist entry {path!r}: the file is not in the branch diff "
+                    f"at all — remove it from {_ALLOWLIST_NAME}"
+                )
+            continue
+        for key, attr, sign in _SHAPES:
+            allowed = _granted(meta, key, sign)
+            if allowed is None:
+                continue  # absent or malformed — check_diff reports malformed
+            measured = _measured(entry, attr)
+            better = measured > allowed if sign < 0 else measured < allowed
+            if better:
+                warnings.append(
+                    f"STALE allowlist entry {path!r}: measured {attr} {measured:+d} is "
+                    f"better than the allowed {allowed:+d} — tighten or remove "
+                    f"{key!r} in {_ALLOWLIST_NAME}"
+                )
     return warnings
+
+
+_SHAPE_MESSAGES = {
+    "asserts": (
+        "NET removal of {n} 'assert' statement(s) in {path} ({delta:+d}) — an "
+        "assertion was deleted from a module that kept its name"
+    ),
+    "strict": (
+        "NET removal of {n} exact-value assertion(s) in {path} ({delta:+d}) — a "
+        "strict check (== / != / is None / assertEqual) was relaxed to a looser "
+        "one. Net 'assert' count does NOT move when `assert x == \"\"` becomes "
+        "`assert not x`, which is why this is counted separately"
+    ),
+    "skips": (
+        "{n} new skip guard(s) in {path} ({delta:+d}) — pytest.skip / xfail / "
+        "importorskip silences a test that used to run"
+    ),
+}
 
 
 def check_diff(
@@ -289,8 +515,8 @@ def check_diff(
 ) -> list[str]:
     """Pure function: return violation strings given a diff + green counts.
 
-    *allowlist* is ``{path: {"allowed_delta": int, "rationale": str}}``. Omitting
-    it (or passing ``{}``) is the strict contract: every net removal violates.
+    *allowlist* is ``{path: {<allowance key>: int, "rationale": str}}``. Omitting
+    it (or passing ``{}``) is the strict contract: every weakening violates.
     """
     allowlist = allowlist or {}
     errors: list[str] = []
@@ -298,30 +524,43 @@ def check_diff(
     for path, meta in sorted(allowlist.items()):
         errors.extend(_allowlist_entry_errors(path, meta))
 
-    for path, delta in sorted(_per_file_assert_deltas(diff_text).items()):
-        if delta >= 0:
+    for path, entry in sorted(_per_file_metrics(diff_text).items()):
+        if entry.is_rename:
+            # A move is not a weakening; blaming the destination for lines the
+            # rename carried across would make every reorganisation red.
             continue
-        entry = allowlist.get(path)
-        allowed = entry.get("allowed_delta") if isinstance(entry, dict) else None
-        if isinstance(allowed, int) and not isinstance(allowed, bool) and allowed < 0:
-            # Sign convention: deltas are negative, so "worse" is SMALLER.
-            # -12 against an allowed -12 passes; -13 does not.
-            if delta >= allowed:
+        meta = allowlist.get(path)
+        for key, attr, sign in _SHAPES:
+            measured = _measured(entry, attr)
+            worse_than_zero = measured < 0 if sign < 0 else measured > 0
+            if not worse_than_zero:
+                continue
+            if attr == "skips" and entry.is_new:
+                # Nothing was silenced — the file did not exist before.
+                continue
+            allowed = _granted(meta, key, sign)
+            if allowed is not None:
+                # Sign convention: an entry grants EXACTLY its recorded delta.
+                # -12 against an allowed -12 passes; -13 does not.
+                within = measured >= allowed if sign < 0 else measured <= allowed
+                if within:
+                    continue
+                errors.append(
+                    "layer 4 — "
+                    + _SHAPE_MESSAGES[attr].format(n=abs(measured), path=path, delta=measured)
+                    + f". This EXCEEDS its allowlisted {key}={allowed:+d}. An allowlist "
+                    f"entry grants exactly its recorded delta; it does not absorb "
+                    f"further weakening. Justify and update the entry in "
+                    f"{_ALLOWLIST_NAME}, or restore the assertions."
+                )
                 continue
             errors.append(
-                f"layer 4 — NET removal of {abs(delta)} 'assert' statement(s) in {path} "
-                f"({delta:+d}) EXCEEDS its allowlisted {allowed:+d}. An allowlist entry "
-                f"grants exactly its recorded delta; it does not absorb further "
-                f"weakening. Justify and update the entry in {_ALLOWLIST_NAME}, or "
-                f"restore the assertions."
+                "layer 4 — "
+                + _SHAPE_MESSAGES[attr].format(n=abs(measured), path=path, delta=measured)
+                + f". If this change is sanctioned, add an entry to {_ALLOWLIST_NAME} "
+                f'recording the exact delta and why — e.g. {{"{path}": '
+                f'{{"{key}": {measured}, "rationale": "...citing the ADR"}}}}.'
             )
-            continue
-        errors.append(
-            f"layer 4 — NET removal of {abs(delta)} 'assert' statement(s) in {path}. "
-            f"If this deletion is sanctioned, add an entry to {_ALLOWLIST_NAME} "
-            f'recording the exact delta ({delta:+d}) and why — e.g. {{"{path}": '
-            f'{{"allowed_delta": {delta}, "rationale": "...citing the ADR"}}}}.'
-        )
 
     if head_green is not None and staged_green is not None:
         if staged_green < head_green:
