@@ -512,3 +512,52 @@ def test_list_project_rows_projection_omits_last_validated_at():
     """
     src = _body_source_without_docstring(MariaStorageEngine.list_project_rows)
     assert "last_validated_at" not in src
+
+
+@pytest.mark.asyncio
+async def test_refresh_false_checks_without_stamping():
+    """``refresh=False`` runs the check and issues no UPDATE.
+
+    The dry-run preflights (``admin_exec/identity_stamp``,
+    ``admin_exec/adr_seed``) pass this so a preview reaches the apply's verdict
+    without the apply's side effect — a ``--dry-run`` that writes is the defect
+    ledger task 385 fixed in ``verify-hooks``, and the guard's bump (task 384)
+    put a second instance of it on the preview path.
+    """
+    conn = _FakeConn()
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+    seen: list[str] = []
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        seen.append(key_value)
+        return True
+
+    engine.row_exists = _row_exists
+
+    await MariaStorageEngine.assert_project_registered(engine, "m-agahi/yadgar", refresh=False)
+
+    assert seen == ["m-agahi/yadgar"], "the check itself must still run"
+    assert conn.executed == [], "a preview stamped last_validated_at"
+
+
+@pytest.mark.asyncio
+async def test_refresh_false_still_refuses_an_unknown_project():
+    """Withholding the stamp must not withhold the refusal.
+
+    Preview/apply parity is owed on the VERDICT. If ``refresh=False`` also
+    softened the check, the dry run would stop predicting the apply, which is
+    the whole reason the preflight calls the guard at all (Car 19 / task 176).
+    """
+    conn = _FakeConn()
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        return False
+
+    engine.row_exists = _row_exists
+
+    with pytest.raises(UnknownProjectError):
+        await MariaStorageEngine.assert_project_registered(engine, "m-agahi/typo", refresh=False)
+    assert conn.executed == []

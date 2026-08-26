@@ -182,7 +182,7 @@ class _ProjectRegistryMixin:
         return {"projects": rows, "threshold_days": int(threshold_days), "count": len(rows)}
 
     @observe(tier="boundary", metric="backend.sql.project.assert_registered")
-    async def assert_project_registered(self, project_id: str) -> None:
+    async def assert_project_registered(self, project_id: str, *, refresh: bool = True) -> None:
         """Raise unless *project_id* is a registered project; refresh its clock.
 
         The registry guard. It sits inside the chokepoint methods, so no
@@ -219,6 +219,24 @@ class _ProjectRegistryMixin:
         a cached read and does not bump, so a project that only stores
         memories still ages past the threshold.
 
+        ``refresh=False`` — A PREVIEW CHECKS, IT DOES NOT STAMP
+        ------------------------------------------------------
+        The dry-run preflights (``admin_exec/identity_stamp`` and
+        ``admin_exec/adr_seed``, both ``_preflight_write_guards``) call this
+        guard so a preview reaches the same verdict the apply would. They
+        pass ``refresh=False``: a ``--dry-run`` that writes is the same
+        defect ledger task 385 fixed in ``verify-hooks``, and it would make
+        the flag mean something different here than everywhere else in the
+        CLI. Parity is preserved where parity is owed — the check runs, the
+        refusal is identical, the preview fidelity is unchanged. Only the
+        side effect is withheld, and a side effect is precisely what a
+        preview must not have.
+
+        Args:
+            project_id: the ``owner/repo`` key to verify.
+            refresh: bump ``last_validated_at`` on a present row. ``False``
+                for preview/dry-run callers.
+
         Raises:
             UnknownProjectError: no ``project`` row matches *project_id*.
         """
@@ -229,6 +247,9 @@ class _ProjectRegistryMixin:
         present = await self.row_exists(table="project", key_column="key", key_value=project_id)
         if not present:
             raise UnknownProjectError(project_id)
+
+        if not refresh:
+            return
 
         try:
             async with self._engine.begin() as conn:
