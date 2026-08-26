@@ -289,7 +289,7 @@ class TestAbstractToSchema:
         ``tests/backend/test_patterns_unit.py:test_empty_cluster``.
         """
         schema = cls.abstract_to_schema([])
-        assert not schema
+        assert schema is None
 
     def test_abstract_preserves_common_tags(self, cls):
         """Schema should mention tags that appear across multiple memories."""
