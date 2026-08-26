@@ -552,10 +552,10 @@ class Settings(BaseSettings):
     # Set to 0 to disable the auto-generated prune pass.
     AUTO_GENERATED_MEMORY_MAX_AGE_DAYS: int = 30
 
-    # auto-abstracted memory retention — _memify_prune deletes cold unaccessed
-    # memories tagged "auto-abstracted" (CLS semantic promotions, action-stream
-    # pattern noise) that are older than this many days.
-    # Set to 0 to disable the auto-abstracted prune pass.
+    # auto-abstracted retention — _memify_prune deletes "auto-abstracted" rows
+    # (CLS promotions, action-stream noise) older than this. A HARD cap (task
+    # 386): recall() writes last_accessed, so a recency gate let a matchy row
+    # renew its own reprieve; is_protected is the sole escape. 0 disables.
     AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS: int = 30
 
     # dream insight retention — _memify_prune deletes unaccessed dream memories

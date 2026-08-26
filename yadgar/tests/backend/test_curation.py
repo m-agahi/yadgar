@@ -962,9 +962,11 @@ def test_memify_prune_auto_abstracted(tmp_path):
         {"id": recent_id, "ts": recent_date},
     )
 
-    # 5. Old but RECENTLY ACCESSED memory — MUST survive (v5.66: recency gate).
-    #    created_at is old, but last_accessed is left at insert time (now = within window).
-    #    This models the correct case: memory is old but is still being used.
+    # 5. Old but RECENTLY ACCESSED memory — MUST be PRUNED (task 386: hard age
+    #    cap, no access escape — same rule pass 4 applies to dream insights).
+    #    created_at is old, last_accessed is left at insert time (now).  Under
+    #    v5.66 this was spared; recall() writes last_accessed, so a row that
+    #    keeps matching renewed its own reprieve forever.
     accessed_id = storage.insert_memory(
         {
             "project_id": _TEST_PROJECT,
@@ -1037,8 +1039,9 @@ def test_memify_prune_auto_abstracted(tmp_path):
     assert storage.get_memory(user_id) is not None, "user memory must not be pruned"
     assert storage.get_memory(protected_id) is not None, "protected memory must not be pruned"
     assert storage.get_memory(recent_id) is not None, "recent auto-abstracted must not be pruned"
-    assert storage.get_memory(accessed_id) is not None, (
-        "recently-accessed auto-abstracted must not be pruned (last_accessed within window)"
+    assert storage.get_memory(accessed_id) is None, (
+        "recently-accessed auto-abstracted must be pruned — hard age cap has no "
+        "last_accessed escape (task 386)"
     )
     assert storage.get_memory(boundary_under_id) is not None, (
         "auto-abstracted at age MAX-1 must survive (boundary: under age cap)"

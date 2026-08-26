@@ -92,20 +92,35 @@ def _prune_auto_abstracted_old(
     storage: StorageEngine,
     settings: Settings,
 ) -> None:
-    """Pass 3: delete stale, old CLS-promoted auto-abstracted semantics.
+    """Pass 3: hard cap CLS-promoted auto-abstracted semantics by AGE alone.
 
     Action-stream noise and file co-occurrence patterns start at heat=0.8
     and decay ~0.9995/hour — reaching COLD_THRESHOLD takes 300+ days, so
-    the 30-day age cap would never fire with a heat gate.  Rely on age +
-    recency of last access; no heat check.
+    the 30-day age cap would never fire with a heat gate.  Age is therefore
+    the ONLY cap these rows have; no heat check.
 
-    v5.66: replaced "ever-accessed = immortal" with recency check.
-    Purge when created_at < cutoff AND last_accessed < cutoff (old AND not
-    recently accessed).  recall() bumps both access_count AND last_accessed
-    on each hit, so last_accessed is a reliable recency signal.
+    THE AGE CAP IS AN AGE CAP (ledger task 386)
+    -------------------------------------------
+    v5.66 added a ``last_accessed`` reprieve here on the premise that
+    ``last_accessed`` is "a reliable recency signal" for value.  It is not,
+    and the reprieve inverted the pass into a self-reinforcing loop:
+    ``recall()`` bumps ``last_accessed`` on EVERY hit, so an auto-abstracted
+    "Recurring pattern…" row that keeps matching queries kept sparing itself
+    — and the more useless-but-matchy it was, the more it surfaced, and the
+    longer it lived.  Retrieval frequency is evidence that a row's embedding
+    is generic, not that a machine-generated abstraction is worth keeping;
+    the ROW never earned its reprieve, the matcher granted it.
 
-    The memory:1110 zombie: 38d old, heat=0, access_count=2, last_accessed
-    32d ago — old guard spared it forever; new guard correctly purges it.
+    Pass 4 (``_prune_dream_insights``) already draws this line the right way
+    for the same class of machine-generated row: "one accidental recall must
+    not let a dream insight escape the age cap forever."  Pass 3 now matches
+    it.  An auto-abstracted row past ``AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS``
+    is deleted regardless of when it was last read.  A row that genuinely
+    must outlive the cap has one sanctioned escape — ``is_protected`` — which
+    is checked below and is a human decision rather than a matcher artefact.
+
+    The memory:1110 zombie (38d old, heat=0, access_count=2, last_accessed
+    32d ago) is still purged; so now is its twin that was read yesterday.
     """
     auto_abstracted_max_age = settings.AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS
     if auto_abstracted_max_age <= 0:
@@ -121,9 +136,6 @@ def _prune_auto_abstracted_old(
         created_at = mem.get("created_at") or ""
         if created_at > aa_age_cutoff:
             continue  # too recent — spare it
-        last_accessed = mem.get("last_accessed") or created_at
-        if last_accessed > aa_age_cutoff:
-            continue  # accessed recently — still in use, spare it
         storage.delete_memory(mem["id"])
         stats["pruned"] += 1
 

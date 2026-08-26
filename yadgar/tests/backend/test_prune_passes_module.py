@@ -211,20 +211,27 @@ class TestPass3AutoAbstracted:
         _memify_prune(storage, _settings(auto_abstracted_max_age=30), stats)
         storage.delete_memory.assert_not_called()
 
-    def test_recently_accessed_spared(self):
-        """v5.66: recency gate — accessed 5d ago within 30d window -> spare."""
+    def test_recently_accessed_still_purged(self):
+        """Task 386: the age cap is an AGE cap — recent access is no reprieve.
+
+        RED on the v5.66 code (``last_accessed > cutoff -> continue`` spared
+        it); GREEN once pass 3 caps on ``created_at`` alone.  ``recall()``
+        bumps ``last_accessed`` on every hit, so a row that keeps matching
+        kept renewing its own reprieve — retrieval frequency is not evidence
+        of value for a machine-generated abstraction.
+        """
         mem = _mem(
             22,
             ["auto-abstracted"],
             heat=0.5,
             access_count=1,
             created_days_ago=60,
-            last_accessed_days_ago=5,  # recently accessed -> spare
+            last_accessed_days_ago=5,  # read 5d ago — irrelevant, 60d > 30d cap
         )
         storage = _storage(mem)
         stats = {"pruned": 0}
         _memify_prune(storage, _settings(auto_abstracted_max_age=30), stats)
-        storage.delete_memory.assert_not_called()
+        storage.delete_memory.assert_called_once_with(22)
 
     def test_stale_accessed_purged(self):
         """v5.66: old+stale (last_accessed beyond cutoff) -> purged despite access_count>0."""

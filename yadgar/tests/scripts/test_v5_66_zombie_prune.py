@@ -174,20 +174,54 @@ class TestPass3AutoAbstractedRecency:
         storage.delete_memory.assert_called_once_with(1110)
         assert stats["pruned"] == 1
 
-    def test_old_accessed_recently_spared(self):
-        """Old auto-abstracted but accessed 3d ago -> spared (still useful)."""
+    def test_old_accessed_recently_still_purged(self):
+        """Task 386: the self-reinforcing loop — recent access is NOT a reprieve.
+
+        This is the memory:1110 twin that kept SURFACING.  v5.66 spared it
+        because ``last_accessed`` was 3d ago; but ``recall()`` is what wrote
+        that timestamp, so the row renewed its own immortality every time it
+        matched a query — and a generic auto-abstracted "Recurring pattern…"
+        row matches a lot.  Pass 3 now caps on ``created_at`` alone, matching
+        pass 4's rule for dream insights.
+
+        RED on the v5.66 code, GREEN after the reprieve is deleted.
+        """
         mem = _mem(
             1111,
             ["auto-abstracted"],
             heat=0.3,
             access_count=5,
             created_days_ago=38,
-            last_accessed_days_ago=3,  # recent: 3d ago, cutoff=30d -> spare
+            last_accessed_days_ago=3,  # read 3d ago — irrelevant, 38d > 30d cap
         )
         storage = _storage(mem)
         stats = {"pruned": 0}
         _memify_prune(storage, _settings(auto_abstracted_max_age=30), stats)
-        storage.delete_memory.assert_not_called()
+        storage.delete_memory.assert_called_once_with(1111)
+        assert stats["pruned"] == 1
+
+    def test_continuously_recalled_row_cannot_outlive_the_cap(self):
+        """A row read TODAY, far past the cap, is still purged.
+
+        The loop's terminal case: an auto-abstracted row that surfaces on
+        every recall never let ``last_accessed`` fall behind the cutoff, so
+        under v5.66 no age — 100 days, 1000 days — could ever reach it.  The
+        only sanctioned escape is ``is_protected`` (a human decision), pinned
+        by ``test_protected_auto_abstracted_always_spared`` below.
+        """
+        mem = _mem(
+            1115,
+            ["auto-abstracted"],
+            heat=0.8,
+            access_count=250,
+            created_days_ago=400,
+            last_accessed_days_ago=0,  # read today, every day, forever
+        )
+        storage = _storage(mem)
+        stats = {"pruned": 0}
+        _memify_prune(storage, _settings(auto_abstracted_max_age=30), stats)
+        storage.delete_memory.assert_called_once_with(1115)
+        assert stats["pruned"] == 1
 
     def test_protected_auto_abstracted_always_spared(self):
         """Protected auto-abstracted: always spared even if old+stale."""

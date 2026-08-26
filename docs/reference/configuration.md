@@ -538,7 +538,7 @@ Rows older than these thresholds are pruned each consolidation cycle. Set to `0`
 | `episode_retention_days` | `YADGAR_EPISODE_RETENTION_DAYS` | int | `14` | Prune `episode` rows older than this each consolidation cycle. |
 | `action_stream_max_age_days` | `YADGAR_ACTION_STREAM_MAX_AGE_DAYS` | int | `14` | `_memify_prune` Pass 5 deletes unaccessed `_action_stream` memories older than this. `0` disables. |
 | `auto_generated_memory_max_age_days` | `YADGAR_AUTO_GENERATED_MEMORY_MAX_AGE_DAYS` | int | `30` | Delete cold unaccessed `auto-generated` memories older than this. `0` disables. |
-| `auto_abstracted_memory_max_age_days` | `YADGAR_AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS` | int | `30` | Delete cold unaccessed `auto-abstracted` memories (CLS promotions, action-stream pattern noise) older than this. `0` disables. |
+| `auto_abstracted_memory_max_age_days` | `YADGAR_AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS` | int | `30` | Delete `auto-abstracted` memories (CLS promotions, action-stream pattern noise) older than this — a hard age cap; heat and recent access grant no reprieve, only `is_protected` does. `0` disables. |
 | `dream_insight_max_age_days` | `YADGAR_DREAM_INSIGHT_MAX_AGE_DAYS` | int | `21` | Delete unaccessed dream memories older than this regardless of heat. `0` disables. |
 | `narrative_entry_retention_days` | `YADGAR_NARRATIVE_ENTRY_RETENTION_DAYS` | int | `90` | Prune `narrative_entry` rows older than this. |
 | `astrocyte_process_retention_days` | `YADGAR_ASTROCYTE_PROCESS_RETENTION_DAYS` | int | `7` | Prune `astrocyte_process` rows older than this. |
