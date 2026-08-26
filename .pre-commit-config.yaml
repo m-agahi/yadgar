@@ -536,7 +536,7 @@ repos:
   - repo: local
     hooks:
       - id: verify-version-bump-local
-        name: Verify version bump vs latest tag (local mirror of CI)
+        name: Verify version bump vs merge-base (local mirror of CI)
         language: system
         entry: python scripts/check_version_bump.py
         pass_filenames: false
@@ -546,19 +546,23 @@ repos:
         # `pre-commit run --hook-stage pre-push` executes every hook
         # regardless of earlier failures.
         fail_fast: true
-        # Mirrors .github/workflows/ci-pr.yml's verify-version-bump job: fails
-        # when pyproject.toml's version still matches the latest git tag AND
-        # the push touches yadgar/**. Runs first among the pre-push hooks —
+        # Mirrors .github/workflows/ci-pr.yml's verify-version-bump job — which
+        # now runs THIS SAME SCRIPT (`--ci --base origin/master`), so local and
+        # CI cannot disagree. Fails when pyproject.toml's version is unchanged
+        # since the merge-base with origin/master AND the branch touches
+        # yadgar/**. Task 382 replaced the old latest-tag comparison: a tag
+        # cannot see a bump that a master merge reverted, and the gate stayed
+        # green over exactly that. Runs first among the pre-push hooks —
         # near-instant, so it fails fast before the ~7min `make e2e` run below
         # instead of only surfacing after push as a CI failure on an open PR.
-        # No `files:` filter: the script itself decides via `git diff
-        # origin/master...HEAD`, which is the authoritative CI-parity
-        # comparison — a pre-commit-side files: filter would duplicate that
-        # decision with a different (push-local) diff and could disagree with
-        # it. Fail-open (exit 0 + stderr warning) when origin/master is
-        # unreachable locally; use `SKIP=verify-version-bump-local git push`
-        # for the rare deliberate no-bump push (no local equivalent of CI's
-        # 'no-release' PR label).
+        # No `files:` filter: the script itself decides from the merge-base
+        # diff, which is the authoritative CI-parity comparison — a
+        # pre-commit-side files: filter would duplicate that decision with a
+        # different (push-local) diff and could disagree with it. FAILS LOUD
+        # (exit 1) when the merge-base cannot be resolved — it deliberately
+        # does not degrade to the comparison it replaced; use
+        # `SKIP=verify-version-bump-local git push` for the rare deliberate
+        # no-bump push (no local equivalent of CI's 'no-release' PR label).
 
       - id: e2e-behavior-contract
         name: Behavior-contract e2e safety net (make e2e)

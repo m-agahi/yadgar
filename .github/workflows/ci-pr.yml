@@ -1007,16 +1007,16 @@ jobs:
           fetch-depth: 0
       - name: Trust workspace (container runs as a different UID than checkout)
         run: git config --global --add safe.directory '*'
-      - name: Verify version bump vs latest tag
-        run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          PYPROJECT_VER=$(grep -E '^version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          if [ "v${PYPROJECT_VER}" = "${LATEST_TAG}" ]; then
-            if git diff --name-only origin/master...HEAD | grep -qE '^yadgar/'; then
-              echo "::error::pyproject.toml version (${PYPROJECT_VER}) matches latest tag (${LATEST_TAG}). Bump or add 'no-release' label."
-              exit 1
-            fi
-          fi
+      - name: Verify version bump vs merge-base
+        # Task 382: was inline bash comparing pyproject.toml's version to
+        # `git describe --tags --abbrev=0`. A tag cannot answer "does THIS
+        # branch bump the version relative to its fork point" once master has
+        # moved — measured live, the gate stayed green over a branch whose own
+        # bump had been reverted by a master merge. Now delegates to the script
+        # (the same one the pre-push hook runs, so local and CI return the same
+        # verdict for the same repo state — the ADR-0097 parity contract) which
+        # compares against the merge-base, exactly as the backend step below.
+        run: python scripts/check_version_bump.py --ci --base origin/master
 
       - name: Verify backend_version bump when backend changed (#83)
         # Uses --ci --base origin/master to diff the PR branch vs the merge-base
