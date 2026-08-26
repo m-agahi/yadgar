@@ -548,7 +548,11 @@ repos:
         fail_fast: true
         # Mirrors .github/workflows/ci-pr.yml's verify-version-bump job — which
         # now runs THIS SAME SCRIPT (`--ci --base origin/master`), so local and
-        # CI cannot disagree. Fails when pyproject.toml's version is unchanged
+        # CI run the same comparison and so cannot disagree about the same
+        # COMMITTED state. (Both read HEAD's version from the working tree, so
+        # an uncommitted bump satisfies the local hook and not CI — that is
+        # pre-existing behaviour, not something the merge-base rework
+        # introduced.) Fails when pyproject.toml's version is unchanged
         # since the merge-base with origin/master AND the branch touches
         # yadgar/**. Task 382 replaced the old latest-tag comparison: a tag
         # cannot see a bump that a master merge reverted, and the gate stayed
