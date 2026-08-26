@@ -612,9 +612,8 @@ yadgar/core/server/tools/admin_other.py:397:PLC0415
 yadgar/core/server/tools/admin_other.py:911:PLC0415
 yadgar/core/server/tools/admin_vacuum.py:51:PLC0415
 yadgar/core/server/tools/adr.py:421:PLC0415
-yadgar/core/server/tools/adr.py:583:PLC0415
-yadgar/core/server/tools/adr.py:778:PLC0415
-yadgar/core/server/tools/adr.py:960:PLC0415
+yadgar/core/server/tools/adr.py:579:PLC0415
+yadgar/core/server/tools/adr.py:774:PLC0415
 yadgar/core/server/tools/adr_render.py:264:PLC0415
 yadgar/core/server/tools/agent_prompts.py:288:PLC0415
 yadgar/core/server/tools/agent_prompts.py:290:PLC0415
