@@ -26,7 +26,7 @@ _DURATION_RE = re.compile(r"^(\d+)(m|h|d)$", re.IGNORECASE)
 _UNIT_SECONDS: dict[str, int] = {"m": 60, "h": 3600, "d": 86400}
 
 
-@observe(tier="hot", metric="tools.admin_other._parse_since_duration")
+@observe(tier="hot", metric="tools._recent_memories._parse_since_duration")
 def _parse_since_duration(since: str) -> str:
     """Convert a duration string ('24h', '7d', '30m') or ISO datetime to cutoff ISO string.
 

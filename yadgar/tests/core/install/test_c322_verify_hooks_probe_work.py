@@ -94,7 +94,7 @@ def test_present_hook_returns_ran(monkeypatch):
     monkeypatch.setattr("yadgar.core.install._verify.subprocess.run", _patched_subprocess("ok"))
 
     result = _probe_hook_execution(entries, timeout=2.0)
-    assert result["post-tool-capture"]["status"] == "ran"
+    assert result["global:post-tool-capture"]["status"] == "ran"
 
 
 def test_hung_hook_returns_hung(monkeypatch):
@@ -104,7 +104,7 @@ def test_hung_hook_returns_hung(monkeypatch):
     monkeypatch.setattr("yadgar.core.install._verify.subprocess.run", _patched_subprocess("hang"))
 
     result = _probe_hook_execution(entries, timeout=0.5)
-    assert result["pre-compact-drain"]["status"] == "hung"
+    assert result["global:pre-compact-drain"]["status"] == "hung"
 
 
 def test_binary_missing(monkeypatch):
@@ -116,7 +116,7 @@ def test_binary_missing(monkeypatch):
     )
 
     result = _probe_hook_execution(entries, timeout=2.0)
-    assert result["session-start-context"]["status"] == "binary-missing"
+    assert result["global:session-start-context"]["status"] == "binary-missing"
 
 
 def test_crash_hook_returns_crash_with_stderr(monkeypatch):
@@ -130,7 +130,7 @@ def test_crash_hook_returns_crash_with_stderr(monkeypatch):
     )
 
     result = _probe_hook_execution(entries, timeout=2.0)
-    rec = result["block-reflect"]
+    rec = result["global:block-reflect"]
     assert rec["status"] == "crash"
     assert "boom" in rec["crash_reason"]
     assert len(rec["crash_reason"]) <= 200
@@ -215,12 +215,12 @@ def test_ok_false_when_any_probe_failed(monkeypatch, tmp_path):
 
     monkeypatch.setattr("yadgar.core.install._verify.subprocess.run", _classify)
 
-    report = verify_managed_hooks(home_dir=tmp_path)
+    report = verify_managed_hooks(home_dir=tmp_path, probe=True)
     assert report["ok"] is False, format_hook_verify_report(report)
 
     execution = report.get("execution", {})
-    assert execution.get("session-start-context", {}).get("status") == "ran"
-    assert execution.get("post-compact-rehydrate", {}).get("status") == "hung"
+    assert execution.get("global:session-start-context", {}).get("status") == "ran"
+    assert execution.get("global:post-compact-rehydrate", {}).get("status") == "hung"
 
 
 def test_ok_true_when_all_probes_ran(monkeypatch, tmp_path):
@@ -247,9 +247,9 @@ def test_ok_true_when_all_probes_ran(monkeypatch, tmp_path):
         _patched_subprocess("ok"),
     )
 
-    report = verify_managed_hooks(home_dir=tmp_path)
+    report = verify_managed_hooks(home_dir=tmp_path, probe=True)
     assert report["ok"] is True
-    assert report["execution"]["session-start-context"]["status"] == "ran"
+    assert report["execution"]["global:session-start-context"]["status"] == "ran"
 
 
 def test_probe_does_not_affect_existing_report_shape(monkeypatch, tmp_path):
@@ -268,7 +268,149 @@ def test_probe_does_not_affect_existing_report_shape(monkeypatch, tmp_path):
         _patched_subprocess("ok"),
     )
 
-    report = verify_managed_hooks(home_dir=tmp_path)
+    report = verify_managed_hooks(home_dir=tmp_path, probe=True)
     for key in ("ok", "scopes_inspected", "findings", "counts"):
         assert key in report, f"existing key {key!r} missing after probe"
     assert "execution" in report
+
+
+# ── task 385: the probe is opt-in, correctly targeted, and collision-free ────
+
+
+def _harvest_stub(expected: dict):
+    def _stub(home_dir, project_directory=None):
+        return (expected, [])
+
+    return _stub
+
+
+def test_default_never_executes_a_hook(monkeypatch, tmp_path):
+    """``verify-hooks`` with no flag must not run a single subprocess.
+
+    The subcommand advertises itself as safe to wire into an unattended probe
+    (``core/cli/verify_hooks.py``), but the #322 probe ran unconditionally —
+    so every invocation POSTed a real ``action_log`` row via the
+    ``post-tool-capture`` payload and ran a real queue drain via
+    ``pre-compact-drain``. Any subprocess at all is the defect here, so the
+    fake raises rather than records.
+    """
+    _write_global_settings(
+        tmp_path, {"hooks": {"SessionStart": [_entry(_runner_cmd("session-start-context"))]}}
+    )
+
+    import yadgar.core.install._verify as verify_mod
+
+    monkeypatch.setattr(
+        verify_mod,
+        "_harvest_expected",
+        _harvest_stub({"SessionStart": {"session-start-context": True}}),
+    )
+
+    def _explode(*args: Any, **kwargs: Any):
+        raise AssertionError(f"read-only default executed a hook: {args!r}")
+
+    monkeypatch.setattr("yadgar.core.install._verify.subprocess.run", _explode)
+
+    report = verify_managed_hooks(home_dir=tmp_path)
+    assert report["ok"] is True
+    assert report["execution"] == {}
+    assert report["probed"] is False
+
+
+def test_probe_skips_standalone_script_entries(monkeypatch, tmp_path):
+    """A PRESENT standalone-script hook must NOT be executed.
+
+    ``_probe_hook_execution`` skips entries whose ``runner_dispatched`` is
+    False, but the report builder hardcoded ``True`` on every PRESENT finding,
+    so the skip could never fire and nix-installed ``yadgar-<name>.py`` entries
+    were exec'd anyway. ``_is_runner_dispatched`` is the predicate that already
+    classifies these correctly for STATUS_FOREIGN.
+    """
+    _write_global_settings(
+        tmp_path,
+        {"hooks": {"SessionStart": [_entry(_standalone_cmd("session-start-context"))]}},
+    )
+
+    import yadgar.core.install._verify as verify_mod
+
+    # expected_runner False → the standalone shape is PRESENT, not FOREIGN.
+    monkeypatch.setattr(
+        verify_mod,
+        "_harvest_expected",
+        _harvest_stub({"SessionStart": {"session-start-context": False}}),
+    )
+
+    run_mock = MagicMock(side_effect=AssertionError("standalone script was executed"))
+    monkeypatch.setattr("yadgar.core.install._verify.subprocess.run", run_mock)
+
+    report = verify_managed_hooks(home_dir=tmp_path, probe=True)
+    assert report["execution"] == {}
+    run_mock.assert_not_called()
+
+
+def test_probe_records_both_scopes_for_one_logical_name(monkeypatch, tmp_path):
+    """Global and project entries for one hook must not overwrite each other.
+
+    ``results[name] = record`` keyed on the logical name alone, so the second
+    scope silently replaced the first — a crashing project-scope hook could be
+    reported as the healthy global one.
+    """
+    cmd = _runner_cmd("post-tool-capture")
+    entries = [
+        {"command": cmd, "scope": "global", "path": "/g", "runner_dispatched": True},
+        {"command": cmd, "scope": "project", "path": "/p", "runner_dispatched": True},
+    ]
+
+    calls: list[str] = []
+
+    def _by_call(*args: Any, **kwargs: Any):
+        calls.append("x")
+        if len(calls) == 2:  # the project-scope entry crashes
+            return subprocess.CompletedProcess(args=args[0], returncode=1, stdout="", stderr="boom")
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("yadgar.core.install._verify.subprocess.run", _by_call)
+
+    result = _probe_hook_execution(entries, timeout=2.0)
+    assert set(result) == {"global:post-tool-capture", "project:post-tool-capture"}
+    assert result["global:post-tool-capture"]["status"] == "ran"
+    assert result["project:post-tool-capture"]["status"] == "crash"
+
+
+def test_probe_report_is_json_serialisable(monkeypatch, tmp_path):
+    """``verify-hooks --json`` dumps the whole report — keys must be strings."""
+    _write_global_settings(
+        tmp_path,
+        {"hooks": {"SessionStart": [_entry(_runner_cmd("session-start-context"))]}},
+    )
+
+    import yadgar.core.install._verify as verify_mod
+
+    monkeypatch.setattr(
+        verify_mod,
+        "_harvest_expected",
+        _harvest_stub({"SessionStart": {"session-start-context": True}}),
+    )
+    monkeypatch.setattr("yadgar.core.install._verify.subprocess.run", _patched_subprocess("ok"))
+
+    report = verify_managed_hooks(home_dir=tmp_path, probe=True)
+    json.dumps(report)  # raises TypeError on a tuple key
+    assert report["probed"] is True
+
+
+def test_cli_help_declares_the_probe_mutates():
+    """The --probe help text must say it writes; the summary must not claim
+    unconditional read-only."""
+    import argparse
+
+    from yadgar.core.cli.verify_hooks import register
+
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers()
+    register(sub)
+    text = sub.choices["verify-hooks"].format_help()
+    assert "--probe" in text
+    assert "read-only" in text.lower()
+
+    top = parser.format_help()
+    assert "read-only unless --probe" in top

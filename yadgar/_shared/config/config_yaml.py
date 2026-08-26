@@ -1501,16 +1501,16 @@ FIELD_META: dict[str, dict[str, object]] = {
         "desc": (
             "Number of consecutive failed backend /health probes after which the core startup "
             "readiness gate enters long-bake-out (default 5). After this many failures the loop "
-            "switches to a single BACKEND_READY_LONG_BAKE_OUT_SEC sleep with one audit log line, so "
-            "a host journal can distinguish 'down for minutes' from a probe storm."
+            "switches to a coarse bake-out sleep (BACKEND_READY_LONG_BAKE_OUT_SEC, clamped to "
+            "POLL_MAX_SEC) with one audit line telling 'down for minutes' from a probe storm."
         ),
         "section": "backend_timeouts",
     },
     "backend_ready_long_bake_out_sec": {
         "desc": (
-            "Sleep duration (seconds) for each long-bake-out cycle after "
-            "BACKEND_READY_LONG_BAKE_OUT_AFTER consecutive probes have failed (default 60). Combined "
-            "with BACKEND_READY_POLL_MAX_SEC=30 a 10-minute outage runs ~30 probes instead of ~300."
+            "Nominal sleep (seconds) per long-bake-out cycle after "
+            "BACKEND_READY_LONG_BAKE_OUT_AFTER consecutive probes have failed (default 60), CLAMPED "
+            "to POLL_MAX_SEC: 60s is never slept, and a 10-minute outage runs ~24 probes, not ~300."
         ),
         "section": "backend_timeouts",
     },

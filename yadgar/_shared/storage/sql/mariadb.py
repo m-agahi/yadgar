@@ -1292,7 +1292,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
 
         The ``owner_kind`` / ``owner_id`` / ``reach`` columns were retired
         (§14.1); tenancy is enforced at the registry guard
-        (car A0's ``_ensure_project_exists``). The hook is the future
+        (``assert_project_registered``). The hook is the future
         seam: when a multi-tenant query shape lands, this method becomes
         a non-no-op and every read path gets filtered through it.
 

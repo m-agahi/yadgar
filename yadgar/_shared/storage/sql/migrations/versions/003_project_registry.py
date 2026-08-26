@@ -8,7 +8,8 @@ The registry exists so every write that stamps ``task.project_id`` or
 ``adr.project_id`` can be REJECTED at the boundary when the value is
 not a known project (FAIL LOUD, NOT INSERT OR IGNORE — §16.5). The
 guarded writes are the ``_LedgerMixin`` paths car A wires; the guard
-itself is ``yadgar/backend/admin_exec/project_registry.py``.
+itself is ``MariaStorageEngine.assert_project_registered``
+(``yadgar/_shared/storage/sql/registry.py``).
 
 Car A's ``002_ledger_tables`` ships the ``task`` and ``adr`` tables
 WITHOUT the FK on ``project_id`` — that is intentional: the FK chain

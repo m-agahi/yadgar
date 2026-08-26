@@ -29,7 +29,7 @@ iterates — so extending the tuple to satisfy the test also makes the preflight
 run the new guard. It cannot be satisfied cosmetically.
 
 Known limit, stated rather than hidden: a future guard written as a
-module-level call (``_ensure_project_exists_async(pid, engine=self)``) rather
+module-level call (``some_guard(pid, engine=self)``) rather
 than a ``self.`` method call escapes the AST rule. The invariant is deliberately
 scoped to the ADR seed's write path; it does not police ``create_task_row``.
 
@@ -93,10 +93,15 @@ class _LedgerFake:
     def __init__(self, *, registered: bool = True) -> None:
         self.registered = registered
         self.guard_calls: list[str] = []
+        self.guard_refresh: list[bool] = []
         self.inserts: list[dict[str, Any]] = []
 
-    async def assert_project_registered(self, project_id: str) -> None:
+    async def assert_project_registered(self, project_id: str, *, refresh: bool = True) -> None:
+        # ``refresh`` mirrors the real guard (task 384/385 follow-up): True bumps
+        # ``project.last_validated_at``. Recorded so the dry-run test can assert
+        # the preview asked for a check WITHOUT the write.
         self.guard_calls.append(project_id)
+        self.guard_refresh.append(refresh)
         if not self.registered:
             raise _UnknownProjectError(f"unknown project_id: {project_id!r}")
 
@@ -229,7 +234,13 @@ class TestPreflightIsDrivenByTheGuardTuple:
         called: list[str] = []
 
         class _TwoGuards(_LedgerFake):
-            async def assert_project_registered(self, project_id: str) -> None:
+            # The narrower signature (no ``refresh``) is deliberate and is now
+            # itself under test: the preflight must not hand the keyword to a
+            # guard that does not take it. mypy is correct that this is not
+            # substitutable for the base — that is the scenario.
+            async def assert_project_registered(  # type: ignore[override]
+                self, project_id: str
+            ) -> None:
                 called.append("assert_project_registered")
 
             async def assert_something_else(self, project_id: str) -> None:
@@ -292,3 +303,77 @@ class TestGuardParityInvariant:
         """Belt and braces: set equality above also passes if BOTH sides are
         empty, which would be a silently disarmed invariant."""
         assert "assert_project_registered" in adr_seed._WRITE_PATH_GUARDS
+
+
+# ── task 384/385 follow-up: a preview checks, it does not stamp ─────────────
+
+
+class TestDryRunDoesNotStampTheRegistry:
+    """A ``--dry-run`` that writes is ledger task 385's defect, second instance.
+
+    ``assert_project_registered`` bumps ``project.last_validated_at`` on a
+    present row (task 384). The preflight calls that guard so a preview reaches
+    the same verdict the apply would — but calling it unqualified made the
+    preview mutate the registry, which is exactly what ``verify-hooks`` was
+    doing when it claimed to be read-only.
+
+    Parity is preserved where it is owed: the guard still RUNS on the preview
+    and still refuses identically. Only the side effect is withheld.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dry_run_asks_for_a_check_without_the_refresh(self) -> None:
+        ledger = _LedgerFake()
+
+        result = await _run(sql_storage=ledger, dry_run=True)
+
+        assert result.get("ok") is not False, result.get("error")
+        # The check ran — preview fidelity is unchanged.
+        assert ledger.guard_calls == [_PROJECT_ID]
+        # ...and asked for no write. RED before the ``refresh`` kwarg landed:
+        # the preview issued UPDATE project SET last_validated_at.
+        assert ledger.guard_refresh == [False]
+        assert ledger.inserts == [], "a dry run reached the write path"
+
+    @pytest.mark.asyncio
+    async def test_apply_still_refreshes(self) -> None:
+        """The real write keeps the stamp — the clock must still move.
+
+        Suppressing it on the apply too would re-open task 384: nothing would
+        bump ``last_validated_at`` and every project would report stale forever.
+        """
+        ledger = _LedgerFake()
+
+        result = await _run(sql_storage=ledger, dry_run=False)
+
+        assert result.get("ok") is not False, result.get("error")
+        assert ledger.inserts, "the apply did not reach create_adr_row"
+        # The preflight's own call is refresh=False; create_adr_row's is the
+        # default True. The apply therefore stamps, the preview does not.
+        assert False in ledger.guard_refresh
+        assert True in ledger.guard_refresh
+
+    @pytest.mark.asyncio
+    async def test_a_guard_without_the_keyword_is_not_handed_one(self) -> None:
+        """A future guard lacking ``refresh`` must not be passed it.
+
+        The preflight reports every exception as "the guard rejected
+        project_id", so a ``TypeError`` from a signature mismatch would surface
+        as a FALSE rejection of a perfectly good project — "could not call" read
+        as "checked and refused". The kwarg is therefore signature-probed.
+        """
+        seen: list[tuple[str, tuple[str, ...]]] = []
+
+        class _NoKwargGuard(_LedgerFake):
+            # Narrower than the base ON PURPOSE — a guard without ``refresh``
+            # is exactly what this test hands the preflight.
+            async def assert_project_registered(  # type: ignore[override]
+                self, project_id: str
+            ) -> None:
+                seen.append(("assert_project_registered", ()))
+
+        ledger = _NoKwargGuard()
+        result = await _run(sql_storage=ledger, dry_run=True)
+
+        assert result.get("ok") is not False, result.get("error")
+        assert seen == [("assert_project_registered", ())]

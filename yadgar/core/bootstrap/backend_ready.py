@@ -116,10 +116,14 @@ def await_backend_ready(settings=None) -> bool:
       * sleep doubles after each consecutive failure, starting at
         ``BACKEND_READY_POLL_SEC`` and capped at ``BACKEND_READY_POLL_MAX_SEC``;
       * after ``BACKEND_READY_LONG_BAKE_OUT_AFTER`` consecutive failures the
-        loop enters long-bake-out: a single ``BACKEND_READY_LONG_BAKE_OUT_SEC``
-        sleep with one ``long-bake-out`` log line, then re-enters the probe loop.
-        The audit hook makes "backend has been down for minutes" greppable in
-        ``journalctl`` instead of indistinguishable from a probe storm.
+        loop enters long-bake-out: one ``long-bake-out`` log line, then a
+        coarse sleep per probe of ``min(BACKEND_READY_LONG_BAKE_OUT_SEC,
+        BACKEND_READY_POLL_MAX_SEC)`` — Car-J (ledger #367) clamps it so one
+        long sleep cannot drain the host CPU budget, which means the
+        configured value only shortens the sleep when set below the cap. The
+        audit hook makes "backend has been down for minutes" greppable in
+        ``journalctl`` instead of indistinguishable from a probe storm; the
+        log line names BOTH the configured cadence and the honoured one.
 
     Args:
         settings: injected for tests; defaults to ``get_settings()``.

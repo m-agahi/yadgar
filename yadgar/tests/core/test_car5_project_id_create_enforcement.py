@@ -4,7 +4,8 @@ Three findings, one defect: every stated guarantee about ``project_id``
 validation was weaker than the code claimed, and the guarantees disagreed
 with each other.
 
-1. ``_ensure_project_exists_sync`` had ZERO production call sites — only its
+1. ``_ensure_project_exists_sync`` had ZERO production call sites (task 384
+   has since deleted it entirely) — only its
    definition, its ``__all__`` entry, and ~12 docstrings across ``adr.py`` /
    ``memorize.py`` / ``recall.py`` / ``task.py`` / ``wiki.py`` /
    ``_project_param.py`` claiming a registry check ran "at the backend write
@@ -468,24 +469,23 @@ class TestDrainerSentinelSetIsTheSharedOne:
 class TestNoFalseEnforcementClaims:
     """A docstring claiming enforcement that does not exist IS the defect class.
 
-    ``_ensure_project_exists_sync`` is unreachable from every process that
-    would need it (see the module docstring), so no core-side surface may go
-    on naming it as the thing that validates a caller's ``project=``.
+    ``_ensure_project_exists_sync`` was unreachable from every process that
+    would need it (see the module docstring). Task 384 DELETED it, so no
+    core-side surface may name it at all now — a citation of a symbol that is
+    not in the tree is strictly worse than one that merely does not run.
     """
 
     def test_core_never_names_the_dead_guard(self) -> None:
         from yadgar.tests._paths import REPO_ROOT
 
         core = REPO_ROOT / "yadgar" / "core"
-        # The ONE sanctioned mention: the module that replaced the dead guard
-        # has to name it to explain why it is dead and unusable.
-        allowed = {core / "server" / "tools" / "_project_registry.py"}
+        # No allowlist since task 384: the symbol no longer exists, so even
+        # the module that replaced it explains itself without naming it.
         offenders = [
             str(p.relative_to(REPO_ROOT))
             for p in core.rglob("*.py")
-            if p not in allowed and "_ensure_project_exists" in p.read_text(encoding="utf-8")
+            if "_ensure_project_exists" in p.read_text(encoding="utf-8")
         ]
         assert offenders == [], (
-            "these core files still claim `_ensure_project_exists_sync` enforces "
-            f"something: {offenders}"
+            f"these core files name `_ensure_project_exists*`, which task 384 deleted: {offenders}"
         )

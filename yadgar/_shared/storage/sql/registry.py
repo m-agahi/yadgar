@@ -22,9 +22,12 @@ mixin is not independently constructible and is private for that reason.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from yadgar._shared.observability.observe import observe
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -121,15 +124,20 @@ class _ProjectRegistryMixin:
         an unregistered target in the mapping is a manifest-review failure,
         not a per-row FK error discovered halfway through the apply.
 
-        ``last_validated_at`` is SELECTed so the staleness surface (C11's
-        ``yadgar project list --stale``) can age rows client-side without
-        a second query.
+        ``last_validated_at`` is deliberately NOT in the projection (task
+        384). This SELECT is what ``core/server/tools/_project_registry``
+        forwards to answer ``assert_project_registered_for_create`` on EVERY
+        ``memorize`` / ``wiki_add``, so naming an optional column here couples
+        the create gate to it: after ``005``'s ``downgrade()`` the statement
+        fails with MySQL 1054, the forward returns an error, and the gate
+        degrades to a shape check — silently, and with nothing in the symptom
+        pointing at a dropped column. ``list_stale_projects`` selects the
+        column itself and is the surface that ages rows.
         """
         from sqlalchemy import text
 
         sql = text(
-            "SELECT `key`, display_name, kind, remote_url, created_at, "
-            "last_validated_at "
+            "SELECT `key`, display_name, kind, remote_url, created_at "
             "FROM project ORDER BY `key` ASC"
         )
         async with self._engine.connect() as conn:
@@ -174,29 +182,87 @@ class _ProjectRegistryMixin:
         return {"projects": rows, "threshold_days": int(threshold_days), "count": len(rows)}
 
     @observe(tier="boundary", metric="backend.sql.project.assert_registered")
-    async def assert_project_registered(self, project_id: str) -> None:
-        """Raise unless *project_id* is a registered project. Read-only.
+    async def assert_project_registered(self, project_id: str, *, refresh: bool = True) -> None:
+        """Raise unless *project_id* is a registered project; refresh its clock.
 
-        The IN-ENGINE half of the registry guard. Its sibling —
-        ``admin_exec/project_registry._ensure_project_exists_async`` — is the
-        same check for callers that hold an engine handle and want the guard
-        WITHOUT going through a ledger write. Both run the same ``row_exists``
-        query; they exist at two seams because they protect different things:
-
-          * this one sits inside the chokepoint methods, so no caller of
-            ``create_task_row`` / ``create_adr_row`` can bypass it — including
-            the two that call the engine directly rather than through the
-            admin op (``adr_seed``, ``seed``);
-          * the standalone one is callable before a write is composed.
+        The registry guard. It sits inside the chokepoint methods, so no
+        caller of ``create_task_row`` / ``create_adr_row`` can bypass it —
+        including the two that call the engine directly rather than through
+        the admin op (``adr_seed``, ``seed``).
 
         Engine-absent is NOT a case here: the method is reached through
         ``self``, so an engine that does not exist cannot dispatch it.
 
+        STALENESS REFRESH (task #88, re-homed by task 384)
+        --------------------------------------------------
+        A confirmed-present row has its ``last_validated_at`` bumped to
+        CURRENT_TIMESTAMP. Task #88 put this bump on the standalone
+        ``admin_exec/project_registry`` guard, which had no call site and
+        has since been deleted — so nothing ever bumped the column, and
+        after ``005``'s day-zero backfill every row would have crossed
+        ``PROJECT_STALENESS_DAYS`` on the same day and stayed there:
+        ``yadgar project list --stale`` would report EVERY project stale,
+        permanently, which is the exact inverse of the signal it exists to
+        carry. The bump belongs on the guard that actually runs.
+
+        It runs in its OWN transaction, AFTER the check, inside a
+        try/except: this method's contract to its callers is the raise, and
+        a write added for observability must never be able to fail one of
+        their ledger inserts. A bump failure is logged at WARNING and
+        swallowed — the check has already passed, and the next call bumps
+        again. Opening the transaction here is safe because every call site
+        invokes this BEFORE opening its own ``begin()``.
+
+        SCOPE — this is a LEDGER-write clock, not a project-activity clock.
+        Only ``create_task_row`` / ``create_adr_row`` reach it. The memory /
+        wiki create gate (``assert_project_registered_for_create``) forwards
+        a cached read and does not bump, so a project that only stores
+        memories still ages past the threshold.
+
+        ``refresh=False`` — A PREVIEW CHECKS, IT DOES NOT STAMP
+        ------------------------------------------------------
+        The dry-run preflights (``admin_exec/identity_stamp`` and
+        ``admin_exec/adr_seed``, both ``_preflight_write_guards``) call this
+        guard so a preview reaches the same verdict the apply would. They
+        pass ``refresh=False``: a ``--dry-run`` that writes is the same
+        defect ledger task 385 fixed in ``verify-hooks``, and it would make
+        the flag mean something different here than everywhere else in the
+        CLI. Parity is preserved where parity is owed — the check runs, the
+        refusal is identical, the preview fidelity is unchanged. Only the
+        side effect is withheld, and a side effect is precisely what a
+        preview must not have.
+
+        Args:
+            project_id: the ``owner/repo`` key to verify.
+            refresh: bump ``last_validated_at`` on a present row. ``False``
+                for preview/dry-run callers.
+
         Raises:
             UnknownProjectError: no ``project`` row matches *project_id*.
         """
+        from sqlalchemy import text
+
         from yadgar._shared.storage.sql.errors import UnknownProjectError
 
         present = await self.row_exists(table="project", key_column="key", key_value=project_id)
         if not present:
             raise UnknownProjectError(project_id)
+
+        if not refresh:
+            return
+
+        try:
+            async with self._engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE project SET last_validated_at = CURRENT_TIMESTAMP "
+                        "WHERE `key` = :key"
+                    ),
+                    {"key": project_id},
+                )
+        except Exception as exc:  # noqa: BLE001 — never fail the guard on a refresh
+            logger.warning(
+                "project registry: last_validated_at refresh failed for %s: %s",
+                project_id,
+                exc,
+            )

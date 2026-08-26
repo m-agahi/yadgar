@@ -323,13 +323,26 @@ def _probe_hook_execution(
     entries: list[dict[str, Any]],
     timeout: float = _PROBE_TIMEOUT_SECONDS,
 ) -> dict[str, dict[str, Any]]:
-    """Invoke each runner-dispatched *entry* and classify the outcome.
+    """Invoke each runner-dispatched *entry* for real and classify the outcome.
 
-    Returns ``{name: {"status": …, "scope": …, "crash_reason": …?}}``.  Only
-    entries with ``runner_dispatched`` are probed — nix-installed standalone
-    scripts (``yadgar-<name>.py``) are skipped because probing them would
-    double-count hooks that already have a runner-dispatched twin, and the
-    runner IS the canonical shape yadgar installs.
+    MUTATES THE LIVE STORE.  The probes are the hooks' own payloads, so
+    ``post-tool-capture`` POSTs a real ``action_log`` row and
+    ``pre-compact-drain`` runs a real queue drain outside a compaction.  Only
+    ``verify_managed_hooks(..., probe=True)`` reaches this function; see its
+    docstring for why that is opt-in.
+
+    Returns ``{"<scope>:<name>": {"status": …, "scope": …, "crash_reason": …?}}``.
+    The key is a ``scope``/``name`` composite, not the bare logical name: the
+    same hook can be wired in BOTH the global and the project settings file,
+    and keying on the name alone made the second record silently overwrite the
+    first — so a crashing project-scope hook could be reported as the healthy
+    global one.  It stays a string rather than a tuple because the whole report
+    goes through ``json.dumps`` on ``verify-hooks --json``.
+
+    Only entries with ``runner_dispatched`` are probed — nix-installed
+    standalone scripts (``yadgar-<name>.py``) are skipped because probing them
+    would double-count hooks that already have a runner-dispatched twin, and
+    the runner IS the canonical shape yadgar installs.
 
     Status values:
 
@@ -375,16 +388,64 @@ def _probe_hook_execution(
             else:
                 record["status"] = "crash"
                 record["crash_reason"] = (completed.stderr or "")[:_PROBE_STDERR_CHARS]
-        results[name] = record
+        results[f"{entry.get('scope')}:{name}"] = record
     return results
+
+
+#: Probe outcomes that mean "wired but does not work" — they fail the check.
+_BROKEN_PROBE_STATUSES = frozenset({"hung", "crash", "binary-missing"})
+
+
+@observe(tier="stage")
+def _probe_present_findings(findings: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Execute every PRESENT runner-dispatched finding. MUTATES the live store.
+
+    Task 385: ``runner_dispatched`` is computed by ``_is_runner_dispatched``,
+    not hardcoded ``True``.  The hardcoded value defeated
+    ``_probe_hook_execution``'s skip for standalone scripts, so nix-installed
+    ``yadgar-<name>.py`` entries — which that function's docstring says it does
+    not touch — were exec'd anyway.
+    """
+    targets = [
+        {
+            "command": f["command"],
+            "scope": f.get("scope"),
+            "path": None,
+            "runner_dispatched": _is_runner_dispatched(f["command"]),
+        }
+        for f in findings
+        if f["status"] == STATUS_PRESENT
+    ]
+    return _probe_hook_execution(targets)
 
 
 @observe(tier="boundary")
 def verify_managed_hooks(
     home_dir: Path,
     project_directory: str | None = None,
+    *,
+    probe: bool = False,
 ) -> dict[str, Any]:
     """Compare the hooks yadgar's installer emits against what is actually wired.
+
+    READ-ONLY BY DEFAULT (task 385)
+    -------------------------------
+    ``probe=False`` (the default) inspects settings files and nothing else.
+    ``probe=True`` additionally EXECUTES every present runner-dispatched hook
+    with its real payload, which writes: ``post-tool-capture`` POSTs an
+    ``action_log`` row (``tool_name="Bash"``, empty summary and directory) and
+    ``pre-compact-drain`` runs a real queue drain outside a compaction.
+
+    The flag exists rather than the alternative — feeding the handlers payloads
+    they no-op on — because this module's whole reason for being a separate
+    subcommand is that it is "safe to wire into an unattended probe"
+    (``core/cli/verify_hooks.py``).  A default that files a phantom action every
+    time a monitor runs contradicts that charter, while silently declawing the
+    payloads would permanently lose coverage: a ``tool_name`` outside
+    ``_CAPTURE_TOOLS`` returns before the summary-extraction and POST paths run,
+    and dropping the drain probe removes ``pre-compact-drain`` coverage
+    entirely.  Opt-in keeps the diagnostic intact for the operator who asks for
+    it, and keeps the unattended default honest.
 
     Returns a report dict::
 
@@ -393,6 +454,8 @@ def verify_managed_hooks(
           "scopes_inspected": [{"scope", "path", "exists"}, …],
           "findings": [{"event", "name", "status", "scope", "command"}, …],
           "counts": {"present", "missing", "foreign", "unexpected", "unrecognized"},
+          "execution": {"<scope>:<name>": {"status", …}},  # {} unless probe=True
+          "probed": bool,
         }
 
     ``foreign`` and ``unexpected`` are reported but do NOT fail the check —
@@ -403,11 +466,11 @@ def verify_managed_hooks(
     name would otherwise vanish from the expected set and be reported clean —
     a blind spot in the very tool built to end blind spots.
 
-    LIMITATION: the comparison answers "is this hook REGISTERED", not "does it
-    WORK".  A standalone-script entry is matched by name only; nothing here
-    checks that the script it points at still exists on disk, that the baked
-    interpreter resolves, or that the hook exits 0.  A clean result means the
-    wiring is present, not that the hooks run.
+    LIMITATION: without ``probe``, the comparison answers "is this hook
+    REGISTERED", not "does it WORK".  A standalone-script entry is matched by
+    name only; nothing here checks that the script it points at still exists on
+    disk, that the baked interpreter resolves, or that the hook exits 0.  A
+    clean result means the wiring is present, not that the hooks run.
     """
     expected, unrecognized = _harvest_expected(home_dir, project_directory)
     live, inspected = _collect_live(home_dir, project_directory)
@@ -484,23 +547,14 @@ def verify_managed_hooks(
         )
     }
 
-    # Probe (task #322): invoke every PRESENT runner-dispatched hook and
-    # classify the outcome.  A registered-but-broken hook (hang, crash,
-    # missing binary) flips ``ok`` to False so the user gets a real signal
-    # rather than "registered but never runs".
-    probe_targets = [
-        {
-            "command": f["command"],
-            "scope": f.get("scope"),
-            "path": None,
-            "runner_dispatched": True,
-        }
-        for f in findings
-        if f["status"] == STATUS_PRESENT
-    ]
-    execution = _probe_hook_execution(probe_targets)
+    # Probe (task #322, gated by task 385): invoke every PRESENT
+    # runner-dispatched hook and classify the outcome.  A registered-but-broken
+    # hook (hang, crash, missing binary) flips ``ok`` to False so the user gets
+    # a real signal rather than "registered but never runs".  Off unless the
+    # caller asked — it mutates the live store.
+    execution = _probe_present_findings(findings) if probe else {}
     execution_failed = any(
-        rec.get("status") in {"hung", "crash", "binary-missing"} for rec in execution.values()
+        rec.get("status") in _BROKEN_PROBE_STATUSES for rec in execution.values()
     )
 
     return {
@@ -513,10 +567,65 @@ def verify_managed_hooks(
         "findings": findings,
         "counts": counts,
         "execution": execution,
+        "probed": probe,
     }
 
 
 # ── report rendering ─────────────────────────────────────────────────────────
+
+
+@observe(tier="stage")
+def _broken_probe_records(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Probe records that mean "wired but does not work"; ``{}`` when unprobed."""
+    return {
+        key: rec
+        for key, rec in (report.get("execution") or {}).items()
+        if rec.get("status") in _BROKEN_PROBE_STATUSES
+    }
+
+
+@observe(tier="stage")
+def _render_broken_section(broken: dict[str, dict[str, Any]]) -> list[str]:
+    """Render the BROKEN block, or nothing at all.
+
+    Empty on the read-only default (task 385): ``execution`` is ``{}`` there,
+    so an unprobed report gets no heading rather than an empty one.
+    """
+    if not broken:
+        return []
+    lines = ["", f"  BROKEN — registered but does not run ({len(broken)}):"]
+    for key, rec in sorted(broken.items()):
+        reason = rec.get("crash_reason", "")
+        suffix = f" — {reason}" if reason else ""
+        lines.append(f"    {key}: {rec['status']}{suffix}")
+    return lines
+
+
+@observe(tier="stage")
+def _verdict_line(report: dict[str, Any], *, broken: bool, missing: bool) -> str:
+    """The single closing line naming what the report concluded.
+
+    Split out of ``format_hook_verify_report`` so adding the probe's two
+    outcomes (task 385) did not push that function past the I13 cyclomatic cap.
+    """
+    if report["ok"] and report.get("probed"):
+        return "  OK: every managed hook is registered AND ran under the probe."
+    if report["ok"]:
+        return "  OK: every managed hook is registered (registration only — see LIMITATION)."
+    if broken:
+        return (
+            "  BROKEN: at least one registered hook hung, crashed, or has no "
+            "binary on disk — it is wired but does not work."
+        )
+    if missing:
+        return (
+            "  DIVERGENCE: at least one managed hook is absent from every "
+            "settings file inspected — it will never fire."
+        )
+    return (
+        "  BLIND SPOT: the installer emits a command shape this check "
+        "cannot name — some managed hooks were not verified at all."
+    )
 
 
 @observe(tier="stage")
@@ -567,6 +676,9 @@ def format_hook_verify_report(report: dict[str, Any]) -> str:
         for finding in unexpected:
             lines.append(f"    {finding['event']}: {finding['name']} [{finding['scope']}]")
 
+    broken = _broken_probe_records(report)
+    lines.extend(_render_broken_section(broken))
+
     present = by_status.get(STATUS_PRESENT, [])
     lines.append("")
     lines.append(
@@ -574,16 +686,5 @@ def format_hook_verify_report(report: dict[str, Any]) -> str:
         f"{len(foreign)} foreign, {len(unexpected)} unexpected, "
         f"{len(unrecognized)} unrecognized"
     )
-    if report["ok"]:
-        lines.append("  OK: every managed hook is registered (registration only — see LIMITATION).")
-    elif missing:
-        lines.append(
-            "  DIVERGENCE: at least one managed hook is absent from every "
-            "settings file inspected — it will never fire."
-        )
-    else:
-        lines.append(
-            "  BLIND SPOT: the installer emits a command shape this check "
-            "cannot name — some managed hooks were not verified at all."
-        )
+    lines.append(_verdict_line(report, broken=bool(broken), missing=bool(missing)))
     return "\n".join(lines)
