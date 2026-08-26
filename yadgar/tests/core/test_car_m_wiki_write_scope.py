@@ -210,6 +210,19 @@ def wiki_tool(monkeypatch):
                         return dict(p)
                 return None
 
+            def list_wiki_pages(self, directory: str | None = None, **_kw) -> list[dict]:
+                """Mirror the real directory filter: exact dir, plus 'global'.
+
+                This is the scan set ``WikiStore.autolink`` iterates, so it is
+                also the set car P's all-or-nothing gate inspects.
+                """
+                if directory is None:
+                    return [dict(p) for p in self._pages]
+                caller_dir = directory.rstrip("/")
+                return [
+                    dict(p) for p in self._pages if p["directory_context"] in (caller_dir, "global")
+                ]
+
         fake._storage = _FakeStorage(pages)  # type: ignore[attr-defined]
         monkeypatch.setattr(_state, "_wiki", fake)
         return fake
@@ -783,3 +796,142 @@ class TestWikiUpdateIsGated:
             f"report not-found: {result!r}"
         )
         assert any(op == "wiki_update" for op, _ in forwarded)
+
+
+class TestWikiAutolinkIsGatedAllOrNothing:
+    """``wiki_autolink`` — the bulk write shell — refuses as a whole or not at all.
+
+    Car M's header named three tools; ``wiki_autolink`` was not one of them, and
+    car P closes it anyway: it reaches the same pages through the same
+    unscoped-identity hole (it, too, sourced its caller from
+    ``accept_project_param``, which returns ``None`` for precisely the
+    session-bound callers a gate most needs to see). A write shell does not get
+    to stay open because an older comment failed to list it.
+
+    ALL-OR-NOTHING, not per-page skipping. ``WikiStore.autolink`` iterates
+    ``list_wiki_pages(directory=...)`` — the caller's directory plus
+    ``'global'`` — and rewrites every page with an accepted proposal. Silently
+    skipping the foreign pages would return ``pages_changed`` /
+    ``links_added`` counts the caller cannot map back to WHICH pages were
+    rewritten: the torn-state problem the rest of car P exists to prevent.
+
+    ``dry_run=True`` (the default) stays a pure read and is never gated.
+    """
+
+    #: A page sitting in the CALLER's directory but stamped another project —
+    #: the live drift shape (ADR-0337's 9 legacy rows), and the one that puts a
+    #: foreign row inside a directory-scoped scan set.
+    _FOREIGN_IN_CALLER_DIR = dict(
+        slug="stray-flux-page", project_id=_FLUX_PROJECT, directory_context=_YADGAR_DIR
+    )
+
+    def test_foreign_page_in_the_target_set_refuses_the_whole_call(self, wiki_tool):
+        wtool, wire, forwarded = wiki_tool
+        wire(
+            [
+                _page("yadgar-own-page", _YADGAR_PROJECT, _YADGAR_DIR, page_id=1),
+                _page(**self._FOREIGN_IN_CALLER_DIR, page_id=2),
+            ]
+        )
+
+        result = wtool.wiki_autolink(directory=_YADGAR_DIR, dry_run=False, project=_YADGAR_PROJECT)
+
+        assert result.get("refused") is True, (
+            f"wiki_autolink rewrote a target set containing a foreign page: {result!r}"
+        )
+        assert result.get("reason") == "cross_project_write_refused"
+        # ALL-OR-NOTHING: not "the yadgar page was linked and the flux one
+        # skipped". Nothing reached the forward, so NO page was modified —
+        # including ``yadgar-own-page``, which the caller does own.
+        assert not forwarded, (
+            f"wiki_autolink forwarded despite a foreign page in the set: {forwarded!r}"
+        )
+
+    def test_dry_run_is_never_gated(self, wiki_tool):
+        """``dry_run=True`` mutates nothing, so the gate must not fire.
+
+        Gating the dry run would break the documented review workflow (dry-run,
+        read the proposals, then apply) for a call that cannot write.
+        """
+        wtool, wire, forwarded = wiki_tool
+        wire(
+            [
+                _page("yadgar-own-page", _YADGAR_PROJECT, _YADGAR_DIR, page_id=1),
+                _page(**self._FOREIGN_IN_CALLER_DIR, page_id=2),
+            ]
+        )
+
+        result = wtool.wiki_autolink(directory=_YADGAR_DIR, dry_run=True, project=_YADGAR_PROJECT)
+
+        assert "refused" not in (result or {}), f"dry run was refused: {result!r}"
+        assert any(op == "wiki_autolink" for op, _ in forwarded)
+
+    def test_own_project_target_set_still_writes(self, wiki_tool):
+        wtool, wire, forwarded = wiki_tool
+        wire(
+            [
+                _page("yadgar-a", _YADGAR_PROJECT, _YADGAR_DIR, page_id=1),
+                _page("yadgar-b", _YADGAR_PROJECT, _YADGAR_DIR, page_id=2),
+            ]
+        )
+
+        result = wtool.wiki_autolink(directory=_YADGAR_DIR, dry_run=False, project=_YADGAR_PROJECT)
+
+        assert "refused" not in (result or {}), f"same-project autolink refused: {result!r}"
+        assert any(
+            op == "wiki_autolink" and payload.get("dry_run") is False for op, payload in forwarded
+        ), f"same-project autolink did not reach the forward seam: {forwarded!r}"
+
+    def test_global_reach_pages_do_not_block_the_set(self, wiki_tool):
+        """A reach-tagged page is an explicit cross-project contract (ADR-0171).
+
+        The agent-prompt library is owned by one project and writable from every
+        one, so its presence in a scan set must not veto the whole call.
+        """
+        wtool, wire, forwarded = wiki_tool
+        wire(
+            [
+                _page("yadgar-a", _YADGAR_PROJECT, _YADGAR_DIR, page_id=1),
+                _page(_GLOBAL_SLUG, _FLUX_PROJECT, "global", page_id=2, tags=[_REACH_TAG]),
+            ]
+        )
+
+        result = wtool.wiki_autolink(directory=_YADGAR_DIR, dry_run=False, project=_YADGAR_PROJECT)
+
+        assert "refused" not in (result or {}), (
+            f"a global-reach page vetoed an otherwise-own-project set: {result!r}"
+        )
+        assert any(op == "wiki_autolink" for op, _ in forwarded)
+
+    def test_unscoped_caller_still_writes(self, wiki_tool):
+        """The caller-declares policy is unchanged here too — no identity, allowed."""
+        wtool, wire, forwarded = wiki_tool
+        wire(
+            [
+                _page("yadgar-own-page", _YADGAR_PROJECT, _YADGAR_DIR, page_id=1),
+                _page(**self._FOREIGN_IN_CALLER_DIR, page_id=2),
+            ]
+        )
+
+        result = wtool.wiki_autolink(directory=_YADGAR_DIR, dry_run=False)
+
+        assert "refused" not in (result or {}), f"unscoped autolink was refused: {result!r}"
+        assert any(op == "wiki_autolink" for op, _ in forwarded)
+
+    def test_session_bound_caller_who_omits_project_is_gated(self, wiki_tool, session_identity):
+        """The inversion, on this tool too: identity via the ladder, not the kwarg."""
+        wtool, wire, forwarded = wiki_tool
+        wire(
+            [
+                _page("yadgar-own-page", _YADGAR_PROJECT, _YADGAR_DIR, page_id=1),
+                _page(**self._FOREIGN_IN_CALLER_DIR, page_id=2),
+            ]
+        )
+        session_identity(_YADGAR_PROJECT)
+
+        result = wtool.wiki_autolink(directory=_YADGAR_DIR, dry_run=False)
+
+        assert result.get("refused") is True, (
+            f"a session-bound caller bulk-rewrote a set containing a foreign page: {result!r}"
+        )
+        assert not forwarded
