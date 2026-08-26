@@ -17,6 +17,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parent.parent.parent.parent / "scripts" / "check_ledger_chokepoint.py"
 
 
@@ -577,3 +579,179 @@ def test_real_adr_row_read_still_flagged(tmp_path):
     res = run_script("--root", str(root))
     assert res.returncode == 1, res.stdout
     assert "adr" in res.stdout
+
+
+# ---------------------------------------------------------------------------
+# Car Q: positional matching replaces Car B's whole-string exemption
+#
+# Car B (task #201) fixed a real false positive by returning [] for the WHOLE
+# literal whenever ``FROM information_schema.`` appeared anywhere in it. That
+# made any literal MIXING a metadata read with a real ledger row access
+# invisible to the guard. The matcher now scores each TABLE POSITION on its
+# own qualifier, so the metadata read is skipped and the row access is not.
+# ---------------------------------------------------------------------------
+
+
+def _violation_lines(stdout: str) -> list[str]:
+    return [line for line in stdout.splitlines() if "ledger table" in line]
+
+
+def test_metadata_read_plus_ledger_write_in_one_literal_is_flagged(tmp_path):
+    """THE case Car B's whole-string exemption created.
+
+    One literal, two statements: a legitimate ``information_schema`` catalog
+    read AND a real ``UPDATE adr SET ...`` row write. Under the exemption the
+    presence of the first bought clemency for the second and the guard scored
+    ZERO violations. Positional matching skips only the metadata POSITION.
+
+    Asserts the exact violation count and the table named — a bare
+    ``returncode == 1`` would also pass if the guard regressed to flagging the
+    ``'adr'`` string VALUE in the WHERE clause, which is the very false
+    positive Car B was right to remove.
+    """
+    root = _make_root(
+        tmp_path,
+        """\
+        from sqlalchemy import text
+
+        def sneaky():
+            return text(
+                "SELECT AUTO_INCREMENT FROM information_schema.TABLES "
+                "WHERE TABLE_NAME='adr'; "
+                "UPDATE adr SET tier='binding' WHERE id=:id"
+            )
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 1, res.stdout
+    lines = _violation_lines(res.stdout)
+    assert len(lines) == 1, res.stdout
+    assert "`adr`" in lines[0], res.stdout
+
+
+def test_metadata_read_plus_ledger_join_in_one_literal_is_flagged(tmp_path):
+    """A catalog read JOINed to a ledger table is still a ledger row access.
+
+    Same shape as above in a single statement rather than two — the
+    ``JOIN adr`` position carries no ``information_schema.`` qualifier.
+    """
+    root = _make_root(
+        tmp_path,
+        """\
+        from sqlalchemy import text
+
+        def joined():
+            return text(
+                "SELECT c.COLUMN_NAME, a.title "
+                "FROM information_schema.COLUMNS c "
+                "JOIN adr a ON a.id = c.ORDINAL_POSITION"
+            )
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 1, res.stdout
+    lines = _violation_lines(res.stdout)
+    assert len(lines) == 1, res.stdout
+    assert "`adr`" in lines[0], res.stdout
+
+
+def test_metadata_only_read_scores_zero_violations(tmp_path):
+    """The Car B false positive stays fixed — and stays fixed for the right reason.
+
+    Stronger than ``test_information_schema_metadata_read_not_flagged``'s
+    ``"information_schema" not in stdout or "adr" not in stdout``, which is
+    satisfied by any stdout that merely omits one of the two words. This
+    pins the violation COUNT at zero.
+    """
+    root = _make_root(
+        tmp_path,
+        """\
+        from sqlalchemy import text
+
+        def read_next_adr_id():
+            return text(
+                "SELECT AUTO_INCREMENT FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'adr'"
+            )
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 0, res.stdout
+    assert _violation_lines(res.stdout) == [], res.stdout
+
+
+def test_ledger_table_as_string_value_not_flagged(tmp_path):
+    """A ledger table name appearing only as a VALUE is not a row access.
+
+    This is the general form of the Car B false positive, with no
+    ``information_schema`` involved at all: the old bare-token matcher
+    flagged ``'adr'`` anywhere in the string, including inside quotes.
+    """
+    root = _make_root(
+        tmp_path,
+        """\
+        from sqlalchemy import text
+
+        def label():
+            return text("SELECT 'adr' AS kind, id FROM config WHERE id = 1")
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 0, res.stdout
+    assert _violation_lines(res.stdout) == [], res.stdout
+
+
+def test_ledger_table_as_column_name_not_flagged(tmp_path):
+    """A COLUMN named after a ledger table is not a table reference."""
+    root = _make_root(
+        tmp_path,
+        """\
+        from sqlalchemy import text
+
+        def insert_elsewhere():
+            return text("INSERT INTO audit_log (id, task) VALUES (1, 2)")
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 0, res.stdout
+    assert _violation_lines(res.stdout) == [], res.stdout
+
+
+@pytest.mark.parametrize(
+    ("sql", "table"),
+    [
+        ("SELECT id FROM task WHERE id = 1", "task"),
+        ("SELECT * FROM t JOIN task_blocked_by tb ON tb.task_id = t.id", "task_blocked_by"),
+        ("INSERT INTO adr (id) VALUES (1)", "adr"),
+        ("REPLACE INTO agent_pattern (name) VALUES ('x')", "agent_pattern"),
+        ("UPDATE adr SET tier = 'binding' WHERE id = 1", "adr"),
+        ("DELETE FROM adr_supersedes WHERE adr_id = 1", "adr_supersedes"),
+        ("TRUNCATE TABLE agent_discipline", "agent_discipline"),
+        ("TRUNCATE task", "task"),
+        ("SELECT id FROM `task` WHERE id = 1", "task"),
+        ("SELECT id FROM ledgerdb.task WHERE id = 1", "task"),
+        ("SELECT id FROM `ledgerdb`.`adr` WHERE id = 1", "adr"),
+    ],
+)
+def test_every_table_introducer_shape_is_caught(tmp_path, sql, table):
+    """Positional matching under-detects where bare-token over-detected.
+
+    A guard that silently stops matching is worse than one that over-matches,
+    so every SQL shape that puts a name in a table position gets a case here:
+    ``FROM``, ``JOIN``, ``INSERT INTO``, ``REPLACE INTO``, ``UPDATE ... SET``,
+    ``DELETE FROM``, ``TRUNCATE TABLE``, bare ``TRUNCATE``, back-quoted, and
+    schema-qualified (which must NOT be confused with the
+    ``information_schema.`` metadata skip).
+    """
+    root = _make_root(
+        tmp_path,
+        f"""\
+        from sqlalchemy import text
+
+        def q():
+            return text({sql!r})
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 1, res.stdout
+    assert f"`{table}`" in res.stdout, res.stdout

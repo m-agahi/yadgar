@@ -30,11 +30,19 @@ ALLOWED
 DETECTION SCOPE
 ---------------
 - String arguments to ``text(...)`` / ``execute(...)`` / ``exec(...)`` calls
-  that mention a ledger table name AND start with an SQL statement keyword
-  (``SELECT`` / ``INSERT`` / ``UPDATE`` / ``DELETE`` / ``MERGE`` /
-  ``REPLACE`` / ``TRUNCATE``). Prose mentions of a table name in a
-  docstring are NOT flagged — the rule is "SQL statement references a
-  ledger table", not "table name appears anywhere".
+  that start with an SQL statement keyword (``SELECT`` / ``INSERT`` /
+  ``UPDATE`` / ``DELETE`` / ``MERGE`` / ``REPLACE`` / ``TRUNCATE``) AND name
+  a ledger table in a TABLE POSITION — after ``FROM`` / ``JOIN`` / ``INTO`` /
+  ``UPDATE`` / ``TABLE`` / ``TRUNCATE``, optionally schema-qualified. Prose
+  mentions of a table name in a docstring are NOT flagged, and neither is a
+  table name appearing only as a string VALUE (``WHERE TABLE_NAME = 'adr'``)
+  or as a column name. The rule is "SQL statement accesses a ledger table",
+  not "table name appears anywhere".
+- A table position qualified by ``information_schema.`` is a catalog
+  metadata read, not a ledger row access, and is skipped — PER POSITION.
+  Other table positions in the same statement are still checked, so a
+  literal that mixes ``FROM information_schema.TABLES`` with
+  ``UPDATE adr SET ...`` is still a violation on ``adr``.
 - Tests are excluded from the scan (mirrors check_dynamic_span_names).
 - Free-standing SQL strings (no ``text(...)`` wrapper) are out of scope.
   The guard is not a SQL parser — it is an AST walker over call shapes,
@@ -100,6 +108,43 @@ _SQL_START_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Keywords after which SQL names a TABLE rather than a column or a value.
+# ``DELETE FROM t`` / ``INSERT INTO t`` / ``REPLACE INTO t`` / ``MERGE INTO t``
+# / ``UPDATE t SET`` / ``TRUNCATE t`` / ``TRUNCATE TABLE t`` / ``... JOIN t``
+# are all covered by this set; a bare column or a quoted string VALUE never
+# follows one of them.
+_TABLE_INTRODUCERS = ("FROM", "JOIN", "INTO", "UPDATE", "TABLE", "TRUNCATE")
+
+# A SQL identifier, optionally back-quoted. Used for the SCHEMA half of a
+# qualified reference (``db.task`` / ``information_schema.TABLES``).
+_SQL_IDENT = r"`?[A-Za-z_][A-Za-z0-9_$]*`?"
+
+# The one schema whose objects are catalog METADATA, never ledger rows.
+# ``SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_NAME='adr'``
+# reads the catalog; the ``'adr'`` in the WHERE clause is a string VALUE.
+_METADATA_SCHEMA = "information_schema"
+
+
+def _table_position_re(table: str) -> re.Pattern[str]:
+    """Regex matching ``table`` where SQL puts a TABLE NAME, not a value.
+
+    Requires one of ``_TABLE_INTRODUCERS`` immediately before the name,
+    with an optional schema qualifier in between (``FROM db.task``,
+    ``JOIN `db`.`task```). The schema is captured so the caller can reject
+    ``information_schema.``-qualified hits without discarding the rest of
+    the statement.
+    """
+    return re.compile(
+        r"\b(?:" + "|".join(_TABLE_INTRODUCERS) + r")\s+"
+        r"(?:(?P<schema>" + _SQL_IDENT + r")\s*\.\s*)?"
+        r"`?" + re.escape(table) + r"`?"
+        r"(?![A-Za-z0-9_$])",
+        re.IGNORECASE,
+    )
+
+
+_TABLE_POSITION_RES: dict[str, re.Pattern[str]] = {t: _table_position_re(t) for t in LEDGER_TABLES}
+
 # Function names whose string-argument calls carry an SQL statement. A
 # Call whose ``func`` is one of these (Name or Attribute) and whose args
 # contain a string literal is the chokepoint's exact surface to inspect.
@@ -131,6 +176,23 @@ def _is_sql_literal(literal: str) -> bool:
     when the SQL starter appears on any line.
     """
     return _SQL_START_RE.search(literal) is not None
+
+
+def _referenced_in_table_position(literal: str, table: str) -> bool:
+    """True when ``literal`` names ``table`` where SQL expects a TABLE.
+
+    Every occurrence is examined, not just the first: a statement may read
+    the catalog AND touch a ledger row, and the catalog read must not grant
+    the row access clemency. A hit qualified by ``information_schema.`` is
+    catalog metadata (``information_schema.adr`` is not the ledger's ``adr``)
+    and does not count; any other hit does.
+    """
+    for match in _TABLE_POSITION_RES[table].finditer(literal):
+        schema = (match.group("schema") or "").strip("`").lower()
+        if schema == _METADATA_SCHEMA:
+            continue
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -291,34 +353,46 @@ def _violations_in_string_literal(
     trigger — the guard is targeted at actual SQL strings, not docstrings
     or log messages.
 
-    Car B (task #201): a statement that reads from ``information_schema.``
-    is a schema-metadata lookup (``information_schema.TABLES``,
-    ``information_schema.COLUMNS``, ``information_schema.STATISTICS`` …) — not
-    a row access on a ledger table. ``_read_next_adr_id`` reads
-    ``SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_NAME = 'adr'``
-    and the bare-substring matcher was over-matching on the ``'adr'`` token
-    inside the WHERE clause's string literal, flagging a legitimate metadata
-    read. The fix excludes any SQL string whose source-of-truth read targets
-    the ``information_schema.`` schema — the ledger-table token in the WHERE
-    clause is a string-literal value, not a table reference, so the whole
-    statement is metadata. A plain ``FROM adr`` (or ``FROM information_schema.adr``
-    with the schema-prefixed form) is unchanged.
+    MATCHING IS POSITIONAL, NOT BARE-TOKEN. A ledger table counts only where
+    SQL puts a TABLE NAME — after ``FROM`` / ``JOIN`` / ``INTO`` / ``UPDATE`` /
+    ``TABLE`` / ``TRUNCATE``, with an optional schema qualifier. A hit whose
+    qualifier is ``information_schema.`` is catalog metadata and is skipped;
+    every OTHER table position in the same statement is still checked.
+
+    Car B (task #201) found the false positive: ``adr_seed._read_next_adr_id``
+    runs ``SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE
+    TABLE_NAME = 'adr'`` and the bare-substring matcher flagged the ``'adr'``
+    token inside the WHERE clause's string VALUE. Car B's remedy was to
+    ``return []`` for the WHOLE literal on any ``FROM information_schema.``
+    anywhere in it — far wider than the false positive, because it made any
+    literal MIXING a metadata read with a real ledger access invisible::
+
+        text("SELECT AUTO_INCREMENT FROM information_schema.TABLES "
+             "WHERE TABLE_NAME='adr'; UPDATE adr SET tier='binding'")
+
+    That string scored ZERO violations. Positional matching removes the
+    whole-string escape hatch: the metadata ``FROM`` is skipped on its
+    qualifier, the ``UPDATE adr`` is still flagged.
+
+    KNOWN GAPS (deliberate — a positional matcher under-detects where a
+    bare-token one over-detected, and each of these would cost more false
+    positives than it buys):
+
+    - Comma-separated table lists (``FROM a, task`` / ``UPDATE a, task SET``):
+      only the first name after the introducer is read. Adding ``,`` as an
+      introducer would flag a COLUMN named ``task`` in
+      ``INSERT INTO foo (id, task)``.
+    - A literal that does not START with an SQL statement keyword is not
+      scanned at all — ``_is_sql_literal`` gates on ``_SQL_STARTERS``, which
+      omits ``WITH``, so a CTE-first statement is out of scope. Pre-existing
+      and unrelated to the exemption; no such literal exists in this repo
+      (measured 2026-08-26).
     """
     if not _is_sql_literal(literal):
         return []
-    # Car B (task #201): ``information_schema.*`` is a schema-metadata read,
-    # not a row access on a ledger table. The whole statement is
-    # metadata if its source-of-truth read is ``FROM information_schema.``
-    # — the ledger-table token in the WHERE clause (e.g. ``TABLE_NAME = 'adr'``)
-    # is a string-literal value, not a table reference. Skip the whole
-    # string; a ``FROM information_schema.ad`` style query carries no
-    # information beyond the prefix.
-    if re.search(r"\bfrom\s+information_schema\.", literal, re.IGNORECASE) is not None:
-        return []
     out: list[Violation] = []
     for table in LEDGER_TABLES:
-        pattern = rf"(?<![A-Za-z0-9_])(?:`)?{re.escape(table)}(?:`)?(?![A-Za-z0-9_])"
-        if re.search(pattern, literal, re.IGNORECASE) is None:
+        if not _referenced_in_table_position(literal, table):
             continue
         snippet = literal.strip().splitlines()[0]
         if len(snippet) > 120:
