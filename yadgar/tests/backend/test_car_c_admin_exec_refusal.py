@@ -242,3 +242,127 @@ def test_admin_route_renders_unknown_project_as_refusal(
     detail = resp.json().get("detail", {})
     assert detail.get("refused") is True
     assert detail.get("ok") is False
+
+
+# ---------------------------------------------------------------------------
+# (4) Car Q — the guard is UNIFORM, not three hand-picked ops.
+#
+# Car C-source added ``except AdminRefusal: raise`` to exactly the three ops
+# that could raise a refusal on the day it was written. Car B-d20's NEW op
+# (``update_adr_tier_subsystem``) shipped without it, because "which ops can
+# refuse today" is a fact that changes every time someone adds a registry
+# check to an engine method. These two tests replace that per-op judgement
+# with a structural invariant over the whole module.
+# ---------------------------------------------------------------------------
+
+
+# Handlers deliberately left WITHOUT the re-raise, each with the reason it is
+# not an oversight. Anything else added to this set needs the same standard:
+# the swallow must not be building an operator-facing error envelope.
+_REFUSAL_SWEEP_EXEMPT: dict[str, str] = {
+    "_attach_supersedes": (
+        "best-effort enrichment — its swallow degrades ADR rows to empty edge "
+        "lists and lets the CALLER's op succeed; it builds no error envelope, "
+        "so re-raising would hand list_adr_rows the failure the degrade exists "
+        "to prevent"
+    ),
+}
+
+
+def _ledger_handlers_missing_refusal_guard() -> list[tuple[str, int]]:
+    """``(function_name, lineno)`` for each unguarded ``except Exception``.
+
+    Structural, not behavioural: a behavioural test can only cover the ops
+    someone remembered to write a case for, which is the exact failure mode
+    this is here to catch.
+    """
+    import ast
+    from pathlib import Path
+
+    import yadgar.backend.admin_exec.ledger as ledger_mod
+
+    tree = ast.parse(Path(ledger_mod.__file__).read_text(encoding="utf-8"))
+    missing: list[tuple[str, int]] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if fn.name in _REFUSAL_SWEEP_EXEMPT:
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Try):
+                continue
+            names = [h.type.id if isinstance(h.type, ast.Name) else None for h in node.handlers]
+            if "Exception" not in names:
+                continue
+            broad_at = names.index("Exception")
+            if "AdminRefusal" not in names[:broad_at]:
+                missing.append((fn.name, node.handlers[broad_at].lineno))
+    return missing
+
+
+def test_every_ledger_handler_reraises_admin_refusal() -> None:
+    """No ``except Exception`` in ledger.py may sit above a missing refusal arm.
+
+    A refusal swallowed into ``{"ok": False}`` at HTTP 200 is
+    indistinguishable from a transport fault at the caller — that is the whole
+    point of ADR-0423's 409 seam. ``update_adr_tier_subsystem`` is the op that
+    proved a per-op audit does not hold: it was added AFTER the three ops were
+    fixed and inherited none of the fix.
+    """
+    missing = _ledger_handlers_missing_refusal_guard()
+    assert missing == [], (
+        "these ledger.py handlers swallow AdminRefusal into an {'ok': False} "
+        f"envelope instead of letting the /admin route render a 409: {missing}. "
+        "Add `except AdminRefusal: raise` above the broad handler, or — if the "
+        "swallow genuinely builds no error envelope — name it in "
+        "_REFUSAL_SWEEP_EXEMPT with the reason."
+    )
+
+
+def test_refusal_sweep_exemptions_still_name_real_functions() -> None:
+    """An exemption for a function that no longer exists is a silent hole."""
+    import yadgar.backend.admin_exec.ledger as ledger_mod
+
+    for name in _REFUSAL_SWEEP_EXEMPT:
+        assert hasattr(ledger_mod, name), (
+            f"_REFUSAL_SWEEP_EXEMPT names {name!r}, which ledger.py no longer "
+            "defines — drop the stale entry rather than leaving it to exempt "
+            "a future function that happens to reuse the name"
+        )
+
+
+class TestUpdateAdrTierSubsystemPropagatesRefusal:
+    """The specific op car B-d20 shipped without the guard (its train siblings
+    ``create_task_row`` / ``create_adr_row`` / ``create_project_row`` got it)."""
+
+    async def test_refusal_is_not_swallowed_into_ok_false(self, _patched_storage) -> None:
+        from yadgar.backend.admin_exec import ledger
+
+        class _RefusingStorage:
+            async def update_adr_tier_subsystem(self, *_a, **_kw):
+                raise UnknownProjectError("m-agahi/ghost")
+
+        _patched_storage(_RefusingStorage())
+
+        with pytest.raises(UnknownProjectError) as excinfo:
+            await ledger.update_adr_tier_subsystem(
+                {"id": 1, "tier": "binding", "subsystem": "storage"}
+            )
+        assert isinstance(excinfo.value, AdminRefusal)
+
+    async def test_ordinary_fault_still_returns_ok_false(self, _patched_storage) -> None:
+        """The guard must narrow the swallow, not remove it — a genuine
+        backend fault still becomes an ``{"ok": False}`` envelope."""
+        from yadgar.backend.admin_exec import ledger
+
+        class _BrokenStorage:
+            async def update_adr_tier_subsystem(self, *_a, **_kw):
+                raise RuntimeError("connection reset")
+
+        _patched_storage(_BrokenStorage())
+
+        result = await ledger.update_adr_tier_subsystem(
+            {"id": 1, "tier": "binding", "subsystem": "storage"}
+        )
+        assert result["ok"] is False
+        assert "connection reset" in result["error"]

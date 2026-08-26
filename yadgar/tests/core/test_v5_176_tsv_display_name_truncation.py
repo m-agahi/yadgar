@@ -20,6 +20,13 @@ Fix scope:
      already prints ``FAIL: <key>: <err>`` (cli/project.py:227), so a
      reason-bearing error envelope makes the counter actionable.
 
+Scope 1 shipped in C8-3. SCOPE 2 DID NOT (ledger task #381): that commit
+touched only ``cli/project.py`` and this file, and the test written for it
+asserted the round-trip of a message the test itself supplied — which the
+unchanged ``str(exc)`` wrapper satisfied. Car Q wrote the production half
+(``driver_errors.driver_error_detail``) and re-pinned it against a real
+``sqlalchemy.exc.DataError``; see ``TestLedgerCreateProjectRowErrorEnrichment``.
+
 This file pins both behaviours. RED → GREEN: written before the fix.
 """
 
@@ -245,51 +252,115 @@ def _ns(map_path: str):
 
 
 class TestLedgerCreateProjectRowErrorEnrichment:
-    """ledger.py:799-801 swallows the exception into ``str(exc)`` — the
-    envelope ``error`` field IS the operator's only signal (cli/project.py:227
-    prints it), so it MUST carry the underlying reason, not just a class
-    name. Pin: the message in the envelope contains the column name and
-    the bad value's length, so ``failed: N`` becomes actionable.
+    """``ledger.create_project_row``'s error envelope IS the operator's only
+    signal (``cli/project.py``'s ``FAIL: <key>: <err>`` print), so it must
+    carry the driver's own reason — the MySQL errno and the column the
+    server named — not SQLAlchemy's full ``str(exc)``.
 
-    SQLAlchemy's ``DataError`` import lives in this venv as an optional
-    dependency — the test exercises the wrapper with a duck-typed
-    exception carrying a real MariaDB 1406 message, which is the exact
-    shape the seed path produced before C8-3."""
+    CAR Q NOTE — this class shipped in C8-3 pinning nothing. Its original
+    test raised a duck-typed exception whose ``str()`` was a message the test
+    itself supplied, then asserted that same message came back out. Since the
+    wrapper did ``str(exc)``, it passed at the merge base while
+    ``ledger.create_project_row`` was byte-identical to master; the
+    production half named in this module's "Fix scope 2" was never written
+    (``git show 7419084b --stat`` touches only ``cli/project.py`` and this
+    file). The tests below construct a REAL ``sqlalchemy.exc.DataError``
+    wrapping a driver exception with ``args == (1406, "Data too long ...")``,
+    which is the shape the seed path actually produces, and assert on what
+    the wrapper EXTRACTS from it rather than on what the test handed in.
+    """
 
-    @pytest.mark.asyncio
-    async def test_dataerror_envelope_carries_reason(self) -> None:
-        """A real MariaDB 1406 DataError must round-trip into the
-        envelope's ``error`` field with the underlying reason — not just
-        a class name. The wrapper currently does ``str(exc)``; this test
-        pins that the operator sees ``Data too long for column
-        'display_name'`` (or close enough to act on), not a bare
-        ``DataError``/``IntegrityError``."""
-        from yadgar.backend.admin_exec import ledger
+    @staticmethod
+    def _real_data_error(note_value: str):
+        """A genuine ``sqlalchemy.exc.DataError`` around a driver exception.
 
-        class _FakeDataError(Exception):
-            """Duck-typed stand-in for ``sqlalchemy.exc.DataError`` — the
-            exception the wrapper sees is the SQLAlchemy class, but the
-            string representation we assert on is the same."""
-
-        msg = (
-            "(pymysql.err.DataError) 1406 (22001): Data too long for column 'display_name' at row 1"
+        The driver half is duck-typed (pymysql is not a test dependency) but
+        its ``args`` tuple is the real ``(errno, message)`` shape every
+        MySQL/MariaDB DBAPI raises, and the SQLAlchemy half is the real
+        class — which is what makes ``str(exc)`` carry the ``[SQL: ...]`` /
+        ``[parameters: ...]`` tail this test distinguishes against.
+        """
+        sqlalchemy_exc = pytest.importorskip(
+            "sqlalchemy.exc",
+            reason="ledger driver-error extraction needs the `sql` extra installed",
         )
+
+        class _PyMySQLDataError(Exception):
+            pass
+
+        orig = _PyMySQLDataError(1406, "Data too long for column 'display_name' at row 1")
+        return sqlalchemy_exc.DataError(
+            "INSERT INTO project (`key`, display_name) VALUES (%s, %s)",
+            ("m-agahi/yadgar", note_value),
+            orig,
+        )
+
+    async def _envelope(self, exc: BaseException) -> dict:
+        from yadgar.backend.admin_exec import ledger
 
         class _FakeStorage:
             async def create_project_row(self, **_kw):
-                raise _FakeDataError(msg)
+                raise exc
 
         with patch.object(ledger, "_get_sql_storage", return_value=_FakeStorage()):
-            result = await ledger.create_project_row(
+            return await ledger.create_project_row(
                 {"key": "m-agahi/yadgar", "kind": "git", "display_name": "x" * 200}
             )
 
+    @pytest.mark.asyncio
+    async def test_dataerror_envelope_carries_driver_errno_and_column(self) -> None:
+        """The envelope names the MySQL errno and the offending column.
+
+        ``db_errno`` is the half that cannot pass by accident: nothing in the
+        exception's ``str()`` produces that key, so a wrapper that still does
+        ``str(exc)`` fails here regardless of what the message happens to say.
+        """
+        note_value = "x" * 200
+        result = await self._envelope(self._real_data_error(note_value))
+
         assert result["ok"] is False
-        # The envelope must carry the underlying reason, not just a class
-        # name. Either way the operator path's ``FAIL: <key>: <err>`` print
-        # at cli/project.py:227 becomes actionable.
+        assert result.get("db_errno") == 1406, result
         err = result.get("error", "")
-        assert err, "envelope must carry a reason"
-        assert "display_name" in err or "Data too long" in err, (
-            f"envelope must surface the underlying reason; got: {err!r}"
+        assert "1406" in err, err
+        assert "display_name" in err, err
+        assert "Data too long" in err, err
+
+    @pytest.mark.asyncio
+    async def test_dataerror_envelope_omits_sql_and_bound_parameters(self) -> None:
+        """The envelope must not echo the statement or the bad value back.
+
+        ``str()`` on a SQLAlchemy ``DBAPIError`` appends ``[SQL: ...]`` and
+        ``[parameters: ...]``, so the pre-Car-Q wrapper put the whole 200-char
+        note — the very value that was too long — into the operator-facing
+        error string, plus a "Background on this error at" URL. This asserts
+        the raw form really does carry that tail (so the test is not vacuous)
+        and that the envelope does not.
+        """
+        note_value = "x" * 200
+        exc = self._real_data_error(note_value)
+
+        raw = str(exc)
+        assert "[SQL:" in raw and "[parameters:" in raw, (
+            "fixture is not a real DBAPIError — the omission assertion below "
+            f"would be vacuous; got: {raw!r}"
         )
+        assert note_value in raw
+
+        result = await self._envelope(exc)
+        err = result.get("error", "")
+        assert "[SQL:" not in err, err
+        assert "[parameters:" not in err, err
+        assert note_value not in err, err
+
+    @pytest.mark.asyncio
+    async def test_non_driver_exception_still_reports_its_message(self) -> None:
+        """A plain exception (no ``.orig``) degrades to ``str(exc)``.
+
+        The extraction must not swallow the reason for every error that is
+        not a wrapped driver failure, and must not invent a ``db_errno``.
+        """
+        result = await self._envelope(RuntimeError("engine went away"))
+
+        assert result["ok"] is False
+        assert result.get("error") == "engine went away"
+        assert "db_errno" not in result

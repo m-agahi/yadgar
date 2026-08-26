@@ -69,9 +69,24 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
     list_agent_prompt_rows(payload) -> {"rows": list[dict]}
         payload: {}   # no parameters today
 
-ERROR MODEL: never raise. A storage exception becomes ``{"ok": False,
-"error": "..."}`` — matches the existing admin-op contract (see
-``runtime_config.py``).
+ERROR MODEL: a FAULT never raises; a REFUSAL always does.
+
+A storage exception becomes ``{"ok": False, "error": "..."}`` — the existing
+admin-op contract (see ``runtime_config.py``). An ``AdminRefusal`` does NOT:
+every handler in this module carries ``except AdminRefusal: raise`` ABOVE its
+``except Exception`` arm so the ``/admin`` route renders the refusal as a
+structured 409 (ADR-0423) instead of flattening it into an ``{"ok": False}``
+body at HTTP 200, where a deliberate rejection is indistinguishable from a
+transport fault.
+
+UNIFORM ACROSS EVERY OP, deliberately — including ops that cannot reach a
+refusal today. A per-op reachability judgement is correct the day it is made
+and silently wrong the first time someone adds a registry check to another
+engine method, which is exactly how ``update_adr_tier_subsystem`` shipped
+without the guard its three train siblings had. One documented exception:
+``_attach_supersedes`` (best-effort degrade, no error envelope — see it).
+Driver failures route through ``driver_errors.driver_error_detail`` rather
+than ``str(exc)``.
 """
 
 from __future__ import annotations
@@ -81,45 +96,14 @@ from typing import Any
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.refusal import AdminRefusal
+from yadgar.backend.admin_exec.driver_errors import driver_error_detail
+from yadgar.backend.admin_exec.refusals import TaskEdgePartialStateError
 
 logger = logging.getLogger(__name__)
 
-
-class TaskEdgePartialStateError(AdminRefusal, RuntimeError):
-    """The row was created/updated, but one of its edge directions did not write.
-
-    Car C10 (task #319): pre-C10 the ledger ops caught ``Exception`` around
-    the entire body and returned ``{"ok": False, "error": "..."}`` at HTTP
-    200 — operationally identical to a fully-failed create/update. The
-    /admin route catches ``AdminRefusal`` → 409, so the row+missing-edge
-    partial state had no way to reach that seam.
-
-    Subclasses BOTH ``AdminRefusal`` and ``RuntimeError`` so:
-      - the /admin route's ``except AdminRefusal`` arm renders it as 409 +
-        a structured envelope (``refused``, ``reason``, ``task_id``,
-        ``edge_kind``, ``edge_error``);
-      - any pre-existing ``except RuntimeError`` catchers keep working
-        (e.g. forwarder-side handlers that key off RuntimeError for retry).
-
-    Carries ``task_id`` and ``edge_kind`` so the caller can decide whether
-    to roll back the row, retry the edge sync, or accept the partial state
-    — D39 partial state is a deliberate outcome, not a fault.
-    """
-
-    reason = "task_edge_partial_state"
-
-    def __init__(self, *, task_id: int, kind: str, reason: str) -> None:
-        super().__init__(reason)
-        self.task_id = int(task_id)
-        self.edge_kind = str(kind)
-        self.edge_error = str(reason)
-
-    def refusal_report(self) -> dict:
-        return {
-            "task_id": self.task_id,
-            "edge_kind": self.edge_kind,
-            "edge_error": self.edge_error,
-        }
+# Re-exported: the class moved to ``refusals`` when this file hit its I13 file
+# cap. ``from ...ledger import TaskEdgePartialStateError`` keeps working.
+__all__ = ["TaskEdgePartialStateError"]
 
 
 def _get_sql_storage() -> Any:
@@ -228,8 +212,11 @@ async def _sync_task_edges(storage: Any, task_id: int, payload: dict) -> None:
             continue
         try:
             await _reconcile_edges(storage, task_id, desired, inverse=inverse)
-        except TaskEdgePartialStateError:
-            # Already-typed refusal from the inner reconcile — propagate as-is.
+        except AdminRefusal:
+            # Any already-typed refusal from the inner reconcile propagates
+            # untranslated — bound on the base, not on
+            # ``TaskEdgePartialStateError``, so a refusal from a future guard
+            # on the edge writers is not re-labelled as partial state.
             raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("task %s %s edge sync error: %s", task_id, key, exc)
@@ -274,6 +261,8 @@ async def list_task_rows(payload: dict) -> dict:
         )
         if payload.get("with_edges"):
             rows = await _attach_task_edges(storage, rows)
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_task_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -306,6 +295,8 @@ async def get_task_row(payload: dict) -> dict:
                 "blocked_by": list(await storage.list_task_blocked_by(task_id)),
                 "blocks": list(await storage.list_task_blocks(task_id)),
             }
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_task_row error id=%s: %s", payload.get("id"), exc)
         return {"ok": False, "error": str(exc)}
@@ -331,6 +322,8 @@ async def list_task_rows_all_projects(payload: dict) -> dict:
         )
         if payload.get("with_edges"):
             rows = await _attach_task_edges(storage, rows)
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_task_rows_all_projects error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -393,6 +386,8 @@ async def update_task_row(payload: dict) -> dict:
             k: v for k, v in payload.items() if k not in {"id", "blocked_by", "blocks"}
         }
         await storage.update_task_row(task_id, **column_payload)
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("update_task_row error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -428,6 +423,8 @@ async def update_adr_tier_subsystem(payload: dict) -> dict:
         if subsystem is not None:
             subsystem = str(subsystem)
         await storage.update_adr_tier_subsystem(adr_id, tier, subsystem)
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("update_adr_tier_subsystem error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -459,6 +456,11 @@ async def _attach_supersedes(storage: Any, project_id: str, rows: list[dict]) ->
     BEST-EFFORT: an enrichment that can take out ``adr_list`` is a worse defect
     than the one it fixes, so a failed edge read logs and degrades to the empty
     lists — i.e. to exactly the pre-fix rendering.
+
+    THE ONE OP WITHOUT ``except AdminRefusal: raise``, deliberately: this
+    handler builds no error ENVELOPE, so re-raising would hand
+    ``list_adr_rows`` the failure the degrade exists to prevent. Unreachable
+    by a refusal today anyway — ``list_adr_supersedes`` is a pure read.
 
     Rows with no ``id`` pass through untouched (they cannot be keyed), and rows
     the reader's SPARSE map does not mention get empty lists — "has none" must
@@ -511,6 +513,8 @@ async def list_adr_rows(payload: dict) -> dict:
             tier=payload.get("tier"),
             subsystem=payload.get("subsystem"),
         )
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_adr_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -543,6 +547,8 @@ async def get_adr_row(payload: dict) -> dict:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         row = await storage.get_adr_row(int(payload["id"]), project_id=str(project_id))
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_adr_row error id=%s: %s", payload.get("id"), exc)
         return {"ok": False, "error": str(exc)}
@@ -560,6 +566,8 @@ async def list_agent_prompt_rows(payload: dict) -> dict:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         rows = await storage.list_agent_prompt_rows()
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_agent_prompt_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -582,6 +590,8 @@ async def list_agent_discipline_rows(payload: dict) -> dict:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         rows = await storage.list_agent_discipline_rows()
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_agent_discipline_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -605,6 +615,8 @@ async def list_agent_pattern_rows_uses_desc(payload: dict) -> dict:
         rows = await storage.list_agent_pattern_rows_uses_desc(
             limit=int(payload.get("limit", 20)),
         )
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_agent_pattern_rows_uses_desc error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -624,6 +636,8 @@ async def get_agent_pattern_row(payload: dict) -> dict:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         row = await storage.get_agent_prompt_row(str(payload["name"]))
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_agent_pattern_row error name=%s: %s", payload.get("name"), exc)
         return {"ok": False, "error": str(exc)}
@@ -645,6 +659,8 @@ async def list_pattern_composes(payload: dict) -> dict:
         rows = await storage.list_pattern_composes(
             pattern_name=str(payload["pattern_name"]),
         )
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "list_pattern_composes error pattern=%s: %s", payload.get("pattern_name"), exc
@@ -674,6 +690,8 @@ async def save_agent_pattern_row(payload: dict) -> dict:
             status=str(payload.get("status", "active")),
             baseline_hash=payload.get("baseline_hash"),
         )
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("save_agent_pattern_row error name=%s: %s", payload.get("name"), exc)
         return {"ok": False, "error": str(exc)}
@@ -698,6 +716,8 @@ async def save_agent_discipline_row(payload: dict) -> dict:
             baseline_hash=payload.get("baseline_hash"),
             meta=payload.get("meta"),
         )
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("save_agent_discipline_row error name=%s: %s", payload.get("name"), exc)
         return {"ok": False, "error": str(exc)}
@@ -716,6 +736,8 @@ async def increment_agent_pattern_uses(payload: dict) -> dict:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         await storage.increment_agent_prompt_uses(str(payload["pattern"]))
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("increment_agent_pattern_uses error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -739,6 +761,8 @@ async def get_agent_prompt_toc_updated_at(payload: dict) -> dict:
         }
     try:
         dt = await storage.max_agent_pattern_updated_at()
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_agent_prompt_toc_updated_at error: %s", exc)
         return {"ok": False, "error": str(exc), "timestamp": None}
@@ -797,6 +821,8 @@ async def set_adr_body_slug(payload: dict) -> dict:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         await storage.set_adr_body_slug(int(payload["id"]), payload["body_slug"])
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("set_adr_body_slug error id=%s: %s", payload.get("id"), exc)
         return {"ok": False, "error": str(exc)}
@@ -824,6 +850,8 @@ async def add_adr_supersedes(payload: dict) -> dict:
         # a generic row update — Car F uses a direct UPDATE here to keep the
         # scope tight.
         await storage._flip_adr_status(int(payload["supersedes_id"]), "superseded")
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "add_adr_supersedes error adr_id=%s supersedes_id=%s: %s",
@@ -855,6 +883,8 @@ async def max_adr_updated_at(payload: dict) -> dict:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         dt = await storage.max_adr_updated_at(project_id=str(payload["project_id"]))
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("max_adr_updated_at error: %s", exc)
         return {"ok": False, "error": str(exc), "updated_at": None}
@@ -906,8 +936,12 @@ async def create_project_row(payload: dict) -> dict:
     except AdminRefusal:
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.warning("create_project_row error key=%s: %s", payload.get("key"), exc)
-        return {"ok": False, "error": str(exc)}
+        reason, errno = driver_error_detail(exc)
+        logger.warning("create_project_row error key=%s: %s", payload.get("key"), reason)
+        envelope: dict[str, Any] = {"ok": False, "error": reason}
+        if errno is not None:
+            envelope["db_errno"] = errno
+        return envelope
     return {"ok": True, "row": row}
 
 
@@ -919,6 +953,8 @@ async def list_project_rows(payload: dict) -> dict:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
     try:
         rows = await storage.list_project_rows()
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_project_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -949,6 +985,8 @@ async def list_stale_projects(payload: dict) -> dict:
     threshold_days = int(get_settings().PROJECT_STALENESS_DAYS)
     try:
         result = await storage.list_stale_projects(threshold_days)
+    except AdminRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("list_stale_projects error: %s", exc)
         return {"ok": False, "error": str(exc)}
