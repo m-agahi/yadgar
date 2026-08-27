@@ -87,23 +87,45 @@ def _insert(storage, *, tags, directory, project_id=None, tier="conditional", pr
     return mid
 
 
+_SEEDED: dict[str, list[int]] = {}
+_EXPECTED_ROWS = 8
+
+
 @pytest.fixture()
 def _corpus(_engines):
     """One anchor per tier in the scanned dir + every unscanned shape.
 
-    Function-scoped and re-seeded per test on purpose: the engines started by
-    ``init_engines`` run a background decay/consolidation pass that clears
-    these hand-inserted rows part-way through a module (reproduced with a
-    bare probe module, no audit code involved), so a module-scoped corpus
-    makes later tests pass vacuously against an empty table.
+    Function-scoped, but seeded LAZILY — the previous test's rows are reused
+    whenever they survived. Two constraints pull against each other here:
+
+    * A module-scoped corpus goes stale: the engines started by
+      ``init_engines`` run a background decay/consolidation pass that clears
+      these hand-inserted rows part-way through a module (reproduced with a
+      bare probe module, no audit code involved), after which the remaining
+      tests pass vacuously against an empty table.
+    * Unconditional per-test re-seeding writes ~9 rows x 13 tests against the
+      same store that background writer is using, and that contention showed
+      up as "Transaction write conflict" failures in NEIGHBOURING audit
+      modules — a test file that breaks its neighbours is worse than a slow
+      one.
+
+    So: count first (a read), and write only when the corpus is actually
+    gone. Both delete predicates are keyed on values only this module writes;
+    a broader sweep (e.g. every ``directory_context = 'global'`` row) would
+    delete other modules' fixtures.
     """
     from yadgar._shared.runtime.lifecycle import _get_storage
 
     st = _get_storage()
+    if _SEEDED:
+        rows = st._q(
+            "SELECT count() AS cnt FROM memory WHERE project_id = $p GROUP ALL", {"p": _PID}
+        )
+        if rows and int(rows[0]["cnt"]) == _EXPECTED_ROWS:
+            return dict(_SEEDED)
+
     st._q("DELETE FROM memory WHERE directory_context = $d", {"d": _DIR})
     st._q("DELETE FROM memory WHERE project_id = $p", {"p": _PID})
-
-    st._q("DELETE FROM memory WHERE directory_context = 'global'")
 
     # One row per tier IN the scanned directory. ``semantic_immortal`` is here
     # deliberately: the car's central finding is that the tier guard governs
@@ -130,6 +152,15 @@ def _corpus(_engines):
     global_reach = [
         _insert(st, tags=["_anchor"], directory="global", project_id=_PID, tier="conditional")
     ]
+    _SEEDED.clear()
+    _SEEDED.update(
+        {
+            "scanned": scanned,
+            "no_tag": no_tag,
+            "dir_mismatch": dir_mismatch,
+            "global_reach": global_reach,
+        }
+    )
     return {
         "scanned": scanned,
         "no_tag": no_tag,
