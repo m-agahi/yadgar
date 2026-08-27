@@ -304,7 +304,7 @@ def check_dead_baseline(repo_root: Path) -> list[str]:
     (see ``check_complexity.dead_baseline_keys`` for why that distinction is
     load-bearing rather than cosmetic).
     """
-    from check_complexity import dead_baseline_keys  # noqa: PLC0415
+    from check_complexity import dead_baseline_keys
 
     scan_root = _baseline_scan_root(repo_root)
     filepaths = [

@@ -532,13 +532,13 @@ def _teardown_surreal_handle(handle: dict, *, wait_timeout: float = 5.0) -> None
     if proc is not None:
         try:
             teardown_surreal_proc(proc, wait_timeout=wait_timeout)
-        except Exception:  # noqa: BLE001 — teardown must never mask a test failure
+        except Exception:  # teardown must never mask a test failure
             pass
     data_dir = handle.get("data_dir")
     if data_dir:
         try:
             remove_test_data_dir(data_dir)
-        except Exception:  # noqa: BLE001 — ditto
+        except Exception:  # ditto
             pass
 
 

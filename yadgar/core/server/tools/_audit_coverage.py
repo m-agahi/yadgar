@@ -71,7 +71,7 @@ def _coverage_project_id(project: str | None) -> str | None:
         )
 
         return get_current_session_project() or None
-    except Exception:  # noqa: BLE001 - reporting must never break the audit
+    except Exception:  # reporting must never break the audit
         logger.warning("_coverage_project_id: session lookup failed", exc_info=True)
         return None
 
