@@ -1,6 +1,7 @@
 """Tests for scripts/check_ledger_chokepoint.py (Car A — D20 ledger chokepoint).
 
-The guard AST-scans ``yadgar/**/*.py`` (tests excluded) and FAILS if any code
+The guard AST-scans ``yadgar/**/*.py`` and ``scripts/**/*.py`` (its ``SCAN_DIRS``;
+tests excluded) and FAILS if any code
 outside ``MariaStorageEngine`` and outside the explicit allowlist references
 a ledger table name (``task``, ``adr``, ``agent_pattern``, ``agent_discipline``,
 ``task_blocked_by``, ``adr_supersedes``, ``agent_pattern_composes``) via
@@ -755,3 +756,100 @@ def test_every_table_introducer_shape_is_caught(tmp_path, sql, table):
     res = run_script("--root", str(root), "--list-all")
     assert res.returncode == 1, res.stdout
     assert f"`{table}`" in res.stdout, res.stdout
+
+
+# ---------------------------------------------------------------------------
+# Default root set — ledger task 394 widened it from ``yadgar/`` to
+# ``yadgar/`` + ``scripts/``.
+#
+# These tests deliberately do NOT pass ``--root``. A test that plants a
+# violation under ``tmp_path/scripts`` and then points ``--root`` at it proves
+# only that the scanner accepts an arbitrary root, which it always did — it
+# stays green on the pre-394 ``yadgar/``-only default and so proves nothing
+# about the widening. Monkeypatching ``_REPO_ROOT`` onto a fixture repo and
+# calling ``scan()`` with no root is what exercises the DEFAULT set.
+# ---------------------------------------------------------------------------
+
+
+def _fixture_repo(tmp_path: Path, *, where: str, body: str) -> Path:
+    """Build a fake repo root with ``yadgar/`` + ``scripts/`` and plant ``body``.
+
+    ``where`` is the repo-relative directory the violating module goes into.
+    Both scanned dirs are always created so ``default_roots()`` resolves the
+    same shape it does in the real checkout.
+    """
+    repo = tmp_path / "fake_repo"
+    (repo / "yadgar").mkdir(parents=True)
+    (repo / "scripts").mkdir(parents=True)
+    target_dir = repo / where
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "mod.py").write_text(textwrap.dedent(body))
+    return repo
+
+
+_RAW_LEDGER_WRITE = """\
+from sqlalchemy import text
+
+def seed_rows(conn):
+    return conn.execute(text("UPDATE adr SET tier = 'binding' WHERE id = 1"))
+"""
+
+
+def test_default_scan_catches_raw_ledger_write_under_scripts(tmp_path, monkeypatch):
+    """A raw ``UPDATE adr`` in an operator script is caught with NO ``--root``.
+
+    This is the regression that ledger task 394 closes: ``scripts/`` holds
+    seed and migration helpers that write against the live store, and the
+    scan skipped the directory entirely, so a D20 bypass there was invisible
+    to the gate whose whole job is to prevent one.
+    """
+    module = _import_checker_module()
+    repo = _fixture_repo(tmp_path, where="scripts", body=_RAW_LEDGER_WRITE)
+    monkeypatch.setattr(module, "_REPO_ROOT", repo)
+
+    violations = module.scan()  # no root → default set
+
+    assert [v.table for v in violations] == ["adr"], violations
+    assert violations[0].source_file.parent.name == "scripts"
+
+
+def test_default_scan_still_catches_violations_under_yadgar(tmp_path, monkeypatch):
+    """Widening the default set must not drop the original ``yadgar/`` root."""
+    module = _import_checker_module()
+    repo = _fixture_repo(tmp_path, where="yadgar/backend", body=_RAW_LEDGER_WRITE)
+    monkeypatch.setattr(module, "_REPO_ROOT", repo)
+
+    violations = module.scan()
+
+    assert [v.table for v in violations] == ["adr"], violations
+    assert violations[0].source_file.parent.name == "backend"
+
+
+def test_explicit_root_replaces_the_default_set(tmp_path, monkeypatch):
+    """``--root``/``scan(root=...)`` scans THAT dir only — never additively.
+
+    Every pre-394 test passes a single root and asserts on exactly that tree.
+    If the override became additive, a fixture root would suddenly be scanned
+    alongside the real repo and those assertions would break for a reason
+    having nothing to do with the fixture.
+    """
+    module = _import_checker_module()
+    repo = _fixture_repo(tmp_path, where="scripts", body=_RAW_LEDGER_WRITE)
+    monkeypatch.setattr(module, "_REPO_ROOT", repo)
+
+    # Point at the OTHER default dir: the scripts/ violation must not appear.
+    assert module.scan(repo / "yadgar") == []
+    # ...and it is genuinely there when that root is named.
+    assert len(module.scan(repo / "scripts")) == 1
+
+
+def test_scan_dirs_names_scripts(tmp_path, monkeypatch):
+    """``SCAN_DIRS`` is the contract; a missing dir is skipped, not a crash."""
+    module = _import_checker_module()
+    assert "scripts" in module.SCAN_DIRS
+    assert "yadgar" in module.SCAN_DIRS
+
+    partial = tmp_path / "partial_repo"
+    (partial / "yadgar").mkdir(parents=True)  # no scripts/ dir at all
+    monkeypatch.setattr(module, "_REPO_ROOT", partial)
+    assert [p.name for p in module.default_roots()] == ["yadgar"]

@@ -25,6 +25,18 @@ earlier turn.
      return shape is:
        {
          "scanned": int,                       # how many _anchor rows were considered
+         "coverage": {                         # task 391 — what the scan MISSED
+           "scanned": int,                     # same number, restated in context
+           "scanned_protected": int,
+           "protected_total": int,             # protected rows this project owns
+           "unscanned": int,                   # protected_total - scanned_protected
+           "unscanned_reasons": {"no_anchor_tag": int,
+                                 "directory_context_mismatch": int,
+                                 "global_reach_not_scanned": int},
+           "unscanned_sample": {<reason>: [id, ...]},   # <=10 ids per reason
+           "scope_keys": {"directory_context": [str, ...], "project_id": str | None},
+           # on a failed coverage query instead: {"error": str, "scope_keys": {...}}
+         },
          "actions": [
            {
              "id": int | [int, int],          # memory id, or [keep_id, forget_id] for merges
@@ -67,6 +79,21 @@ earlier turn.
    prose-only-archive risk is the healthy state, not a task — but a silent
    stop that cannot distinguish "nothing to audit" from "audit ran clean" is
    the ambiguity this gate exists to remove.
+
+2b. COVERAGE — ``scanned`` IS NOT THE WHOLE PROJECT. Whether or not you
+   stopped at the gate above, read ``coverage``. ``scanned`` counts only rows
+   the scan's own selector matches (``_anchor`` tag AND the audited
+   directory); ``coverage.protected_total`` counts every protected row the
+   project owns by either scope key. When ``coverage.unscanned > 0``, say so
+   in ONE line alongside whatever else you report — the count, and the
+   reasons verbatim, e.g.
+       "95 of 102 protected rows scanned; 7 outside the scan
+        (no_anchor_tag: 6, directory_context_mismatch: 1)".
+   Do NOT act on unscanned rows — they are not audit candidates and this
+   protocol proposes nothing for them. They are reported so a clean audit
+   cannot be mistaken for a complete one. If ``coverage`` carries an
+   ``error`` key, the coverage query failed: report that it is unknown, and
+   do NOT report full coverage.
 
 3. JUDGE EACH CANDIDATE (semantic). For each entry in ``actions`` and each
    ``cross_project_redundancy_candidates`` entry, decide its fate from its
@@ -117,6 +144,9 @@ earlier turn.
    audit — the report the user reads must not lie about completion.
 
 7. WRAP UP. Report which memories were retired / merged (or that the user kept
-   all) and how many prose-only archives remain at risk. Then continue the
+   all), how many prose-only archives remain at risk, and — if you have not
+   already said it at Step 2b — the ``coverage.unscanned`` count. A wrap-up
+   that names only what was audited reads as a statement about the whole
+   project; it is not one. Then continue the
    conversation — if you were mid-thought, repeat your last question so the
    flow resumes.

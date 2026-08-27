@@ -355,9 +355,13 @@ test:
 ## because 'sqlalchemy not installed (sql extra)' is a sanctioned reason. Plain `make
 ## test` keeps the smaller set on purpose: asyncmy is a compiled driver and install is
 ## this repo's worst surface (see the `sql` extra's own note in pyproject.toml).
+## --extra analytics (task 390): same defect, second dependency. All 26 tests in
+## yadgar/tests/core/test_export_duckdb.py open with pytest.importorskip("duckdb"),
+## and for 82 days NO extra in pyproject.toml provided duckdb at all, so they had
+## never once executed. The extra is restored; this leg installs it so they do.
 test-ci:
 	@$(LOCKED) 'bash scripts/reap-test-surreal.sh; trap "bash scripts/reap-test-surreal.sh" EXIT; \
-	  scripts/test-capped.sh uv run --extra test --extra ml --extra sql python -m pytest yadgar/tests/ \
+	  scripts/test-capped.sh uv run --extra test --extra ml --extra sql --extra analytics python -m pytest yadgar/tests/ \
 	    -m "not integration and not e2e" -p no:randomly -n auto -q $(PYTEST_ARGS)'
 
 ## ci-local: Reproduce CI's test groups (the `tests` matrix in .github/workflows/ci-pr.yml) as ONE

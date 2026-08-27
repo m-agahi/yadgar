@@ -3,7 +3,7 @@
 # Purpose: used by .forgejo/workflows/{ci.yaml,release.yaml} container jobs
 #          so CI runners can pull from dockerhub (PD-42 carve-out).
 # Contains: system deps (make, git, curl, ca-certificates, build-essential)
-#           + pre-installed yadgar test + ml + sql extras to speed CI start
+#           + pre-installed yadgar test + ml + sql + analytics extras to speed CI start
 #           + SurrealDB v3.1.5 baked in (saves 15-30s CI per run, v5.46.9)
 #           + HuggingFace all-MiniLM-L6-v2 baked in (saves 30-60s, v5.46.9)
 #           + bsdmainutils for `column` binary (fixes F5 make help failure, v5.46.9)
@@ -99,13 +99,18 @@ RUN curl -fsSL \
     tar -xzf /tmp/surreal.tgz -C /usr/local/bin surreal && \
     chmod +x /usr/local/bin/surreal && \
     rm /tmp/surreal.tgz
-# Pre-install test + ml extras to speed CI pip installs.
+# Pre-install test + ml + sql + analytics extras to speed CI pip installs.
+# NOTE: this image has no auto-sync pipeline. Editing the extras list here does
+# NOT change the image CI currently runs — that needs a rebuild + push. Until
+# then the analytics-guarded tests still skip in GitHub CI, and the extras
+# receipt the test jobs emit (scripts/check_skip_inventory.py --emit-receipt)
+# is what makes that visible instead of silent.
 # Copies pyproject.toml only so this layer caches across source changes.
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
 COPY uv.lock /app/uv.lock
 
-# Install the FULL [test,ml,sql] extras (deps only — the package itself is installed
+# Install the FULL [test,ml,sql,analytics] extras (deps only — the package itself is installed
 # per-run) FROM uv.lock, not from pyproject's open constraints. LOCK PARITY IS
 # LOAD-BEARING: an unpinned resolve here pulled starlette>1.0.0 whose testclient
 # deprecates plain httpx — invisible while warnings were tolerated, fatal under
@@ -113,7 +118,7 @@ COPY uv.lock /app/uv.lock
 # the exact versions the repo locks. Legs install only the package itself
 # (`uv pip install --system --no-deps -e .`) so nothing re-resolves at run time.
 RUN pip install --no-cache-dir uv && \
-    uv export --frozen --no-emit-project --extra test --extra ml --extra sql \
+    uv export --frozen --no-emit-project --extra test --extra ml --extra sql --extra analytics \
         -o /tmp/requirements-lock.txt && \
     uv pip install --system --no-cache -r /tmp/requirements-lock.txt && \
     rm -f /tmp/requirements-lock.txt && \

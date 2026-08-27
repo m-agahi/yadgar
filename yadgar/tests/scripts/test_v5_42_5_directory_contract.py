@@ -667,7 +667,26 @@ class TestRecallDirectoryScope:
         The ``WHERE id IN [...]`` hydration queries are deliberately exempt:
         they re-read rows whose ids a scoped query already chose, so they spend
         no budget and have nothing to narrow.
+
+        NEEDS THE `ml` EXTRA. The four-arm liveness assertions at the end are
+        what stop "none were unscoped" being vacuously true, and the memory
+        VECTOR arm only runs when `recall` has a real query embedding to compare
+        against. Without `sentence-transformers` the embedding is None, that arm
+        never issues its query, and this failed with "memory vector arm did not
+        run" on every plain `make test` (`--extra test`) run — false RED with no
+        bug behind it. Guarded and sanctioned CONDITIONALLY in
+        yadgar/tests/skip_inventory.json (`ml-extra-recall-vector-arm-01`).
+
+        TRADE-OFF, recorded rather than hidden: the guard skips the WHOLE test,
+        so the scope-predicate assertion above it also stops running under plain
+        `make test`. Making only the vector-arm assertion conditional would be a
+        weakened assertion, which is worse. CI and `make test-ci` install
+        `--extra ml`, so the check still runs where it gates merges — and the
+        extras receipt turns a skip on such a leg into a gate FAILURE.
         """
+        pytest.importorskip(
+            "sentence_transformers", reason="sentence-transformers not installed (ml extra)"
+        )
         import yadgar._shared.runtime.state as _st
         from yadgar._shared.storage import client as _client_mod
 

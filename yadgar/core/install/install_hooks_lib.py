@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shlex
 import sys  # noqa: F401 — re-exported: tests patch ihl.sys.executable (shared sys singleton)
 from pathlib import Path
 
@@ -63,11 +62,14 @@ from ._settings import (
     _append_if_absent,
     _atomic_write,
     _build_core_hooks,
+    _build_global_stop_entries,
     _entry_command,
     _install_append_hooks,
     _install_global_scripts,
     _load_settings,
     _make_hook_entry,
+    _register_global_stop_hooks,
+    _replace_managed_entries,
     _resolve_env_block,
     _resolve_scope_paths,
     _write_global_stop_hooks,
@@ -83,6 +85,7 @@ __all__ = [
     "_append_if_absent",
     "_atomic_write",
     "_build_core_hooks",
+    "_build_global_stop_entries",
     "_canonical_repo_python",
     "_copy_hook",
     "_entry_command",
@@ -97,7 +100,9 @@ __all__ = [
     "_main_repo_root",
     "_make_hook_entry",
     "_pipx_python",
+    "_register_global_stop_hooks",
     "_registered_python",
+    "_replace_managed_entries",
     "_resolve_env_block",
     "_resolve_python_shebang",
     "_resolve_scope_paths",
@@ -230,25 +235,13 @@ def install_hooks_impl(
 
     settings_data["hooks"] = hooks_config
 
-    _python = shlex.quote(_python_path)
-    _stop_entry = [
-        {
-            "matcher": "",
-            "hooks": [{"type": "command", "command": f"{_python} {shlex.quote(str(stop_dst))}"}],
-        }
-    ]
-    _session_end_entry = [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"{_python} {shlex.quote(str(session_end_dst))}"}
-            ],
-        }
-    ]
+    _stop_entry, _session_end_entry = _build_global_stop_entries(
+        stop_dst, session_end_dst, _python_path
+    )
 
     if scope == "global":
-        hooks_config["Stop"] = _stop_entry
-        hooks_config["SessionEnd"] = _session_end_entry
+        # Foreign-preserving, exactly like the five core events (task 400).
+        _register_global_stop_hooks(hooks_config, _stop_entry, _session_end_entry)
         settings_data["hooks"] = hooks_config
 
     if dry_run:

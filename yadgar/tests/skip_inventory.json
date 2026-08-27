@@ -2,7 +2,7 @@
   "_meta": {
     "version": "1",
     "description": "Sanctioned skips for yadgar test suite. Every skip must appear here or CI gate fails.",
-    "updated": "2026-08-07",
+    "updated": "2026-08-27",
     "adr": "Car 1 of test-suite hardening train (fix/test-hardening-car1-skips)"
   },
   "entries": [
@@ -11,21 +11,24 @@
       "file": "yadgar/tests/_shared/test_mariadb_engine.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "sqlalchemy not installed (sql extra)",
-      "note": "Engine-#2 car C. sqlalchemy/asyncmy live in the `sql` extra; Dockerfile.ci:116 bakes only `--extra test --extra ml` and yadgar-ci has no auto-sync pipeline, so these skip until that image is rebuilt with `--extra sql`. Covers the same importorskip in yadgar/tests/integration/test_mariadb_connection.py. The credential half (test_mariadb_option_file.py) and the wiring half (test_mariadb_composition.py) are pure stdlib and never skip."
+      "note": "Engine-#2 car C. sqlalchemy/asyncmy live in the `sql` extra; Dockerfile.ci now bakes `--extra sql`, but yadgar-ci has no auto-sync pipeline, so these keep skipping in GitHub CI until that image is rebuilt and pushed. Covers the same importorskip in yadgar/tests/integration/test_mariadb_connection.py. The credential half (test_mariadb_option_file.py) and the wiring half (test_mariadb_composition.py) are pure stdlib and never skip. CONDITIONAL (task 392): this entry sanctions ONLY while sqlalchemy is measured absent. Task 380 taught `make test-ci`, scripts/ci-local-legs.sh and Dockerfile.ci to install `--extra sql`, at which point an unconditional entry would keep passing a run that skipped all of these tests exactly like a run that executed them. Plain `make test` still installs no sql extra and legitimately skips them, which is why the entry is narrowed rather than deleted.",
+      "sanctioned_when_module_absent": "sqlalchemy"
     },
     {
       "id": "engine2-alembic-extra-absent-01",
       "file": "yadgar/tests/_shared/test_mariadb_migrations.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "alembic not installed (sql extra)",
-      "note": "Engine-#2 car D. alembic travels with sqlalchemy/asyncmy in the `sql` extra; Dockerfile.ci:116 bakes only `--extra test --extra ml` and yadgar-ci has no auto-sync pipeline, so the Alembic-chain tests skip until that image is rebuilt with `--extra sql`. Separate pattern from engine2-sql-extra-absent-01 because the two importorskips name different modules and either can be the one that is missing. Covers the same importorskip in yadgar/tests/integration/test_mariadb_migrations.py. The wiring half (yadgar/tests/backend/test_engine2_migration_wiring.py) is pure stdlib plus stubs and never skips."
+      "note": "Engine-#2 car D. alembic travels with sqlalchemy/asyncmy in the `sql` extra; Dockerfile.ci now bakes `--extra sql`, but yadgar-ci has no auto-sync pipeline, so the Alembic-chain tests keep skipping in GitHub CI until that image is rebuilt and pushed. Separate pattern from engine2-sql-extra-absent-01 because the two importorskips name different modules and either can be the one that is missing. Covers the same importorskip in yadgar/tests/integration/test_mariadb_migrations.py. The wiring half (yadgar/tests/backend/test_engine2_migration_wiring.py) is pure stdlib plus stubs and never skips. CONDITIONAL (task 392): sanctions ONLY while alembic is measured absent — see engine2-sql-extra-absent-01. Keyed on alembic rather than sqlalchemy because this reason names alembic and either module can be the missing one.",
+      "sanctioned_when_module_absent": "alembic"
     },
     {
       "id": "engine2-carh-cross-engine-invariants-01",
       "file": "yadgar/tests/integration/test_cross_engine_invariants.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "alembic not installed (sql extra)",
-      "note": "Engine-#2 car H (the cross-engine check_invariants arm). The live half reads a real alembic_version stamp and a real config row count, so it needs alembic AND sqlalchemy from the `sql` extra; Dockerfile.ci:116 bakes only `--extra test --extra ml` and yadgar-ci has no auto-sync pipeline. The second importorskip in the same file ('sqlalchemy not installed (sql extra)') is covered by engine2-sql-extra-absent-01. The offline half (yadgar/tests/backend/test_cross_engine_invariants.py) is pure stdlib plus stubs and NEVER skips - which matters more here than elsewhere: this car exists to kill vacuous passes, so its own coverage must not evaporate when an extra is missing."
+      "note": "Engine-#2 car H (the cross-engine check_invariants arm). The live half reads a real alembic_version stamp and a real config row count, so it needs alembic AND sqlalchemy from the `sql` extra; Dockerfile.ci now bakes `--extra sql`, but yadgar-ci has no auto-sync pipeline, so this keeps skipping in GitHub CI until that image is rebuilt and pushed. The second importorskip in the same file ('sqlalchemy not installed (sql extra)') is covered by engine2-sql-extra-absent-01. The offline half (yadgar/tests/backend/test_cross_engine_invariants.py) is pure stdlib plus stubs and NEVER skips - which matters more here than elsewhere: this car exists to kill vacuous passes, so its own coverage must not evaporate when an extra is missing. CONDITIONAL (task 392): sanctions ONLY while alembic is measured absent. This car exists to kill vacuous passes, so a stale sanction here is worse than elsewhere.",
+      "sanctioned_when_module_absent": "alembic"
     },
     {
       "id": "v5-169-setup-linger-timeout-01",
@@ -95,7 +98,8 @@
       "file": "yadgar/tests/core/test_export_duckdb.py",
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "duckdb not installed",
-      "note": "duckdb is an optional dep not included in [test] extras or CI image (python:3.14-slim). All 18 duckdb skips are covered by this entry."
+      "note": "duckdb powers `yadgar export duckdb` and lives in the [analytics] extra. That extra was deleted as collateral in 86c23cbc (task 390), so for 82 days NO extra provided duckdb and all 26 skips here were unreachable rather than conditional - this note used to claim 18 skips and that the CI image excludes duckdb, both wrong. The extra is restored and `make test-ci`, scripts/ci-local-legs.sh and Dockerfile.ci install it; plain `make test` does not, which is the case this entry still covers. CONDITIONAL (task 392): sanctions ONLY while duckdb is measured absent. Restoring the analytics extra (task 390) turned this entry into the identical defect - validate_inventory's staleness check reads the importorskip call out of the SOURCE, which stays put whether or not duckdb is installed, so an unconditional entry would sanction a mass-skip on the very legs that now install it.",
+      "sanctioned_when_module_absent": "duckdb"
     },
     {
       "id": "nix-flake-eval-01",
@@ -187,6 +191,22 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "mariadb client not available on this host",
       "note": "Engine-#2 car G. DISTINCT from engine2-carf-mariadb-client-absent-01: that one names `mariadb-dump`, this one names the `mariadb` CLIENT, and a host can have either without the other. The restore arm shells the client both to replay the artifact and to run the enumeration queries; in production it ships with the mariadb-server apt install baked into Dockerfile.backend. Like car F it imports nothing from the `sql` extra, so the yadgar-ci --extra sql rebuild does not fix it."
+    },
+    {
+      "id": "ml-extra-embedding-backfill-01",
+      "file": "yadgar/tests/scripts/test_migration_014_wiki_embedding_backfill.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "sentence-transformers not installed (ml extra)",
+      "note": "Gate-honesty car I. `sentence-transformers` lives in the optional [ml] extra. Without it EmbeddingEngine returns None for every vector, so WikiStore.backfill_null_embeddings skips every row and returns 0 - and the five tests here that assert a NON-ZERO backfill count measured `assert 0 == 4` / `0 == 1` / `0 == 6` under plain `make test` (`--extra test`). Measured 2026-08-27 before the guard: 5 failed, 13 passed on a venv synced `--extra dev --extra test`; 19 passed (this file plus the sibling recall test) on one synced `--extra dev --extra test --extra ml --extra sql --extra analytics`. That is false RED - the mirror of the false GREEN this train exists to kill, because a suite carrying six standing failures that are not bugs teaches its readers to skim red. Guarded with pytest.importorskip rather than deleted, and deliberately NOT applied to the whole class: test_returns_zero_on_empty_db (no rows to embed) and test_backfill_embed_failure_warns_and_skips (patches _compute_embedding to return None on purpose) pass on their own merits without the extra, and guarding them would delete real coverage from `make test`. CONDITIONAL (task 392 mechanism): sanctions ONLY while sentence_transformers is measured ABSENT, so a leg that installs `--extra ml` and still skips these fails the gate instead of passing like a leg that ran them.",
+      "sanctioned_when_module_absent": "sentence_transformers"
+    },
+    {
+      "id": "ml-extra-recall-vector-arm-01",
+      "file": "yadgar/tests/scripts/test_v5_42_5_directory_contract.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "sentence-transformers not installed (ml extra)",
+      "note": "Gate-honesty car I, second file. Shares the reason_pattern with ml-extra-embedding-backfill-01 because the absent module and the skip reason are genuinely the same; a separate entry so each file's sanction validates independently (validate_inventory's staleness check reads the pattern out of the named source). test_every_candidate_query_carries_the_scope_predicate ends with four liveness assertions that stop `no unscoped queries` being vacuously true, and one of them requires the memory VECTOR arm to have issued its query - which needs a real query embedding, hence the ml extra. Measured absent it failed with `memory vector arm did not run`. TRADE-OFF recorded rather than hidden: the guard skips the whole test, so the SQL-level scope-predicate assertion also stops running under plain `make test`; making only the vector-arm assertion conditional would be a weakened assertion, which is worse, and CI plus `make test-ci` install `--extra ml` so the check still runs where it gates merges. CONDITIONAL: sanctions ONLY while sentence_transformers is measured ABSENT.",
+      "sanctioned_when_module_absent": "sentence_transformers"
     }
   ]
 }

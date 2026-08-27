@@ -164,11 +164,29 @@ run_leg() {
     # a leg that installs a smaller dependency set than the group it mirrors is
     # not mirroring it. (`make test` deliberately keeps the smaller set —
     # asyncmy is a compiled driver and that is the everyday target.)
+    #
+    # --extra analytics (task 390) is the same defect with a second dependency:
+    # all 26 tests in yadgar/tests/core/test_export_duckdb.py open with
+    # `pytest.importorskip("duckdb")`, and NO extra in pyproject.toml provided
+    # duckdb at all, so unlike the sqlalchemy set they had never executed
+    # anywhere — not here, not in CI, not on a developer's machine. The extra is
+    # restored; this leg installs it. duckdb ships prebuilt wheels, so the
+    # compiled-driver argument that keeps `sql` out of `make test` does not apply.
+    #
+    # The extras receipt (task 392) leads the log, exactly as it does in the CI
+    # jobs: it MEASURES, inside the same `uv run` environment this leg's pytest
+    # uses, which optional dependencies are importable. `check_skip_inventory.py`
+    # reads it back out of this file and refuses to let e.g. `sqlalchemy not
+    # installed (sql extra)` sanction a skip on a leg that installed sqlalchemy.
+    # Piping this log into the gate is therefore meaningful locally too:
+    #   cat <log> | python scripts/check_skip_inventory.py --require-receipt
+    uv run --extra test --extra ml --extra sql --extra analytics \
+      python "$script_dir/check_skip_inventory.py" --emit-receipt > "$log" 2>/dev/null || : > "$log"
     if TEST_TIMEOUT="${TEST_TIMEOUT:-5400}" TEST_MEM_MAX="$leg_mem" \
         "$script_dir/test-capped.sh" \
-        uv run --extra test --extra ml --extra sql python -m pytest "$@" \
+        uv run --extra test --extra ml --extra sql --extra analytics python -m pytest "$@" \
           -q -rs --tb=short -n 4 --dist loadgroup --reruns 2 --reruns-delay 2 \
-          -m "$CI_LOCAL_MARKER" ${PYTEST_ARGS:-} > "$log" 2>&1; then
+          -m "$CI_LOCAL_MARKER" ${PYTEST_ARGS:-} >> "$log" 2>&1; then
       echo pass > "$status_file"
     else
       echo fail > "$status_file"

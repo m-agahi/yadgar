@@ -148,7 +148,13 @@ repos:
         entry: python scripts/check_ledger_chokepoint.py --allowlist .ledger-chokepoint-allowlist.txt
         types: [python]
         pass_filenames: false
-        files: ^yadgar/.*\.py$
+        # scripts/ joined the scan in ledger task 394. The regex MUST list it
+        # too: with pass_filenames: false the hook still scans everything, but
+        # `files:` decides whether it RUNS AT ALL — leaving this ^yadgar/-only
+        # would mean a raw ledger write added under scripts/ never triggers the
+        # gate, i.e. a widened scan that is inert on the exact directory it was
+        # widened for. Shape mirrors check-complexity-allowlist.
+        files: ^(yadgar/.*\.py|scripts/.*\.py)$
 
       - id: check-auth-token-pattern
         name: "Check bearer-token resolution chokepoint (bug train car 9: every YADGAR_MCP_AUTH_TOKEN read routes through resolve_auth_token())"
@@ -294,7 +300,8 @@ repos:
         entry: python scripts/check_ruff_noqa_liveness.py
         pass_filenames: false
         # always_run: the read set is pyproject.toml's [tool.ruff.lint]
-        # select PLUS every .py file under yadgar/ — a pure pyproject.toml
+        # select PLUS every .py file under yadgar/ AND scripts/ (task 394 —
+        # the gate lives in scripts/ and used to skip it) — a pure pyproject.toml
         # change that adds a rule to select with zero staged code is exactly
         # the input that must make this fail (the previously-inert noqa
         # sites become inert-flag violations). C2 (2026-08-23) found 309
@@ -366,11 +373,14 @@ repos:
         always_run: true
 
       - id: check-complexity-allowlist
-        name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
+        name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale/dead entries)
         language: system
         entry: python scripts/check_complexity_allowlist.py
         pass_filenames: false
-        files: ^(yadgar/.*\.py|scripts/.*\.py|\.complexity-allowlist\.json|\.complexity-config\.json)$
+        # .complexity-baseline.json is in the filter because property (e)
+        # (task 395) reads it — editing the baseline must re-run the gate,
+        # otherwise a dead entry can be re-introduced by a baseline-only commit.
+        files: ^(yadgar/.*\.py|scripts/.*\.py|\.complexity-allowlist\.json|\.complexity-config\.json|\.complexity-baseline\.json)$
 
       - id: check-swallowed-failure
         name: Check ADR-0420 swallowed failure (R3 at zero, R1 baseline-ratcheted)

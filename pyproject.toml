@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.190.3"
+version = "5.191.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -241,6 +241,21 @@ test = [
     "anyio>=4.0",
     # v5.59 — parallel chunk splitting for CI matrix (ci-pr.yaml --splits/--group)
     "pytest-split>=0.9.0",
+]
+# `yadgar export duckdb` — the analytics snapshot exporter (yadgar/core/export/).
+# RESTORED in the gate-honesty train (task 390). This extra was added in
+# 7bf9015a (2026-06-01 08:07) and deleted three hours later as unmentioned
+# collateral in 86c23cbc, a "bump version 5.26.0 -> 5.31.0" commit whose message
+# and diff disagree about the version pair — a sloppy rebase, not a decision.
+# For 82 days afterwards `yadgar/core/cli/export.py` told users to run
+# `pip install yadgar[analytics]` against an extra that did not exist, and all
+# 26 tests in yadgar/tests/core/test_export_duckdb.py were guarded on an import
+# NO extra could satisfy, so they had never executed.
+# Unlike `sql` above, duckdb ships pure prebuilt wheels (cp314 manylinux x86_64
+# published for 1.5.5), so the compiled-driver argument that keeps `sql` out of
+# plain `make test` does not apply here.
+analytics = [
+    "duckdb>=0.10,<2",
 ]
 dev = [
     "yadgar[test]",

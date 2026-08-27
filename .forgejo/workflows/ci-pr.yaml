@@ -146,14 +146,23 @@ jobs:
           echo "group '${{ matrix.group }}' selects ${collected} tests"
 
       - name: Run tests
+        # EXTRAS RECEIPT FIRST (task 392) — mirrors .github/workflows/ci-pr.yml.
+        # `--emit-receipt` measures, in this job's interpreter, which optional
+        # dependencies the skip inventory keys on are importable, and writes one
+        # `SKIPGATE-MODULES:` line ahead of pytest's output (hence `>` then
+        # `tee -a`). Without it the gate cannot tell a group that RAN the
+        # sqlalchemy/duckdb tests from one that skipped every one of them.
         run: |
           set -o pipefail
+          python scripts/check_skip_inventory.py --emit-receipt \
+            > pytest-rs-${{ matrix.group }}.txt
+          cat pytest-rs-${{ matrix.group }}.txt
           python -m pytest ${{ matrix.paths }} ${{ matrix.split }} \
             -q -rs --tb=short \
             -n ${{ vars.CI_PYTEST_WORKERS || '4' }} --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
             -m 'not integration and not e2e and not perf' \
-            2>&1 | tee pytest-rs-${{ matrix.group }}.txt
+            2>&1 | tee -a pytest-rs-${{ matrix.group }}.txt
 
       - name: Upload -rs output for skip gate
         if: ${{ always() }}
@@ -261,17 +270,26 @@ jobs:
         # Package-manager-portable: this mirror's runner host is not
         # guaranteed to be the same distro as the GitHub mirror's.
         #
-        # NOT THE DISTRO PACKAGE on apt hosts. The GitHub mirror's runner is
-        # Ubuntu 20.04, whose `mariadb-client` is MariaDB 10.3 — old enough to
-        # predate the `mysqldump` -> `mariadb-dump` rename (10.5). apt
-        # SUCCEEDED there while `mariadb-dump` stayed absent, and every one of
-        # the 15 skips left in GH run 31677402827 was that single cause.
-        # Production resolves the binary by that exact name (`backup_sql.py`:
+        # UPSTREAM REPO, NOT THE DISTRO PACKAGE, on apt hosts — and the WHY
+        # has changed, so read this as history then current position.
+        #
+        # HISTORY. The GitHub mirror's runner used to be Ubuntu 20.04 (focal),
+        # whose `mariadb-client` is MariaDB 10.3 — old enough to predate the
+        # `mysqldump` -> `mariadb-dump` rename (10.5). apt SUCCEEDED there
+        # while `mariadb-dump` stayed absent, and every one of the 15 skips
+        # left in GH run 31677402827 was that single cause. Production
+        # resolves the binary by that exact name (`backup_sql.py`:
         # which("mariadb-dump")), so symlinking 10.3's `mysqldump` over it
         # would satisfy the guard with the wrong binary under a false name.
-        # MariaDB's own repo publishes 11.4 for these codenames — the same
-        # series as the server image the fixtures start. Alpine's own
-        # `mariadb-client` is already new enough, so apk is left alone.
+        #
+        # NOW. That mirror runs `myoung34/github-runner:ubuntu-noble` — Ubuntu
+        # 24.04, `mariadb-client` 10.11, which ships `mariadb-dump` (ADR-0446).
+        # THIS mirror's host is a separate machine and its distro is still not
+        # guaranteed, which is why the branching below stays. On any apt host
+        # the upstream repo is no longer about making the binary exist; it is
+        # about keeping the CLIENT in the same 11.4 series as the server image
+        # the fixtures start. Alpine's own `mariadb-client` is already new
+        # enough, so apk is left alone.
         run: |
           set -euo pipefail
           SUDO=""
@@ -288,13 +306,20 @@ jobs:
               | $SUDO tee /etc/apt/keyrings/mariadb.pgp > /dev/null
             echo "deb [signed-by=/etc/apt/keyrings/mariadb.pgp] https://mirror.mariadb.org/repo/11.4/${ID} ${codename} main" \
               | $SUDO tee /etc/apt/sources.list.d/mariadb.list > /dev/null
-            # MariaDB drops EOL distros from its repo (focal etc.). When the
-            # codename isn't published, ``apt-get update`` exits 100 and the
-            # whole step blows up — even though the distro's own
-            # ``mariadb-client`` is new enough to expose ``mariadb-dump``.
-            # Try the upstream repo first; fall back to the distro package
-            # if update fails, with a log line naming the skipped codename so
-            # the next EOL doesn't bury itself in a generic 100. (task 335)
+            # MariaDB drops EOL distros from its repo. When the codename isn't
+            # published, ``apt-get update`` exits 100 and the whole step blows
+            # up — even though the distro's own ``mariadb-client`` is new enough
+            # to expose ``mariadb-dump``. Try the upstream repo first; fall back
+            # to the distro package if update fails, with a log line naming the
+            # skipped codename so the next EOL doesn't bury itself in a generic
+            # 100. (task 335)
+            #
+            # That "new enough" premise is only true as of noble (ADR-0446): on
+            # focal the distro package was 10.3, which has no ``mariadb-dump``
+            # at all, so this fallback could never have rescued the EOL it was
+            # written for. noble's 10.11 does ship it, so the fallback went from
+            # dead code to a genuinely viable path. Nothing here became
+            # redundant — the branch is still what runs the day noble is dropped.
             if ! $SUDO apt-get update -qq 2>/tmp/mariadb-update.err; then
               echo "MariaDB repo skipped: codename '${codename}' not published (likely EOL distro)"
               cat /tmp/mariadb-update.err >&2
@@ -327,7 +352,7 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Provision Python 3.14 (requires-python >=3.14; system python3 here is 3.8)
+      - name: Provision Python 3.14 (requires-python >=3.14; system python3 here is 3.12)
         run: uv python install 3.14
 
       - name: Sync the sql + test extras
@@ -685,7 +710,11 @@ jobs:
             ls -la rs-logs/ >&2
             exit 1
           fi
-          cat rs-logs/pytest-rs-*.txt | python scripts/check_skip_inventory.py
+          # --require-receipt: a group whose -rs text carries no measured
+          # SKIPGATE-MODULES line is unverifiable and fails rather than
+          # being tolerated. The gate echoes each receipt it finds.
+          cat rs-logs/pytest-rs-*.txt \
+            | python scripts/check_skip_inventory.py --require-receipt
 
       - name: Validate inventory governance (ADR-0087 — stale entries, note length, wildcards)
         run: python scripts/check_skip_inventory.py --validate-inventory

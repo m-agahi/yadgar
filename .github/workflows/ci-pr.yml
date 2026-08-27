@@ -257,14 +257,28 @@ jobs:
         # -n is capped (never `auto`): /proc/meminfo reports HOST RAM inside the
         # cgroup-limited runner, so `auto` spawns a worker per host core and each
         # worker carries a SurrealDB child plus the embedding model (ADR-0070).
+        #
+        # EXTRAS RECEIPT FIRST (task 392). `--emit-receipt` MEASURES, in this
+        # job's own interpreter, whether each optional dependency the inventory
+        # keys on is importable, and writes one `SKIPGATE-MODULES:` line into
+        # the artifact ahead of pytest's output (hence `>` then `tee -a`). The
+        # gate reads it out of the same stream and refuses to let an entry like
+        # 'sqlalchemy not installed (sql extra)' sanction a skip on a leg where
+        # sqlalchemy is installed. It must be MEASURED and not declared here:
+        # yadgar-ci has no auto-sync pipeline, so a hardcoded "this image has
+        # the sql extra" would be an assertion that can silently go false —
+        # precisely the kind of unverifiable claim this gate exists to remove.
         run: |
           set -o pipefail
+          python scripts/check_skip_inventory.py --emit-receipt \
+            > pytest-rs-${{ matrix.group }}.txt
+          cat pytest-rs-${{ matrix.group }}.txt
           python -m pytest ${{ matrix.paths }} ${{ matrix.split }} \
             -q -rs --tb=short \
             -n ${{ vars.CI_PYTEST_WORKERS || '4' }} --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
             -m 'not integration and not e2e and not perf' \
-            2>&1 | tee pytest-rs-${{ matrix.group }}.txt
+            2>&1 | tee -a pytest-rs-${{ matrix.group }}.txt
 
       - name: Upload -rs output for skip gate
         # if: always() — a FAILING group must still publish its artifact, or
@@ -401,17 +415,28 @@ jobs:
         # their own `shutil.which("mariadb-dump")` / `shutil.which("mariadb")`
         # guards even once a working container runtime is found (car G5).
         #
-        # NOT THE DISTRO PACKAGE. This runner is Ubuntu 20.04 — its
-        # `mariadb-client` is MariaDB 10.3, which predates the
+        # UPSTREAM REPO, NOT THE DISTRO PACKAGE — and WHY has changed, so read
+        # the two paragraphs as history then current position (ADR-0446).
+        #
+        # HISTORY. This runner used to be Ubuntu 20.04 (focal), whose
+        # `mariadb-client` is MariaDB 10.3 — old enough to predate the
         # `mysqldump` -> `mariadb-dump` rename (10.5). So apt SUCCEEDED while
         # `mariadb-dump` stayed absent, and every one of the 15 skips left in
         # run 31677402827 was that single cause. Production resolves the
         # binary by that exact name (`backup_sql.py`: which("mariadb-dump")),
         # so pointing a symlink at 10.3's `mysqldump` would satisfy the guard
         # with the wrong binary under a false name — a green tick for an
-        # untested path. MariaDB's own repo publishes 11.4 for focal, the
-        # same series as the server image the fixtures start, so client and
-        # server match.
+        # untested path.
+        #
+        # NOW. The runner is `myoung34/github-runner:ubuntu-noble` — Ubuntu
+        # 24.04, whose own `mariadb-client` is 10.11 and DOES ship
+        # `mariadb-dump`. The upstream repo is therefore no longer what makes
+        # the binary exist; it is what keeps the CLIENT in the same 11.4 series
+        # as the server image the fixtures start, so client and server match.
+        # MariaDB publishes 11.4 for noble, so the fallback below is a fallback
+        # rather than the path taken. Do not "simplify" this to the distro
+        # package: that silently drops the version match, and the day noble
+        # goes EOL it drops back to a client several series behind the server.
         run: |
           set -euo pipefail
           . /etc/os-release
@@ -425,13 +450,20 @@ jobs:
             | sudo tee /etc/apt/keyrings/mariadb.pgp > /dev/null
           echo "deb [signed-by=/etc/apt/keyrings/mariadb.pgp] https://mirror.mariadb.org/repo/11.4/${ID} ${codename} main" \
             | sudo tee /etc/apt/sources.list.d/mariadb.list > /dev/null
-          # MariaDB drops EOL distros from its repo (focal etc.). When the
-          # codename isn't published, ``apt-get update`` exits 100 and the
-          # whole step blows up — even though the distro's own
-          # ``mariadb-client`` is new enough to expose ``mariadb-dump``.
-          # Try the upstream repo first; fall back to the distro package
-          # if update fails, with a log line naming the skipped codename so
-          # the next EOL doesn't bury itself in a generic 100. (task 335)
+          # MariaDB drops EOL distros from its repo. When the codename isn't
+          # published, ``apt-get update`` exits 100 and the whole step blows
+          # up — even though the distro's own ``mariadb-client`` is new enough
+          # to expose ``mariadb-dump``. Try the upstream repo first; fall back
+          # to the distro package if update fails, with a log line naming the
+          # skipped codename so the next EOL doesn't bury itself in a generic
+          # 100. (task 335)
+          #
+          # That "new enough" premise is only true as of noble (ADR-0446): on
+          # focal the distro package was 10.3, which has no ``mariadb-dump``
+          # at all, so this fallback could never have rescued the EOL it was
+          # written for. noble's 10.11 does ship it, so the fallback went from
+          # dead code to a genuinely viable path. Nothing here became
+          # redundant — the branch is still what runs the day noble is dropped.
           if ! sudo apt-get update -qq 2>/tmp/mariadb-update.err; then
             echo "MariaDB repo skipped: codename '${codename}' not published (likely EOL distro)"
             cat /tmp/mariadb-update.err >&2
@@ -450,17 +482,19 @@ jobs:
 
       - name: Install uv (bare host, no container to inherit it from)
         # `python3 -m pip install uv` (the original approach) resolves through
-        # WHATEVER `python3` is on the runner's PATH -- that turned out to be
-        # the host's system Python 3.8, and the pip-installed `uv` package's
-        # binary-fetch landed somewhere `python3 -m uv` doesn't search
-        # (uv._find_uv.UvNotFound — PR #41's actual CI failure). The official
-        # installer places a real `uv` binary at ~/.local/bin/uv directly,
-        # independent of whatever system python is on PATH.
+        # WHATEVER `python3` is on the runner's PATH -- which was then focal's
+        # system Python 3.8 (it is 3.12 on noble today, ADR-0446), and the
+        # pip-installed `uv` package's binary-fetch landed somewhere
+        # `python3 -m uv` doesn't search (uv._find_uv.UvNotFound — PR #41's
+        # actual CI failure). The official installer places a real `uv` binary
+        # at ~/.local/bin/uv directly, independent of whatever system python is
+        # on PATH — which is the point: the fix does not depend on the host's
+        # python version, so a distro bump neither breaks nor obviates it.
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Provision Python 3.14 (requires-python >=3.14; system python3 here is 3.8)
+      - name: Provision Python 3.14 (requires-python >=3.14; system python3 here is 3.12)
         run: uv python install 3.14
 
       - name: Sync the sql + test extras
@@ -809,7 +843,14 @@ jobs:
             ls -la rs-logs/ >&2
             exit 1
           fi
-          cat rs-logs/pytest-rs-*.txt | python scripts/check_skip_inventory.py
+          # --require-receipt: every group must carry its measured
+          # SKIPGATE-MODULES line. A group whose -rs text has none is
+          # unverifiable — 'ran and passed' and 'skipped and passed' look
+          # identical — so its absence FAILS rather than being tolerated.
+          # The gate echoes each receipt, so this job's log is the CI-visible
+          # answer to 'did the optional-dependency tests actually run?'.
+          cat rs-logs/pytest-rs-*.txt \
+            | python scripts/check_skip_inventory.py --require-receipt
 
       - name: Validate inventory governance (ADR-0087 — stale entries, note length, wildcards)
         run: python scripts/check_skip_inventory.py --validate-inventory

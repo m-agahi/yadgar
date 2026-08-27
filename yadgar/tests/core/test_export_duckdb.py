@@ -20,6 +20,24 @@ import pytest
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
+# The dim every fixture below configures on both StorageEngine and ExportConfig.
+SEED_EMBEDDING_DIM = 384
+
+# The memory row's embedding. NON-ZERO on purpose (task 390): the roundtrip test
+# asserts the first component survives export, and the cosine test asserts a
+# vector compared with ITSELF scores ~1.0. A zero vector satisfies neither — its
+# components carry no information and its cosine against anything is undefined
+# (DuckDB returns -1.0). Both tests were written red-first against a 4-dim
+# non-zero seed, the fixture later drifted to `[0.0] * 384`, and because the
+# whole file was guarded on a `duckdb` import no extra could satisfy, the two
+# assertions never ran again to notice.
+#
+# Computed, not a literal, for two reasons: the components VARY along the vector
+# so a transposition or truncation in the exporter cannot pass unnoticed, and
+# yadgar/tests/scripts/test_v5_46_4_vector_dim_384.py greps this file for the old
+# 4-element literal to keep the v5.46.4 B8 fix (384-dim seeds) from regressing.
+SEED_EMBEDDING = [round(0.1 + (i % 7) * 0.05, 3) for i in range(SEED_EMBEDDING_DIM)]
+
 
 @pytest.fixture()
 def tmp_duckdb(tmp_path: Path) -> Path:
@@ -55,7 +73,7 @@ def seeded_storage(tmp_db: str):
             "c": "test memory content",
             "h": 0.8,
             "t": ["tag1", "tag2"],
-            "e": [0.0] * 384,
+            "e": SEED_EMBEDDING,
             "d": "/test/project",
         },
     )
@@ -180,6 +198,7 @@ class TestExporterCreatesTables:
         con = duckdb.connect(str(exported_db), read_only=True)
         rows = con.execute("SELECT count(*) FROM memory").fetchone()
         con.close()
+        assert rows is not None, "count(*) must return a row"
         assert rows[0] == 1
 
     def test_wiki_page_table_exists(self, exported_db: Path):
@@ -188,6 +207,7 @@ class TestExporterCreatesTables:
         con = duckdb.connect(str(exported_db), read_only=True)
         rows = con.execute("SELECT count(*) FROM wiki_page").fetchone()
         con.close()
+        assert rows is not None, "count(*) must return a row"
         assert rows[0] == 1
 
     def test_all_exported_tables_present(self, exported_db: Path):
@@ -301,9 +321,10 @@ class TestExporterActionLogWindow:
         import duckdb
 
         con = duckdb.connect(str(exported_db), read_only=True)
-        count = con.execute("SELECT count(*) FROM action_log").fetchone()[0]
+        row = con.execute("SELECT count(*) FROM action_log").fetchone()
         con.close()
-        assert count >= 1
+        assert row is not None, "count(*) must return a row"
+        assert row[0] >= 1
 
     def test_action_log_limit_zero(self, seeded_storage, tmp_duckdb, tmp_db):
         """limit=0 → empty action_log table."""
@@ -370,17 +391,19 @@ class TestExporterEmbeddingRoundtrip:
         assert row is not None
         emb = row[0]
         assert emb is not None, "embedding should not be NULL"
-        assert len(emb) == 4, f"expected dim 4, got {len(emb)}"
-        assert abs(emb[0] - 0.1) < 1e-4
+        assert len(emb) == SEED_EMBEDDING_DIM, f"expected dim {SEED_EMBEDDING_DIM}, got {len(emb)}"
+        assert abs(emb[0] - SEED_EMBEDDING[0]) < 1e-4
 
     def test_cosine_similarity_computable(self, exported_db: Path):
         import duckdb
 
         con = duckdb.connect(str(exported_db), read_only=True)
-        # array_cosine_similarity is available natively in DuckDB >= 0.10
+        # array_cosine_similarity is available natively in DuckDB >= 0.10.
+        # Probe with the SEEDED vector itself, so the expected answer is a real
+        # self-similarity of 1.0 rather than the undefined zero-vs-zero case.
         result = con.execute(
-            f"SELECT list_cosine_similarity(embedding, {[0.0] * 384}::FLOAT[384]) "
-            "FROM memory LIMIT 1"
+            f"SELECT list_cosine_similarity(embedding, {SEED_EMBEDDING}"
+            f"::FLOAT[{SEED_EMBEDDING_DIM}]) FROM memory LIMIT 1"
         ).fetchone()
         con.close()
         assert result is not None

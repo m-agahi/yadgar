@@ -30,6 +30,15 @@ logger = logging.getLogger(__name__)
 # (`a-valid-32-char-token-here!!` lives in tests/server/test_security_headers.py.)
 _TEST_FIXTURE_TOKENS = frozenset({"a-valid-32-char-token-here!!"})
 
+# Basenames of the two always-global hook scripts. They are also the
+# yadgar-managed IDENTITY of the Stop / SessionEnd entries: like every other
+# event (ADR-0161), those two strip on script basename so a foreign entry under
+# the same key survives an install. Named once here because two call sites need
+# to agree — ``_install_global_scripts`` (which copies the scripts) and
+# ``_write_global_stop_hooks`` (which registers them).
+_STOP_HOOK_BASENAME = "yadgar-stop-memory-checkpoint.py"
+_SESSION_END_HOOK_BASENAME = "yadgar-session-end-capture.py"
+
 
 # ── Container detection ────────────────────────────────────────────────────
 
@@ -154,10 +163,10 @@ def _install_global_scripts(
     shebang_python: str | None = None,
 ) -> tuple[Path, Path, Path]:
     """Copy always-global hook scripts; return (stop_dst, session_end_dst, router_dst)."""
-    stop_dst = global_hooks_dir / "yadgar-stop-memory-checkpoint.py"
+    stop_dst = global_hooks_dir / _STOP_HOOK_BASENAME
     _copy_hook(package_hooks / "stop-memory-checkpoint.py", stop_dst, dry_run, shebang_python)
 
-    session_end_dst = global_hooks_dir / "yadgar-session-end-capture.py"
+    session_end_dst = global_hooks_dir / _SESSION_END_HOOK_BASENAME
     _copy_hook(package_hooks / "session-end-capture.py", session_end_dst, dry_run, shebang_python)
 
     # HOOKS train Car 1: standalone PreToolUse router-guard — subsumes the old
@@ -281,6 +290,48 @@ def _build_core_hooks(
 
 
 @observe(tier="stage")
+def _build_global_stop_entries(
+    stop_dst: Path,
+    session_end_dst: Path,
+    python: str,
+) -> tuple[list[dict], list[dict]]:
+    """Build the (Stop, SessionEnd) hook-entry pair — the always-global scripts.
+
+    Lives here beside the other entry builders rather than inline in
+    ``install_hooks_impl``; the orchestrator only needs the pair, and both of
+    its scope branches (global registration + the project-scope global writer)
+    consume the same two lists.
+    """
+    _python = shlex.quote(python)
+    stop_entry = [_make_hook_entry(f"{_python} {shlex.quote(str(stop_dst))}", "", {})]
+    session_end_entry = [_make_hook_entry(f"{_python} {shlex.quote(str(session_end_dst))}", "", {})]
+    return stop_entry, session_end_entry
+
+
+@observe(tier="stage")
+def _register_global_stop_hooks(
+    hooks_config: dict,
+    stop_entry: list[dict],
+    session_end_entry: list[dict],
+) -> None:
+    """Register the Stop + SessionEnd pair, foreign-preserving (task 400).
+
+    These two used to be hard-assigned (``hooks_config["Stop"] = ...``) at both
+    of their write sites, which silently discarded ANY pre-existing entry under
+    the key — so a foreign SessionStart hook survived an install (the five core
+    events moved onto ``_replace_managed_entries`` in ADR-0161) while a foreign
+    Stop or SessionEnd hook did not. Preservation is now uniform. The strip
+    predicate is the managed script basename, identical to every other event,
+    so yadgar's OWN stale entries are still collapsed rather than promoted to
+    foreign — a stale entry kept beside the fresh one would double-fire.
+    """
+    _replace_managed_entries(hooks_config, "Stop", _STOP_HOOK_BASENAME, stop_entry)
+    _replace_managed_entries(
+        hooks_config, "SessionEnd", _SESSION_END_HOOK_BASENAME, session_end_entry
+    )
+
+
+@observe(tier="stage")
 def _install_append_hooks(
     package_hooks: Path,
     hooks_dir: Path,
@@ -319,7 +370,12 @@ def _write_global_stop_hooks(
     stop_entry: list,
     session_end_entry: list,
 ) -> None:
-    """Merge Stop + SessionEnd into the global settings.json (scope=project path)."""
+    """Merge Stop + SessionEnd into the global settings.json (scope=project path).
+
+    The second write site for the pair, and it had the same hard-assign bug the
+    ``scope=global`` one did — see ``_register_global_stop_hooks``, which both
+    now share.
+    """
     global_settings_path = global_claude_dir / "settings.json"
     global_settings: dict = {}
     if global_settings_path.exists():
@@ -328,8 +384,7 @@ def _write_global_stop_hooks(
         except Exception:
             global_settings = {}
     global_hooks = global_settings.get("hooks", {})
-    global_hooks["Stop"] = stop_entry
-    global_hooks["SessionEnd"] = session_end_entry
+    _register_global_stop_hooks(global_hooks, stop_entry, session_end_entry)
     global_settings["hooks"] = global_hooks
     _atomic_write(global_claude_dir, global_settings_path, global_settings)
 
