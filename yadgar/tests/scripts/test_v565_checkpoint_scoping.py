@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import sys
 
 import pytest
 
@@ -411,7 +412,7 @@ class TestStopHookStdout:
         )
 
         result = subprocess.run(
-            ["python3", hook_path],
+            [sys.executable, hook_path],
             input=payload,
             capture_output=True,
             text=True,
@@ -469,7 +470,7 @@ class TestStopHookStdout:
         )
 
         result = subprocess.run(
-            ["python3", hook_path],
+            [sys.executable, hook_path],
             input=payload,
             capture_output=True,
             text=True,
