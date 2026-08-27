@@ -263,7 +263,7 @@ For `pipx` the suggested command is `pipx upgrade yadgar`; then re-run `yadgar s
 ### Setup / install
 ```bash
 yadgar setup                                  # first-run: config, secrets, hooks, units
-yadgar install --client claude-code --hooks    # (re-)wire Claude Code hooks + bearer token (replaces yadgar install-hooks)
+yadgar install --client claude-code --hooks    # (re-)wire Claude Code hooks ONLY — MCP config untouched (replaces yadgar install-hooks)
 yadgar install-subagents                      # install subagent templates
 yadgar daemon configure-mcp                   # write ~/.claude.json with streamable-HTTP + bearer header
 yadgar seed <directory>                       # bootstrap memory for an existing project
@@ -315,7 +315,7 @@ yadgar rules export|import          # policy rules
 yadgar config init|list|get|set     # configuration
 yadgar update --check|--install|--rollback
 yadgar export duckdb --output snap.duckdb   # analytics snapshot (pip install yadgar[analytics])
-yadgar install --client <name> [--hooks] [--scope ...]   # wire MCP + rules + hooks (default-on) per client; --hooks explicit when scope is set
+yadgar install --client <name> [--hooks] [--scope ...]   # no surface flag = MCP + rules + hooks; --hooks = hooks surface only
 yadgar install-subagents                # install subagent templates (claude-code only)
 yadgar restore <directory>          # (hook-internal) restore context post-compaction
 yadgar capture                      # (hook-internal) lightweight action capture

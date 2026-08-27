@@ -40,10 +40,22 @@ Key guarantees:
     home-manager activation writes the file; the actual token is resolved
     from the environment at daemon start.
 
+Surface selection (``--mcp`` / ``--rules`` / ``--hooks``)
+---------------------------------------------------------
+Naming any surface flag installs **exactly** the named surfaces; naming none
+installs MCP + rules (hooks ride along, see below).  So
+``yadgar install --client claude-code --hooks`` touches ``~/.claude/settings.json``
+and nothing else — it does not rewrite the client's MCP config.  ``--no-hooks``
+is not a surface name: it deselects hooks and leaves the no-flags default for
+the other two intact.  It is mutually exclusive with ``--hooks`` (naming and
+deselecting the same surface would select nothing).
+
 Hook install behavior:
-  * ``--hooks`` is on by default for clients with a registered ``hooks_kind``
+  * hooks are on by default for clients with a registered ``hooks_kind``
     in the registry (claude-code, cursor, opencode, etc.). For advisory-only
     clients (Gemini, ``hooks_kind=None``) hooks is a no-op regardless.
+  * ``--hooks`` selects the hooks surface alone (suppressing the MCP + rules
+    default). Combine with ``--mcp`` / ``--rules`` to add those back.
   * ``--no-hooks`` opts out. Useful for nix provisioning where the
     home-manager activation only needs the MCP + rules fragments, or for
     debugging where the user wants to test the other surfaces in isolation.
@@ -140,17 +152,24 @@ def cmd_install(args) -> None:
     # Determine which surfaces to install.
     want_mcp = bool(getattr(args, "mcp", False))
     want_rules = bool(getattr(args, "rules", False))
-    # Hooks: defaults to True (wired for clients with a hooks_kind). The
-    # ``--no-hooks`` flag opts out; ``--hooks`` explicitly opts in (same as
-    # the default, kept for symmetry with ``--mcp`` / ``--rules``).
-    if getattr(args, "no_hooks", False):
-        want_hooks = False
-    elif getattr(args, "hooks", False):
-        want_hooks = True
-    else:
-        want_hooks = True  # default-on
-    # Default: all surfaces when neither flag given explicitly.
-    if not want_mcp and not want_rules:
+    # ``--hooks`` NAMES the hooks surface, exactly as ``--mcp`` / ``--rules``
+    # name theirs. ``--no-hooks`` is not a surface name — it deselects hooks
+    # and leaves the no-flags default for the other two intact. The two are
+    # mutually exclusive at the parser (see ``register``), so at most one of
+    # them is ever set.
+    hooks_named = bool(getattr(args, "hooks", False))
+    want_hooks = not getattr(args, "no_hooks", False)  # default-on
+    # Surface default: MCP + rules when NO surface flag was named at all.
+    #
+    # Task 399: this fallback used to key on ``--mcp`` / ``--rules`` alone, so
+    # ``yadgar install --client claude-code --hooks`` — naming ONLY the hooks
+    # surface — silently switched the MCP and rules surfaces on as well and
+    # rewrote the client's MCP config. That is a destructive surprise (nix
+    # writes ``"type": "http"`` with a literal bearer token into
+    # ``~/.claude.json``; the installer writes ``"type": "streamable-http"``),
+    # and it made the ``--hooks`` help text — "explicitly opts in" — false.
+    # Naming any surface now means: install exactly the named surfaces.
+    if not want_mcp and not want_rules and not hooks_named:
         want_mcp = True
         want_rules = True
 
@@ -276,19 +295,26 @@ def register(subparsers) -> None:
         default=False,
         help="Install rules file (writes AGENTS.md / CLAUDE.md / client-native)",
     )
-    p.add_argument(
+    # --hooks / --no-hooks are contradictory: --hooks names a surface (which
+    # suppresses the MCP + rules default), --no-hooks deselects that same
+    # surface. Passing both would select nothing at all, so argparse rejects
+    # the pair rather than letting the command become a silent no-op.
+    hooks_group = p.add_mutually_exclusive_group()
+    hooks_group.add_argument(
         "--hooks",
         dest="hooks",
         action="store_true",
         default=False,
         help=(
-            "Install hooks surface (default ON for clients with a hooks_kind: "
-            "claude-code, cursor, opencode, etc.; no-op for Gemini). Writes the "
-            "client's native hook-registration file: TS plugin (opencode), "
+            "Install the hooks surface ONLY. Hooks are default-ON when no "
+            "surface flag is named; naming --hooks selects hooks and leaves "
+            "MCP + rules untouched (combine with --mcp / --rules to add them "
+            "back). No-op for clients without a hooks_kind (Gemini). Writes "
+            "the client's native hook-registration file: TS plugin (opencode), "
             "settings.json (claude-code), or hooks.json (cursor)."
         ),
     )
-    p.add_argument(
+    hooks_group.add_argument(
         "--no-hooks",
         dest="no_hooks",
         action="store_true",

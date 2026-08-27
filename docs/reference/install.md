@@ -122,9 +122,9 @@ yadgar install --client <name> --print
 | `--auto-detect` | — | Probe and register all detected clients |
 | `--mcp` | — | Write MCP registration config only |
 | `--rules` | — | Write rules file only (AGENTS.md-equivalent) |
-| `--hooks` | on for clients with a `hooks_kind` | Wire the hooks surface (TS plugin for opencode, settings.json for claude-code, hooks.json for cursor). No-op for advisory-only clients (Gemini). |
-| `--no-hooks` | — | Skip the hooks surface. Useful for nix provisioning where only MCP + rules are needed. |
-| (neither) | — | Write MCP config, rules file, AND hooks (for clients that have a hook surface) |
+| `--hooks` | on for clients with a `hooks_kind` | Wire the hooks surface ONLY (TS plugin for opencode, settings.json for claude-code, hooks.json for cursor) — the client's MCP config and rules file are left untouched. Combine with `--mcp` / `--rules` to add those back. No-op for advisory-only clients (Gemini). |
+| `--no-hooks` | — | Skip the hooks surface. Not a surface name: it keeps the MCP + rules default. Mutually exclusive with `--hooks`. Useful for nix provisioning where only MCP + rules are needed. |
+| (no surface flag) | — | Write MCP config, rules file, AND hooks (for clients that have a hook surface) |
 | `--print` | — | Dry-run: emit JSON to stdout, no file writes; auth uses env-ref (never literal tokens) |
 | `--port PORT` | `8765` | Daemon port for the MCP endpoint URL |
 | `--scope {global,project}` | `global` | Global home-dir config or per-project config |
@@ -141,7 +141,7 @@ yadgar install --client <name> --print
 }
 ```
 
-`mcp`, `rules`, or `hooks` is `null` when the corresponding `--mcp` / `--rules` / `--no-hooks` flag was omitted (or when the client has no hook surface, e.g. Gemini).
+A surface is `null` when it was not selected: naming any of `--mcp` / `--rules` / `--hooks` installs exactly the named surfaces (so `--hooks` alone renders `mcp: null, rules: null`), naming none installs MCP + rules + hooks, and `--no-hooks` nulls `hooks`. `hooks` is also `null` when the client has no hook surface (e.g. Gemini).
 
 ### Per-client config paths
 

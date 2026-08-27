@@ -26,12 +26,13 @@ yadgar install --client <name>           # register one client (e.g. --client op
 yadgar install --auto-detect             # detect + register all installed clients
 yadgar install --client <name> --mcp     # MCP registration config only
 yadgar install --client <name> --rules   # rules file only (AGENTS.md-equivalent)
+yadgar install --client <name> --hooks  # hooks surface only (does NOT rewrite the MCP config)
 yadgar install --client <name> --no-hooks  # skip the hooks surface (MCP + rules only)
 yadgar install --client <name> --print   # dry-run: emit JSON to stdout, no file writes
 yadgar install --client <name> --scope project --project-directory /path/to/repo
 ```
 
-`--hooks` is the default for clients with a registered `hooks_kind` (claude-code, cursor, opencode, etc.); `--no-hooks` opts out. Advisory-only clients (Gemini, `hooks_kind=None`) are no-op for hooks regardless of the flag. `--print` is the nix/home-manager integration path: it outputs the full config JSON without touching the filesystem. Full flag reference: [`docs/reference/install.md`](docs/reference/install.md).
+Naming any surface flag installs **exactly** the named surfaces; naming none installs MCP + rules. Hooks are on by default for clients with a registered `hooks_kind` (claude-code, cursor, opencode, etc.); `--hooks` selects the hooks surface alone (so it does not rewrite the client's MCP config), and `--no-hooks` opts out (it is not a surface name, so it keeps the MCP + rules default). The two are mutually exclusive. Advisory-only clients (Gemini, `hooks_kind=None`) are no-op for hooks regardless of the flag. `--print` is the nix/home-manager integration path: it outputs the full config JSON without touching the filesystem. Full flag reference: [`docs/reference/install.md`](docs/reference/install.md).
 
 ### Fast path — user install (pipx)
 
@@ -235,7 +236,7 @@ yadgar export duckdb --output snap.duckdb   # analytics snapshot (needs [analyti
 yadgar seed <directory>               # bootstrap memory from README + docs
 yadgar rules add|export|import        # retrieval / write policy rules
 yadgar config init|list|get|set|edit  # ~/.config/yadgar/config.yaml
-yadgar install --client <name> [--hooks | --no-hooks] [--scope ...]   # wires MCP + rules + hooks (default-on hooks for claude-code / cursor / opencode; --no-hooks opts out)
+yadgar install --client <name> [--hooks | --no-hooks] [--scope ...]   # no surface flag = MCP + rules + hooks; --hooks = hooks only; --no-hooks opts hooks out
 yadgar update --check                 # PyPI version probe (v5.48.0+)
 yadgar update --install               # multi-step coordinated upgrade (gated; opt-in)
 yadgar update --rollback              # restore prior image from latest snapshot
