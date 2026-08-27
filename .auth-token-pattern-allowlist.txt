@@ -23,7 +23,7 @@ yadgar/core/hooks/file-changed.py:57:same as above for the FileChanged hook's st
 yadgar/core/hooks/session-start-context.py:105:same portability pattern as the three fallbacks above, inline rather than a separate entry-point/module split — guarded by `resolve_auth_token is not None` (set to None on ImportError) so it degrades to the bare env read only when yadgar itself is not importable.
 
 # --- category 4: different purpose entirely — must read the literal env var, not the resolved value ---
-yadgar/core/install/_settings.py:378:not a client resolving a token to send — warns when the RAW env var equals a known test-fixture placeholder (BUG C guard) and never uses the value to authenticate anything; needs the literal env var, not the secrets.env-fallback value.
+yadgar/core/install/_settings.py:433:not a client resolving a token to send — warns when the RAW env var equals a known test-fixture placeholder (BUG C guard) and never uses the value to authenticate anything; needs the literal env var, not the secrets.env-fallback value.
 
 # --- category 5: already fixed on a sibling branch pending merge; re-applying here would only conflict ---
 yadgar/core/forward.py:83:fixed on car5/host-cli-entrypoint (commit acde2191) via resolve_auth_token() — bug-train car 9 was explicitly told not to redo this to avoid a merge conflict when the two branches integrate.
