@@ -25,6 +25,7 @@ from yadgar._shared.observability.observe import observe
 from yadgar._shared.runtime.lifecycle import _get_storage
 from yadgar.core.forward import _forward_admin
 from yadgar.core.server._app import _tool
+from yadgar.core.server.tools._audit_coverage import _build_coverage
 from yadgar.core.server.tools._project_param import accept_project_param
 from yadgar.core.server.tools.project import (
     _ANCHOR_PROMOTE_TAGS,
@@ -658,12 +659,34 @@ def audit_anchors(
     Returns:
         {
             "scanned": int,
+            "coverage": {...},  # task 391 — see below; always present
             "actions": [...],  # forget_expired / merge / promote / verify_grace_expired_anchor
             "dry_run": bool,
             "applied": [...],  # populated when dry_run=False
             "cross_project_redundancy_candidates": [...],  # always present (may be empty)
             "_truncated": bool,  # True when MAX_ACTIONS_PER_RUN cap hit
         }
+
+    ``scanned`` counts only rows matching the scan's own selector
+    (``'_anchor' INSIDE tags AND directory_context = $dir``), which is
+    narrower than "this project's protected rows". ``coverage`` states the
+    shortfall instead of leaving it silent::
+
+        {
+            "scanned": 95,              # the number above, unchanged
+            "scanned_protected": 95,    # of those, how many are is_protected
+            "protected_total": 102,     # protected rows owned by either key
+            "unscanned": 7,
+            "unscanned_reasons": {"no_anchor_tag": 6,
+                                  "directory_context_mismatch": 1},
+            "unscanned_sample": {...},  # up to 10 ids per reason
+            "scope_keys": {"directory_context": [...], "project_id": "..."},
+        }
+
+    No tier is excluded from the scan — ``semantic_immortal`` rows ARE
+    scanned; the tier guard governs mutation (``_is_safe_to_mutate``), not
+    visibility. ``coverage`` is a REPORT: it never enlarges the population
+    the action builders run over.
 
     NEVER auto-applies:
       - promote_to_wiki (draft only)
@@ -676,7 +699,7 @@ def audit_anchors(
     """
     # C3 (0047 PR#40 §5.C3): validated at the MCP boundary; C7 re-keys
     # this tool's scope from ``directory`` onto the resolved project_id.
-    accept_project_param(project, directory)
+    accepted_project = accept_project_param(project, directory)
     cfg = get_settings()
     storage = _get_storage()
     resolved = _resolve_project_root(directory)
@@ -687,8 +710,9 @@ def audit_anchors(
 
     actions: list[dict] = []
     scanned = 0
+    audit_dirs = [resolved] + (["global"] if include_global else [])
 
-    for audit_dir in [resolved] + (["global"] if include_global else []):
+    for audit_dir in audit_dirs:
         _now = storage._now_iso()
         try:
             cnt_rows = storage._q(
@@ -724,6 +748,7 @@ def audit_anchors(
 
     result: dict = {
         "scanned": scanned,
+        "coverage": _build_coverage(storage, audit_dirs, scanned, accepted_project),
         "actions": actions,
         "dry_run": dry_run,
         "applied": applied,
