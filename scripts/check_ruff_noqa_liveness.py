@@ -26,9 +26,30 @@ Two failure classes caught here:
 
   (b) BARE / EMPTY — ``# noqa`` or ``# noqa:`` with no rule code stated.
       A blanket suppression is too coarse to audit; the gate requires a
-      named rule.
+      named rule. Prose after a bare marker does NOT make it prose: ruff
+      0.15.21 treats ``# noqa cannot suppress hard violations`` as a live
+      blanket suppression of that line (verified by probe), so the gate
+      flags it too.
 
-A third class (VACUOUS — noqa: XXXX where XXXX IS in select but the line
+  (c) UNSCANNABLE — a file :mod:`tokenize` cannot read. The gate reports it
+      rather than falling back to raw-line matching, because a guard that
+      silently narrows its own coverage reports a cleanliness it did not
+      check. See ``iter_comments``.
+
+WHAT THE GATE LOOKS AT (task 393, 2026-08-27)
+---------------------------------------------
+COMMENT TOKENS, not raw lines, and the noqa need not end its line. The
+original ``_NOQA_RE`` was anchored with ``\\s*$``, requiring the noqa comment
+to be the last thing on the line — which excluded ``# noqa: CODE — reason``,
+the exact form this project's own convention mandates. 292 of 1355 real inert
+sites in ``yadgar/`` were therefore invisible, and the baseline frozen from
+that scan was structurally incomplete: the gate was enforcing a subset of the
+tree while claiming the tree. Tokenising is what lets the regex drop the
+anchor safely — a looser regex over raw lines would have started counting
+``# noqa`` text that lives inside string literals and docstrings, of which
+this repo has several.
+
+A further class (VACUOUS — noqa: XXXX where XXXX IS in select but the line
 below doesn't trigger XXXX) is left to ``check_ruff_ignores_liveness``'s
 spirit and is intentionally NOT checked here: it would require running
 ruff per-site, which is O(lines) subprocesses for marginal signal — the
@@ -58,8 +79,16 @@ Keying on ``(relpath, code)`` with a stored COUNT fixes both halves:
 The ratchet only loosens by a deliberate, stated edit: counts may FALL
 freely (clean a site up and the gate stays green), never rise silently.
 
+WHAT THE GATE WALKS (task 394, 2026-08-27)
+------------------------------------------
+``yadgar/`` AND ``scripts/``. It used to be ``yadgar/`` alone — so the
+operator scripts under ``scripts/``, this gate among them, could carry inert
+suppressions that nothing reported. A gate that exempts its own directory
+audits everything except the code doing the auditing. 12 (file, rule) pairs /
+22 sites were sitting there unseen the day the scan was extended.
+
 Exit codes:
-  0  no unbaselined inert-rule / bare noqa sites in yadgar/
+  0  no unbaselined inert-rule / bare noqa sites under `_SCAN_DIRS`
   1  one or more sites flagged
 
 Regenerate (rare — see above; state the before/after counts in the commit):
@@ -68,8 +97,10 @@ Regenerate (rare — see above; state the before/after counts in the commit):
 
 from __future__ import annotations
 
+import io
 import re
 import sys
+import tokenize
 import tomllib
 from collections import defaultdict
 from pathlib import Path
@@ -77,20 +108,55 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
+# Directories walked for ``*.py``. ``scripts/`` joined ``yadgar/`` in task 394
+# (2026-08-27): the gate lived IN ``scripts/`` and did not scan it, so every
+# operator script — this one included — could carry an inert suppression that
+# nothing would ever report. A gate exempt from itself is not a gate. 12
+# (file, rule) pairs / 22 sites were sitting there unseen.
+_SCAN_DIRS: tuple[str, ...] = ("yadgar", "scripts")
+
 # Recognise both single-code (hash + ``noqa:`` + code, e.g. E402) and
 # comma-separated codes (e.g. E402 + F401), AND bare (hash + ``noqa``
 # with no colon) / empty (hash + ``noqa:`` with nothing or whitespace
 # after) — the BARE class.
 #
-# Anchored on the trailing-position pattern: ruff only suppresses the LINE
-# the comment sits on, so we only care about a noqa-comment that is the
-# LAST thing on its line.
+# APPLIED TO A COMMENT TOKEN, NOT A RAW LINE, AND NOT ANCHORED AT EOL
+# (task 393). It used to be ``^[^#\n]*#\s*noqa(?::\s*([A-Z0-9,\s]*?))?\s*$``:
+# the trailing ``\s*$`` required the noqa comment to be the LAST thing on its
+# line, which excluded the very form ``pyproject.toml`` mandates for this
+# repo — hash + ``noqa: CODE — reason``. Measured on the tree the day this
+# was fixed: 292 of 1355 real inert sites in ``yadgar/`` were invisible to the
+# gate, i.e. the baseline it enforced was structurally incomplete and it
+# reported a cleanliness it had not checked.
+#
+# Behaviour verified against ruff 0.15.21 rather than assumed (probe files,
+# ``select = ["F"]``, unused ``import os``). Written hash-first so this
+# comment does not itself become a directive:
+#
+#   hash + ``noqa: F401 — reason``     -> suppressed (mandated form; MUST match)
+#   hash + ``noqa:F401,E402 trailing`` -> suppressed (no space, trailing prose)
+#   hash + ``noqa cannot suppress X``  -> suppressed (BLANKET — prose after a
+#                                         bare marker is still a directive)
+#   hash + ``NOQA``                    -> suppressed (ruff is case-insensitive)
+#   hash + ``blah noqa blah``          -> NOT suppressed (must follow the hash)
+#   hash + ``noqable prose``           -> NOT suppressed (whole word only)
+#
+# ``finditer`` (not ``search``): one comment may carry two markers, e.g. a
+# ``type: ignore`` followed by a hash + ``noqa: F401``, and ruff acts on the
+# second.
 #
 # Capture groups:
-#   1: raw code-string (possibly empty) — checked for INERT-RULE / BARE
-#      Empty/whitespace-only → BARE.
-#      ``None`` (no colon) → also BARE.
-_NOQA_RE = re.compile(r"^[^#\n]*#\s*noqa(?::\s*([A-Z0-9,\s]*?))?\s*$")
+#   codes: raw code-string (possibly absent) — checked for INERT-RULE / BARE.
+#          Absent or empty → BARE, matching ruff, which treats a marker with
+#          no parsable code as a blanket suppression (or rejects it outright
+#          with an "Invalid directive" warning). Either way it names no rule,
+#          so it cannot be audited — which is what the gate demands.
+_NOQA_RE = re.compile(
+    r"#[ \t]*(?i:noqa)"  # the marker, after a `#`; ruff is case-insensitive
+    r"(?![A-Za-z0-9_])"  # ...as a whole word: `noqable` prose is not one
+    r"(?P<colon>:)?[ \t]*"
+    r"(?P<codes>[A-Z]+[0-9]+(?:[ \t]*,[ \t]*[A-Z]+[0-9]+)*)?"
+)
 
 # A valid ruff code shape: 1-3 uppercase letters followed by 3-4 digits.
 # Matches: A002, B017 (flake8-pytest-style), E402 (pycodestyle),
@@ -135,6 +201,26 @@ _BASELINE_HEADER = """\
 # a regeneration on every line shift, and a regeneration is indistinguishable
 # from absorbing that commit's own new markers (measured: 951 -> 988 rows on
 # one train, unmentioned).
+#
+# TASK 393 (2026-08-27) — THIS FILE GREW AND NOTHING NEW WAS SUPPRESSED.
+# 300 rows / 1063 sites -> 448 rows / 1355 sites. Every one of those +292
+# sites already existed in the tree; the scanner could not see them. The old
+# `_NOQA_RE` required the noqa comment to END its line, so `# noqa: CODE —
+# reason` — the form this project mandates — matched nothing. Zero source
+# lines were added or edited in that commit, and the pre-fix scan is a strict
+# subset of the post-fix scan (no row lost, no count lowered), which is what
+# makes "visibility, not new debt" a measurement rather than a claim.
+# Two rows were DROPPED at the same time, and they are the other direction:
+# `backend/admin_exec/project_registry.py:BLE001:1` (file deleted since) and
+# `backend/admin_exec/seed_adr_tier_subsystem.py:PLC0415:2` (site cleaned up)
+# were stale over-allowances the ratchet had been carrying.
+#
+# TASK 394 (2026-08-27) — SAME AGAIN, ONE DIRECTORY WIDER.
+# 448 rows / 1355 sites -> 460 rows / 1377 sites. The scan walked `yadgar/`
+# only, so `scripts/` — the directory this gate itself lives in — was never
+# audited. Those +12 rows / +22 sites are the pre-existing contents of
+# `scripts/`, unchanged and now merely visible; no source line under
+# `scripts/` gained a suppression in that commit.
 #
 # Format: <relpath>:<CODE>:<count>
 # Regenerate: python scripts/check_ruff_noqa_liveness.py --write-baseline
@@ -250,6 +336,43 @@ def is_live(code: str, select: set[str], ignore: set[str]) -> bool:
     return selected > _match_specificity(code, ignore)
 
 
+def iter_comments(path: Path) -> tuple[list[tuple[int, str]], str | None]:
+    """Return ``([(lineno, comment_text), ...], tokenize_error)`` for one file.
+
+    Comments come from :mod:`tokenize`, NOT from matching raw lines, and that
+    is the point (task 393). A raw-line scan cannot tell a real ``# noqa``
+    comment from the same characters sitting inside a string literal, and this
+    repo has both: ``yadgar/tests/conftest.py`` documents the
+    ``# noqa: F401`` re-export idiom inside a docstring, and
+    ``yadgar/tests/_meta/test_harness_hardening.py`` writes a conftest fixture
+    containing one through ``textwrap.dedent``. Ruff acts on neither — they
+    are not comments — but a line scanner counts both, so loosening the regex
+    to see trailing reasons WITHOUT tokenising would have traded one blind
+    spot for a crop of phantom sites.
+
+    ``tokenize_error`` is non-None when the file could not be tokenised, and
+    the caller turns it into a HARD ERROR rather than falling back to line
+    matching. Deliberate: a gate that quietly downgrades its own coverage on
+    the files it cannot parse is reporting a cleanliness it did not check,
+    which is the exact class this file exists to refuse. (Precedent in this
+    repo: a ruff-format rewrite of ``except (A, B):`` to Python-2 syntax
+    silently blocked an AST-based scan for an entire train.) Zero files in
+    ``yadgar/`` + ``scripts/`` fail to tokenise today.
+    """
+    try:
+        body = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):  # fmt: skip
+        return [], None  # not a text file we can read — skip silently
+    comments: list[tuple[int, str]] = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(body).readline):
+            if tok.type == tokenize.COMMENT:
+                comments.append((tok.start[0], tok.string))
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError) as exc:  # fmt: skip
+        return [], f"{type(exc).__name__}: {exc}"
+    return comments, None
+
+
 def scan_file(
     path: Path,
     select: set[str],
@@ -260,9 +383,10 @@ def scan_file(
 
     Returns ``(hard_errors, inert_sites)`` where:
 
-      * ``hard_errors`` — BARE/EMPTY noqa and malformed rule codes. These are
-        NEVER baselined: a blanket or misspelled suppression is always a
-        defect, at any count.
+      * ``hard_errors`` — BARE/EMPTY noqa, malformed rule codes, and files
+        that could not be tokenised. These are NEVER baselined: a blanket or
+        misspelled suppression is always a defect, at any count, and an
+        unscannable file is always a hole in the gate's own coverage.
       * ``inert_sites`` — ``{code: [lineno, ...]}`` for well-formed codes that
         ruff does not run. The CALLER compares those counts against the
         baseline allowance; this function does not, because the allowance is
@@ -271,71 +395,89 @@ def scan_file(
     hard_errors: list[str] = []
     inert_sites: dict[str, list[int]] = defaultdict(list)
     try:
-        body = path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):  # fmt: skip
-        return hard_errors, {}  # not a text file we can read — skip silently
-
-    try:
         rel = path.relative_to(repo_root).as_posix()
     except ValueError:  # pragma: no cover - defensive
         rel = str(path)
-    for lineno, line in enumerate(body.splitlines(), start=1):
-        m = _NOQA_RE.match(line)
-        if m is None:
-            continue  # not a noqa line — skip
-        codes_str = (m.group(1) or "").strip()
-        if not codes_str:
-            # BARE / EMPTY class — must be flagged. Never allowlisted: a
-            # blanket suppression with no rule is ALWAYS a defect.
-            hard_errors.append(
-                f"BARE: {rel}:{lineno}: bare `# noqa` (no rule code) — "
-                "specify the rule you are suppressing, or ruff treats it as "
-                "a blanket suppression that no lint pass can audit."
-            )
-            continue
-        # Split on comma, validate each code.
-        for code in (c.strip() for c in codes_str.split(",")):
-            if not code:
-                continue
-            if not _CODE_RE.match(code):
-                # Not a ruff-shaped code (e.g. typo). Flag as inert too —
-                # the gate's whole point is "names a rule ruff will run."
-                # Not allowlisted: a misspelled rule is ALWAYS a defect.
+
+    comments, tok_error = iter_comments(path)
+    if tok_error is not None:
+        hard_errors.append(
+            f"UNSCANNABLE: {rel}: could not be tokenised ({tok_error}). The "
+            "gate cannot see this file's `# noqa` comments, so it must not "
+            "report the file clean. Fix the file — the gate does not fall "
+            "back to line matching, because a silent coverage downgrade is "
+            "the failure it exists to catch."
+        )
+        return hard_errors, {}
+
+    for lineno, comment in comments:
+        for m in _NOQA_RE.finditer(comment):
+            codes_str = (m.group("codes") or "").strip()
+            if not codes_str:
+                # BARE / EMPTY class — must be flagged. Never allowlisted: a
+                # blanket suppression with no rule is ALWAYS a defect. The
+                # two are reported apart (same `BARE:` prefix) because they
+                # are different typos: one forgot the codes, the other forgot
+                # the colon AND the codes.
+                shape = (
+                    "empty `# noqa:` (colon, no rule code)"
+                    if m.group("colon")
+                    else "bare `# noqa` (no colon, no rule code)"
+                )
                 hard_errors.append(
-                    f"INERT-RULE: {rel}:{lineno}: `# noqa: {code}` names a "
-                    "rule that is not a valid ruff code (expected one or two "
-                    "uppercase letters + 3-4 digits). Either it is misspelled "
-                    "or ruff silently ignores it."
+                    f"BARE: {rel}:{lineno}: {shape} — specify the rule you "
+                    "are suppressing, or ruff treats it as a blanket "
+                    "suppression that no lint pass can audit."
                 )
                 continue
-            if not is_live(code, select, ignore):
-                inert_sites[code].append(lineno)
+            # Split on comma, validate each code.
+            for code in (c.strip() for c in codes_str.split(",")):
+                if not code:
+                    continue
+                if not _CODE_RE.match(code):
+                    # Not a ruff-shaped code (e.g. typo). Flag as inert too —
+                    # the gate's whole point is "names a rule ruff will run."
+                    # Not allowlisted: a misspelled rule is ALWAYS a defect.
+                    hard_errors.append(
+                        f"INERT-RULE: {rel}:{lineno}: `# noqa: {code}` names a "
+                        "rule that is not a valid ruff code (expected one or two "
+                        "uppercase letters + 3-4 digits). Either it is misspelled "
+                        "or ruff silently ignores it."
+                    )
+                    continue
+                if not is_live(code, select, ignore):
+                    inert_sites[code].append(lineno)
     return hard_errors, dict(inert_sites)
 
 
 def collect_inert(
     repo_root: Path, select: set[str], ignore: set[str]
 ) -> tuple[list[str], BaselineCounts]:
-    """Walk ``yadgar/`` and return ``(hard_errors, {(relpath, code): count})``.
+    """Walk every directory in ``_SCAN_DIRS``; return ``(hard_errors, counts)``.
 
-    The counts are the OBSERVED state of the tree — the same shape the
-    baseline stores, which is what lets ``--write-baseline`` and the gate
-    share one scan.
+    ``counts`` is ``{(relpath, code): count}`` — the OBSERVED state of the
+    tree, the same shape the baseline stores, which is what lets
+    ``--write-baseline`` and the gate share one scan.
+
+    A missing scan directory is skipped, not an error: the tests build
+    synthetic repos with only ``yadgar/`` in them, and a repo that has no
+    ``scripts/`` has no operator scripts to gate.
     """
     hard_errors: list[str] = []
     counts: BaselineCounts = {}
-    yadgar = repo_root / "yadgar"
-    if not yadgar.is_dir():
-        return hard_errors, counts
-    for path in sorted(yadgar.rglob("*.py")):
-        errs, inert = scan_file(path, select, ignore, repo_root)
-        hard_errors.extend(errs)
-        try:
-            rel = path.relative_to(repo_root).as_posix()
-        except ValueError:  # pragma: no cover - defensive
-            rel = str(path)
-        for code, linenos in inert.items():
-            counts[(rel, code)] = len(linenos)
+    for scan_dir in _SCAN_DIRS:
+        root = repo_root / scan_dir
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            errs, inert = scan_file(path, select, ignore, repo_root)
+            hard_errors.extend(errs)
+            try:
+                rel = path.relative_to(repo_root).as_posix()
+            except ValueError:  # pragma: no cover - defensive
+                rel = str(path)
+            for code, linenos in inert.items():
+                counts[(rel, code)] = len(linenos)
     return hard_errors, counts
 
 
@@ -362,11 +504,12 @@ def _format_growth(rel: str, code: str, observed: int, allowed: int) -> str:
 
 
 def check(repo_root: Path | None = None) -> list[str]:
-    """Walk yadgar/ for BARE noqa sites and inert-rule GROWTH.
+    """Walk `_SCAN_DIRS` for BARE noqa sites and inert-rule GROWTH.
 
     Returns a list of formatted error strings. Empty list means clean.
     Missing pyproject → empty list (no config to drift against, nothing to gate).
     Missing baseline → every inert site reported (no allowlist).
+    Missing scan directory → skipped (see ``collect_inert``).
     """
     repo_root = repo_root or _REPO_ROOT
     pyproject = repo_root / "pyproject.toml"

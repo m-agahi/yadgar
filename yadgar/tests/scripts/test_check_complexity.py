@@ -161,7 +161,8 @@ class TestFunctionLOCSoft:
         assert soft, f"Expected soft LOC violation, got {result.violations}"
 
     def test_over_80_soft_with_noqa_passes_silently(self, tmp_py):
-        # noqa on def line suppresses soft violation (suppressed=True, not in warnings)
+        # A cohesive marker on the def line suppresses the soft violation
+        # (suppressed=True, not in warnings).
         body = "\n".join(f"    x_{i} = {i}" for i in range(83))
         src = f"def my_func():  # noqa: C901 - cohesive: single flow\n{body}\n"
         f = tmp_py(src, "target.py")
@@ -171,7 +172,7 @@ class TestFunctionLOCSoft:
         assert result.exit_code == 0
 
     def test_noqa_does_not_suppress_hard_violation(self, tmp_py):
-        # noqa cannot suppress hard violations
+        # A cohesive marker cannot suppress hard violations.
         body = "\n".join(f"    x_{i} = {i}" for i in range(152))
         src = f"def my_func():  # noqa: C901 - cohesive: single flow\n{body}\n"
         f = tmp_py(src, "target.py")

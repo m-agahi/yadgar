@@ -34,6 +34,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _SCRIPTS_DIR = str(Path(__file__).parent.parent.parent.parent / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
@@ -162,7 +164,7 @@ class TestBareOrEmpty:
     """``# noqa`` with no rule code stated → flagged."""
 
     def test_bare_noqa_is_flagged(self, tmp_path: Path) -> None:
-        # Bare ``# noqa`` (no colon, no code) — ruff accepts this as a blanket
+        # A bare ``noqa`` (no colon, no code) — ruff accepts this as a blanket
         # suppression, but the gate demands an explicit rule.
         mod_src = "def f():\n    x = 1  # noqa\n"  # noqa: RUF100
         repo = _make_repo(
@@ -175,7 +177,7 @@ class TestBareOrEmpty:
         assert bare, f"a bare # noqa must be flagged as malformed: errors={errors}"
 
     def test_empty_noqa_colon_is_flagged(self, tmp_path: Path) -> None:
-        # ``# noqa:`` with no code after colon — also a blanket suppression.
+        # A ``noqa:`` with no code after the colon — also a blanket suppression.
         mod_src = "def f():\n    x = 1  # noqa:\n"  # noqa: RUF100
         repo = _make_repo(
             tmp_path,
@@ -187,7 +189,7 @@ class TestBareOrEmpty:
         assert bare, f"empty ``# noqa:`` must be flagged: errors={errors}"
 
     def test_empty_whitespace_noqa_is_flagged(self, tmp_path: Path) -> None:
-        # ``# noqa:   `` with only trailing whitespace counts as bare.
+        # A ``noqa:   `` with only trailing whitespace counts as bare.
         mod_src = "def f():\n    x = 1  # noqa:   \n"  # noqa: RUF100
         repo = _make_repo(
             tmp_path,
@@ -542,3 +544,191 @@ class TestShippedConfigLivenessPin:
         lint = nql.load_lint_config(REPO_ROOT / "pyproject.toml")
         assert lint is not None
         assert nql.is_live("F401", *lint) is True
+
+
+# ---------------------------------------------------------------------------
+# (i) WHAT THE SCANNER CAN SEE (task 393, 2026-08-27)
+# ---------------------------------------------------------------------------
+
+
+class TestTrailingReasonIsSeen:
+    """A noqa with a trailing reason is a real directive and must be scanned.
+
+    ``_NOQA_RE`` used to be anchored with ``\\s*$``, so only a noqa that ENDED
+    its line matched — which excluded ``# noqa: CODE — reason``, the form this
+    project's own convention mandates. Measured on the tree the day it was
+    fixed: 292 of 1355 real inert sites in ``yadgar/`` were invisible, so the
+    baseline frozen from that scan covered a subset of the tree while the gate
+    reported the tree.
+
+    Each form below was verified against ruff 0.15.21 (probe file,
+    ``select = ["F"]``, unused ``import os``) to actually suppress — these are
+    live directives, not decoration.
+    """
+
+    COMMENTS = [
+        "# noqa: BLE001",  # the one form the old anchor could see
+        "# noqa: BLE001 — em-dash reason (the mandated form)",
+        "# noqa: BLE001 -- double-hyphen reason",
+        "# noqa: BLE001 (parenthetical reason)",
+        "#noqa:BLE001 no spaces anywhere",
+        "# NOQA: BLE001 — ruff matches the marker case-insensitively",
+        "# type: ignore  # noqa: BLE001 — second marker on the same comment",
+    ]
+
+    @pytest.mark.parametrize("comment", COMMENTS)
+    def test_inert_code_is_flagged_whatever_follows_it(self, tmp_path: Path, comment: str) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": f"def f():\n    x = 1  {comment}\n"},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "BLE001" in e], (
+            f"{comment!r} is a live ruff directive naming an inert rule; the "
+            f"gate must see it. Got {errors}"
+        )
+
+    def test_multiple_codes_with_a_trailing_reason_are_all_seen(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={
+                "yadgar/core/mod.py": ("import os  # noqa: BLE001, PLC0415 — both inert here\n")
+            },
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "BLE001" in e], f"first code missed: {errors}"
+        assert [e for e in errors if "PLC0415" in e], f"second code missed: {errors}"
+
+    def test_word_boundary_stops_a_false_bare(self, tmp_path: Path) -> None:
+        """``# noqable`` is not a directive — ruff refuses to act on it.
+
+        Probed: ruff 0.15.21 emits "Invalid ``# noqa`` directive" and does NOT
+        suppress. It silences nothing, so flagging it as BARE would be a false
+        positive on prose.
+        """
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "def f():\n    x = 1  # noqable prose\n"},
+        )
+        assert nql.check(repo) == [], "a non-directive word must not be flagged"
+
+
+class TestStringLiteralsAreNotDirectives:
+    """``noqa`` inside a string literal is not a comment, so it is not a site.
+
+    This is why the scanner tokenises instead of matching raw lines: dropping
+    the end-of-line anchor from a LINE matcher would have started counting
+    text inside docstrings and fixtures. The repo has real instances —
+    ``yadgar/tests/conftest.py`` documents the ``# noqa: F401`` re-export
+    idiom in a docstring, and ``yadgar/tests/_meta/test_harness_hardening.py``
+    writes a conftest fixture containing one via ``textwrap.dedent``. Ruff
+    acts on neither.
+    """
+
+    def test_triple_quoted_fixture_line_is_not_a_site(self, tmp_path: Path) -> None:
+        # The embedded line ENDS with the noqa, so even the old end-anchored
+        # regex matched it — a false positive that predates the fix.
+        body = 'CONFTEST = """\\\nimport os  # noqa: BLE001\n"""\n'
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": body},
+        )
+        assert nql.check(repo) == [], (
+            "a noqa inside a triple-quoted string is fixture text, not a "
+            f"directive ruff will ever act on; got {nql.check(repo)}"
+        )
+
+    def test_docstring_prose_is_not_a_bare_site(self, tmp_path: Path) -> None:
+        body = 'def f():\n    """Use a bare # noqa here and ruff blanket-suppresses."""\n    return 1\n'
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": body},
+        )
+        assert nql.check(repo) == [], (
+            f"prose in a docstring must not be flagged BARE; got {nql.check(repo)}"
+        )
+
+
+class TestUnscannableFileIsAHardError:
+    """A file the scanner cannot tokenise is reported, never skipped.
+
+    The alternative — fall back to raw-line matching — would let the gate
+    report a file clean under a scan it silently narrowed. That is the class
+    this whole file exists to refuse, and the repo has precedent: a
+    ruff-format rewrite of ``except (A, B):`` into Python-2 syntax silently
+    blocked an AST-based scan for an entire train.
+    """
+
+    def test_tokenize_error_is_surfaced(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            # Unterminated triple-quoted string → tokenize.TokenError.
+            sources={"yadgar/core/mod.py": 'x = """unterminated\n'},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "UNSCANNABLE" in e], (
+            f"an untokenisable file must be reported, not skipped; got {errors}"
+        )
+
+    def test_scannable_file_reports_no_tokenize_error(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "def f():\n    return 1\n"},
+        )
+        assert nql.check(repo) == []
+
+
+# ---------------------------------------------------------------------------
+# (j) WHAT THE SCANNER WALKS (task 394, 2026-08-27)
+# ---------------------------------------------------------------------------
+
+
+class TestScriptsDirectoryIsScanned:
+    """``scripts/`` is walked too — the gate is not exempt from itself.
+
+    The scan was ``yadgar/`` only, and this gate lives in ``scripts/``. Every
+    operator script could carry an inert suppression that nothing would ever
+    report, including the script doing the reporting. 12 (file, rule) pairs /
+    22 sites were sitting there unseen when the scan was extended.
+    """
+
+    def test_inert_site_under_scripts_is_flagged(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"scripts/op.py": "import os  # noqa: BLE001 — inert here\n"},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "scripts/op.py" in e and "BLE001" in e], (
+            f"a noqa under scripts/ must be scanned, not exempt; got {errors}"
+        )
+
+    def test_scripts_row_is_baselined_under_its_own_relpath(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"scripts/op.py": "import os  # noqa: BLE001 — inert here\n"},
+        )
+        nql.write_baseline(repo)
+        assert nql.load_baseline(repo) == {("scripts/op.py", "BLE001"): 1}
+        assert nql.check(repo) == []
+
+    def test_scan_dirs_names_both_trees(self) -> None:
+        assert nql._SCAN_DIRS == ("yadgar", "scripts")
+
+    def test_missing_scan_dir_is_skipped_not_an_error(self, tmp_path: Path) -> None:
+        """A repo with no ``scripts/`` has no operator scripts to gate."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "def f():\n    return 1\n"},
+        )
+        assert not (repo / "scripts").is_dir()
+        assert nql.check(repo) == []
