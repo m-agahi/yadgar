@@ -28,6 +28,7 @@ TWO ARMS (the second added by the gate-honesty train, car I)
 from __future__ import annotations
 
 import ast
+import os
 import re
 import sys
 from pathlib import Path
@@ -108,9 +109,9 @@ def test_yaml_loaders_do_not_import_undeclared_pyyaml():
 # those loaders in ANY form, guarded or not, which is stricter than this arm;
 # replacing it would relax the rule for the files v5.169.1 was filed about.
 
-#: Directories that are not repo source. Matched against parts of the path
-#: RELATIVE to the repo root -- never the absolute path. An absolute-parts match
-#: silently scans ZERO files when the checkout is an agent worktree under
+#: Directories that are not repo source. Matched against a path RELATIVE to the
+#: repo root -- never the absolute path. An absolute-parts match silently scans
+#: ZERO files when the checkout is an agent worktree under
 #: `<repo>/.claude/worktrees/<name>/`, because every path then contains
 #: `.claude`. Measured while writing this test: the first draft reported
 #: "scanned 0 unparseable 0" and would have passed vacuously forever.
@@ -125,9 +126,19 @@ _NON_SOURCE_DIRS = frozenset(
         "node_modules",
         "build",
         "dist",
-        "site-packages",
     }
 )
+
+#: A virtualenv marks its own root with this file. Pruning on the MARKER rather
+#: than on a name list is what keeps the scan from depending on what somebody
+#: called their env directory: `.venv` is the repo convention, but `venv/`,
+#: `env/`, `.venv-ml/` and `UV_PROJECT_ENVIRONMENT=<anything>` are all one
+#: command away, and third-party code is wall-to-wall `import yaml`. Measured:
+#: with a name list alone, a repo-local `venv/` leaked a top-level module
+#: (`venv/bin_probe.py`) into the scan and turned this gate red on code the repo
+#: does not own. `site-packages` used to be in the list above and hid only the
+#: nested case.
+_VENV_MARKER = "pyvenv.cfg"
 
 #: Floor for the anti-vacuity assertion. The repo held 1450 scannable modules on
 #: 2026-08-27; a scan that suddenly sees a handful is broken, not clean.
@@ -136,13 +147,22 @@ _MIN_SCANNED_FILES = 500
 _IMPORT_ERROR_NAMES = frozenset({"ImportError", "ModuleNotFoundError"})
 
 
-def _iter_repo_python_files() -> list[Path]:
-    """Every ``.py`` file in the repo that is actually repo source."""
-    return [
-        p
-        for p in _REPO_ROOT.rglob("*.py")
-        if not (_NON_SOURCE_DIRS & set(p.relative_to(_REPO_ROOT).parts))
-    ]
+def _iter_repo_python_files(root: Path = _REPO_ROOT) -> list[Path]:
+    """Every ``.py`` file under *root* that is actually repo source.
+
+    Prunes whole subtrees rather than filtering afterwards, so a virtualenv is
+    never descended into at all.
+    """
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        here = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in _NON_SOURCE_DIRS and not (here / d / _VENV_MARKER).is_file()
+        ]
+        found.extend(here / f for f in filenames if f.endswith(".py"))
+    return found
 
 
 def _handler_catches_import_error(handler: ast.ExceptHandler) -> bool:
@@ -228,6 +248,44 @@ class TestUnguardedPyYAMLDetector:
     def test_except_other_than_import_error_is_not_a_guard(self):
         src = "try:\n    import yaml\nexcept ValueError:\n    yaml = None\n"
         assert unguarded_pyyaml_imports(src) == [2]
+
+
+class TestRepoWalkScope:
+    """The walk's own correctness — both failure modes were MEASURED, not feared."""
+
+    def test_a_virtualenv_is_pruned_whatever_it_is_called(self, tmp_path):
+        """A repo-local env named anything but `.venv` must not enter the scan.
+
+        Measured before the `pyvenv.cfg` prune existed: a name list alone hid
+        `<env>/lib/python3.14/site-packages/**` (via a `site-packages` entry) but
+        NOT a module sitting at the env root, so a repo-local `venv/` turned this
+        gate red on code the repo does not own.
+        """
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "real.py").write_text("x = 1\n")
+        for name in ("venv", "env", ".venv-ml"):
+            env = tmp_path / name
+            (env / "lib" / "python3.14" / "site-packages" / "pkg").mkdir(parents=True)
+            (env / _VENV_MARKER).write_text("home = /usr\n")
+            (env / "top_level.py").write_text("import yaml\n")
+            (env / "lib" / "python3.14" / "site-packages" / "pkg" / "m.py").write_text(
+                "import yaml\n"
+            )
+
+        found = {p.relative_to(tmp_path).as_posix() for p in _iter_repo_python_files(tmp_path)}
+        assert found == {"src/real.py"}, f"virtualenv content leaked into the scan: {found}"
+
+    def test_a_dot_claude_worktree_path_does_not_empty_the_scan(self, tmp_path):
+        """Absolute-parts matching would return ZERO here — the vacuity trap."""
+        root = tmp_path / ".claude" / "worktrees" / "agent-abc"
+        (root / "yadgar").mkdir(parents=True)
+        (root / "yadgar" / "mod.py").write_text("x = 1\n")
+
+        found = _iter_repo_python_files(root)
+        assert [p.name for p in found] == ["mod.py"], (
+            f"a checkout under .claude/worktrees/ scanned {len(found)} files — an "
+            "absolute-parts skip match empties the walk and passes vacuously"
+        )
 
 
 def test_no_module_in_the_repo_imports_pyyaml_unguarded():
