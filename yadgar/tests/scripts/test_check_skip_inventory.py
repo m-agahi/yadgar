@@ -299,3 +299,251 @@ class TestValidateInventory:
             (repo_root / "yadgar" / "tests" / "skip_inventory.json").read_text(encoding="utf-8")
         )
         assert validate_inventory(data, repo_root=repo_root) == []
+
+
+# ---------------------------------------------------------------------------
+# Extras receipt + conditional sanctioning (task 392)
+#
+# The defect these cover: an inventory entry sanctioning "sqlalchemy not
+# installed (sql extra)" keeps sanctioning after a leg starts installing
+# `--extra sql`. A run that skips all 211 of those tests then passes the gate
+# exactly like a run that executed them. Nothing in the -rs text distinguishes
+# the two, so nothing could ever notice.
+# ---------------------------------------------------------------------------
+
+from check_skip_inventory import (  # noqa: E402
+    _parse_receipt,
+    emit_receipt_line,
+    probe_modules,
+)
+
+
+def _cond_inventory(specs: list[tuple[str, str | None]], tmp_path: Path) -> Path:
+    """Write an inventory where each spec is (reason_pattern, module-or-None)."""
+    entries = []
+    for i, (pattern, module) in enumerate(specs):
+        e = {
+            "id": f"c{i}",
+            "file": "x.py",
+            "verdict": "LEGIT-CONDITIONAL",
+            "reason_pattern": pattern,
+            "note": _LONG_NOTE,
+        }
+        if module is not None:
+            e["sanctioned_when_module_absent"] = module
+        entries.append(e)
+    inv = tmp_path / "cond_inventory.json"
+    inv.write_text(json.dumps({"_meta": {"version": "1"}, "entries": entries}), encoding="utf-8")
+    return inv
+
+
+def _receipt(**modules: bool) -> str:
+    payload = " ".join(
+        f"{name}={'present' if present else 'absent'}" for name, present in sorted(modules.items())
+    )
+    return f"SKIPGATE-MODULES: {payload}"
+
+
+class TestParseReceipt:
+    def test_non_receipt_line_returns_none(self):
+        assert _parse_receipt("SKIPPED [1] tests/a.py:1: whatever") is None
+
+    def test_present_and_absent_parsed(self):
+        got = _parse_receipt(_receipt(sqlalchemy=True, duckdb=False))
+        assert got == {"sqlalchemy": True, "duckdb": False}
+
+    def test_empty_payload_is_empty_mapping(self):
+        assert _parse_receipt("SKIPGATE-MODULES:") == {}
+
+    def test_leading_whitespace_tolerated(self):
+        assert _parse_receipt("   " + _receipt(duckdb=True)) == {"duckdb": True}
+
+
+class TestProbeModules:
+    def test_stdlib_module_is_present(self):
+        assert probe_modules(["json"]) == {"json": True}
+
+    def test_missing_module_is_absent(self):
+        assert probe_modules(["yadgar_no_such_module_zzz"]) == {"yadgar_no_such_module_zzz": False}
+
+    def test_emit_receipt_line_round_trips(self):
+        line = emit_receipt_line(["json", "yadgar_no_such_module_zzz"])
+        assert _parse_receipt(line) == {"json": True, "yadgar_no_such_module_zzz": False}
+
+
+class TestConditionalSanctioning:
+    def test_conditional_entry_sanctions_when_module_absent(self, tmp_path):
+        inv = _cond_inventory([("sqlalchemy not installed (sql extra)", "sqlalchemy")], tmp_path)
+        lines = [_receipt(sqlalchemy=False), _skip_line("sqlalchemy not installed (sql extra)")]
+        ok, offenders = check(lines, inv)
+        assert ok, offenders
+
+    def test_conditional_entry_does_not_sanction_when_module_present(self, tmp_path):
+        """THE regression this car exists for: a mass-skip on a leg that
+        installed the extra must FAIL, not pass."""
+        inv = _cond_inventory([("sqlalchemy not installed (sql extra)", "sqlalchemy")], tmp_path)
+        lines = [_receipt(sqlalchemy=True), _skip_line("sqlalchemy not installed (sql extra)")]
+        ok, offenders = check(lines, inv)
+        assert not ok
+        assert len(offenders) == 1
+        assert "sqlalchemy" in offenders[0]
+
+    def test_no_receipt_falls_back_to_sanctioning(self, tmp_path):
+        """Pipe mode over a hand-made file has no receipt; stay lenient there.
+        --require-receipt is what makes CI strict."""
+        inv = _cond_inventory([("sqlalchemy not installed (sql extra)", "sqlalchemy")], tmp_path)
+        ok, offenders = check([_skip_line("sqlalchemy not installed (sql extra)")], inv)
+        assert ok, offenders
+
+    def test_module_absent_from_receipt_falls_back_to_sanctioning(self, tmp_path):
+        inv = _cond_inventory([("sqlalchemy not installed (sql extra)", "sqlalchemy")], tmp_path)
+        lines = [_receipt(duckdb=True), _skip_line("sqlalchemy not installed (sql extra)")]
+        ok, offenders = check(lines, inv)
+        assert ok, offenders
+
+    def test_unconditional_entry_unaffected_by_receipt(self, tmp_path):
+        inv = _cond_inventory([("requires macOS host", None)], tmp_path)
+        lines = [_receipt(sqlalchemy=True), _skip_line("requires macOS host")]
+        ok, offenders = check(lines, inv)
+        assert ok, offenders
+
+    def test_receipt_scope_is_sequential_per_group(self, tmp_path):
+        """cat of several groups' -rs files: each receipt governs the lines that
+        follow it, so a group WITHOUT the extra still skips legitimately even
+        when a later group HAS it."""
+        inv = _cond_inventory([("sqlalchemy not installed (sql extra)", "sqlalchemy")], tmp_path)
+        lines = [
+            _receipt(sqlalchemy=False),
+            _skip_line("sqlalchemy not installed (sql extra)", loc="tests/a.py:1"),
+            _receipt(sqlalchemy=True),
+            _skip_line("sqlalchemy not installed (sql extra)", loc="tests/b.py:2"),
+        ]
+        ok, offenders = check(lines, inv)
+        assert not ok
+        assert len(offenders) == 1, offenders
+        assert "tests/b.py:2" in offenders[0]
+
+    def test_a_second_entry_can_still_sanction(self, tmp_path):
+        """A conditional entry that declines does not veto an unconditional one
+        whose pattern also matches."""
+        inv = _cond_inventory(
+            [
+                ("sqlalchemy not installed (sql extra)", "sqlalchemy"),
+                ("sqlalchemy not installed", None),
+            ],
+            tmp_path,
+        )
+        lines = [_receipt(sqlalchemy=True), _skip_line("sqlalchemy not installed (sql extra)")]
+        ok, offenders = check(lines, inv)
+        assert ok, offenders
+
+
+class TestRequireReceipt:
+    def test_skips_without_receipt_fail_under_require_receipt(self, tmp_path):
+        inv = _cond_inventory([("requires macOS host", None)], tmp_path)
+        ok, offenders = check([_skip_line("requires macOS host")], inv, require_receipt=True)
+        assert not ok
+        assert any("receipt" in o.lower() for o in offenders)
+
+    def test_skips_with_receipt_pass_under_require_receipt(self, tmp_path):
+        inv = _cond_inventory([("requires macOS host", None)], tmp_path)
+        lines = [_receipt(sqlalchemy=True), _skip_line("requires macOS host")]
+        ok, offenders = check(lines, inv, require_receipt=True)
+        assert ok, offenders
+
+    def test_no_skips_at_all_still_requires_a_receipt(self, tmp_path):
+        """A run that emitted no receipt is unverifiable even when it skipped
+        nothing — that is the 'cannot tell ran from skipped' hole."""
+        inv = _cond_inventory([("requires macOS host", None)], tmp_path)
+        ok, offenders = check(["= 100 passed ="], inv, require_receipt=True)
+        assert not ok
+        assert any("receipt" in o.lower() for o in offenders)
+
+
+class TestValidateConditionalField:
+    def test_valid_module_name_passes(self, tmp_path):
+        _write_test_file(tmp_path, "yadgar/tests/foo.py", 'reason="requires macOS host"\n')
+        errors = validate_inventory(
+            {"entries": [_entry(sanctioned_when_module_absent="sqlalchemy")]},
+            repo_root=tmp_path,
+        )
+        assert errors == []
+
+    def test_dotted_module_name_passes(self, tmp_path):
+        _write_test_file(tmp_path, "yadgar/tests/foo.py", 'reason="requires macOS host"\n')
+        errors = validate_inventory(
+            {"entries": [_entry(sanctioned_when_module_absent="a.b")]}, repo_root=tmp_path
+        )
+        assert errors == []
+
+    def test_non_identifier_fails(self, tmp_path):
+        _write_test_file(tmp_path, "yadgar/tests/foo.py", 'reason="requires macOS host"\n')
+        errors = validate_inventory(
+            {"entries": [_entry(sanctioned_when_module_absent="not a module!")]},
+            repo_root=tmp_path,
+        )
+        assert any("module" in e.lower() for e in errors)
+
+    def test_empty_string_fails(self, tmp_path):
+        _write_test_file(tmp_path, "yadgar/tests/foo.py", 'reason="requires macOS host"\n')
+        errors = validate_inventory(
+            {"entries": [_entry(sanctioned_when_module_absent="")]}, repo_root=tmp_path
+        )
+        assert errors
+
+    def test_real_inventory_scopes_the_optional_dep_entries(self):
+        """The committed inventory must not sanction a mass-skip of tests whose
+        dependency the leg installs. Every entry whose reason names an optional
+        dependency has to carry the conditional field."""
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        data = json.loads(
+            (repo_root / "yadgar" / "tests" / "skip_inventory.json").read_text(encoding="utf-8")
+        )
+        by_id = {e["id"]: e for e in data["entries"]}
+        expected = {
+            "engine2-sql-extra-absent-01": "sqlalchemy",
+            "engine2-alembic-extra-absent-01": "alembic",
+            "engine2-carh-cross-engine-invariants-01": "alembic",
+            "export-duckdb-01": "duckdb",
+        }
+        for eid, module in expected.items():
+            assert eid in by_id, f"{eid} missing from inventory"
+            assert by_id[eid].get("sanctioned_when_module_absent") == module, (
+                f"{eid} must only sanction while {module} is absent"
+            )
+
+
+class TestAnsiColouredOutput:
+    """A colourised -rs summary must still be parsed.
+
+    pytest colourises when it believes a terminal is attached, and the agent
+    harness exports FORCE_COLOR=3. Before this the gate matched nothing in such
+    output and printed "OK — no skips found" over a log full of skips.
+    """
+
+    _GREEN = "\x1b[32m"
+    _RESET = "\x1b[0m"
+
+    def _coloured(self, reason: str, loc: str = "yadgar/tests/foo.py:42") -> str:
+        return f"{self._GREEN}SKIPPED{self._RESET} [1] {loc}: {reason}"
+
+    def test_coloured_skip_is_extracted(self):
+        result = _extract_skip_reasons([self._coloured("requires macOS host")])
+        assert len(result) == 1
+        assert result[0][1] == "requires macOS host"
+
+    def test_coloured_unsanctioned_skip_still_fails(self, tmp_path):
+        inv = _make_inventory(["macOS only"], tmp_path)
+        ok, offenders = check([self._coloured("BRAND NEW UNSANCTIONED REASON")], inv)
+        assert not ok, "a colourised skip line must not slip past the gate"
+        assert len(offenders) == 1
+
+    def test_coloured_conditional_skip_still_fails_when_module_present(self, tmp_path):
+        inv = _cond_inventory([("sqlalchemy not installed (sql extra)", "sqlalchemy")], tmp_path)
+        lines = [
+            _receipt(sqlalchemy=True),
+            self._coloured("sqlalchemy not installed (sql extra)"),
+        ]
+        ok, offenders = check(lines, inv)
+        assert not ok
+        assert len(offenders) == 1
