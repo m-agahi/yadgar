@@ -24,8 +24,15 @@ ALLOWED
   path or by ``isinstance`` — to keep the AST scan stdlib-only and to make
   the rule obvious to a reviewer.
 - An entry in the allowlist file (one ``path:lineno:reason`` per line).
-  Use sparingly; the allowlist is for the PRE-EXISTING violations car H
-  audits found, not a general escape hatch.
+  ``.ledger-chokepoint-allowlist.txt`` is EMPTY as shipped and the scan exits
+  0 with it and without it — the two entries it once held were both dead by
+  ledger task 388, and one of them asserted a ``UPDATE adr SET`` that task 202
+  had already routed through the engine. The mechanism is kept for a future
+  documented violation, not because one is outstanding. Prefer a POSITIONAL
+  MATCHER FIX over an entry: a false positive means the matcher is imprecise,
+  and fixing it protects every future call site rather than one line number.
+  An entry must state plainly whether it is a checker-precision artifact or
+  genuine tracked debt; it is never a general escape hatch.
 
 DETECTION SCOPE
 ---------------
