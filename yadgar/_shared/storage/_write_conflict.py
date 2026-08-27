@@ -90,6 +90,18 @@ def _any_entry_is_retryable(results: object) -> bool:
 
 
 @observe(tier="hot")
+def _statement_count(surql: str) -> int:
+    """Number of ``;``-separated statements in *surql*, trailing ``;`` ignored.
+
+    Deliberately naive. A ``;`` inside a string literal inflates the count,
+    which makes ``_replay_is_safe`` refuse a replay it could technically have
+    allowed — the safe direction. A parser that got this "right" would be
+    trading a real double-apply risk for a retry that was never guaranteed.
+    """
+    return len([s for s in surql.rstrip().rstrip(";").split(";") if s.strip()])
+
+
+@observe(tier="hot")
 def _replay_is_safe(surql: str, results: object, err_index: int, n_lets: int) -> bool:
     """True when re-POSTing the request after this error cannot double-apply anything.
 
@@ -103,10 +115,22 @@ def _replay_is_safe(surql: str, results: object, err_index: int, n_lets: int) ->
     2. Nothing with a persistent effect can already have committed:
          * an explicit ``BEGIN … COMMIT`` statement rolled back whole — safe; or
          * the failing entry is the FIRST non-``LET`` statement
-           (``err_index == n_lets``), so only ``LET`` bindings preceded it and
-           those have no persistent effect.
+           (``err_index == n_lets``) AND ``surql`` holds only that one
+           statement, so nothing with a persistent effect ran before it and
+           nothing follows it that a replay could re-apply.
        A conflict at a LATER index means an earlier statement's own transaction
        already committed, and replaying would apply it twice — refuse.
+
+    The single-statement clause closes a hole the ``err_index == n_lets`` test
+    leaves open on its own. ``/sql`` keeps executing after a statement fails, so
+    in a NON-atomic ``A; B`` body where A conflicts, B still runs and commits —
+    yet the failure sits at ``err_index == n_lets`` and would read as safe. A
+    replay then applies B twice. No production caller is exposed today (all 17
+    multi-statement ``_q`` sites wrap in ``BEGIN``, audited 2026-08-27), but the
+    rule failed OPEN rather than closed, and the obvious next multi-statement
+    caller would have inherited a silent double-apply. The test-suite wipe
+    (``DELETE memory; UPSERT counter:memory SET val = (val ?? 0) + 1``) is
+    exactly that shape — it would have double-incremented the id counter.
 
     The BEGIN test reads ``surql`` — the caller's statement — and NOT the wire
     body, which is what makes it reachable at all: every production
@@ -126,6 +150,8 @@ def _replay_is_safe(surql: str, results: object, err_index: int, n_lets: int) ->
         return False
     if surql.lstrip().upper().startswith("BEGIN"):
         return True
+    if _statement_count(surql) > 1:
+        return False
     return err_index == n_lets
 
 

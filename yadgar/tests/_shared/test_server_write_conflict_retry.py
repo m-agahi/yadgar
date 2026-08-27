@@ -201,6 +201,70 @@ def test_multi_statement_conflict_after_a_commit_is_not_retried(storage):
     )
 
 
+def test_multi_statement_conflict_on_the_FIRST_statement_is_not_retried(storage):
+    """The other half: `/sql` keeps going after a failure, so what FOLLOWS committed.
+
+    `err_index == n_lets` alone reads this as safe — the conflict is on the
+    first non-``LET`` statement, nothing with a persistent effect preceded it.
+    But ``/sql`` runs each ``;``-separated statement in its own transaction and
+    does NOT stop at the first error, so the SECOND statement ran and committed
+    while the first rolled back. A replay re-applies it.
+
+    This is the exact shape of the test-suite wipe
+    (``DELETE memory; UPSERT counter:memory SET val = (val ?? 0) + 1``), where a
+    replay would double-increment the id counter — a desync that blocks every
+    subsequent write.
+
+    No production caller is exposed (all 17 multi-statement ``_q`` sites wrap in
+    ``BEGIN``, audited 2026-08-27), but the rule failed OPEN, so the next
+    multi-statement caller would have inherited a silent double-apply.
+    """
+    calls = _responses(
+        storage,
+        [
+            [
+                {"status": "OK", "result": None},  # LET $v
+                {"status": "ERR", "detail": _CONFLICT},  # DELETE — conflicted, rolled back
+                {"status": "OK", "result": []},  # UPSERT — RAN ANYWAY, committed
+            ]
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="Transaction write conflict"):
+        storage._q_server("DELETE memory; UPSERT counter:memory SET val = $v", {"v": 1})
+
+    assert calls["n"] == 1, (
+        "a non-atomic multi-statement body must NOT be replayed even when the conflict is "
+        f"on the first statement — a later statement already committed; got {calls['n']} posts"
+    )
+
+
+def test_single_statement_conflict_is_still_retried(storage):
+    """The single-statement path must survive the multi-statement guard.
+
+    Guards that over-refuse are their own failure: this is the common case the
+    retry exists for, and it must keep working.
+    """
+    calls = _responses(
+        storage,
+        [
+            [
+                {"status": "OK", "result": None},  # LET $v
+                {"status": "ERR", "detail": _CONFLICT},
+            ],
+            [
+                {"status": "OK", "result": None},
+                {"status": "OK", "result": [{"ok": True}]},
+            ],
+        ],
+    )
+
+    out = storage._q_server("UPSERT counter:memory SET val = $v", {"v": 1})
+
+    assert out == [{"ok": True}]
+    assert calls["n"] == 2, f"expected one retry (2 posts), got {calls['n']}"
+
+
 def test_begin_transaction_statement_is_retried_even_late_in_the_batch(storage):
     """An explicit BEGIN…COMMIT statement rolls back whole — replay is safe.
 
