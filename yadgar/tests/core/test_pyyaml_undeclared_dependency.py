@@ -119,6 +119,7 @@ _NON_SOURCE_DIRS = frozenset(
     {
         ".venv",
         ".git",
+        ".claude",
         ".mypy_cache",
         ".pytest_cache",
         ".ruff_cache",
@@ -285,6 +286,31 @@ class TestRepoWalkScope:
         assert [p.name for p in found] == ["mod.py"], (
             f"a checkout under .claude/worktrees/ scanned {len(found)} files — an "
             "absolute-parts skip match empties the walk and passes vacuously"
+        )
+
+    def test_a_sibling_agent_worktree_is_not_scanned(self, tmp_path):
+        """The other half of `.claude`: prune it BELOW the root, keep it AT the root.
+
+        `.claude/worktrees/<agent>/` holds live agent checkouts of this same
+        repo. Scanning them makes this gate's verdict depend on whether a
+        sibling agent happens to be running — measured on 2026-08-27, when it
+        went red naming `agent-a5f5ed373d2462eba/...:252`, a pre-fix copy of a
+        bug already fixed on the train. That is the same "reports a state that
+        is not the repo's" failure this gate exists to catch, so pruning is by
+        directory NAME during descent: a `.claude` child of the walk root is
+        skipped, while a root that IS itself inside `.claude/worktrees/` still
+        scans its own files (the test above).
+        """
+        (tmp_path / "yadgar").mkdir()
+        (tmp_path / "yadgar" / "real.py").write_text("x = 1\n")
+        sibling = tmp_path / ".claude" / "worktrees" / "agent-xyz" / "yadgar"
+        sibling.mkdir(parents=True)
+        (sibling / "leaked.py").write_text("import yaml\n")
+
+        found = {p.name for p in _iter_repo_python_files(tmp_path)}
+        assert found == {"real.py"}, (
+            f"scan reached a sibling agent worktree: {sorted(found)} — this gate's "
+            "result must not depend on which agents are running"
         )
 
 
