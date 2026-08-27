@@ -316,10 +316,13 @@ def check_dead_baseline(repo_root: Path) -> list[str]:
     if not baseline_path.exists():
         return []
     dead = dead_baseline_keys(filepaths, str(baseline_path))
+    # Remediation names THIS key, deliberately not ``--gc --all-files``: that
+    # flag also deletes the ~1576 benign line-drift entries the Car 7 standing
+    # decision keeps on purpose, so pointing at it turns a one-key problem
+    # into a 1576-entry diff.
     return [
         f"DEAD-BASELINE: {key} names a symbol that no longer exists — "
-        f"remove the entry (`python scripts/check_complexity.py --gc --all-files` "
-        f"clears line-drift keys too)"
+        f"delete this entry from .complexity-baseline.json"
         for key in sorted(dead)
     ]
 

@@ -24,6 +24,14 @@ three ``semantic_immortal`` rows are INSIDE the 95. The tier guard
                               WHERE misses it (ADR-0233 scope-key drift;
                               re-keying the scan itself is C7's job, not
                               this car's).
+  global_reach_not_scanned    ``_anchor``-tagged with the ``global`` reach
+                              sentinel in ``directory_context``, which
+                              ``audit_anchors`` scans only under
+                              ``include_global=True``. Zero on this corpus
+                              today, and split out anyway: folding it into
+                              ``directory_context_mismatch`` would blame
+                              ADR-0233 drift for a row the caller simply did
+                              not ask for.
 
 Everything here REPORTS. It deliberately does not widen the population the
 action builders run over — what ``audit_anchors`` decides to retire is
@@ -39,6 +47,10 @@ from yadgar._shared.observability.observe import observe
 logger = logging.getLogger(__name__)
 
 _COVERAGE_SAMPLE_CAP = 10
+
+# The ``directory_context`` sentinel ``audit_anchors`` scans only when
+# ``include_global=True`` — see its ``audit_dirs`` list.
+_GLOBAL_DIR = "global"
 
 
 @observe(tier="stage", metric="tools._audit_coverage._coverage_project_id")
@@ -131,7 +143,15 @@ def _build_coverage(
             scanned_protected += 1
             continue
         # Exhaustive: failing the conjunction means one of the two arms failed.
-        reason = "no_anchor_tag" if not in_scan_tag else "directory_context_mismatch"
+        if not in_scan_tag:
+            reason = "no_anchor_tag"
+        elif row.get("directory_context") == _GLOBAL_DIR:
+            # Not scope-key drift — a global-reach row the caller simply did
+            # not ask for. Labelling it ``directory_context_mismatch`` would
+            # blame ADR-0233 for a row ``include_global=True`` would scan.
+            reason = "global_reach_not_scanned"
+        else:
+            reason = "directory_context_mismatch"
         reasons[reason] = reasons.get(reason, 0) + 1
         bucket = sample.setdefault(reason, [])
         if len(bucket) < _COVERAGE_SAMPLE_CAP:

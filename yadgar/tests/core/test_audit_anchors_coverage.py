@@ -18,6 +18,11 @@ the seven split into two causes, neither of them a tier filter (the three
     ``directory_context`` column, so the directory-keyed WHERE misses it
     (ADR-0233 scope-key drift).
 
+A third bucket, ``global_reach_not_scanned``, is zero on the live corpus and
+covered here anyway: a ``global``-reach row is unscanned because the caller
+passed ``include_global=False``, not because a scope key drifted, and one
+label for two causes is not "the cause, precisely".
+
 This car does NOT widen what the audit decides to retire — the action
 builders are untouched. It makes the shortfall VISIBLE: silence was the
 defect.
@@ -84,7 +89,7 @@ def _insert(storage, *, tags, directory, project_id=None, tier="conditional", pr
 
 @pytest.fixture()
 def _corpus(_engines):
-    """Three scanned anchors + the two unscanned shapes measured live.
+    """One anchor per tier in the scanned dir + every unscanned shape.
 
     Function-scoped and re-seeded per test on purpose: the engines started by
     ``init_engines`` run a background decay/consolidation pass that clears
@@ -98,7 +103,19 @@ def _corpus(_engines):
     st._q("DELETE FROM memory WHERE directory_context = $d", {"d": _DIR})
     st._q("DELETE FROM memory WHERE project_id = $p", {"p": _PID})
 
-    scanned = [_insert(st, tags=["_anchor"], directory=_DIR, project_id=_PID) for _ in range(3)]
+    st._q("DELETE FROM memory WHERE directory_context = 'global'")
+
+    # One row per tier IN the scanned directory. ``semantic_immortal`` is here
+    # deliberately: the car's central finding is that the tier guard governs
+    # MUTATION, not visibility, and a fixture whose only immortal row sits in
+    # an unscanned bucket would let that claim pass vacuously.
+    scanned = [
+        _insert(st, tags=["_anchor"], directory=_DIR, project_id=_PID, tier="conditional"),
+        _insert(st, tags=["_anchor"], directory=_DIR, project_id=_PID, tier="ephemeral"),
+        _insert(st, tags=["_anchor"], directory=_DIR, project_id=_PID, tier="semantic_immortal"),
+        # Pre-v5.8 legacy anchor: protected, no tier at all.
+        _insert(st, tags=["_anchor"], directory=_DIR, project_id=_PID, tier=None),
+    ]
     # Cause 1 — protected, project-owned, but no ``_anchor`` tag.
     no_tag = [
         _insert(st, tags=["_active_work"], directory=_DIR, project_id=_PID, tier=None),
@@ -109,7 +126,16 @@ def _corpus(_engines):
     dir_mismatch = [
         _insert(st, tags=["_anchor"], directory=_PID, project_id=_PID, tier="semantic_immortal")
     ]
-    return {"scanned": scanned, "no_tag": no_tag, "dir_mismatch": dir_mismatch}
+    # Cause 3 — global reach, scanned only under include_global=True.
+    global_reach = [
+        _insert(st, tags=["_anchor"], directory="global", project_id=_PID, tier="conditional")
+    ]
+    return {
+        "scanned": scanned,
+        "no_tag": no_tag,
+        "dir_mismatch": dir_mismatch,
+        "global_reach": global_reach,
+    }
 
 
 class TestCoverageReporting:
@@ -124,15 +150,15 @@ class TestCoverageReporting:
         from yadgar.core.server.tools.audit import audit_anchors
 
         result = audit_anchors(directory=_DIR, dry_run=True, project=_PID)
-        assert result["scanned"] == 3
+        assert result["scanned"] == 4
         assert result["coverage"]["scanned"] == result["scanned"]
 
     def test_protected_total_counts_rows_the_scan_misses(self, _corpus):
         from yadgar.core.server.tools.audit import audit_anchors
 
         cov = audit_anchors(directory=_DIR, dry_run=True, project=_PID)["coverage"]
-        assert cov["protected_total"] == 6
-        assert cov["unscanned"] == 3
+        assert cov["protected_total"] == 8
+        assert cov["unscanned"] == 4
 
     def test_unscanned_rows_are_attributed_to_a_named_cause(self, _corpus):
         from yadgar.core.server.tools.audit import audit_anchors
@@ -141,6 +167,7 @@ class TestCoverageReporting:
         reasons = cov["unscanned_reasons"]
         assert reasons["no_anchor_tag"] == 2
         assert reasons["directory_context_mismatch"] == 1
+        assert reasons["global_reach_not_scanned"] == 1
         assert sum(reasons.values()) == cov["unscanned"]
 
     def test_every_tier_is_scanned_or_explicitly_accounted_for(self, _corpus):
@@ -158,6 +185,56 @@ class TestCoverageReporting:
         # count agree and no ``scanned_unprotected`` key is emitted.
         assert cov["scanned_protected"] == cov["scanned"]
         assert "scanned_unprotected" not in cov
+        # All four in-directory tiers — conditional, ephemeral,
+        # semantic_immortal, and the untiered legacy row — are SCANNED, and
+        # none of them appears in any unscanned bucket.
+        assert cov["scanned_protected"] == len(_corpus["scanned"])
+        unscanned_ids = {i for ids in cov["unscanned_sample"].values() for i in ids}
+        assert unscanned_ids.isdisjoint(set(_corpus["scanned"]))
+
+    def test_semantic_immortal_in_directory_is_counted_not_excluded(self, storage, _corpus):
+        """The car's central finding, pinned against the row itself.
+
+        ``_is_safe_to_mutate`` refuses to auto-mutate ``semantic_immortal``;
+        the SCAN has no such filter. Read the tier back off the DB so this
+        cannot pass on a mis-seeded fixture.
+        """
+        from yadgar.core.server.tools.audit import audit_anchors
+
+        immortal = _corpus["scanned"][2]
+        row = storage._q(
+            "SELECT tier FROM memory WHERE id = type::record('memory', $id)", {"id": immortal}
+        )
+        assert row and row[0]["tier"] == "semantic_immortal"
+
+        cov = audit_anchors(directory=_DIR, dry_run=True, project=_PID)["coverage"]
+        unscanned_ids = {i for ids in cov["unscanned_sample"].values() for i in ids}
+        assert immortal not in unscanned_ids
+
+    def test_global_reach_row_is_not_blamed_on_scope_key_drift(self, _corpus):
+        """A ``global`` row is unscanned because nobody asked for it.
+
+        Folding it into ``directory_context_mismatch`` would report an
+        ADR-0233 cause for a row ``include_global=True`` scans happily.
+        """
+        from yadgar.core.server.tools.audit import audit_anchors
+
+        cov = audit_anchors(directory=_DIR, dry_run=True, project=_PID)["coverage"]
+        assert set(cov["unscanned_sample"]["global_reach_not_scanned"]) == set(
+            _corpus["global_reach"]
+        )
+        assert set(cov["unscanned_sample"]["directory_context_mismatch"]).isdisjoint(
+            set(_corpus["global_reach"])
+        )
+
+    def test_include_global_moves_the_global_row_into_the_scan(self, _corpus):
+        from yadgar.core.server.tools.audit import audit_anchors
+
+        cov = audit_anchors(directory=_DIR, dry_run=True, project=_PID, include_global=True)[
+            "coverage"
+        ]
+        assert "global_reach_not_scanned" not in cov["unscanned_reasons"]
+        assert cov["scanned"] == len(_corpus["scanned"]) + len(_corpus["global_reach"])
 
     def test_samples_name_the_offending_rows(self, _corpus):
         from yadgar.core.server.tools.audit import audit_anchors
@@ -188,7 +265,7 @@ class TestCoverageReporting:
         from yadgar.core.server.tools.audit import audit_anchors
 
         cov = audit_anchors(directory=_DIR, dry_run=True)["coverage"]
-        assert cov["scanned"] == 3
+        assert cov["scanned"] == 4
         # The directory-context-mismatch row is unreachable without a project
         # key; the two untagged rows are still visible.
         assert cov["unscanned_reasons"]["no_anchor_tag"] == 2
@@ -207,4 +284,4 @@ class TestCoverageReporting:
         cov = audit_anchors(directory=_DIR, dry_run=True, project=_PID)["coverage"]
         assert "error" in cov
         assert "protected_total" not in cov
-        assert cov["scanned"] == 3
+        assert cov["scanned"] == 4
