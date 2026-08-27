@@ -26,6 +26,7 @@ import time
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import trace_span
+from yadgar._shared.storage._write_conflict import post_sql_with_conflict_retry
 
 _log = logging.getLogger(__name__)
 
@@ -662,19 +663,10 @@ class _ClientMixin:
             body = "\n".join(lets) + "\n" + surql
         else:
             body = surql
-        resp = self._http.post(
-            "/sql", content=body.encode(), headers={"Content-Type": "text/plain"}
-        )
-        resp.raise_for_status()
-        results = resp.json()
-        # Raise on any SurrealDB-level error (HTTP is always 200).
-        for entry in results:
-            if entry.get("status") == "ERR":
-                raise RuntimeError(
-                    f"SurrealDB error: {entry.get('detail') or entry.get('result') or entry}"
-                )
-        # Last entry is the actual query result (LET entries precede it).
-        return results[-1].get("result") if results else None
+        # Raises RuntimeError on any SurrealDB-level error (HTTP is always 200);
+        # a retryable transaction-write conflict is replayed first when replaying
+        # cannot double-apply anything (see _write_conflict for the exact rule).
+        return post_sql_with_conflict_retry(self._http, body, surql, len(params) if params else 0)
 
     @observe(tier="stage")
     def _q_embedded(self, surql: str, params: dict | None) -> object:
