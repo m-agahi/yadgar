@@ -1207,19 +1207,87 @@ class TestLayer4NonE2EAllowlist:
         assert ctw.stale_allowlist_entries("", allowlist), "absent from the diff IS stale"
 
 
-class TestLayer4ShippedAllowlistRecordsCarK:
-    """The sanction is recorded in the repo, in the diff — not by narrowing the guard."""
+# A relaxation this file OWNS: a synthetic path that no car ever ships, so the
+# property below cannot go stale the way a shipped-file pin does (see the class
+# docstring).  Exact-value `== 3` relaxed to truthiness — net assert delta zero,
+# net strict delta -1.
+_SYNTHETIC_PATH = "yadgar/tests/core/test_synthetic_subject.py"
+_SYNTHETIC_RELAXATION = (
+    f"diff --git a/{_SYNTHETIC_PATH} b/{_SYNTHETIC_PATH}\n"
+    "-        assert rows == 3\n"
+    "+        assert rows\n"
+)
+_SYNTHETIC_REASON = (
+    "Synthetic fixture rationale, written long enough to clear the minimum-length "
+    "governance rule every allowlist entry must satisfy."
+)
 
-    def test_shipped_allowlist_sanctions_the_cls_store_relaxation(self) -> None:
-        allowlist = ctw.load_allowlist(_REPO_ROOT / ctw._ALLOWLIST_NAME)
-        assert _CLS_STORE in allowlist, (
-            "car K's relaxation is real and the widened guard flags it; it must be "
-            "RECORDED in .test-weakening-allowlist.json with a reason, not made to "
-            "disappear by re-narrowing the scan"
+
+class TestLayer4SanctionIsRecordedNotScannedAway:
+    """A real relaxation is RECORDED in the allowlist — never scanned away.
+
+    Car R shipped this property pinned to one real file and its shipped
+    allowlist entry.  Car O then reverted that relaxation to something strictly
+    stronger, the guard reported the entry STALE on its own ("measured strict +0
+    is better than the allowed -1 — tighten or remove"), the entry was removed as
+    ``_stale_policy`` directs, and the pinned test went red for doing its job.
+    A property stated against a shipped file has a shelf life; the same property
+    stated against a synthetic diff does not.  Same arms, no pin.
+    """
+
+    def test_the_relaxation_is_flagged(self) -> None:
+        errors = ctw.check_diff(_SYNTHETIC_RELAXATION, 5, 5, {})
+        assert errors, "an exact-value assertion relaxed to truthiness must fire"
+        assert _SYNTHETIC_PATH in " ".join(errors), errors
+        assert "exact-value" in " ".join(errors), errors
+
+    def test_an_allowlist_entry_silences_it(self) -> None:
+        """The sanctioned route: written down, in the repo, in the reviewed diff."""
+        allowlist = {_SYNTHETIC_PATH: {"allowed_strict_delta": -1, "rationale": _SYNTHETIC_REASON}}
+        assert ctw.check_diff(_SYNTHETIC_RELAXATION, 5, 5, allowlist) == []
+
+    def test_the_shipped_scope_does_not_let_it_slip(self) -> None:
+        """Re-narrowing the scan is the OTHER way to make a violation disappear.
+
+        The subject is invisible to layer 3's e2e declaration, so the
+        pre-task-379 scope would have passed it in silence with nothing recorded
+        anywhere.  Layer 4's own scope must still see it.
+        """
+        assert not ctw._E2E_PATH_RE.search(_SYNTHETIC_PATH), (
+            "fixture guard: a path the narrow scan CAN see would prove nothing here"
         )
-        entry = allowlist[_CLS_STORE]
-        assert entry.get("allowed_strict_delta") == -1, entry
-        assert len(entry.get("rationale", "")) >= ctw._MIN_RATIONALE, entry
+        assert ctw._TEST_PATH_RE.search(_SYNTHETIC_PATH), (
+            "layer 4 scans every yadgar/tests/**/*.py — narrowing it back to e2e is "
+            "how a relaxation disappears without a sanction being written down"
+        )
+        assert ctw.check_diff(_SYNTHETIC_RELAXATION, 5, 5, {}), (
+            "the shipped scope must flag a non-e2e relaxation"
+        )
+
+    def test_narrowing_the_scan_is_what_would_hide_it(self, monkeypatch) -> None:
+        """The hazard itself, executed rather than asserted about.
+
+        Shrunk to the e2e declaration, the SAME diff passes clean with no entry
+        and no reason recorded.  This is the move the allowlist exists to make
+        unnecessary, and ``TestLayer3Layer4ScopeLockstep`` is what keeps the two
+        scopes from being quietly collapsed into one.
+        """
+        monkeypatch.setattr(ctw, "_TEST_PATH_RE", ctw._E2E_PATH_RE)
+
+        assert ctw.check_diff(_SYNTHETIC_RELAXATION, 5, 5, {}) == [], (
+            "fixture guard: if the narrowed scan still fired, the demonstration "
+            "would not be showing the hazard it claims to"
+        )
+
+
+class TestLayer4ShippedAllowlistIsWellformed:
+    """Whatever the shipped allowlist currently records, it must parse and pass.
+
+    Deliberately names no file: entries come and go with every train (see the
+    class above), and a test pinning one goes red the moment its car merges.
+    What must hold on every commit is that the file the guard loads is not
+    malformed.
+    """
 
     def test_the_shipped_allowlist_is_still_wellformed(self) -> None:
         allowlist = ctw.load_allowlist(_REPO_ROOT / ctw._ALLOWLIST_NAME)
