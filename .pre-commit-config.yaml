@@ -148,7 +148,13 @@ repos:
         entry: python scripts/check_ledger_chokepoint.py --allowlist .ledger-chokepoint-allowlist.txt
         types: [python]
         pass_filenames: false
-        files: ^yadgar/.*\.py$
+        # scripts/ joined the scan in ledger task 394. The regex MUST list it
+        # too: with pass_filenames: false the hook still scans everything, but
+        # `files:` decides whether it RUNS AT ALL — leaving this ^yadgar/-only
+        # would mean a raw ledger write added under scripts/ never triggers the
+        # gate, i.e. a widened scan that is inert on the exact directory it was
+        # widened for. Shape mirrors check-complexity-allowlist.
+        files: ^(yadgar/.*\.py|scripts/.*\.py)$
 
       - id: check-auth-token-pattern
         name: "Check bearer-token resolution chokepoint (bug train car 9: every YADGAR_MCP_AUTH_TOKEN read routes through resolve_auth_token())"

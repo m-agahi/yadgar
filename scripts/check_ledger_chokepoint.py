@@ -3,9 +3,10 @@
 
 WHAT THIS GUARD DOES
 --------------------
-AST-scans ``yadgar/**/*.py`` (tests excluded, mirrors check_dynamic_span_names)
-and FAILS on any code that accesses one of the seven ledger tables via raw
-SQL OUTSIDE ``MariaStorageEngine`` and OUTSIDE the explicit allowlist.
+AST-scans ``yadgar/**/*.py`` AND ``scripts/**/*.py`` (tests excluded, mirrors
+check_dynamic_span_names) and FAILS on any code that accesses one of the seven
+ledger tables via raw SQL OUTSIDE ``MariaStorageEngine`` and OUTSIDE the
+explicit allowlist. The scanned set is ``SCAN_DIRS``.
 
   Ledger tables (D20 chokepoint surface):
     task, adr, agent_pattern, agent_discipline,
@@ -51,6 +52,9 @@ DETECTION SCOPE
   literal that mixes ``FROM information_schema.TABLES`` with
   ``UPDATE adr SET ...`` is still a violation on ``adr``.
 - Tests are excluded from the scan (mirrors check_dynamic_span_names).
+- The scan covers ``yadgar/`` and ``scripts/`` (``SCAN_DIRS``). ``scripts/``
+  was added by ledger task 394 — an operator script is exactly where an
+  un-chokepointed ledger write is most tempting and was, until then, invisible.
 - Free-standing SQL strings (no ``text(...)`` wrapper) are out of scope.
   The guard is not a SQL parser — it is an AST walker over call shapes,
   by design. A reviewer who writes `conn.execute(raw_string)` must wrap
@@ -58,9 +62,9 @@ DETECTION SCOPE
   is also what makes the engine's emitted SQL dialect-correct.
 
 Usage:
-  python scripts/check_ledger_chokepoint.py                 # check yadgar/, exit 0/1
-  python scripts/check_ledger_chokepoint.py --root <dir>    # scan a different root
-  python scripts/check_ledger_chokepoint.py --allowlist <p> # pre-existing violations file
+  python scripts/check_ledger_chokepoint.py                 # check yadgar/ + scripts/, exit 0/1
+  python scripts/check_ledger_chokepoint.py --root <dir>    # scan ONLY that one dir instead
+  python scripts/check_ledger_chokepoint.py --allowlist <p> # documented-violations file
   python scripts/check_ledger_chokepoint.py --list-all      # list every violation
 
 Exit codes:
@@ -78,6 +82,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Repo-root-relative directories the guard scans when no ``--root`` is given.
+#
+# ``scripts/`` joined the set in ledger task 394. The scan was ``yadgar/``-only
+# for its whole life, so an operator script under ``scripts/`` could carry raw
+# ledger SQL and never be seen — exactly the D20 bypass this gate exists to
+# prevent, in the one directory whose whole purpose is one-off writes against
+# the live store. Measured when the widening landed: ZERO violations under
+# ``scripts/``, and that is structurally expected rather than suspicious —
+# ``backfill_agent_pattern_from_wiki.py`` is the only script that reaches the
+# ledger at all and it forwards REGISTERED admin ops via ``_forward_admin``,
+# which is the chokepoint. The widening is a tripwire for the NEXT such
+# script, not a bug-finder for the current ones.
+SCAN_DIRS: tuple[str, ...] = ("yadgar", "scripts")
 
 # Ledger tables (D20 chokepoint surface). Order matters for stable error
 # messages — keep alphabetical by table name.
@@ -530,18 +548,37 @@ def _iter_py_files(root: Path) -> list[Path]:
     return files
 
 
+def default_roots() -> list[Path]:
+    """The directories scanned when no explicit ``--root`` is given.
+
+    Resolved against ``_REPO_ROOT`` at CALL time (not import time) so a test
+    can monkeypatch ``_REPO_ROOT`` onto a fixture tree and exercise the DEFAULT
+    root set — the only way to prove the default covers ``scripts/`` rather
+    than proving the scanner accepts an arbitrary ``--root``, which it always
+    did. A root that does not exist is skipped, so a partial checkout does not
+    turn the gate into a crash.
+    """
+    return [p for p in (_REPO_ROOT / d for d in SCAN_DIRS) if p.is_dir()]
+
+
 def scan(
     root: Path | None = None,
     allowed: set[tuple[str, int]] | None = None,
 ) -> list[Violation]:
-    """Scan all in-scope files under ``root`` and return every violation."""
-    if root is None:
-        root = _REPO_ROOT / "yadgar"
+    """Scan every in-scope file under ``root`` and return every violation.
+
+    ``root=None`` scans the DEFAULT root set (``SCAN_DIRS`` — ``yadgar/`` and
+    ``scripts/``). An explicit ``root`` scans THAT ONE directory and nothing
+    else: the override is a replacement, never an addition, so an existing
+    caller pointing at a fixture tree keeps getting exactly that tree.
+    """
+    roots = [root] if root is not None else default_roots()
     if allowed is None:
         allowed = set()
     violations: list[Violation] = []
-    for f in _iter_py_files(root):
-        violations.extend(scan_file(f, allowed))
+    for r in roots:
+        for f in _iter_py_files(r):
+            violations.extend(scan_file(f, allowed))
     return violations
 
 
@@ -560,8 +597,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--root",
-        default=str(_REPO_ROOT / "yadgar"),
-        help="Directory to scan (default: yadgar/).",
+        default=None,
+        help=(
+            "Scan THIS ONE directory instead of the default set "
+            f"({'/, '.join(SCAN_DIRS)}/). Replaces the default set, never adds to it."
+        ),
     )
     parser.add_argument(
         "--allowlist",
@@ -578,7 +618,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    root = Path(args.root)
+    root = Path(args.root) if args.root else None
     allowed = _load_allowlist(Path(args.allowlist)) if args.allowlist else set()
     violations = scan(root, allowed)
 
