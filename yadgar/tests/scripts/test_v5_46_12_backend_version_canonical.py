@@ -249,9 +249,17 @@ def test_sync_version_hook_fires_on_server_json() -> None:
     which rewrites everything downstream. This asserts the backend track gets
     the same treatment.
     """
-    import yaml  # noqa: PLC0415
+    # ruamel.yaml, NOT PyYAML: `import yaml` only resolves when the optional
+    # `ml` extra happens to be installed (huggingface-hub pulls pyyaml in
+    # transitively), and `test_pyyaml_undeclared_dependency.py` actively forbids
+    # declaring PyYAML in pyproject.toml. So a bare `import yaml` here made this
+    # test unsatisfiable in every base/test environment the repo sanctions —
+    # `make test` (`--extra test` only) hit ModuleNotFoundError deterministically
+    # while `make test-ci` (`--extra ml`) went green. ruamel.yaml is the declared
+    # hard dependency and is always present (v5.169.1 stance).
+    from ruamel.yaml import YAML  # noqa: PLC0415
 
-    cfg = yaml.safe_load((REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    cfg = YAML(typ="safe").load((REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
     hooks = [
         h for repo in cfg["repos"] for h in repo.get("hooks", []) if h.get("id") == "sync-version"
     ]
