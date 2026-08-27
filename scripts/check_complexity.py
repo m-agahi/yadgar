@@ -38,6 +38,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -226,6 +227,12 @@ def load_baseline(baseline_path: str) -> dict:
         return json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):  # fmt: skip
         return {}
+
+
+# Trailing ``@<lineno>`` on a baseline key. Stripping it collapses a moved
+# symbol onto its original entry, which is how ``dead_baseline_keys``
+# separates benign line drift from a genuinely absent symbol (task 395).
+_LINENO_SUFFIX_RE = re.compile(r"@\d+$")
 
 
 def _baseline_key(filepath: str, entity_name: str, lineno: int = 0) -> str:
@@ -812,6 +819,73 @@ def _collect_live_keys(filepaths: list[str]) -> set[str]:
         for c in cls_results:
             live.add(_baseline_key(c.filepath, c.name, c.lineno))
     return live
+
+
+def _strip_lineno(key: str) -> str:
+    """Reduce ``<path>::<name>@<lineno>`` to ``<path>::<name>``.
+
+    ``__file__`` keys carry no ``@lineno`` and pass through unchanged.
+    """
+    return _LINENO_SUFFIX_RE.sub("", key)
+
+
+def dead_baseline_keys(filepaths: list[str], baseline_path: str) -> list[str]:
+    """Baseline entries whose ``<path>::<name>`` no longer exists in code.
+
+    Task 395. This is the strict subset of ``gc_baseline``'s "stale" set that
+    is genuinely decorative. The two are NOT the same thing and conflating
+    them is why ``--gc`` was left opt-in:
+
+      LINE DRIFT  ``path::name`` still live, only ``@lineno`` moved. Measured
+                  2026-08-27: 1576 of 1711 stale keys (92%). Harmless — the
+                  ratchet just misses that symbol and falls through to FULL
+                  enforcement, the strictest path.
+      DEAD        ``path::name`` exists nowhere in ``filepaths``. Measured:
+                  135 keys, 48 of them in 8 files that no longer exist. These
+                  describe nothing, so they can never be wrong — the
+                  "recorded number is decorative" class (task 282).
+
+    Only entries whose file is IN ``filepaths`` are judged. A path outside the
+    scanned set is out of scope, and a file the analyser could not parse
+    contributes no live keys — so its entries are reported as dead only when
+    the file is genuinely absent from the scan, never because a parse blew up.
+    """
+    baseline = load_baseline(baseline_path)
+    if not baseline:
+        return []
+    scanned_files: set[str] = set()
+    parsed_files: set[str] = set()
+    live_stripped: set[str] = set()
+    all_classes: dict = {}
+    for filepath in filepaths:
+        resolved = str(Path(filepath).resolve())
+        scanned_files.add(_rel_path(resolved))
+        is_test = _is_test_file(resolved)
+        # ``analyze_file`` SWALLOWS SyntaxError and returns empty results, which
+        # would make every symbol in an unparseable file look dead. Parse first
+        # so a broken file is UNKNOWN rather than condemned.
+        try:
+            ast.parse(Path(resolved).read_text(encoding="utf-8", errors="replace"))
+            fn_results, _file_result, cls_results = analyze_file(resolved, is_test, all_classes)
+        except (SyntaxError, ValueError, OSError):  # fmt: skip
+            continue
+        parsed_files.add(_rel_path(resolved))
+        live_stripped.add(_baseline_key(resolved, "__file__"))
+        for r in fn_results:
+            live_stripped.add(_strip_lineno(_baseline_key(r.filepath, r.name, r.lineno)))
+        for c in cls_results:
+            live_stripped.add(_strip_lineno(_baseline_key(c.filepath, c.name, c.lineno)))
+
+    dead: list[str] = []
+    for key in baseline:
+        path = key.split("::", 1)[0]
+        if path in parsed_files:
+            if _strip_lineno(key) not in live_stripped:
+                dead.append(key)
+        elif path not in scanned_files and not (_REPO_ROOT / path).exists():
+            # File absent from the scan AND absent from disk ⇒ deleted.
+            dead.append(key)
+    return dead
 
 
 def gc_baseline(filepaths: list[str], baseline_path: str) -> int:

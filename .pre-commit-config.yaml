@@ -366,11 +366,14 @@ repos:
         always_run: true
 
       - id: check-complexity-allowlist
-        name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale entries)
+        name: Check I30 complexity-cap integrity (HARD gated, rationale required, no stale/dead entries)
         language: system
         entry: python scripts/check_complexity_allowlist.py
         pass_filenames: false
-        files: ^(yadgar/.*\.py|scripts/.*\.py|\.complexity-allowlist\.json|\.complexity-config\.json)$
+        # .complexity-baseline.json is in the filter because property (e)
+        # (task 395) reads it — editing the baseline must re-run the gate,
+        # otherwise a dead entry can be re-introduced by a baseline-only commit.
+        files: ^(yadgar/.*\.py|scripts/.*\.py|\.complexity-allowlist\.json|\.complexity-config\.json|\.complexity-baseline\.json)$
 
       - id: check-swallowed-failure
         name: Check ADR-0420 swallowed failure (R3 at zero, R1 baseline-ratcheted)

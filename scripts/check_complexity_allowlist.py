@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """I30 — Complexity-cap integrity invariant.
 
-Enforces four properties of the HARD complexity allowlist:
+Enforces four properties of the HARD complexity allowlist, plus one of the
+soft-violation baseline:
 
   (a) GATE — no HARD violation exists outside the allowlist.
       Every production HARD violation must be covered by a
@@ -18,8 +19,15 @@ Enforces four properties of the HARD complexity allowlist:
       current measured values within tolerance (DRIFT_TOLERANCE = 0.20).
       Growth beyond the recorded value triggers re-review.
 
+  (e) NO DEAD BASELINE ENTRIES — no .complexity-baseline.json entry
+      names a path/symbol that no longer exists (task 395).  Property
+      (c) covered the allowlist only, so a baseline entry describing a
+      moved-away function sat there forever.  Line drift (same symbol,
+      new line number) is NOT a violation — only a symbol that exists
+      nowhere in the scanned tree.
+
 Exit codes:
-  0  all four properties satisfied
+  0  all five properties satisfied
   1  one or more violations found
 
 Usage:
@@ -274,15 +282,60 @@ def check_drift(
     return errors
 
 
+def _baseline_scan_root(repo_root: Path) -> Path:
+    """Directory whose ``*.py`` files define the live-symbol set.
+
+    Split out so a test can point the scan at the real tree while the
+    baseline under test lives elsewhere.
+    """
+    return repo_root / "yadgar"
+
+
+def check_dead_baseline(repo_root: Path) -> list[str]:
+    """(e) No ``.complexity-baseline.json`` entry names a symbol that is gone.
+
+    Task 395. The allowlist has had a no-stale-entries property since I30 was
+    written; the BASELINE never did, so
+    ``admin_other.py::_parse_since_duration@146`` survived the function's move
+    to ``_recent_memories.py`` two cars earlier with nothing to flag it.
+
+    Scope matches (c)/(d): production ``yadgar/`` excluding ``/tests/``.
+    Only DEAD keys are errors — a symbol that merely moved lines is not one
+    (see ``check_complexity.dead_baseline_keys`` for why that distinction is
+    load-bearing rather than cosmetic).
+    """
+    from check_complexity import dead_baseline_keys  # noqa: PLC0415
+
+    scan_root = _baseline_scan_root(repo_root)
+    filepaths = [
+        str(p)
+        for p in scan_root.rglob("*.py")
+        if "__pycache__" not in str(p) and ".venv" not in str(p) and "/tests/" not in str(p)
+    ]
+    baseline_path = repo_root / ".complexity-baseline.json"
+    if not baseline_path.exists():
+        return []
+    dead = dead_baseline_keys(filepaths, str(baseline_path))
+    return [
+        f"DEAD-BASELINE: {key} names a symbol that no longer exists — "
+        f"remove the entry (`python scripts/check_complexity.py --gc --all-files` "
+        f"clears line-drift keys too)"
+        for key in sorted(dead)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Main check
 # ---------------------------------------------------------------------------
 
 
-def run_check(repo_root: Path) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Run all four I30 checks.
+def run_check(
+    repo_root: Path,
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+    """Run all five I30 checks.
 
-    Returns (gate_errors, rationale_errors, stale_errors, drift_errors).
+    Returns (gate_errors, rationale_errors, stale_errors, drift_errors,
+    dead_baseline_errors).
     """
     allowlist = load_allowlist(repo_root / ".complexity-allowlist.json")
     allowlist_index = build_allowlist_index(allowlist)
@@ -313,6 +366,7 @@ def run_check(repo_root: Path) -> tuple[list[str], list[str], list[str], list[st
         check_rationale(allowlist),  # rationale applies to all entries
         check_stale(audited_entries, hard_violations),
         check_drift(audited_entries, hard_violations),
+        check_dead_baseline(repo_root),
     )
 
 
@@ -359,9 +413,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
 
-    gate_errors, rationale_errors, stale_errors, drift_errors = run_check(repo_root)
+    gate_errors, rationale_errors, stale_errors, drift_errors, dead_errors = run_check(repo_root)
 
-    all_errors = gate_errors + rationale_errors + stale_errors + drift_errors
+    all_errors = gate_errors + rationale_errors + stale_errors + drift_errors + dead_errors
     if all_errors:
         print("I30 VIOLATIONS — complexity-cap integrity broken:", file=sys.stderr)
         for section, errs in [
@@ -369,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
             ("(b) RATIONALE", rationale_errors),
             ("(c) STALE", stale_errors),
             ("(d) DRIFT", drift_errors),
+            ("(e) DEAD-BASELINE", dead_errors),
         ]:
             if errs:
                 print(f"  {section}:", file=sys.stderr)
