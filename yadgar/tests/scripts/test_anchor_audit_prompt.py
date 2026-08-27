@@ -152,3 +152,37 @@ class TestAnchorAuditPromptDeAnchorStillReferenced:
         # dry-run-then-apply flow stands on; an audit reader must not conclude
         # the primitive was deleted.
         assert "de_anchor" in _CONTENT
+
+
+class TestAnchorAuditPromptSurfacesCoverage:
+    """Task 391 — the human-facing path must not restate the under-count.
+
+    ``audit_anchors`` now reports ``coverage``; if the protocol renders only
+    ``scanned`` and ``actions``, the 95-vs-102 shortfall stays silent on the
+    automated path and the fix never reaches a reader.
+    """
+
+    def test_step_1_return_shape_lists_coverage(self):
+        assert '"coverage"' in _step_block(1)
+
+    def test_step_2_block_instructs_reading_unscanned(self):
+        block = _step_block(2)
+        assert "coverage.unscanned" in block
+        assert "protected_total" in block
+
+    def test_step_2_block_names_the_causes(self):
+        block = _step_block(2)
+        assert "no_anchor_tag" in block
+        assert "directory_context_mismatch" in block
+
+    def test_step_2_block_handles_a_failed_coverage_query(self):
+        # An `error` key must not be read as "no unscanned rows".
+        assert "error" in _step_block(2)
+
+    def test_unscanned_rows_are_not_audit_candidates(self):
+        # Coverage is a REPORT; the protocol must not invite action on rows
+        # the audit proposed nothing for.
+        assert "Do NOT act on unscanned rows" in _step_block(2)
+
+    def test_wrap_up_repeats_the_coverage_number(self):
+        assert "coverage.unscanned" in _step_block(7)
