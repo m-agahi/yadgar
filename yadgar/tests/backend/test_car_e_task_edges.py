@@ -7,10 +7,14 @@ Three properties, none of which held before this car:
    returns them ONLY when the payload asks (``with_edges``). The join table
    was writable and unreadable — ``list_task_blocked_by`` had no admin op, no
    MCP tool and no inverse, so ``task_get`` answered with columns only.
-2. A failed edge write is reported as ``{"ok": False, ...}``. It used to be a
-   ``logger.warning`` followed by the success envelope, which made "six edges
-   written" and "six edges silently dropped" the same answer (the 2026-08-15
-   backfill hit exactly this).
+2. A failed edge write reaches the caller. It used to be a ``logger.warning``
+   followed by the success envelope, which made "six edges written" and "six
+   edges silently dropped" the same answer (the 2026-08-15 backfill hit
+   exactly this). Car E first surfaced it as ``{"ok": False, ...}``; car C10
+   (task #319) tightened that to a RAISED ``TaskEdgePartialStateError`` — an
+   ``AdminRefusal`` the /admin route renders as 409 — because an ok-false
+   envelope at HTTP 200 is a value the caller may ignore, and was anyway
+   indistinguishable from "the row never created at all".
 3. The ``blocks`` direction is reconciled at all. It was accepted by
    ``task_write``, stripped out of the column payload by the admin op, and
    then dropped.
@@ -29,7 +33,9 @@ from unittest.mock import patch
 
 import pytest
 
+from yadgar._shared.refusal import AdminRefusal
 from yadgar.backend.admin_exec import ledger as ledger_ops
+from yadgar.backend.admin_exec.refusals import TaskEdgePartialStateError
 
 
 class FakeEdgeStore:
@@ -179,29 +185,56 @@ class TestListTaskRowsEdgesAreOptIn:
 
 
 class TestEdgeWriteFailuresAreNotSuccess:
-    async def test_create_reports_ok_false_when_the_edge_write_fails(self, store) -> None:
+    """Car C10 (task #319): the failure is RAISED, not returned.
+
+    Car E's original contract here was ``{"ok": False, "error": ...}``. C10
+    replaced it with ``TaskEdgePartialStateError``, an ``AdminRefusal`` that
+    ``create_task_row`` / ``update_task_row`` let past their bare handler, so
+    the /admin route renders it as 409 rather than 200. Strictly stronger than
+    the envelope it replaced: a raise cannot be ignored by a caller that never
+    reads ``out["ok"]``, and 200 + ok:false was anyway the same answer the
+    route gave when the row failed to create at all.
+    """
+
+    async def test_create_raises_partial_state_when_the_edge_write_fails(self, store) -> None:
         store.fail_on = "add_task_blocked_by"
 
-        out = await ledger_ops.create_task_row({"project_id": "p", "title": "t", "blocked_by": [2]})
+        with pytest.raises(TaskEdgePartialStateError) as excinfo:
+            await ledger_ops.create_task_row({"project_id": "p", "title": "t", "blocked_by": [2]})
 
-        assert out["ok"] is False
-        assert "blocked_by" in out["error"]
+        exc = excinfo.value
+        assert exc.edge_kind == "blocked_by"
+        assert exc.reason == "task_edge_partial_state"
+        assert str(exc) == "its blocked_by edges were not written: add_task_blocked_by exploded"
+        assert isinstance(exc, AdminRefusal), (
+            "the /admin route renders 409 from its `except AdminRefusal` arm — "
+            "reparenting this class off that base restores the 200 + ok:false shape "
+            "without any test noticing"
+        )
+        assert str(exc.__cause__) == "add_task_blocked_by exploded"
 
     async def test_create_still_names_the_row_that_survived(self, store) -> None:
         """The row IS inserted; a caller that loses its id cannot clean up."""
         store.fail_on = "add_task_blocked_by"
 
-        out = await ledger_ops.create_task_row({"project_id": "p", "title": "t", "blocked_by": [2]})
+        with pytest.raises(TaskEdgePartialStateError) as excinfo:
+            await ledger_ops.create_task_row({"project_id": "p", "title": "t", "blocked_by": [2]})
 
-        assert out["id"] == 231
-        assert "231" in out["error"]
+        assert excinfo.value.task_id == 231
+        assert excinfo.value.refusal_report() == {
+            "task_id": 231,
+            "edge_kind": "blocked_by",
+            "edge_error": "its blocked_by edges were not written: add_task_blocked_by exploded",
+        }
 
-    async def test_update_reports_ok_false_when_the_edge_write_fails(self, store) -> None:
+    async def test_update_raises_partial_state_when_the_edge_write_fails(self, store) -> None:
         store.fail_on = "add_task_blocked_by"
 
-        out = await ledger_ops.update_task_row({"id": 1, "blocked_by": [2]})
+        with pytest.raises(TaskEdgePartialStateError) as excinfo:
+            await ledger_ops.update_task_row({"id": 1, "blocked_by": [2]})
 
-        assert out["ok"] is False
+        assert excinfo.value.task_id == 1
+        assert excinfo.value.edge_kind == "blocked_by"
 
     async def test_a_clean_create_still_returns_the_row(self, store) -> None:
         out = await ledger_ops.create_task_row({"project_id": "p", "title": "t", "blocked_by": [2]})

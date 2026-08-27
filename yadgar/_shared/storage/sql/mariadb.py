@@ -807,6 +807,29 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         async with self._engine.begin() as conn:
             await conn.execute(sql, {"id": adr_id, "body_slug": body_slug})
 
+    @observe(tier="boundary", metric="backend.sql.adr.update_adr_tier_subsystem")
+    async def update_adr_tier_subsystem(
+        self,
+        adr_id: int,
+        tier: str,
+        subsystem: str | None,
+    ) -> None:
+        """Stamp ``tier`` + ``subsystem`` on one ``adr`` row.
+
+        Car B (task #202): the one-shot ``seed_adr_tier_subsystem`` backfill
+        previously fell back to a direct ``storage._engine.begin()`` UPDATE
+        when no test seam was supplied — a D20 chokepoint violation (every
+        row access to a ledger table must go through ``MariaStorageEngine``).
+        This helper is the sanctioned surface the seed now routes through,
+        replacing the in-seed SQL with the same engine-level UPDATE the
+        ``set_adr_body_slug`` shape already uses.
+        """
+        from sqlalchemy import text
+
+        sql = text("UPDATE adr SET tier = :tier, subsystem = :subsystem WHERE id = :id")
+        async with self._engine.begin() as conn:
+            await conn.execute(sql, {"id": adr_id, "tier": tier, "subsystem": subsystem})
+
     @observe(tier="boundary", metric="backend.sql.adr.add_supersedes")
     async def add_adr_supersedes(self, adr_id: int, supersedes_id: int) -> None:
         """Insert one ``adr_supersedes`` row — ``adr_id`` supersedes ``supersedes_id``."""
@@ -1269,7 +1292,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
 
         The ``owner_kind`` / ``owner_id`` / ``reach`` columns were retired
         (§14.1); tenancy is enforced at the registry guard
-        (car A0's ``_ensure_project_exists``). The hook is the future
+        (``assert_project_registered``). The hook is the future
         seam: when a multi-tenant query shape lands, this method becomes
         a non-no-op and every read path gets filtered through it.
 

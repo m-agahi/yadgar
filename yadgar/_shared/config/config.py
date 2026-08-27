@@ -541,21 +541,21 @@ class Settings(BaseSettings):
     # episodic memory scan to at most this many most-recently-accessed memories.
     CLS_PATTERN_MAX_CANDIDATES: int = 2000
 
-    # action-stream memory retention — _memify_prune Pass 5 deletes unaccessed
-    # memories tagged "_action_stream" that are older than this many days.
-    # These summaries start at heat=0.4, too warm for Pass 1 (heat<0.01).
-    # Set to 0 to disable the action-stream age cap.
+    # action-stream retention — _memify_prune Pass 5 deletes "_action_stream"
+    # rows older than this. These start at heat=0.4, too warm for Pass 1
+    # (heat<0.01), so this is their ONLY cap: a HARD one (task 386), no
+    # recent-access reprieve. Set to 0 to disable the action-stream age cap.
     ACTION_STREAM_MAX_AGE_DAYS: int = 14
 
-    # auto-generated memory retention — _memify_prune deletes cold unaccessed
-    # memories tagged "auto-generated" that are older than this many days.
-    # Set to 0 to disable the auto-generated prune pass.
+    # auto-generated retention — _memify_prune deletes "auto-generated" rows
+    # older than this that are ALSO below COLD_THRESHOLD. Heat is the recency
+    # signal (it decays); last_accessed is not consulted (task 386). 0 disables.
     AUTO_GENERATED_MEMORY_MAX_AGE_DAYS: int = 30
 
-    # auto-abstracted memory retention — _memify_prune deletes cold unaccessed
-    # memories tagged "auto-abstracted" (CLS semantic promotions, action-stream
-    # pattern noise) that are older than this many days.
-    # Set to 0 to disable the auto-abstracted prune pass.
+    # auto-abstracted retention — _memify_prune deletes "auto-abstracted" rows
+    # (CLS promotions, action-stream noise) older than this. A HARD cap (task
+    # 386): recall() writes last_accessed, so a recency gate let a matchy row
+    # renew its own reprieve; is_protected is the sole escape. 0 disables.
     AUTO_ABSTRACTED_MEMORY_MAX_AGE_DAYS: int = 30
 
     # dream insight retention — _memify_prune deletes unaccessed dream memories
@@ -612,10 +612,24 @@ class Settings(BaseSettings):
     # crashloop. 0 disables the gate entirely (escape hatch).
     # NOT a cold-boot mechanism: After=yadgar-backend.service is.
     BACKEND_READY_WAIT_SEC: int = 60
-    # Fixed interval between /health probes. Fixed, not exponential — the wait is
-    # for another process to finish loading a model, so backoff only adds latency
-    # after readiness. 2s matches daemon.py's existing health poll.
+    # Initial interval between /health probes. Doubles each consecutive failure
+    # up to BACKEND_READY_POLL_MAX_SEC. Task #61: the original gate polled
+    # at a fixed interval and a long outage issued ~300 probes in 10 minutes
+    # — backoff + long-bake-out cap the count at ~30 for the same window
+    # without delaying the happy path.
     BACKEND_READY_POLL_SEC: float = 2.0
+    # Upper bound for the exponential backoff between /health probes (task #61).
+    # Defaults to 30s, matching the spec.
+    BACKEND_READY_POLL_MAX_SEC: float = 30.0
+    # After this many consecutive failed probes, the loop enters "long-bake-out"
+    # — a single BACKEND_READY_LONG_BAKE_OUT_SEC sleep with one INFO log line so
+    # a journal audit can distinguish "long outage" from "first few probes" (task #61).
+    BACKEND_READY_LONG_BAKE_OUT_AFTER: int = 5
+    # Nominal sleep (seconds) per long-bake-out cycle. Car-J clamps the actual
+    # sleep to BACKEND_READY_POLL_MAX_SEC, so at the 60s/30s defaults a
+    # 10-minute outage issues ~5 backoff probes + ~19 clamped ones = ~24 total,
+    # under the ~30 ceiling. Values BELOW poll_max_sec do shorten the sleep.
+    BACKEND_READY_LONG_BAKE_OUT_SEC: float = 60.0
 
     # task:0113 — self-heal deadline (seconds) for the maintenance write-gate the
     # vacuum engages around its count-capture → export → swap window.  The
@@ -750,6 +764,15 @@ class Settings(BaseSettings):
     # v5.89 #69: dispatch-prelude read-side nudge threshold.
     # Hours without agent_dispatch_prelude call (vs active_work) before use_agent_prompt_library fires.
     DISPATCH_PRELUDE_DUE_WARN_HOURS: float = 12.0
+
+    # Car C11-#88 (task #88): project-table staleness threshold.
+    # ``yadgar project list --stale`` surfaces project rows whose
+    # ``last_validated_at`` is older than this many days. Default 90: same
+    # shape as the anchor-conditional TTL and the action-stream archive
+    # sweep — three months of silent drift is the signal this car exists
+    # to catch. Lower via YADGAR_PROJECT_STALENESS_DAYS if an operator
+    # wants a tighter window.
+    PROJECT_STALENESS_DAYS: int = 90
 
     # v5.8.0: anchor hygiene TTL knobs
     # Default valid_until offset (days) for tier=conditional anchors.

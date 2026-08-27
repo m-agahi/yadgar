@@ -69,11 +69,18 @@ def _body_source_without_docstring(fn) -> str:
 def test_errors_module_is_stdlib_only():
     """``sql/errors.py`` must import nothing third-party.
 
-    The module is the seam both sides share: ``mariadb.py`` (which needs
-    sqlalchemy) and ``admin_exec/project_registry.py`` (which documents that
-    it stays off the ``sql`` extra). A third-party import here would make the
-    guard module drag sqlalchemy in at import time — invisible in a venv that
+    The module is the seam every raiser and catcher shares: ``mariadb.py`` /
+    ``sql/registry.py`` (which need sqlalchemy) and the core-side callers that
+    must stay off the ``sql`` extra. A third-party import here would drag
+    sqlalchemy in at import time for all of them — invisible in a venv that
     HAS the extra, which is every venv this suite runs in.
+
+    Car-J relaxes the rule for ``yadgar._shared.refusal``: that module does
+    NOT reach engine #2 (it pulls opentelemetry lazily, not sqlalchemy), and
+    re-using its ``AdminRefusal`` is the only way to keep class identity with
+    the rest of the codebase. The structural invariant — "importable on a
+    host that never installs the ``sql`` extra" — still holds, because
+    ``yadgar._shared.refusal`` is importable without sqlalchemy.
     """
     tree = ast.parse(_ERRORS_PATH.read_text(encoding="utf-8"))
     imported: list[str] = []
@@ -82,8 +89,11 @@ def test_errors_module_is_stdlib_only():
             imported.extend(a.name for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.append(node.module)
-    forbidden = [m for m in imported if m.split(".")[0] not in {"__future__"}]
-    assert not forbidden, f"sql/errors.py must be stdlib-only; imports: {forbidden}"
+    allowed_yadgar = frozenset({"yadgar._shared.refusal"})
+    forbidden = [
+        m for m in imported if m.split(".")[0] not in {"__future__"} and m not in allowed_yadgar
+    ]
+    assert not forbidden, f"sql/errors.py must be engine-#2-free; imports: {forbidden}"
 
 
 def test_duplicate_project_error_carries_the_key():
@@ -118,19 +128,6 @@ def test_registry_errors_are_runtime_errors(cls):
     (``RestoreVerificationError(RuntimeError)``).
     """
     assert issubclass(cls, RuntimeError)
-
-
-def test_backend_guard_reexports_the_same_class_object():
-    """``admin_exec.project_registry.UnknownProjectError`` IS the shared class.
-
-    Not merely a same-named class: ``pytest.raises`` / ``except`` at every
-    existing call site binds on identity, so a second class with the same
-    name would let a real rejection pass through an ``except`` block that
-    looks correct.
-    """
-    import yadgar.backend.admin_exec.project_registry as pr  # noqa: PLC0415
-
-    assert pr.UnknownProjectError is UnknownProjectError
 
 
 # ── the writer on MariaStorageEngine ────────────────────────────────────────
@@ -202,7 +199,7 @@ def test_registry_ops_are_registered_on_the_admin_dispatch():
     a table every ledger write FKs to — the deployment is bricked with a
     correct schema.
     """
-    from yadgar.backend.admin_exec import admin_ops  # noqa: PLC0415
+    from yadgar.backend.admin_exec import admin_ops
 
     ops = admin_ops()
     assert "create_project_row" in ops
@@ -216,11 +213,10 @@ def test_registry_seed_op_is_not_registry_guarded():
     be registered. Pinned as a source assertion because the deadlock only
     shows up on a genuinely empty deployment, which no test fixture is.
     """
-    from yadgar.backend.admin_exec import ledger  # noqa: PLC0415
+    from yadgar.backend.admin_exec import ledger
 
     src = inspect.getsource(ledger.create_project_row)
     assert "assert_project_registered" not in src
-    assert "_ensure_project_exists" not in src
 
 
 # ── writer behaviour (no DB — a fake engine stands in for the connection) ────
@@ -331,7 +327,7 @@ async def test_create_project_row_raises_duplicate_project_error_on_collision():
     rather than as a source grep: re-seeding an existing project must tell
     the operator which key already existed.
     """
-    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+    from sqlalchemy.exc import IntegrityError
 
     integrity = IntegrityError("INSERT INTO project", {}, Exception("duplicate"))
     engine = _engine_with(_FakeConn(raise_on_execute=integrity))
@@ -408,6 +404,11 @@ async def test_stamping_writes_proceed_for_a_registered_project(method):
     The other half of "the guard cannot brick writes": once the registry is
     seeded — which the runbook orders BEFORE any agent use — the guard is
     invisible.
+
+    Two statements are issued, not one (task 384): the guard bumps
+    ``project.last_validated_at`` on a confirmed-present row before the row
+    write runs. Pinned by SHAPE rather than by count so the assertion still
+    says which statement is which.
     """
     conn = _FakeConn()
     engine: Any = object.__new__(MariaStorageEngine)
@@ -419,4 +420,144 @@ async def test_stamping_writes_proceed_for_a_registered_project(method):
     engine.row_exists = _row_exists
 
     await getattr(engine, method)(project_id="m-agahi/yadgar", title="t")
+    statements = [stmt for stmt, _ in conn.executed]
+    inserts = [s for s in statements if s.startswith("INSERT INTO")]
+    refreshes = [s for s in statements if "last_validated_at = CURRENT_TIMESTAMP" in s]
+    assert len(inserts) == 1, statements
+    assert len(refreshes) == 1, statements
+    assert len(statements) == 2, statements
+
+
+# ── task 384: the staleness refresh lives on the guard that actually runs ────
+
+
+@pytest.mark.asyncio
+async def test_assert_project_registered_bumps_last_validated_at():
+    """The reachable guard refreshes the row's staleness clock.
+
+    Task #88 put this bump on ``admin_exec/project_registry._ensure_project_exists_async``,
+    which had no call site (and task 384 deleted). Nothing would ever have
+    bumped the column: migration 005 backfills every row to CURRENT_TIMESTAMP
+    at deploy and that would have been the LAST write, so on day
+    ``PROJECT_STALENESS_DAYS + 1`` ``yadgar project list --stale`` would report
+    EVERY project stale, permanently — the surface reporting the exact inverse
+    of the truth for the rest of the deployment's life.
+    """
+    conn = _FakeConn()
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        return True
+
+    engine.row_exists = _row_exists
+
+    await MariaStorageEngine.assert_project_registered(engine, "m-agahi/yadgar")
+
     assert len(conn.executed) == 1
+    stmt, params = conn.executed[0]
+    assert "UPDATE project" in stmt
+    assert "last_validated_at = CURRENT_TIMESTAMP" in stmt
+    assert params == {"key": "m-agahi/yadgar"}
+
+
+@pytest.mark.asyncio
+async def test_refresh_failure_cannot_break_the_registry_check():
+    """A failing bump is swallowed — the guard's contract is the raise.
+
+    The refresh is observability bolted onto a gate that ledger INSERTs depend
+    on. If a transient failure on the UPDATE could propagate, adding the bump
+    would have turned every ``task`` / ``adr`` write into a second thing that
+    can fail for a reason unrelated to the caller.
+    """
+    conn = _FakeConn(raise_on_execute=RuntimeError("simulated: refresh blew up"))
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        return True
+
+    engine.row_exists = _row_exists
+
+    # No raise: the check passed, so the caller must see the project as
+    # registered regardless of what the refresh did.
+    await MariaStorageEngine.assert_project_registered(engine, "m-agahi/yadgar")
+
+
+@pytest.mark.asyncio
+async def test_unregistered_project_is_not_refreshed():
+    """A rejected project_id must issue no UPDATE — it has no row to stamp."""
+    conn = _FakeConn()
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        return False
+
+    engine.row_exists = _row_exists
+
+    with pytest.raises(UnknownProjectError):
+        await MariaStorageEngine.assert_project_registered(engine, "m-agahi/typo")
+    assert conn.executed == []
+
+
+def test_list_project_rows_projection_omits_last_validated_at():
+    """The forwarded create-gate SELECT must not name an optional column.
+
+    ``core/server/tools/_project_registry`` forwards ``list_project_rows`` to
+    answer ``assert_project_registered_for_create`` on every ``memorize`` /
+    ``wiki_add``. With ``last_validated_at`` in the projection, 005's
+    ``downgrade()`` makes the statement fail with MySQL 1054 and the create
+    gate silently degrades to a shape check.
+    """
+    src = _body_source_without_docstring(MariaStorageEngine.list_project_rows)
+    assert "last_validated_at" not in src
+
+
+@pytest.mark.asyncio
+async def test_refresh_false_checks_without_stamping():
+    """``refresh=False`` runs the check and issues no UPDATE.
+
+    The dry-run preflights (``admin_exec/identity_stamp``,
+    ``admin_exec/adr_seed``) pass this so a preview reaches the apply's verdict
+    without the apply's side effect — a ``--dry-run`` that writes is the defect
+    ledger task 385 fixed in ``verify-hooks``, and the guard's bump (task 384)
+    put a second instance of it on the preview path.
+    """
+    conn = _FakeConn()
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+    seen: list[str] = []
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        seen.append(key_value)
+        return True
+
+    engine.row_exists = _row_exists
+
+    await MariaStorageEngine.assert_project_registered(engine, "m-agahi/yadgar", refresh=False)
+
+    assert seen == ["m-agahi/yadgar"], "the check itself must still run"
+    assert conn.executed == [], "a preview stamped last_validated_at"
+
+
+@pytest.mark.asyncio
+async def test_refresh_false_still_refuses_an_unknown_project():
+    """Withholding the stamp must not withhold the refusal.
+
+    Preview/apply parity is owed on the VERDICT. If ``refresh=False`` also
+    softened the check, the dry run would stop predicting the apply, which is
+    the whole reason the preflight calls the guard at all (Car 19 / task 176).
+    """
+    conn = _FakeConn()
+    engine: Any = object.__new__(MariaStorageEngine)
+    engine._engine = _FakeEngine(conn)
+
+    async def _row_exists(*, table, key_column, key_value, limit=1):
+        return False
+
+    engine.row_exists = _row_exists
+
+    with pytest.raises(UnknownProjectError):
+        await MariaStorageEngine.assert_project_registered(engine, "m-agahi/typo", refresh=False)
+    assert conn.executed == []

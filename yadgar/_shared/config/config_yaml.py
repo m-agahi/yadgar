@@ -1488,6 +1488,32 @@ FIELD_META: dict[str, dict[str, object]] = {
         ),
         "section": "backend_timeouts",
     },
+    "backend_ready_poll_max_sec": {
+        "desc": (
+            "Upper bound (seconds) for the exponential backoff between backend /health probes in the "
+            "core startup readiness gate (default 30). Caps the per-probe sleep so a long outage "
+            "stays well inside the core unit's TimeoutStartSec instead of burning the host CPU "
+            "budget on back-to-back 30s sleeps."
+        ),
+        "section": "backend_timeouts",
+    },
+    "backend_ready_long_bake_out_after": {
+        "desc": (
+            "Number of consecutive failed backend /health probes after which the core startup "
+            "readiness gate enters long-bake-out (default 5). After this many failures the loop "
+            "switches to a coarse bake-out sleep (BACKEND_READY_LONG_BAKE_OUT_SEC, clamped to "
+            "POLL_MAX_SEC) with one audit line telling 'down for minutes' from a probe storm."
+        ),
+        "section": "backend_timeouts",
+    },
+    "backend_ready_long_bake_out_sec": {
+        "desc": (
+            "Nominal sleep (seconds) per long-bake-out cycle after "
+            "BACKEND_READY_LONG_BAKE_OUT_AFTER consecutive probes have failed (default 60), CLAMPED "
+            "to POLL_MAX_SEC: 60s is never slept, and a 10-minute outage runs ~24 probes, not ~300."
+        ),
+        "section": "backend_timeouts",
+    },
     # circuit breaker + rerank concurrency
     "circuit_breaker_enabled": {
         "desc": (
@@ -1795,6 +1821,13 @@ FIELD_META: dict[str, dict[str, object]] = {
     "vacuum_side_launcher": {
         "desc": "Which side-build launcher Phase 3 uses for its throwaway SurrealDB (task 0107): 'auto' (host binary first, container second, SKIP third — default), 'host' (host binary only, fails loud rather than falling through), or 'container' (container only, ignoring any resolvable host binary).",
         "section": "vacuum",
+    },
+    "project_staleness_days": {
+        "desc": (
+            "Days before a project row is considered stale for `yadgar project list --stale` (default 90). "
+            "Rows whose `last_validated_at` is NULL or older than this are surfaced."
+        ),
+        "section": "ops",
     },
 }
 

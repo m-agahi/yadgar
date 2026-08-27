@@ -92,7 +92,7 @@ def _validate_valid_until(ctx: MemorizeContext, settings) -> dict | None:
         except ValueError as exc:
             return {"stored": False, "reason": str(exc)}
 
-    # v5.8.0: tier auto-sets is_protected
+    # v5.8.0: tier auto-sets is_protected.
     if ctx.tier is not None:
         ctx.is_protected = True
     return None
@@ -136,9 +136,7 @@ def _validate_gate_and_policy(ctx: MemorizeContext) -> dict | None:
     gate = gate_or_reject(ctx.content, tags=list(ctx.tags) if ctx.tags else [])
     if gate is not None:
         try:
-            from yadgar._shared.observability.metrics import (
-                yadgar_writegate_outcome,  # noqa: PLC0415
-            )
+            from yadgar._shared.observability.metrics import yadgar_writegate_outcome
 
             yadgar_writegate_outcome.labels(outcome="rejected_secret").inc()
         except Exception:

@@ -124,7 +124,7 @@ class _PromotionMixin:
             {
                 "content": schema,
                 "embedding": schema_embedding,
-                "tags": ["semantic", "auto-abstracted"],
+                "tags": ["semantic", "auto-abstracted", "_from_consolidation"],
                 "directory_context": primary_dir,
                 "project_id": primary_project,
                 "heat": 0.8,

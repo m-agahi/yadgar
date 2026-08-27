@@ -28,6 +28,35 @@ class RelationshipMeta:
 class _EntityMixin:
     """Entity + relationship CRUD — mixed into StorageEngine."""
 
+    @observe(tier="stage", metric="_assert_entity_ids_exist")
+    def _assert_entity_ids_exist(self, entity_ids: list[int]) -> None:
+        """Reject any entity id not present in the entity table (Car C11-#89).
+
+        SurrealDB doesn't enforce FK constraints on ``relationship.source_entity_id``
+        / ``target_entity_id``, so a typo / race with a delete left orphan rows in
+        the corpus. ``check_invariants`` reported one such row; this guard closes
+        the write path so no new orphan can land. Missing ids are reported in a
+        single ValueError so the caller fixes all of them in one pass.
+        """
+        if not entity_ids:
+            return
+        unique_ids = list(dict.fromkeys(int(e) for e in entity_ids))
+        id_list = ", ".join(f"entity:{eid}" for eid in unique_ids)
+        # ``self._q`` is injected at composition time (StorageEngine mixes this
+        # class in); ``getattr`` avoids mypy's attr-defined on the unbound member.
+        _q = getattr(self, "_q")  # noqa: B009 — composition-time inject
+        rows = _q(f"SELECT id FROM entity WHERE id IN [{id_list}]")
+        found: set[int] = set()
+        for r in rows:
+            rid = r["id"]
+            # SurrealDB returns record-ids as "entity:N"; strip the prefix.
+            if isinstance(rid, str) and ":" in rid:
+                rid = rid.rsplit(":", 1)[-1]
+            found.add(int(rid))
+        missing = [eid for eid in unique_ids if eid not in found]
+        if missing:
+            raise ValueError(f"entity ids not found: {missing} (relationship FK violation)")
+
     # ------------------------------------------------------------------ Entities
 
     @trace_span()
@@ -132,6 +161,10 @@ class _EntityMixin:
 
     @trace_span()
     def insert_relationship(self, relationship: dict) -> int:
+        # Car C11-#89: reject orphan FK before the CREATE. See _assert_entity_ids_exist.
+        self._assert_entity_ids_exist(
+            [relationship["source_entity_id"], relationship["target_entity_id"]]
+        )
         now = self._now_iso()
         rid = self._next_id("relationship")
         # C1: bi-temporal validity — valid_from = now(), valid_until = NULL.
@@ -346,6 +379,8 @@ class _EntityMixin:
         meta: RelationshipMeta,
     ) -> int:
         """Core insert — called with a resolved RelationshipMeta."""
+        # Car C11-#89: reject orphan FK before the CREATE. See _assert_entity_ids_exist.
+        self._assert_entity_ids_exist([source_entity_id, target_entity_id])
         now = self._now_iso()
         rid = self._next_id("relationship")
         # C1: bi-temporal validity. valid_from defaults to now().

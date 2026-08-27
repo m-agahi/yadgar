@@ -5,7 +5,7 @@ existed and was registered in ``backend/admin_exec/__init__.py:152`` but
 had no CLI / MCP path. Mirrors the style of
 ``test_car_m_project_param.py`` (the car that pinned the registry
 refusal behaviour at the read side) — that test asserts the guard at
-``_ensure_project_exists_sync`` REJECTS unknown ids; this one asserts
+``MariaStorageEngine.assert_project_registered`` REJECTS unknown ids; this one asserts
 the SEED path that lets the guard ever succeed.
 
 RED → GREEN: written before the implementation; the
@@ -353,8 +353,9 @@ class TestRegister:
 
 class TestProjectSeedMcpTool:
     """MCP surface — mirrors the CLI's behavior at the tool boundary, plus
-    the §2 test bullet that the existing guard at ``_ensure_project_exists_sync``
-    is NOT relaxed (the new tool only SEEDS — it does not weaken the refusal)."""
+    the §2 test bullet that the existing guard at
+    ``MariaStorageEngine.assert_project_registered`` is NOT relaxed (the new
+    tool only SEEDS — it does not weaken the refusal)."""
 
     def test_tool_call_seeds_a_known_good_map(self, tmp_path: Path) -> None:
         """§2: idempotency + seed behaviour at the MCP boundary."""
@@ -431,24 +432,20 @@ class TestProjectSeedMcpTool:
         assert result["map_path"] == str(f)
 
     def test_tool_rejects_unknown_id_via_existing_guard(self, tmp_path: Path) -> None:
-        """§2 test bullet: ``_ensure_project_exists_sync`` STILL refuses
-        unknown project_ids on the WRITE path after the seed is added.
-        The new tool only seeds; the guard stays in force (ADR-0078).
+        """§2 test bullet: the registry guard STILL refuses unknown
+        project_ids on the WRITE path after the seed is added. The new tool
+        only seeds; the guard stays in force (ADR-0078).
 
-        This test imports the guard and asserts it raises — pinning the
-        contract that the seed path did not weaken the refusal."""
-        # The guard exists, takes a project_id, and the test is that
-        # the *contract* is unchanged: an unknown id raises
-        # ``UnknownProjectError`` (matching the assertion style of
-        # test_car_m_project_param.py:20).
+        Task 384 re-pointed this at ``MariaStorageEngine.assert_project_registered``.
+        It used to name ``_ensure_project_exists_sync`` — a function with zero
+        call sites, so the "guard on the WRITE path" this test claimed to pin
+        was not the one any write reached."""
         import inspect
 
         from yadgar._shared.storage.sql.errors import UnknownProjectError
-        from yadgar.backend.admin_exec.project_registry import (
-            _ensure_project_exists_sync,
-        )
+        from yadgar._shared.storage.sql.mariadb import MariaStorageEngine
 
-        sig = inspect.signature(_ensure_project_exists_sync)
+        sig = inspect.signature(MariaStorageEngine.assert_project_registered)
         assert "project_id" in sig.parameters
         # The class identity is what every ``except`` binds on; if the
         # seed refactor accidentally re-raised something else the

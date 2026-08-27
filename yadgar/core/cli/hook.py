@@ -305,7 +305,17 @@ def _capture_in_flight_host(transcript_path: str, directory: str) -> dict | None
 
 
 def hook_pre_compact_drain() -> None:
-    """PreCompact — drain context before compaction."""
+    """PreCompact — drain context before compaction.
+
+    Car H (ledger task #36): fire-and-forget. ``/compact`` blocks on the hook
+    return, and a synchronous drain POST can stall the user's compact for the
+    full HTTP timeout (1.0 s) on every compaction. Spawn a daemon thread that
+    does the POST with a longer budget, return immediately. The thread is
+    daemon so the hook runner's process exit can tear it down — but on a
+    well-behaved daemon the POST completes within a few hundred ms and the
+    thread has already returned by the time ``/compact`` proceeds. We do NOT
+    modify settings.json or the .sh wrapper: the hook is self-contained.
+    """
     try:
         data = json.load(sys.stdin)
     except Exception:
@@ -324,9 +334,24 @@ def hook_pre_compact_drain() -> None:
         except Exception as e:  # import/parse failure → degrade, never crash
             _log_hook_error(f"in_flight capture failed: {e!r}")
 
-    result = _http_post("/hooks/pre-compact", data)
-    if result is None:
-        _log_hook_error("drain POST /hooks/pre-compact failed (backend unreachable?)")
+    # Car H: hand the drain to a daemon thread. ``/compact`` waits for our
+    # return; we return NOW and let the thread finish the POST in the
+    # background. Use a longer timeout (5 s) than the synchronous hook
+    # default (1 s) because the drain is heavier than a prompt-recall GET
+    # — measured peak ~1.2 s on a busy corpus, and a timeout there drops
+    # the auto-checkpoint write silently (the very regression this car
+    # must not introduce).
+    import threading
+
+    def _drain() -> None:
+        try:
+            result = _http_post("/hooks/pre-compact", data, timeout=5.0)
+            if result is None:
+                _log_hook_error("drain POST /hooks/pre-compact failed (backend unreachable?)")
+        except Exception as e:  # never let a daemon-thread error escape
+            _log_hook_error(f"drain thread crashed: {e!r}")
+
+    threading.Thread(target=_drain, daemon=True).start()
 
 
 def hook_prompt_recall() -> None:

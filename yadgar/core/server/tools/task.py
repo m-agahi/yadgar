@@ -563,9 +563,11 @@ def task_list(
     ``project_id``, ``state``, ``active_form``, ``plan_path``, ``body_slug``,
     ``completed_at``, ``created_at``, ``updated_at``) for the callers that
     genuinely need it — chiefly the session-end catch-up sync, which reads
-    ``updated_at`` for its staleness guard. Measured 2026-08-16 on the live
-    corpus: 81 open rows cost 26,242 chars at 11 columns (324/row) against
-    8,900 at three (110/row) — a 66.1% reduction.
+    ``updated_at`` for its staleness guard. A measurement on the 2026-08
+    corpus showed the full shape costing on the order of a few hundred chars
+    per open row, against a small fraction of that for the three-column
+    ``id``, ``title``, ``status`` projection — a roughly 3x reduction on a
+    typical project. <measurement-date 2026-08-16>
     ``task_get`` is unaffected — the single-row read is always full.
 
     ROW COUNT is untouched by ``verbose``: every matching task is returned

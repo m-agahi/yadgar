@@ -748,6 +748,91 @@ class TestSeedAdrTierSubsystem:
         assert result.get("rows_updated") == 0
         assert result.get("rows_skipped") == 2
 
+    def test_seed_routes_through_storage_update_adr_tier_subsystem(self) -> None:
+        """Car B (task #202): ``seed_adr_tier_subsystem`` MUST stamp via
+        ``MariaStorageEngine.update_adr_tier_subsystem`` — never via a
+        direct ``storage._engine.begin()`` UPDATE.
+
+        Pre-fix, the seed fell back to a direct ``_engine`` UPDATE when no
+        ``row_updater`` test seam was supplied. That path is a D20
+        chokepoint violation (every row access to a ledger table must go
+        through ``MariaStorageEngine``). The fix routes through the engine.
+
+        This test asserts the helper is called for every row the seed
+        intends to update, AND that no direct ``_engine`` write happened
+        for the same data.
+        """
+        from yadgar.backend.admin_exec.seed_adr_tier_subsystem import (
+            seed_adr_tier_subsystem,
+        )
+
+        updates: list[tuple[int, str, str | None]] = []
+
+        class _StubStorage:
+            async def list_adr_rows(self, **kwargs) -> list[dict]:
+                return [
+                    {
+                        "id": 10,
+                        "project_id": "p",
+                        "status": "accepted",
+                        "tier": None,
+                        "subsystem": None,
+                        "body_slug": "",
+                    },
+                    {
+                        "id": 11,
+                        "project_id": "p",
+                        "status": "superseded",
+                        "tier": None,
+                        "subsystem": None,
+                        "body_slug": "",
+                    },
+                ]
+
+            async def update_adr_tier_subsystem(self, adr_id, tier, subsystem) -> None:
+                updates.append((adr_id, tier, subsystem))
+
+            def get_wiki_page_by_slug(self, slug):
+                return None
+
+        async def _fake_body_reader(_slug):
+            return ""
+
+        result = seed_adr_tier_subsystem(
+            {"project_id": "p"},
+            storage=_StubStorage(),
+            body_reader=_fake_body_reader,
+        )
+        import asyncio
+
+        if hasattr(result, "__await__"):
+            result = asyncio.run(result)
+
+        # Both rows must have been stamped via the helper — never a
+        # direct _engine UPDATE.
+        assert sorted(updates) == [
+            (10, "binding", None),
+            (11, "historical", None),
+        ], f"helper route missed a row: {updates}"
+        assert result.get("rows_updated") == 2
+        assert result.get("rows_skipped") == 0
+
+    def test_storage_engine_exposes_update_adr_tier_subsystem(self) -> None:
+        """The engine has the helper the seed routes through.
+
+        Defensive surface check — the seed's contract is
+        ``storage.update_adr_tier_subsystem(adr_id, tier, subsystem)``.
+        The engine class must expose it; this catches a rename / removal
+        that would silently break the seed.
+        """
+        from yadgar._shared.storage.sql.mariadb import MariaStorageEngine
+
+        assert hasattr(MariaStorageEngine, "update_adr_tier_subsystem")
+        # Async + coroutine — the seed awaits it.
+        import inspect
+
+        assert inspect.iscoroutinefunction(MariaStorageEngine.update_adr_tier_subsystem)
+
 
 # ── §4.2: rollup regen renders body + writes via sanctioned path ──────────────
 

@@ -324,12 +324,20 @@ def normalize_write_context(context: str) -> str:
     - Worktree context → canonical repo root replaces the worktree path.
     - NEVER rejects: any failure → verbatim passthrough + log.
 
+    The `_SENTINEL_PROJECT_IDS` short-circuit (task #21) stops the helper from
+    passing `'global'` (or any other sentinel identity) to ``git -C <sentinel>
+    rev-parse``, which would otherwise fall through to the path heuristic and
+    pick up a CWD-coincidental `.git` file — turning the literal into a
+    directory on the calling process. Sentinels pass through verbatim.
+
     ADR-0215 removed the branch half of this seam (throwaway worktree contexts
     used to additionally pin the write to the repo default branch); the
     directory normalization it exists for is unaffected.
     """
     try:
         if not context:
+            return context
+        if context in _SENTINEL_PROJECT_IDS:
             return context
         root = _worktree_canonical_root(context)
         if root is None:
@@ -343,6 +351,16 @@ def normalize_write_context(context: str) -> str:
         return context
 
 
+#: Write-context sentinels that name an identity, NOT a filesystem path.
+#: Task #21: passing these into the git subprocess (or the path heuristic
+#: fallback) would let a CWD-coincidental ``.git`` file rewrite the literal
+#: into a directory on the calling process. Verbatim passthrough keeps the
+#: identity intact end-to-end. Name is on the C5 fail-loud recogniser
+#: allowlist (``test_c5_fail_loud._RECOGNISER_NAMES``) so the bare string
+#: literal "unresolved" inside it is exempt from the no-minting-literal gate.
+_SENTINEL_PROJECT_IDS: frozenset[str] = frozenset({"global", "system", "unresolved"})
+
+
 @observe(tier="hot", metric="tools.project._bump_epoch_for_context")
 def _bump_epoch_for_context(context: str | None) -> None:
     """Advance the structural epoch for `context`, normalized to its git-root.
@@ -353,7 +371,7 @@ def _bump_epoch_for_context(context: str | None) -> None:
     different, never-read _DIR_EPOCH key (the decorative-epoch bug). Fully guarded:
     instrumentation must never break or block the write path."""
     try:
-        from yadgar._shared.runtime.cache_epoch import bump_epoch  # noqa: PLC0415
+        from yadgar._shared.runtime.cache_epoch import bump_epoch
 
         resolved = _resolve_project_root(context) if context else None
         bump_epoch(resolved)
@@ -422,7 +440,7 @@ def _q_with_timeout(
     http = getattr(storage, "_http", None)
     if http is not None:
         try:
-            import httpx as _httpx  # noqa: PLC0415
+            import httpx as _httpx
         except ImportError:
             return storage._q(surql, params)
         old_timeout = http.timeout

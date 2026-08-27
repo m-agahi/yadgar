@@ -125,6 +125,37 @@ class _BookmarksMixin:
         return self._rows_to_dicts(rows)
 
     @trace_span()
+    def list_orphan_bookmarks(self) -> list[dict]:
+        """Return bookmark rows whose slug has no matching ``wiki_page`` row.
+
+        Audit surface for Car-N (ledger #341 / #365): a bookmark can outlive
+        its wiki page if the page was deleted through any path that did not
+        cascade (legacy data; pre-fix ``wiki_delete``; manual SurrealDB row
+        removal). Callers wire this into ``wiki_lint`` and into a one-shot
+        ``bookmark_repair`` admin op that invokes ``remove_bookmark`` per row.
+
+        Returns bookmark dicts (slug, label_override, position, added_at) in
+        insertion order. Empty list when the corpus is consistent.
+        """
+        rows = self._q("SELECT slug FROM wiki_bookmark")
+        if not rows:
+            return []
+        page_slugs = {
+            str(r.get("slug"))
+            for r in self._q("SELECT slug FROM wiki_page")
+            if r.get("slug") is not None
+        }
+        orphans: list[dict] = []
+        for row in rows:
+            slug = row.get("slug")
+            if slug is None or slug in page_slugs:
+                continue
+            existing = self.get_bookmark(slug)
+            if existing is not None:
+                orphans.append(existing)
+        return orphans
+
+    @trace_span()
     def reorder_bookmark(self, slug: str, new_position: int) -> bool:
         """Move *slug* to *new_position*; shift other bookmarks to maintain density.
 

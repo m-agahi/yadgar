@@ -95,16 +95,21 @@ class _LedgerFake:
 
     ``assert_project_registered`` is the ADR-0078 gate that lives INSIDE the
     row write (``MariaStorageEngine.assert_project_registered``) — the
-    reachable one, not ``_ensure_project_exists_sync``, which Car 5 proved
-    unusable by construction.
+    reachable one, and since task 384 the only one: the standalone
+    ``admin_exec`` guard Car 5 proved unusable by construction is deleted.
     """
 
     def __init__(self, known: list[str]) -> None:
         self.known = set(known)
         self.checked: list[str] = []
+        self.refreshed: list[bool] = []
 
-    async def assert_project_registered(self, project_id: str) -> None:
+    async def assert_project_registered(self, project_id: str, *, refresh: bool = True) -> None:
+        # ``refresh`` mirrors the real guard: True bumps
+        # ``project.last_validated_at``. Recorded so the preflight test can
+        # assert the preview asked for a check WITHOUT the write.
         self.checked.append(project_id)
+        self.refreshed.append(refresh)
         if project_id not in self.known:
             raise _UnknownProjectError(f"project {project_id!r} is not registered")
 
@@ -557,3 +562,67 @@ class TestApply:
         m = await stamp_project_id({"dry_run": True})
         assert m["ok"] is False
         assert "storage" in m["error"]
+
+
+# ── task 384/385 follow-up: the identity-stamp preview must not write ────────
+
+
+class TestPreflightChecksWithoutStamping:
+    """``_preflight_write_guards`` runs the guard on the preview, not the stamp.
+
+    Task 384 gave ``assert_project_registered`` a
+    ``UPDATE project SET last_validated_at`` on the present branch. This
+    preflight calls that guard over EVERY derived project_id on the preview as
+    well as the apply, so unqualified it turned `yadgar backfill
+    --identity-stamp`'s dry run into a writer — the same defect ledger task 385
+    fixed in ``verify-hooks``, which advertised "read-only" and POSTed a row.
+
+    This op never writes a ledger row at all (its apply is
+    ``UPDATE ... SET project_id`` on SurrealDB tables), so it has no business
+    moving the registry's ledger clock on either path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_preview_asks_for_a_check_without_the_refresh(self) -> None:
+        ledger = _LedgerFake([_YADGAR_ID, _QWFM_ID])
+
+        error = await identity_stamp._preflight_write_guards(ledger, [_YADGAR_ID, _QWFM_ID])
+
+        assert error is None
+        # Every target is still checked — preview fidelity is unchanged.
+        assert ledger.checked == [_YADGAR_ID, _QWFM_ID]
+        # ...and none of them is stamped. RED before the ``refresh`` kwarg:
+        # this read [True, True].
+        assert ledger.refreshed == [False, False]
+
+    @pytest.mark.asyncio
+    async def test_withholding_the_stamp_does_not_withhold_the_refusal(self) -> None:
+        """Parity is owed on the VERDICT; that is what the preflight exists for."""
+        ledger = _LedgerFake([_YADGAR_ID])
+
+        error = await identity_stamp._preflight_write_guards(ledger, [_YADGAR_ID, _QWFM_ID])
+
+        assert error is not None
+        assert _QWFM_ID in error
+        assert "assert_project_registered" in error
+
+    @pytest.mark.asyncio
+    async def test_a_guard_without_the_keyword_is_not_handed_one(self) -> None:
+        """A future guard lacking ``refresh`` must not receive it.
+
+        The preflight reports every exception as "the guard rejected
+        project_id", so a ``TypeError`` from a signature mismatch would read as
+        a FALSE rejection of a good project — "could not call" mistaken for
+        "checked and refused", the exact confusion this file's task-168 test
+        exists to prevent.
+        """
+        called: list[str] = []
+
+        class _NoKwargGuard:
+            async def assert_project_registered(self, project_id: str) -> None:
+                called.append(project_id)
+
+        error = await identity_stamp._preflight_write_guards(_NoKwargGuard(), [_YADGAR_ID])
+
+        assert error is None, error
+        assert called == [_YADGAR_ID]

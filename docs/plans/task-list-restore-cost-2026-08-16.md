@@ -6,7 +6,9 @@ Status: DRAFT — not approved. Seven review items still open (see bottom).
 
 Restoring the task list into a session costs ~22.3k input tokens (`task_list` 12,786 + `restore()` 9,563, measured) plus 16,705 output tokens if the session mirrors the ledger into the harness task list. The MariaDB ledger migration was expected to remove this cost. It did not, and the storage engine is not the reason.
 
-Measured 2026-08-16 on the live corpus (79 open tasks): `task_list` returns 24,889 chars for 79 rows — **315 chars/row**, where `id + title + status` is ~90. Real tokenisation density for these JSON payloads is 2.0-2.3 chars/token, not the chars/3.6 rule of thumb.
+Measured 2026-08-16 on the live corpus (81 open tasks at time of measurement): `task_list` returns 26,242 chars for 81 rows through the fixed 11-column `TASK_COLUMNS` — **324 chars/row**, against **8,900** for the three columns a listing caller actually reads (110/row, `id + title + status`). A 66.1% reduction in chars on the wire and the same on tokens. Real tokenisation density for these JSON payloads is 2.0-2.3 chars/token, not the chars/3.6 rule of thumb.
+
+The canonical measurement — and the post-fix lean figures — live in `yadgar/_shared/storage/sql/ledger_columns.py` (the `TASK_COLUMNS_SUMMARY` docstring, lines ~62-72) and in `docs/CHANGELOG.md` under the "66% fewer characters" entry. Numbers in this plan reflect the 2026-08-16 measurement snapshot at the time of writing; refer to those two for the live, post-Car-A values.
 
 ### Defect 1 — no projection (the main cost)
 
@@ -41,7 +43,7 @@ Severity note: `_resolve_list_status` (`task.py:393-403`) correctly defaults to 
 
 ### Defect 4 — `limit`/`offset` are decorative
 
-`task.py:478-481` adds them to the payload only when non-default; `ledger.py:83-86` never reads them; `mariadb.py:340-345` accepts no such kwargs and emits no `LIMIT` clause. Confirmed live: `limit=5` returned all 77 pending rows.
+`task.py:478-481` adds them to the payload only when non-default; `ledger.py:83-86` never reads them; `mariadb.py:340-345` accepts no such kwargs and emits no `LIMIT` clause. Confirmed live at the time of writing: `limit=5` returned all pending rows then present (77 at that snapshot; 81 at the canonical 2026-08-16 measurement recorded in `docs/CHANGELOG.md`).
 
 This is a truthfulness defect, not a cost defect. The intended behaviour for `task_list` is to return **all** open tasks — the caller listing tasks needs the complete set. Paging is not the fix and must not be used as one.
 
@@ -56,9 +58,9 @@ This is a truthfulness defect, not a cost defect. The intended behaviour for `ta
 
 It queries `status=["pending", "in_progress"]` (`http.py:1309-1313`), hits Defect 2, and fails open at `http.py:1314-1316` to `rows=[]`. **The nudge is dead by exception, not by design.** Sessions currently look clean because an error is being swallowed.
 
-Fixing Defect 2 in isolation therefore resurrects the nudge and makes every future session mirror all 79 open tasks — the 16,705-output-token operation, automatically, on every start. Defect 2 is presently queued as a standalone fix (ledger task 10). **It must not ship alone.**
+Fixing Defect 2 in isolation therefore resurrects the nudge and makes every future session mirror all 81 open tasks (measured at time of writing) — the 16,705-output-token operation, automatically, on every start. Defect 2 is presently queued as a standalone fix (ledger task 10). **It must not ship alone.**
 
-Intended outcome: session-start task cost ~300 tokens; a full 79-row `task_list` ~3k instead of 12.8k; no instruction anywhere telling a session to mirror the whole ledger.
+Intended outcome: session-start task cost ~300 tokens; a full 81-row `task_list` ~8,900 chars (≈2.2k tokens at the measured 2.0-2.3 chars/token) instead of 12,786 chars (~5k tokens); no instruction anywhere telling a session to mirror the whole ledger. The 12,786 → 8,900 number is the on-the-wire saving; tokens scale with chars at the measured density, not at the chars/3.6 rule of thumb.
 
 ## Not in scope
 
@@ -205,7 +207,7 @@ Split out 2026-08-16: these are MCP writes, not git changes, so they cannot be i
 ## Verification
 
 1. `task_list(project_id="m-agahi/yadgar", status=["pending","in_progress"])` returns rows instead of throwing 4078. This is the single call that fails today.
-2. Same call, count response chars: **≥60% reduction from 24,889**. Then `verbose=True` returns the 11-column shape unchanged.
+2. Same call, count response chars: **66.1% reduction from 26,242 → 8,900** (the canonical measurement, recorded in `docs/CHANGELOG.md` and `ledger_columns.py`'s `TASK_COLUMNS_SUMMARY` docstring). Then `verbose=True` returns the 11-column shape unchanged.
 3. Row count is unchanged — all open tasks still returned, nothing truncated.
 4. Restart the daemon, open a fresh session, read the SessionStart block. Must contain an open-task count and the `in_progress` rows; must NOT contain "Call TaskCreate for EACH one now".
 5. `pytest yadgar/tests/core/test_task_list_bindparam.py yadgar/tests/core/test_task_list_restore_nudge.py`. Note `test_task_list_restore_nudge.py:110-127` pins that the primary path must not hit the legacy wiki parser — Car C must not break that.

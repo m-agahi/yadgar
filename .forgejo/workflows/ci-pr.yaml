@@ -408,16 +408,56 @@ jobs:
           BASE=$(git show origin/master:server.json \
                    | python3 -c "import json,sys;print(json.load(sys.stdin)['backend_version'])")
           REPO=docker.io/openfantasy/yadgar-backend
+          # Tier 3 exists because tier 2's premise turned out to be false. The
+          # original logic assumed master's DECLARED backend_version is always a
+          # PUBLISHED image. It is not: images are pushed by hand (ledger task
+          # 232), so master can declare 5.84.0 while Docker Hub's newest tag is
+          # 5.83.0 — which made this step hard-fail on EVERY pr, forever, for a
+          # reason no pr could fix. Measured 2026-08-27 (ledger task 396).
+          # So: ask the registry what actually exists rather than trusting a
+          # version string. Failing only when NOTHING is pullable keeps the gate
+          # honest — that is a real repo-level problem — while a merely-stale
+          # published image degrades to a loud warning, which is what this step
+          # already admits it is.
+          newest_published() {
+            python3 - "$REPO" <<'PY'
+          import json, re, sys, urllib.request
+          repo = sys.argv[1].split("docker.io/", 1)[-1]
+          url = f"https://hub.docker.com/v2/repositories/{repo}/tags?page_size=100"
+          try:
+              with urllib.request.urlopen(url, timeout=20) as r:
+                  tags = [t["name"] for t in json.load(r).get("results", [])]
+          except Exception:
+              sys.exit(0)
+          sem = [t for t in tags if re.fullmatch(r"\d+\.\d+\.\d+", t)]
+          if sem:
+              print(max(sem, key=lambda t: tuple(int(p) for p in t.split("."))))
+          PY
+          }
+          IMG=""
           if docker manifest inspect "$REPO:$PENDING" >/dev/null 2>&1; then
             IMG="$REPO:$PENDING"
             echo "vacuum e2e: backend $PENDING is published — testing the pending image"
-          else
+          elif docker manifest inspect "$REPO:$BASE" >/dev/null 2>&1; then
             IMG="$REPO:$BASE"
             echo "::warning::vacuum e2e: backend $PENDING is not published yet; falling back to master's $BASE"
             echo "::warning::vacuum e2e: backend changes in THIS PR are NOT validated by this job"
+          else
+            NEWEST="$(newest_published || true)"
+            if [ -n "$NEWEST" ] && docker manifest inspect "$REPO:$NEWEST" >/dev/null 2>&1; then
+              IMG="$REPO:$NEWEST"
+              echo "::warning::vacuum e2e: NEITHER $PENDING (pending) NOR $BASE (master's declared) is published"
+              echo "::warning::vacuum e2e: master declares a backend_version that was never pushed — see ledger task 396"
+              echo "::warning::vacuum e2e: falling back to the newest PUBLISHED tag $NEWEST; backend changes are NOT validated"
+            fi
+          fi
+          if [ -z "$IMG" ]; then
+            echo "no pullable backend image at all: tried $PENDING (pending), $BASE (master), and the newest published tag." >&2
+            echo "That is a repo-level publishing failure, not a PR problem — see ledger task 396." >&2
+            exit 1
           fi
           docker pull "$IMG" || {
-            echo "neither $REPO:$PENDING nor $REPO:$BASE could be pulled" >&2
+            echo "$IMG resolved via the registry but could not be pulled" >&2
             exit 1
           }
           echo "YADGAR_TEST_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
@@ -870,16 +910,11 @@ jobs:
       - uses: https://data.forgejo.org/actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Verify version bump vs latest tag
-        run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          PYPROJECT_VER=$(grep -E '^version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          if [ "v${PYPROJECT_VER}" = "${LATEST_TAG}" ]; then
-            if git diff --name-only origin/master...HEAD | grep -qE '^yadgar/'; then
-              echo "::error::pyproject.toml version (${PYPROJECT_VER}) matches latest tag (${LATEST_TAG}). Bump or add 'no-release' label."
-              exit 1
-            fi
-          fi
+      - name: Verify version bump vs merge-base
+        # Task 382 — see the GitHub mirror for the full rationale: a latest-tag
+        # comparison cannot see a bump that a master merge reverted, so both
+        # mirrors now delegate to the script's merge-base comparison.
+        run: python scripts/check_version_bump.py --ci --base origin/master
 
       - name: Verify backend_version bump when backend changed (#83)
         # Uses --ci --base origin/master to diff the PR branch vs the merge-base

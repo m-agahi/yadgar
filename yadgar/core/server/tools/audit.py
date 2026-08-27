@@ -732,6 +732,7 @@ def audit_anchors(
     }
     if truncated:
         result["_truncated"] = True
+
     return result
 
 

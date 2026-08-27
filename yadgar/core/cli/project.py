@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -49,6 +50,23 @@ DEFAULT_MAP_PATH = Path.cwd() / ".yadgar" / "project-id-map.tsv"
 # subcommand's output is self-documenting.
 _NON_SEED_VALUES = frozenset({"DROP", "REVIEW"})
 
+# ``project.display_name`` is VARCHAR(64) (see alembic revision
+# ``003_project_registry``: ``sa.Column("display_name", sa.String(length=64),
+# nullable=True)``). The TSV ``note`` column is a free-text field and can
+# exceed that width; the original code used ``note[:255]`` which silently
+# let >64-char notes through and tripped a MariaDB ``DataError(1406)`` at
+# INSERT time. The 2026-08-20 incident showed this surfacing as
+# ``failed: N`` with no per-row reason — task #241, car C8-3. We truncate
+# to the schema's actual width here, BEFORE the backend call, and log the
+# truncation reason so the daemon log has the operator signal the bare
+# counter never carried.
+DISPLAY_NAME_MAX_CHARS = 64
+
+# Module-level logger for the seed path. ``yadgar.*`` namespace so it
+# lands on the same handler as the backend's ``create_project_row``
+# warning (which the operator reads for column-level reasons).
+_logger = logging.getLogger("yadgar.core.cli.project")
+
 
 def read_auth_token() -> str:
     """Read YADGAR_MCP_AUTH_TOKEN via the canonical resolver.
@@ -58,7 +76,7 @@ def read_auth_token() -> str:
     pattern lint hard-fails any hand-rolled ``os.environ.get("YADGAR_MCP_AUTH_TOKEN", ...)``
     so this stays a one-liner, not a copy.
     """
-    from yadgar.core.install.auth_token import resolve_auth_token  # noqa: PLC0415
+    from yadgar.core.install.auth_token import resolve_auth_token
 
     return resolve_auth_token()
 
@@ -188,7 +206,7 @@ def seed_row(row: dict, *, auth_token: str) -> str:
     """
     # Imported lazily so the import cost is paid only on use (the
     # ``--help`` path should not require httpx to be importable).
-    from yadgar.core.forward import _forward_admin  # noqa: PLC0415
+    from yadgar.core.forward import _forward_admin
 
     kind = infer_kind(row["project_id"])
     payload = {
@@ -199,8 +217,26 @@ def seed_row(row: dict, *, auth_token: str) -> str:
     # so the operator can correlate later. ``create_project_row``
     # accepts ``display_name``; we use the note (truncated) as a
     # cheap-as-free annotation. Empty notes stay empty.
-    if row.get("note"):
-        payload["display_name"] = row["note"][:255]
+    #
+    # ``project.display_name`` is VARCHAR(64) (alembic revision
+    # ``003_project_registry``: ``sa.String(length=64)``). The original
+    # code used ``note[:255]`` which silently let >64-char notes
+    # through and tripped MariaDB ``DataError(1406)`` at INSERT time.
+    # The 2026-08-20 incident showed this surfacing as ``failed: N``
+    # with no per-row reason — task #241, car C8-3. Truncate to the
+    # schema's actual width BEFORE the backend call, and log the
+    # truncation reason so the daemon log carries the operator signal
+    # the bare counter never did.
+    note = row.get("note") or ""
+    if note:
+        if len(note) > 64:  # noqa: PLR2004 — schema length, not magic
+            _logger.warning(
+                "display_name truncated: project_id=%r note_len=%d -> 64",
+                row["project_id"],
+                len(note),
+            )
+            note = note[:64]
+        payload["display_name"] = note
 
     try:
         result = _forward_admin(
@@ -226,6 +262,77 @@ def seed_row(row: dict, *, auth_token: str) -> str:
         return "skipped"
     print(f"  FAIL: {row['project_id']}: {err}", file=sys.stderr)
     return "failed"
+
+
+def cmd_project_list(args: argparse.Namespace) -> int:
+    """``yadgar project list [--stale]`` handler.
+
+    With ``--stale``, calls ``list_stale_projects`` (the C11 op) and
+    renders the rows the threshold flagged, ``last_validated_at`` included.
+    Without ``--stale``, calls ``list_project_rows`` and renders every
+    registered project — the same shape the backfill uses internally, which
+    since task 384 no longer carries ``last_validated_at``.
+
+    Failures print to stderr with a leading ``ERROR:`` marker and return
+    1 — same convention as ``cmd_project_seed``. A zero-row result is NOT
+    a failure; an operator running ``--stale`` and finding zero rows is
+    the goal, not an error.
+    """
+    # Lazy import — the ``--help`` path should not require httpx.
+    from yadgar.core.forward import _forward_admin
+
+    auth_token = read_auth_token()
+    if not auth_token:
+        print(
+            "  WARN: YADGAR_MCP_AUTH_TOKEN unset; backend may reject the request.",
+            file=sys.stderr,
+        )
+
+    op = "list_stale_projects" if args.stale else "list_project_rows"
+    payload: dict = {}
+    try:
+        result = _forward_admin(op, payload, timeout_s=30.0)
+    except Exception as exc:  # noqa: BLE001
+        print(f"ERROR: {op}: backend call raised: {exc}", file=sys.stderr)
+        return 1
+
+    # Both ops have the ``{"ok": False, "error": ...}`` failure shape.
+    if result.get("ok") is False:
+        print(
+            f"ERROR: {op}: {result.get('error', 'unknown error')}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.stale:
+        rows = result.get("projects", [])
+        threshold = result.get("threshold_days", "?")
+        print(
+            f"Stale project rows (threshold={threshold} days, count={len(rows)}):",
+            file=sys.stderr,
+        )
+        for row in rows:
+            last = row.get("last_validated_at") or "NEVER"
+            print(
+                f"  {row.get('key')}  kind={row.get('kind')}  last_validated_at={last}",
+                file=sys.stderr,
+            )
+    else:
+        # ``last_validated_at`` is NOT rendered here: task 384 dropped it from
+        # the ``list_project_rows`` projection so the create gate that forwards
+        # the same SELECT cannot be broken by an optional column. ``--stale``
+        # is the surface for that value; it selects the column itself.
+        rows = result.get("rows", [])
+        print(f"Registered projects ({len(rows)}):", file=sys.stderr)
+        for row in rows:
+            print(
+                f"  {row.get('key')}  kind={row.get('kind')}",
+                file=sys.stderr,
+            )
+
+    # JSON to stdout for downstream consumption (jq, capture, etc.).
+    print(json.dumps(result))
+    return 0
 
 
 def cmd_project_seed(args: argparse.Namespace) -> int:
@@ -304,3 +411,18 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Path to the project-id map TSV (default: ./.yadgar/project-id-map.tsv)",
     )
     seed_p.set_defaults(func=cmd_project_seed)
+
+    # Car C11-#88 (task #88): staleness surface.
+    # ``yadgar project list [--stale]`` — without the flag, every row;
+    # with ``--stale``, rows older than ``YADGAR_PROJECT_STALENESS_DAYS``.
+    list_p = project_sub.add_parser(
+        "list",
+        help="List registered projects (with --stale: rows older than the threshold)",
+    )
+    list_p.add_argument(
+        "--stale",
+        action="store_true",
+        default=False,
+        help="Show only rows whose last_validated_at is older than YADGAR_PROJECT_STALENESS_DAYS",
+    )
+    list_p.set_defaults(func=cmd_project_list)

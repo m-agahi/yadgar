@@ -111,7 +111,7 @@ async def _fetch_body_via_wiki(body_reader: Callable[[str], dict[str, Any]], slu
         page = body_reader(slug)
         if hasattr(page, "__await__"):
             page = await page
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("_fetch_body_via_wiki: reader failed for slug=%s err=%s", slug, exc)
         return ""
     if not isinstance(page, dict):
@@ -132,38 +132,41 @@ async def _apply_row_update(
 ) -> None:
     """Stamp ``tier`` + ``subsystem`` on one ``adr`` row.
 
-    When *updater* is supplied (test seam), it is invoked with kwargs
-    ``adr_id``, ``tier``, ``subsystem``. Otherwise the function falls
-    back to a live UPDATE on the SQL engine — but that path requires
-    a new ``MariaStorageEngine.update_adr_tier_subsystem`` helper
-    which is out of H scope (the seed's row writes today go through
-    the existing ``update_task_row``-shape pattern; the H helper is a
-    future addition).
+    The write goes through ``MariaStorageEngine.update_adr_tier_subsystem`` —
+    the D20 chokepoint surface for ``adr`` row writes. Car B (task #202)
+    closed the previous direct-``_engine`` UPDATE that bypassed the engine.
 
-    For Car H the seed uses a direct UPDATE via the storage's
-    ``_engine`` connection when no test seam is supplied, so the
-    seed is end-to-end runnable without a new storage method.
+    Two call paths, in priority order:
+
+    1. *updater* (test seam) — invoked with kwargs ``adr_id``, ``tier``,
+       ``subsystem``. Tests use this to assert the route without booting
+       storage.
+    2. *storage.update_adr_tier_subsystem* — the live engine method. This
+       is the path the seed's runtime call takes; it keeps the row write
+       inside the engine's chokepoint surface.
+
+    The direct ``storage._engine.begin()`` UPDATE that Car B replaced is
+    gone. The chokepoint script proves it: ``scripts/check_ledger_chokepoint.py``
+    no longer flags this module.
     """
     if updater is not None:
         await updater(adr_id=adr_id, tier=tier, subsystem=subsystem)
         return
     if storage is None:
-        from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
+        from yadgar._shared.runtime.lifecycle import _get_sql_storage
 
         storage = _get_sql_storage()
     if storage is None:
         raise RuntimeError(
             "seed_adr_tier_subsystem requires storage; runtime storage not initialised"
         )
-    # Direct UPDATE — the SQL engine exposes _engine from asyncmy; same
-    # shape as ``set_adr_body_slug`` (storage/wiki.py:533-539).
-    from sqlalchemy import text as _sa_text  # noqa: PLC0415
-
-    async with storage._engine.begin() as conn:  # type: ignore[attr-defined]
-        await conn.execute(
-            _sa_text("UPDATE adr SET tier = :tier, subsystem = :subsystem WHERE id = :id"),
-            {"id": adr_id, "tier": tier, "subsystem": subsystem},
+    update_adr_tier_subsystem = getattr(storage, "update_adr_tier_subsystem", None)
+    if update_adr_tier_subsystem is None:
+        raise RuntimeError(
+            "seed_adr_tier_subsystem requires storage.update_adr_tier_subsystem "
+            "(engine #2 must expose the helper — D20 chokepoint surface)"
         )
+    await update_adr_tier_subsystem(adr_id=adr_id, tier=tier, subsystem=subsystem)
 
 
 # ── Per-row stamp helper (extracted for I13 fn_loc + cyclomatic caps) ────────
@@ -251,7 +254,7 @@ async def seed_adr_tier_subsystem(
         return {"ok": False, "error": "project_id is required"}
 
     if storage is None:
-        from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
+        from yadgar._shared.runtime.lifecycle import _get_sql_storage
 
         storage = _get_sql_storage()
     if storage is None:

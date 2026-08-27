@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from yadgar._shared.observability.observe import observe
+from yadgar.backend.admin_exec._preview_guards import preview_guard_kwargs
 
 # Re-export: retype_page_type moved to adr_retype (2026-08-18, I30 file_loc
 # cap). Imported here so `adr_seed.retype_page_type` keeps resolving for the
@@ -749,6 +750,12 @@ async def _preflight_write_guards(
     Skipped entirely when ``row_inserter`` is injected: that seam replaces
     ``create_adr_row``, so the guards inside it are not the ones that will run.
     Mirrors how ``present`` / ``number_to_id`` already treat the same seam.
+
+    Guards are invoked with ``refresh=False`` when they accept it (see
+    :data:`_GUARD_NO_WRITE_KW`) — a preview must not stamp
+    ``project.last_validated_at``. The APPLY still stamps it, via
+    ``create_adr_row``'s own unqualified call to the same guard, so the clock
+    task 384 repaired keeps moving on real writes.
     """
     if row_inserter is not None:
         return None
@@ -766,7 +773,7 @@ async def _preflight_write_guards(
                 "could not run; a handle that cannot be checked is not a handle that passed"
             )
         try:
-            result_obj = guard(project_id)
+            result_obj = guard(project_id, **preview_guard_kwargs(guard))
             if hasattr(result_obj, "__await__"):
                 await result_obj
         except Exception as exc:  # noqa: BLE001 — every guard failure is fatal here

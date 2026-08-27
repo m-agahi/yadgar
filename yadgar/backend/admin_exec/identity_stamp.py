@@ -97,8 +97,17 @@ the apply fails is worthless. :data:`_WRITE_PATH_GUARDS` and
 difference that matters: this op derives MANY distinct targets, so the guard
 runs over the WHOLE set on both paths, and the set it checked is recorded in
 the manifest. The guard is ``MariaStorageEngine.assert_project_registered``
-— the one that actually runs inside the ledger write, NOT
-``_ensure_project_exists_sync``, which Car 5 proved has no call site.
+— the one that actually runs inside the ledger write. It is now the only one
+there is: task 384 deleted the standalone ``admin_exec`` guard Car 5 proved
+had no call site.
+
+The preview runs that guard with ``refresh=False`` (see
+:data:`_GUARD_NO_WRITE_KW`). Task 384 gave the guard a
+``UPDATE project SET last_validated_at`` on its present branch, and a dry run
+that calls it unqualified stops being a dry run — the same defect ledger task
+385 fixed in ``verify-hooks``. Parity is owed on the VERDICT, not on the side
+effects: the check still runs over every derived target and refuses
+identically.
 """
 
 from __future__ import annotations
@@ -112,6 +121,7 @@ from yadgar._shared.storage._project_id_writer import (
     _NON_IDENTIFYING_PROJECT_IDS,
     resolve_project_id_from_rows,
 )
+from yadgar.backend.admin_exec._preview_guards import preview_guard_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +131,7 @@ logger = logging.getLogger(__name__)
 #: ITERATES this tuple, so extending it extends the dry run too — that coupling is
 #: the whole point of naming it once.
 _WRITE_PATH_GUARDS: tuple[str, ...] = ("assert_project_registered",)
+
 
 #: ``entity.name`` shape that names a memory row. Anchored on both ends: a name
 #: like ``memory:1 and memory:2`` is prose, not a pointer.
@@ -618,7 +629,7 @@ async def _preflight_write_guards(sql_storage: Any, project_ids: list[str]) -> s
             )
         for project_id in project_ids:
             try:
-                result_obj = guard(project_id)
+                result_obj = guard(project_id, **preview_guard_kwargs(guard))
                 if hasattr(result_obj, "__await__"):
                     await result_obj
             except Exception as exc:  # noqa: BLE001 — every guard failure is fatal here

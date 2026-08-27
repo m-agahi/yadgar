@@ -453,20 +453,22 @@ def _allocate_adr_ledger_row(
     supplied ``tier`` still wins — the derivation is a DEFAULT, not an
     override.
     """
-    try:
-        result = _forward_admin(
-            "create_adr_row",
-            {
-                "project_id": project_id,
-                "title": title,
-                "status": status,
-                "decided_on": date,
-                "tier": tier or _tier_for_status(status),
-                "subsystem": subsystem,
-            },
-        )
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"create_adr_row forward failed: {exc}"}
+    # Car I (ledger #346, C10 #319 sibling): the prior ``except Exception``
+    # swallow masked real faults (``httpx.HTTPError``, missing
+    # ``YADGAR_EMBED_URL``) as 200/ok:False — the returned refusal envelope
+    # was already handled by the post-forward check below. Let the faults
+    # propagate so the /admin route renders them as 500s.
+    result = _forward_admin(
+        "create_adr_row",
+        {
+            "project_id": project_id,
+            "title": title,
+            "status": status,
+            "decided_on": date,
+            "tier": tier or _tier_for_status(status),
+            "subsystem": subsystem,
+        },
+    )
     row = result.get("row") if isinstance(result, dict) else None
     if row is None:
         err = result.get("error") if isinstance(result, dict) else "unknown"
@@ -513,18 +515,12 @@ def _link_adr_body_slug(adr_id_int: int, adr_id: str, page_slug: str) -> dict | 
     """Step 3 of ``adr_add``: forward ``set_adr_body_slug`` to link the ledger
     row to the body slug (D4 — only the slug pointer moves). Returns an error
     dict on failure, None on success. Extracted from ``adr_add`` (I13 fn_loc)."""
-    try:
-        slug_result = _forward_admin(
-            "set_adr_body_slug",
-            {"id": adr_id_int, "body_slug": page_slug},
-        )
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "ok": False,
-            "error": f"set_adr_body_slug forward failed: {exc}",
-            "adr_id": adr_id,
-            "slug": page_slug,
-        }
+    # Car I (ledger #346, C10 #319 sibling): see _allocate_adr_ledger_row —
+    # let transport faults propagate; refusal envelope handled below.
+    slug_result = _forward_admin(
+        "set_adr_body_slug",
+        {"id": adr_id_int, "body_slug": page_slug},
+    )
     if isinstance(slug_result, dict) and slug_result.get("ok") is False:
         return {
             "ok": False,

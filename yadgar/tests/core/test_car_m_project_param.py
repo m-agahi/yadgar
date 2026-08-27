@@ -5,8 +5,8 @@ that lets a caller address another project's namespace without leaving the
 current working tree. Default = the derived current project (from SessionStart
 context — Car E). Override = the caller-supplied ``project``, validated for
 type-level shape; the deep "is this project_id in the registry?" check lives
-at the backend write path (Car A0 ``_ensure_project_exists_sync``, §15 /
-ADR-0078).
+at the backend write path (``MariaStorageEngine.assert_project_registered``,
+§15 / ADR-0078).
 
 These tests pin:
 

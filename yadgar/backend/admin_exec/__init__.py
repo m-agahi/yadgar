@@ -155,6 +155,10 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # two ops are deliberately NOT registry-guarded: they are the bootstrap.
     "create_project_row": ledger.create_project_row,
     "list_project_rows": ledger.list_project_rows,
+    # Car C11-#88 (task #88): staleness surface for ``yadgar project list
+    # --stale``. The threshold comes from Settings; the op echoes it so the
+    # CLI can render "stale since N days" without a second admin call.
+    "list_stale_projects": ledger.list_stale_projects,
     # C6: the operator-invoked project_id backfill (T2). Dry-run by default —
     # it returns a manifest and writes nothing until the operator re-runs with
     # dry_run=False AND acknowledges the unmapped bucket and the deletes.
@@ -257,14 +261,14 @@ def _ensure_engines() -> None:
 
     BLOCKING — every caller must keep it off the event loop.
     """
-    from yadgar.backend.restoration import ensure_restoration_engines  # noqa: PLC0415
+    from yadgar.backend.restoration import ensure_restoration_engines
 
     ensure_restoration_engines()
 
 
 def _resolve_storage():
     """Return the runtime storage engine for ops that take it as a parameter."""
-    from yadgar._shared.runtime.lifecycle import _get_storage  # noqa: PLC0415
+    from yadgar._shared.runtime.lifecycle import _get_storage
 
     return _get_storage()
 

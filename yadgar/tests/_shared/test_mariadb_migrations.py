@@ -29,7 +29,7 @@ from yadgar._shared.storage.sql.migrate import (  # noqa: E402
     script_directory,
 )
 
-EXPECTED_HEAD = "004_agent_pattern_model_client"
+EXPECTED_HEAD = "005_project_last_validated"
 
 
 # ── the chain itself ─────────────────────────────────────────────────────

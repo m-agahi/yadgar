@@ -18,7 +18,10 @@ class TestAbstractToSchemaUnit:
     """Characterization tests for abstract_to_schema — pure-Python, no DB."""
 
     def test_empty_cluster(self, mixin):
-        assert mixin.abstract_to_schema([]) == ""
+        # An empty cluster has nothing to abstract: the return type is
+        # ``str | None`` and None is the "no schema" signal. The caller
+        # (promotion._promote_pattern) guards with ``if not schema``.
+        assert mixin.abstract_to_schema([]) is None
 
     def test_meaningful_words_included(self, mixin):
         cluster = [

@@ -7,7 +7,7 @@
 
 </div>
 
-[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Architecture](#architecture) · [Roadmap](#roadmap) · [JS/TS SDK](docs/reference/sdk-js.md) · [Agents guide](AGENTS.md)
+[Changelog](docs/CHANGELOG.md) · [Benchmark](#benchmark) · [Architecture](#architecture) · [Roadmap](#roadmap) · [JS/TS SDK](docs/reference/sdk-js.md) · [Agents guide](AGENTS.md) · [CLI cheat-sheet](docs/reference/cli-cheatsheet.md)
 
 > **AI coding agents:** the operational guide lives in [`AGENTS.md`](AGENTS.md) — setup commands, dev environment, test runner, code style, PR rules, security gates. This README is the human overview.
 

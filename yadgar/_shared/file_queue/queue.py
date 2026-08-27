@@ -180,7 +180,21 @@ class FileQueue:
                 "slug": fm.get("slug", ""),
                 "hint": fm.get("hint", ""),
             }
-        return None
+        # Car C10 (task #317): CATCH-ALL — any failure_reason the reader has
+        # not been taught specifically must STILL reach the caller as a
+        # non-None ``result`` carrying the original reason and last_error.
+        # Pre-C10 the function returned ``None`` for everything outside the
+        # three special cases above, which made a sidecar present + unknown
+        # reason byte-identical to "no sidecar written" — the caller could
+        # not tell them apart and an operator reading ``wait_for_job`` output
+        # could not decide which gate had refused. Surfacing ``reason``
+        # uniformly fixes the gap; the three bespoke branches above stay so
+        # callers that key off ``candidates`` / ``slug`` keep working.
+        return {
+            "stored": False,
+            "reason": str(reason or "unknown"),
+            "hint": last_error or "",
+        }
 
     def pending(self) -> list[Path]:
         """Return queue files sorted oldest-first."""

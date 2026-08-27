@@ -83,7 +83,13 @@ _require_admin_token = _es._require_admin_token
 
 
 @observe(tier="stage", metric="backend.recall.landscape")
-def _run_landscape_backend(query: str, max_results: int, project_id: str, storage) -> list[dict]:
+def _run_landscape_backend(
+    query: str,
+    max_results: int,
+    project_id: str,
+    storage,
+    tags: list[str] | None = None,
+) -> list[dict]:
     """Backend-side landscape recall via AstrocytePool.consensus_retrieve.
 
     Phase 1 §5.1/§3.2: mirrors core _landscape_recall (recall.py:45-91) but runs
@@ -98,6 +104,13 @@ def _run_landscape_backend(query: str, max_results: int, project_id: str, storag
     an oversight: ``consensus_retrieve`` is an astrocyte-domain consensus walk,
     not a single SQL query, so there is no one ``WHERE`` to push a predicate
     into. The guard is the same predicate the SQL arms use, so the two agree.
+
+    Car B (task #204): ``tags`` is honored as a POST-filter ``required_tags``
+    subset guard — the same shape the fanout path runs in providers/memory.py
+    (~line 131). Empty/None ``tags`` skips the guard (unchanged behavior for
+    callers that don't ask). The route already strips the ``superseded`` opt-in
+    token before threading ``tags`` here, so that token cannot leak into the
+    subset check.
     """
     import yadgar._shared.runtime.state as _st  # noqa: PLC0415
     from yadgar._shared.storage.directory import is_project_eligible  # noqa: PLC0415
@@ -107,7 +120,14 @@ def _run_landscape_backend(query: str, max_results: int, project_id: str, storag
         return []
 
     raw = _st._pool.consensus_retrieve(query, top_k=max_results)
-    scoped = [r for r in raw if is_project_eligible(r.get("project_id"), r.get("tags"), project_id)]
+    required_tags = set(tags or ())
+    scoped: list[dict] = []
+    for r in raw:
+        if required_tags and not required_tags.issubset(set(r.get("tags") or ())):
+            continue
+        if not is_project_eligible(r.get("project_id"), r.get("tags"), project_id):
+            continue
+        scoped.append(r)
     return scoped[:max_results]
 
 
@@ -239,11 +259,17 @@ async def recall_route(
             # §5.1 landscape dispatch: backend-hosted consensus_retrieve via AstrocytePool.
             # Mirrors core _landscape_recall (recall.py:45-91): consensus_retrieve →
             # directory post-filter → apply DB side-effects.
+            #
+            # Car B (task #204): tags ride through to the landscape post-filter.
+            # The ``superseded`` opt-in token is already stripped into
+            # ``pipeline_tags`` above (the free-rider clause), so the token
+            # cannot reach the subset guard.
             merged = _run_landscape_backend(
                 query=req.query,
                 max_results=req.max_results,
                 project_id=req.project_id,
                 storage=storage,
+                tags=pipeline_tags,
             )
         else:
             # Default fanout path — thread profile/rerank_level.

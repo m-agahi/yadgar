@@ -392,6 +392,16 @@ class _RealFunnelStorage:
     def _bytes_to_floats(self, b):
         return b
 
+    def remove_bookmark(self, slug):
+        """Car P: ``delete_wiki_page`` cascades through ``remove_bookmark``.
+
+        It used to issue its own ``DELETE FROM wiki_bookmark`` — a delete with
+        no position compaction, which is the corruption car P removed. The
+        cascade primitive is a real sibling method now, so the stub has to
+        carry it; this test is about the epoch bump, so the cascade is a no-op.
+        """
+        return False
+
 
 def _make_real_funnel():
     """Bind the real _WikiMixin methods onto a stubbed-primitive instance."""

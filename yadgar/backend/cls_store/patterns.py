@@ -455,14 +455,14 @@ class _PatternsMixin:
     # ── Schema Abstraction ────────────────────────────────────────────────
 
     @observe(tier="hot", metric="consolidation.cls.abstract_to_schema")
-    def abstract_to_schema(self, cluster_memories: list[dict]) -> str:
+    def abstract_to_schema(self, cluster_memories: list[dict]) -> str | None:
         """Abstract multiple episodic memories into a semantic schema.
 
         Extracts common words and entities across all memories,
         then builds a generalized statement.
         """
         if not cluster_memories:
-            return ""
+            return None
 
         word_freq, all_contents = _collect_word_freq(cluster_memories)
         n_memories = len(cluster_memories)
@@ -473,7 +473,7 @@ class _PatternsMixin:
         meaningful = common_words - _SCHEMA_STOP_WORDS
 
         if not meaningful:
-            # Fallback: use the shortest memory as representative
+            # Fallback: use the shortest memory as representative.
             shortest = min(all_contents, key=len)
             return f"Recurring pattern: {shortest}"
 

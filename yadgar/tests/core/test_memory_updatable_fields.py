@@ -111,9 +111,6 @@ INTERNAL_EXCLUDE: frozenset[str] = frozenset(
     {
         # System-managed by DB / auto-increment
         "id",
-        # Timestamp — set at creation; use update_memory_last_accessed for last_accessed
-        # (last_accessed IS now in _MEMORY_UPDATABLE_FIELDS — included to be explicit)
-        "created_at",
         # Access tracking managed by dedicated helpers (not via generic memory_update)
         "access_count_since_decay",
         "useful_count",

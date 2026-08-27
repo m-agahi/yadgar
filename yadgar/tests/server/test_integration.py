@@ -2,7 +2,9 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from yadgar._shared.astrocyte_pool import AstrocytePool
@@ -101,6 +103,42 @@ def sleep_engine(storage, embeddings, kg, curator, thermo, settings):
 @pytest.fixture
 def detector(storage, settings):
     return StalenessDetector(storage, settings)
+
+
+@pytest.fixture
+def fake_dream_embeddings():
+    """Deterministic embeddings stand-in for the dream integration test (task 263).
+
+    Real `EmbeddingEngine.encode()` returns None when sentence-transformers
+    is not installed, which sends the test corpus down the embedding-None
+    gate at dream.py:60 — every pair is skipped, `pairs_examined` lands at
+    zero, and the engine activity assertion (`>= 1`) fails for the WRONG
+    reason (corpus shape, not engine behaviour).
+
+    The deterministic mock returns a normalised 384-dim float32 blob on
+    every encode and a fixed 0.5 cosine for similarity — both above the
+    moderate threshold (0.4) and below the strong threshold (0.7), so the
+    engine produces connections but no insights. The similarity value is
+    the same one the deterministic unit tests in
+    `test_sleep_compute.py::TestDreamReplay::test_finds_connections` use,
+    so an integration run that flips a threshold also breaks the unit
+    layer.
+    """
+    mock = MagicMock(spec=EmbeddingEngine)
+    mock.get_model_name.return_value = "all-MiniLM-L6-v2"
+
+    vec = np.full(384, 1.0, dtype=np.float32)
+    vec = vec / np.linalg.norm(vec)
+
+    def _encode(text: str) -> bytes:
+        return vec.tobytes()
+
+    mock.encode.side_effect = _encode
+    mock.encode_batch.side_effect = lambda texts: [_encode(t) for t in texts]
+    mock.encode_query.side_effect = _encode
+    mock.encode_document.side_effect = _encode
+    mock.similarity.return_value = 0.5
+    return mock
 
 
 @pytest.fixture(autouse=False)
@@ -776,19 +814,31 @@ class TestCausalDetectionIntegration:
 
 
 class TestDreamReplayIntegration:
-    def test_dream_discovers_connections(self, storage, embeddings, sleep_engine):
-        """Shape + invariant integration test for dream_replay (task 263, C1).
+    def test_dream_discovers_connections(self, storage, sleep_engine, fake_dream_embeddings):
+        """Shape + invariant integration test for dream_replay (task 263, C9).
 
-        The semantic discovery of related-memory pairs is gated by an embedding
-        cosine threshold (engine: dream.py:73,79). With real embeddings on a
-        four-item corpus the engine may examine zero pairs (sampling)
-        AND may produce zero connections (similarity below threshold) — both
-        are valid outcomes. This integration layer pins the SHAPE of the stat
-        dict + the documented engine invariant, NOT a deterministic similarity
-        outcome. The deterministic similarity-threshold coverage lives at
-        ``yadgar/tests/backend/test_sleep_compute.py::TestDreamReplay*``,
-        where ``mock_embeddings.similarity.return_value`` is forced to a known
-        value.
+        Originally a PRE-EXISTING RED on master that asserted `0 >= 1` on
+        `pairs_examined` (task 263, reproduce on pristine e9c9d303). The C1
+        car shipped a `>= 0` patch (always-true) citing "real-embedding
+        similarity can sit below the 0.7 / 0.4 thresholds" — but that
+        explanation is wrong: `pairs_examined` is incremented BEFORE the
+        similarity check at dream.py:70, so a similarity miss leaves it
+        counting. The actual cause of the original red is that the
+        integration test uses the module's real `embeddings` fixture, and
+        real embeddings on a four-item corpus CAN land at zero candidates
+        (e.g. when sentence-transformers is unavailable and encode returns
+        None, every memory's `embedding IS NONE` and the dream loop skips
+        every pair at the embedding-None gate on dream.py:60).
+
+        ADR-0430 forbids weakening the assertion; the fix is a
+        deterministic embeddings fixture local to the dream path so the
+        test does not depend on a real model being loadable. The
+        similarity threshold coverage stays at
+        ``yadgar/tests/backend/test_sleep_compute.py::TestDreamReplay*``;
+        this integration layer pins the SHAPE of the stat dict + the
+        documented engine invariant AND the minimal engine activity
+        invariant (`pairs_examined >= 1` proves the engine actually ran
+        its pair-examine loop instead of silently dropping every pair).
         """
         contents = [
             "Python asyncio uses event loops for concurrent I/O",
@@ -798,7 +848,7 @@ class TestDreamReplayIntegration:
         ]
 
         for content in contents:
-            embedding = embeddings.encode(content)
+            embedding = fake_dream_embeddings.encode(content)
             storage.insert_memory(
                 {
                     "project_id": _TEST_PROJECT_ID,
@@ -808,7 +858,7 @@ class TestDreamReplayIntegration:
                     "directory_context": "/proj",
                     "heat": 1.0,
                     "is_stale": False,
-                    "embedding_model": embeddings.get_model_name(),
+                    "embedding_model": fake_dream_embeddings.get_model_name(),
                 }
             )
 
@@ -821,7 +871,13 @@ class TestDreamReplayIntegration:
             isinstance(stats[k], int)
             for k in ("pairs_examined", "connections_found", "insights_generated")
         )
-        assert stats["pairs_examined"] >= 0
+        # Engine activity invariant: with N>=2 memories and embeddings that
+        # are non-None, dream MUST examine at least one pair (dream.py:70
+        # runs AFTER the embedding-None gate, so a None-only corpus is the
+        # one legitimate reason for 0; the fixture supplies non-None
+        # embeddings to remove that exception). Weakened from `>= 1` to
+        # `>= 0` in C1 car; ADR-0430 restores the stricter check.
+        assert stats["pairs_examined"] >= 1
         assert stats["connections_found"] >= 0
         assert stats["insights_generated"] >= 0
         # Engine invariant: insights ⊆ connections (dream.py:73–82).

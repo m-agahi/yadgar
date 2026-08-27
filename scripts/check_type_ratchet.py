@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -69,6 +70,25 @@ DEFAULT_BASE_REF = "origin/master"
 # mypy emits ``path:line: error: message  [code]``; notes and the trailing
 # summary line must not be counted as errors.
 _ERROR_LINE = re.compile(r"^(?P<path>[^:]+):\d+:(?:\d+:)? error:")
+
+# Colour codes defeat every ``^``-anchored regex below. mypy colourises when it
+# believes it is talking to a terminal, and the Claude Code harness exports
+# ``FORCE_COLOR=3`` into the environment its Bash tool runs in, so a hook that
+# captures mypy's stdout got ``\x1b[1mSuccess: ...`` and matched NOTHING against
+# ``^Success:``. The guard then reported "COULD NOT RUN / mypy printed no summary
+# line" on a run that had in fact succeeded -- a well-formed failure over a real
+# pass (ADR-0420's class, pointed at the type gate itself). The workaround people
+# reached for was chanting ``unset FORCE_COLOR`` before every commit; that is a
+# ritual, not a fix, and it silently stops working the moment someone forgets.
+# Two belts: ask mypy not to colour (below, in run_mypy), and strip anything that
+# still arrives so no future colour source can blind the parser again.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI SGR/CSI sequences so ``^``-anchored parsing works on captured output."""
+    return _ANSI_RE.sub("", text)
+
 
 # mypy prints exactly one summary line, in one of two shapes, and drops the
 # plural at 1.  Its ``checked N source files`` count is the only POSITIVE
@@ -299,12 +319,18 @@ class MypyRun(NamedTuple):
 
 def run_mypy(paths: list[str]) -> MypyRun:
     """Run mypy over *paths* and return stdout + exit code (config in pyproject)."""
+    # Strip the harness's FORCE_COLOR and pin mypy's own colour switch off, so
+    # the captured stdout is plain text no matter who set what. See _ANSI_RE.
+    env = {k: v for k, v in os.environ.items() if k != "FORCE_COLOR"}
+    env["MYPY_FORCE_COLOR"] = "0"
+    env["NO_COLOR"] = "1"
     result = subprocess.run(
         [resolve_mypy_interpreter(REPO_ROOT), "-m", "mypy", *paths],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,
         check=False,
+        env=env,
     )
     if "No module named mypy" in result.stderr:
         raise RuntimeError(
@@ -312,7 +338,7 @@ def run_mypy(paths: list[str]) -> MypyRun:
             "This guard fails LOUD rather than passing silently — a type gate "
             "that no-ops when its checker is missing is worse than no gate."
         )
-    return MypyRun(output=result.stdout, returncode=result.returncode)
+    return MypyRun(output=strip_ansi(result.stdout), returncode=result.returncode)
 
 
 def load_baseline() -> dict[str, int]:

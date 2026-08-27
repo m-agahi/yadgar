@@ -1,4 +1,4 @@
-"""Car #85 — de_anchor tool + memory_update allowlist widening.
+"""Car #85 — de_anchor tool + memory_update allowlist widening + C7b gate.
 
 The anchor-audit maintenance car adds a core MCP tool ``de_anchor(memory_id)``
 that RETIRES an anchor so it re-enters the normal heat-decay path:
@@ -22,11 +22,15 @@ Also covers the allowlist widening: memory_update must accept ``importance`` and
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from yadgar._shared.config import get_settings
 from yadgar._shared.thermodynamics.thermodynamics import MemoryThermodynamics
 from yadgar.core import server
+from yadgar.core.server.tools import _memory_update_filter as _filter_module
+from yadgar.core.server.tools import admin_other
 from yadgar.tests.core.conftest import TEST_PROJECT_ID
 
 
@@ -139,3 +143,56 @@ class TestMemoryUpdateAllowlistWidened:
         mid = self._insert()
         with pytest.raises(ValueError):
             server.memory_update(mid, {"heat": 0.9})
+
+
+@pytest.mark.usefixtures("admin_backend_bypass")
+class TestDeAnchorGatePassthrough:
+    """Task 275 / Car C7b: de_anchor MUST route its fields dict through the
+    same _MEMORY_UPDATE_ALLOWED gate that memory_update enforces. Before the
+    fix, de_anchor called _forward_admin directly and skipped the gate —
+    structural bypass, not a field-level one.
+    """
+
+    def test_de_anchor_calls_filter_helper(self):
+        """de_anchor must route its fields through the shared filter helper,
+        the same one memory_update uses. Before the fix the helper did not
+        exist and de_anchor skipped it (structural bypass); the spy on the
+        helper goes unsatisfied and this assertion fires.
+
+        The helper lives in ``yadgar.core.server.tools._memory_update_filter``
+        (Car C7b extracted it from admin_other to keep admin_other under the
+        1000-LOC I13 cap). Both memory_update and de_anchor call it via
+        ``from yadgar.core.server.tools._memory_update_filter import
+        _filter_memory_update_fields`` — patching the source module is what
+        actually intercepts the call.
+        """
+        assert hasattr(_filter_module, "_filter_memory_update_fields"), (
+            "_memory_update_filter must expose _filter_memory_update_fields "
+            "so de_anchor and memory_update share the gate (task 275 / Car C7b)"
+        )
+        mid = _insert_anchor()
+
+        seen_kwargs: list[dict] = []
+        original_filter = _filter_module._filter_memory_update_fields
+
+        def _recording_filter(payload: dict) -> dict:
+            seen_kwargs.append(payload)
+            return original_filter(payload)
+
+        with (
+            patch.object(admin_other, "_forward_admin", return_value={"ok": True}),
+            patch.object(_filter_module, "_filter_memory_update_fields", _recording_filter),
+        ):
+            server.de_anchor(mid)
+
+        assert seen_kwargs, (
+            "de_anchor did not call _filter_memory_update_fields — it bypassed "
+            "the _MEMORY_UPDATE_ALLOWED gate. Route the fields dict through "
+            "_filter_memory_update_fields before _forward_admin."
+        )
+        # And the captured payload must contain the four fields de_anchor
+        # intends to write — none of which the gate is allowed to drop.
+        passed = set(seen_kwargs[0]) - admin_other._MEMORY_UPDATE_ALLOWED
+        assert not passed, (
+            f"de_anchor's fields contain keys outside _MEMORY_UPDATE_ALLOWED: {sorted(passed)}"
+        )

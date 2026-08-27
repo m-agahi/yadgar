@@ -147,9 +147,26 @@ def check(
 GitRunner = Callable[[list[str]], str]
 
 
+def resolve_merge_base(base_ref: str, run_git: GitRunner) -> str | None:
+    """Return merge-base(*base_ref*, HEAD), or ``None`` when it cannot be resolved.
+
+    ``None`` is the "I could not determine where this branch forked" signal —
+    a shallow clone, an unfetched remote, a detached CI checkout, or an unborn
+    HEAD.  Callers decide what that means for them: this script's two collectors
+    degrade to a weaker-but-safe baseline (see below), while
+    ``scripts/check_version_bump.py`` fails loud, because a version gate that
+    silently degrades is the defect it exists to catch.
+
+    Split out (task 382) so the merge-base comparison has ONE implementation
+    shared by the backend-version gate and the core-version gate.
+    """
+    return run_git(["merge-base", base_ref, "HEAD"]).strip() or None
+
+
 def collect_ci_inputs(
     base_ref: str,
     run_git: GitRunner,
+    blob_path: str = "server.json",
 ) -> tuple[list[str], str | None, str | None]:
     """Gather inputs for check() from a CI diff (PR branch vs merge-base).
 
@@ -159,16 +176,20 @@ def collect_ci_inputs(
     Args:
         base_ref: The base branch ref (e.g. "origin/master").
         run_git:  Callable(args) → stdout str (injectable for testing).
+        blob_path: Repo-relative path of the version-carrying file to read at
+            both refs.  Defaults to ``server.json`` (this script's own gate);
+            parameterised so the core-version gate can reuse the same
+            merge-base collection for ``pyproject.toml``.
 
     Returns:
-        (changed_files, server_json_base, server_json_head)
-        where server_json_base is the content at the merge-base commit and
-        server_json_head is the content at HEAD.  Either may be None if the
+        (changed_files, blob_base, blob_head)
+        where blob_base is the content at the merge-base commit and
+        blob_head is the content at HEAD.  Either may be None if the
         file doesn't exist at that ref.
     """
     # Find the merge-base so we compare against the branch point, not the tip.
-    merge_base = run_git(["merge-base", base_ref, "HEAD"]).strip()
-    if not merge_base:
+    merge_base = resolve_merge_base(base_ref, run_git)
+    if merge_base is None:
         # Fallback: treat base_ref itself as the base (shallow histories,
         # first commit, etc.).
         merge_base = base_ref
@@ -176,15 +197,16 @@ def collect_ci_inputs(
     changed_raw = run_git(["diff", "--name-only", merge_base, "HEAD"])
     changed_files = [f for f in changed_raw.splitlines() if f]
 
-    base_server = run_git(["show", f"{merge_base}:server.json"]) or None
-    head_server = run_git(["show", "HEAD:server.json"]) or None
+    base_blob = run_git(["show", f"{merge_base}:{blob_path}"]) or None
+    head_blob = run_git(["show", f"HEAD:{blob_path}"]) or None
 
-    return changed_files, base_server, head_server
+    return changed_files, base_blob, head_blob
 
 
 def collect_precommit_inputs(
     base_ref: str,
     run_git: GitRunner,
+    blob_path: str = "server.json",
 ) -> tuple[list[str], str | None, str | None]:
     """Gather inputs for check() in pre-commit mode — CI parity (PR #175).
 
@@ -201,10 +223,10 @@ def collect_precommit_inputs(
     (staged files vs HEAD server.json).
 
     Returns:
-        (changed_files, server_json_base, server_json_index)
+        (changed_files, blob_base, blob_index)
     """
-    merge_base = run_git(["merge-base", base_ref, "HEAD"]).strip()
-    if not merge_base:
+    merge_base = resolve_merge_base(base_ref, run_git)
+    if merge_base is None:
         merge_base = "HEAD"  # legacy per-commit fallback
 
     branch_raw = run_git(["diff", "--name-only", merge_base, "HEAD"])
@@ -212,10 +234,10 @@ def collect_precommit_inputs(
     changed_files = [f for f in branch_raw.splitlines() if f]
     changed_files += [f for f in staged_raw.splitlines() if f and f not in changed_files]
 
-    base_server = run_git(["show", f"{merge_base}:server.json"]) or None
-    index_server = run_git(["show", ":server.json"]) or None
+    base_blob = run_git(["show", f"{merge_base}:{blob_path}"]) or None
+    index_blob = run_git(["show", f":{blob_path}"]) or None
 
-    return changed_files, base_server, index_server
+    return changed_files, base_blob, index_blob
 
 
 # ---------------------------------------------------------------------------
