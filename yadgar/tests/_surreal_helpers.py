@@ -8,13 +8,18 @@ shim so existing test imports continue to work unchanged.
 from yadgar.core._surreal_runner import (  # noqa: F401
     _DEFAULT_PORT_BASE,
     _RETRY_BACKOFF_MS,
+    _SPAWNED_SURREAL_DATA_DIRS,
     _SPAWNED_SURREAL_PIDS,
     _port_in_use,
     _worker_index,
     allocate_port,
     allocate_port_with_retry,
     kill_all_spawned_surreal,
+    purge_registered_test_data_dirs,
     reap_stale_surreal,
+    register_test_data_dir,
+    remove_test_data_dir,
     spawn_surreal,
+    sweep_orphan_surreal_data_dirs,
     teardown_surreal_proc,
 )

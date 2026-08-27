@@ -220,22 +220,39 @@ def pytest_configure(config):
     # Master-only guardrails (v5.54.5) — skip xdist worker subprocesses, which
     # would otherwise reap each other's live databases.
     if not hasattr(config, "workerinput"):
-        from yadgar.tests._surreal_helpers import reap_stale_surreal
+        from yadgar.tests._surreal_helpers import (
+            reap_stale_surreal,
+            sweep_orphan_surreal_data_dirs,
+        )
 
         reap_stale_surreal()
+        # Task 307 backstop. The producing path is a SIGKILL (OOM), where no
+        # fixture teardown, sessionfinish or atexit ever runs — so the only
+        # cleanup that can reach that debris is one at the START of the NEXT
+        # run. It lives here rather than only in scripts/reap-test-surreal.sh
+        # because the leaked dirs sat at the top of /tmp (TMPDIR unset), i.e.
+        # they came from bare `uv run pytest`, which never touches that script.
+        sweep_orphan_surreal_data_dirs()
         _clamp_workers_to_ram(config)
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Final cleanup — kill any leftover spawned SurrealDB workers.
+    """Final cleanup — kill leftover SurrealDB workers AND remove their stores.
 
     Fires unconditionally regardless of exitstatus, including on SIGINT,
     timeout-induced teardown, and pytest-timeout thread unwind.
     Belt-and-suspenders alongside atexit.register in _surreal_helpers.
+
+    Task 307: the data-dir purge runs AFTER the kill pass so no surrealkv store
+    is removed out from under a process still writing to it.
     """
-    from yadgar.tests._surreal_helpers import kill_all_spawned_surreal
+    from yadgar.tests._surreal_helpers import (
+        kill_all_spawned_surreal,
+        purge_registered_test_data_dirs,
+    )
 
     kill_all_spawned_surreal()
+    purge_registered_test_data_dirs()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -476,9 +493,12 @@ def _ensure_surreal_spawned() -> dict | None:
             return _SURREAL_HANDLE
         import tempfile
 
-        from yadgar.tests._surreal_helpers import spawn_surreal
+        from yadgar.tests._surreal_helpers import register_test_data_dir, spawn_surreal
 
         data_dir = tempfile.mkdtemp(prefix="surreal_session_")
+        # Task 307: register BEFORE the spawn, so a crash between the two still
+        # leaves the dir on the atexit purge list.
+        register_test_data_dir(data_dir)
         proc = spawn_surreal(port=_SURREAL_RESERVED_PORT, data_dir=data_dir)
         _wait_for_health(_SURREAL_RESERVED_PORT)
         _SURREAL_HANDLE = {
@@ -488,6 +508,38 @@ def _ensure_surreal_spawned() -> dict | None:
             "respawns": 0,
         }
     return _SURREAL_HANDLE
+
+
+def _teardown_surreal_handle(handle: dict, *, wait_timeout: float = 5.0) -> None:
+    """Reap the handle's SurrealDB process AND remove its surrealkv data dir.
+
+    Task 307: the second half is the one that was missing.  ``_surreal_url_reserve``
+    tore the PROCESS down and left ``handle["data_dir"]`` on disk forever, so a
+    ``/tmp/surreal_session_*`` store accumulated for every session that ever
+    touched the DB — 4838 dirs / 49GB observed, and an OOM-killed pre-push gate.
+
+    Extracted as a named helper (rather than inlined in the fixture's ``finally``)
+    so the teardown contract is directly testable without driving a session-scoped
+    generator fixture around its ``shutil.which("surreal")`` gate — see
+    ``yadgar/tests/_meta/test_surreal_data_dir_cleanup.py``.
+
+    Never raises: teardown runs on the failure path too, and a cleanup error must
+    not replace the real failure.
+    """
+    from yadgar.tests._surreal_helpers import remove_test_data_dir, teardown_surreal_proc
+
+    proc = handle.get("proc")
+    if proc is not None:
+        try:
+            teardown_surreal_proc(proc, wait_timeout=wait_timeout)
+        except Exception:  # noqa: BLE001 — teardown must never mask a test failure
+            pass
+    data_dir = handle.get("data_dir")
+    if data_dir:
+        try:
+            remove_test_data_dir(data_dir)
+        except Exception:  # noqa: BLE001 — ditto
+            pass
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -517,9 +569,7 @@ def _surreal_url_reserve():
     finally:
         handle = _SURREAL_HANDLE
         if handle is not None:
-            from yadgar.tests._surreal_helpers import teardown_surreal_proc
-
-            teardown_surreal_proc(handle["proc"], wait_timeout=5)
+            _teardown_surreal_handle(handle, wait_timeout=5)
         _SURREAL_HANDLE = None
         _SURREAL_RESERVED_PORT = None
         os.environ.pop("YADGAR_DB_URL", None)
@@ -541,7 +591,11 @@ def _ensure_surreal_alive(handle: dict) -> bool:
     """
     import tempfile
 
-    from yadgar.tests._surreal_helpers import spawn_surreal
+    from yadgar.tests._surreal_helpers import (
+        register_test_data_dir,
+        remove_test_data_dir,
+        spawn_surreal,
+    )
 
     if handle["proc"].poll() is None:
         return False  # alive
@@ -554,9 +608,17 @@ def _ensure_surreal_alive(handle: dict) -> bool:
             "unstable; aborting to avoid masking real failures as a cascade."
         )
 
+    # Task 307: capture the abandoned store BEFORE the handle field is
+    # overwritten — every respawn used to orphan one dir with no way back to it.
+    old_dir = handle.get("data_dir")
     new_dir = tempfile.mkdtemp(prefix="surreal_respawn_")
+    register_test_data_dir(new_dir)
     handle["proc"] = spawn_surreal(port=handle["port"], data_dir=new_dir)
     handle["data_dir"] = new_dir
+    # The old process is confirmed dead (poll() above), so nothing is still
+    # writing into old_dir.
+    if old_dir and old_dir != new_dir:
+        remove_test_data_dir(old_dir)
     _wait_for_health(handle["port"])
     return True
 
