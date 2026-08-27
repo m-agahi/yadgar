@@ -146,14 +146,23 @@ jobs:
           echo "group '${{ matrix.group }}' selects ${collected} tests"
 
       - name: Run tests
+        # EXTRAS RECEIPT FIRST (task 392) — mirrors .github/workflows/ci-pr.yml.
+        # `--emit-receipt` measures, in this job's interpreter, which optional
+        # dependencies the skip inventory keys on are importable, and writes one
+        # `SKIPGATE-MODULES:` line ahead of pytest's output (hence `>` then
+        # `tee -a`). Without it the gate cannot tell a group that RAN the
+        # sqlalchemy/duckdb tests from one that skipped every one of them.
         run: |
           set -o pipefail
+          python scripts/check_skip_inventory.py --emit-receipt \
+            > pytest-rs-${{ matrix.group }}.txt
+          cat pytest-rs-${{ matrix.group }}.txt
           python -m pytest ${{ matrix.paths }} ${{ matrix.split }} \
             -q -rs --tb=short \
             -n ${{ vars.CI_PYTEST_WORKERS || '4' }} --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
             -m 'not integration and not e2e and not perf' \
-            2>&1 | tee pytest-rs-${{ matrix.group }}.txt
+            2>&1 | tee -a pytest-rs-${{ matrix.group }}.txt
 
       - name: Upload -rs output for skip gate
         if: ${{ always() }}
@@ -685,7 +694,11 @@ jobs:
             ls -la rs-logs/ >&2
             exit 1
           fi
-          cat rs-logs/pytest-rs-*.txt | python scripts/check_skip_inventory.py
+          # --require-receipt: a group whose -rs text carries no measured
+          # SKIPGATE-MODULES line is unverifiable and fails rather than
+          # being tolerated. The gate echoes each receipt it finds.
+          cat rs-logs/pytest-rs-*.txt \
+            | python scripts/check_skip_inventory.py --require-receipt
 
       - name: Validate inventory governance (ADR-0087 — stale entries, note length, wildcards)
         run: python scripts/check_skip_inventory.py --validate-inventory

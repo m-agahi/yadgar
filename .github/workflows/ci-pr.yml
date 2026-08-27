@@ -257,14 +257,28 @@ jobs:
         # -n is capped (never `auto`): /proc/meminfo reports HOST RAM inside the
         # cgroup-limited runner, so `auto` spawns a worker per host core and each
         # worker carries a SurrealDB child plus the embedding model (ADR-0070).
+        #
+        # EXTRAS RECEIPT FIRST (task 392). `--emit-receipt` MEASURES, in this
+        # job's own interpreter, whether each optional dependency the inventory
+        # keys on is importable, and writes one `SKIPGATE-MODULES:` line into
+        # the artifact ahead of pytest's output (hence `>` then `tee -a`). The
+        # gate reads it out of the same stream and refuses to let an entry like
+        # 'sqlalchemy not installed (sql extra)' sanction a skip on a leg where
+        # sqlalchemy is installed. It must be MEASURED and not declared here:
+        # yadgar-ci has no auto-sync pipeline, so a hardcoded "this image has
+        # the sql extra" would be an assertion that can silently go false —
+        # precisely the kind of unverifiable claim this gate exists to remove.
         run: |
           set -o pipefail
+          python scripts/check_skip_inventory.py --emit-receipt \
+            > pytest-rs-${{ matrix.group }}.txt
+          cat pytest-rs-${{ matrix.group }}.txt
           python -m pytest ${{ matrix.paths }} ${{ matrix.split }} \
             -q -rs --tb=short \
             -n ${{ vars.CI_PYTEST_WORKERS || '4' }} --dist loadgroup \
             --reruns 2 --reruns-delay 2 \
             -m 'not integration and not e2e and not perf' \
-            2>&1 | tee pytest-rs-${{ matrix.group }}.txt
+            2>&1 | tee -a pytest-rs-${{ matrix.group }}.txt
 
       - name: Upload -rs output for skip gate
         # if: always() — a FAILING group must still publish its artifact, or
@@ -809,7 +823,14 @@ jobs:
             ls -la rs-logs/ >&2
             exit 1
           fi
-          cat rs-logs/pytest-rs-*.txt | python scripts/check_skip_inventory.py
+          # --require-receipt: every group must carry its measured
+          # SKIPGATE-MODULES line. A group whose -rs text has none is
+          # unverifiable — 'ran and passed' and 'skipped and passed' look
+          # identical — so its absence FAILS rather than being tolerated.
+          # The gate echoes each receipt, so this job's log is the CI-visible
+          # answer to 'did the optional-dependency tests actually run?'.
+          cat rs-logs/pytest-rs-*.txt \
+            | python scripts/check_skip_inventory.py --require-receipt
 
       - name: Validate inventory governance (ADR-0087 — stale entries, note length, wildcards)
         run: python scripts/check_skip_inventory.py --validate-inventory
