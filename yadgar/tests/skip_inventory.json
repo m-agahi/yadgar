@@ -191,6 +191,22 @@
       "verdict": "LEGIT-CONDITIONAL",
       "reason_pattern": "mariadb client not available on this host",
       "note": "Engine-#2 car G. DISTINCT from engine2-carf-mariadb-client-absent-01: that one names `mariadb-dump`, this one names the `mariadb` CLIENT, and a host can have either without the other. The restore arm shells the client both to replay the artifact and to run the enumeration queries; in production it ships with the mariadb-server apt install baked into Dockerfile.backend. Like car F it imports nothing from the `sql` extra, so the yadgar-ci --extra sql rebuild does not fix it."
+    },
+    {
+      "id": "ml-extra-embedding-backfill-01",
+      "file": "yadgar/tests/scripts/test_migration_014_wiki_embedding_backfill.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "sentence-transformers not installed (ml extra)",
+      "note": "Gate-honesty car I. `sentence-transformers` lives in the optional [ml] extra. Without it EmbeddingEngine returns None for every vector, so WikiStore.backfill_null_embeddings skips every row and returns 0 - and the five tests here that assert a NON-ZERO backfill count measured `assert 0 == 4` / `0 == 1` / `0 == 6` under plain `make test` (`--extra test`). Measured 2026-08-27 before the guard: 5 failed, 13 passed on a venv synced `--extra dev --extra test`; 19 passed (this file plus the sibling recall test) on one synced `--extra dev --extra test --extra ml --extra sql --extra analytics`. That is false RED - the mirror of the false GREEN this train exists to kill, because a suite carrying six standing failures that are not bugs teaches its readers to skim red. Guarded with pytest.importorskip rather than deleted, and deliberately NOT applied to the whole class: test_returns_zero_on_empty_db (no rows to embed) and test_backfill_embed_failure_warns_and_skips (patches _compute_embedding to return None on purpose) pass on their own merits without the extra, and guarding them would delete real coverage from `make test`. CONDITIONAL (task 392 mechanism): sanctions ONLY while sentence_transformers is measured ABSENT, so a leg that installs `--extra ml` and still skips these fails the gate instead of passing like a leg that ran them.",
+      "sanctioned_when_module_absent": "sentence_transformers"
+    },
+    {
+      "id": "ml-extra-recall-vector-arm-01",
+      "file": "yadgar/tests/scripts/test_v5_42_5_directory_contract.py",
+      "verdict": "LEGIT-CONDITIONAL",
+      "reason_pattern": "sentence-transformers not installed (ml extra)",
+      "note": "Gate-honesty car I, second file. Shares the reason_pattern with ml-extra-embedding-backfill-01 because the absent module and the skip reason are genuinely the same; a separate entry so each file's sanction validates independently (validate_inventory's staleness check reads the pattern out of the named source). test_every_candidate_query_carries_the_scope_predicate ends with four liveness assertions that stop `no unscoped queries` being vacuously true, and one of them requires the memory VECTOR arm to have issued its query - which needs a real query embedding, hence the ml extra. Measured absent it failed with `memory vector arm did not run`. TRADE-OFF recorded rather than hidden: the guard skips the whole test, so the SQL-level scope-predicate assertion also stops running under plain `make test`; making only the vector-arm assertion conditional would be a weakened assertion, which is worse, and CI plus `make test-ci` install `--extra ml` so the check still runs where it gates merges. CONDITIONAL: sanctions ONLY while sentence_transformers is measured ABSENT.",
+      "sanctioned_when_module_absent": "sentence_transformers"
     }
   ]
 }

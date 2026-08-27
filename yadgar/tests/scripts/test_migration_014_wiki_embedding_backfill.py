@@ -207,6 +207,24 @@ class TestStorageMethods:
 # ---------------------------------------------------------------------------
 
 
+# `backfill_null_embeddings` only counts a row once a REAL embedding vector came
+# back for it. `sentence-transformers` lives in the optional `ml` extra, and
+# without it `EmbeddingEngine` logs "sentence-transformers is not installed;
+# embedding operations will return None" and every row is skipped — so the five
+# tests below that assert a NON-ZERO backfill count measured 0 under plain
+# `make test` (`--extra test`) while passing under `--extra ml`. That was false
+# RED: a real bug in neither the test nor the code, just an absent optional
+# dependency, and six standing failures teach a reader to skim red.
+#
+# They are therefore importorskip-guarded, sanctioned CONDITIONALLY in
+# yadgar/tests/skip_inventory.json (`ml-extra-embedding-backfill-01`) — the entry
+# holds ONLY while `sentence_transformers` is measured ABSENT, so if these ever
+# skip on a leg that installed the extra the skip gate fails the run.
+#
+# Deliberately NOT applied to the whole class. `test_returns_zero_on_empty_db`
+# (no rows to embed) and `test_backfill_embed_failure_warns_and_skips` (patches
+# `_compute_embedding` to return None on purpose) pass for their OWN reasons
+# without the extra; guarding them would delete real coverage from `make test`.
 class TestBackfillNullEmbeddings:
     def test_returns_zero_on_empty_db(self, _engines):
         """Fresh DB: backfill returns 0."""
@@ -215,6 +233,9 @@ class TestBackfillNullEmbeddings:
 
     def test_backfills_all_null_rows(self, _engines):
         """N null-embedding pages → backfill returns N."""
+        pytest.importorskip(
+            "sentence_transformers", reason="sentence-transformers not installed (ml extra)"
+        )
         for i in range(4):
             _insert_null_page(f"Backfill Page {i}", f"Content for page {i}.")
 
@@ -223,6 +244,9 @@ class TestBackfillNullEmbeddings:
 
     def test_backfill_idempotent(self, _engines):
         """Second run returns 0 (no NULL rows remain)."""
+        pytest.importorskip(
+            "sentence_transformers", reason="sentence-transformers not installed (ml extra)"
+        )
         _insert_null_page("Idempotent Page", "Content for idempotency test.")
 
         first = _wiki().backfill_null_embeddings()
@@ -233,6 +257,9 @@ class TestBackfillNullEmbeddings:
 
     def test_backfill_skips_existing_embeddings(self, _engines):
         """Rows with embeddings are skipped; only NULL rows are counted."""
+        pytest.importorskip(
+            "sentence_transformers", reason="sentence-transformers not installed (ml extra)"
+        )
         import yadgar.backend.queue_drainer._locals as _loc
 
         _loc._drain_local.active = True
@@ -261,6 +288,9 @@ class TestBackfillNullEmbeddings:
 
     def test_backfill_embed_exception_warns_and_continues(self, _engines, caplog):
         """If _compute_embedding raises, the row is skipped and backfill continues."""
+        pytest.importorskip(
+            "sentence_transformers", reason="sentence-transformers not installed (ml extra)"
+        )
         _insert_null_page("Fail Page", "Fail content.")
         _insert_null_page("Success Page", "Success content.")
 
@@ -283,6 +313,9 @@ class TestBackfillNullEmbeddings:
 
     def test_backfill_batch_size_respected(self, _engines):
         """Custom batch_size parameter is accepted without error."""
+        pytest.importorskip(
+            "sentence_transformers", reason="sentence-transformers not installed (ml extra)"
+        )
         for i in range(6):
             _insert_null_page(f"Batch Page {i}", f"Content {i}.")
 
