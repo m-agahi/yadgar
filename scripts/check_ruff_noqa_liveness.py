@@ -79,8 +79,16 @@ Keying on ``(relpath, code)`` with a stored COUNT fixes both halves:
 The ratchet only loosens by a deliberate, stated edit: counts may FALL
 freely (clean a site up and the gate stays green), never rise silently.
 
+WHAT THE GATE WALKS (task 394, 2026-08-27)
+------------------------------------------
+``yadgar/`` AND ``scripts/``. It used to be ``yadgar/`` alone — so the
+operator scripts under ``scripts/``, this gate among them, could carry inert
+suppressions that nothing reported. A gate that exempts its own directory
+audits everything except the code doing the auditing. 12 (file, rule) pairs /
+22 sites were sitting there unseen the day the scan was extended.
+
 Exit codes:
-  0  no unbaselined inert-rule / bare noqa sites in yadgar/
+  0  no unbaselined inert-rule / bare noqa sites under `_SCAN_DIRS`
   1  one or more sites flagged
 
 Regenerate (rare — see above; state the before/after counts in the commit):
@@ -99,6 +107,13 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
+
+# Directories walked for ``*.py``. ``scripts/`` joined ``yadgar/`` in task 394
+# (2026-08-27): the gate lived IN ``scripts/`` and did not scan it, so every
+# operator script — this one included — could carry an inert suppression that
+# nothing would ever report. A gate exempt from itself is not a gate. 12
+# (file, rule) pairs / 22 sites were sitting there unseen.
+_SCAN_DIRS: tuple[str, ...] = ("yadgar", "scripts")
 
 # Recognise both single-code (hash + ``noqa:`` + code, e.g. E402) and
 # comma-separated codes (e.g. E402 + F401), AND bare (hash + ``noqa``
@@ -199,6 +214,13 @@ _BASELINE_HEADER = """\
 # `backend/admin_exec/project_registry.py:BLE001:1` (file deleted since) and
 # `backend/admin_exec/seed_adr_tier_subsystem.py:PLC0415:2` (site cleaned up)
 # were stale over-allowances the ratchet had been carrying.
+#
+# TASK 394 (2026-08-27) — SAME AGAIN, ONE DIRECTORY WIDER.
+# 448 rows / 1355 sites -> 460 rows / 1377 sites. The scan walked `yadgar/`
+# only, so `scripts/` — the directory this gate itself lives in — was never
+# audited. Those +12 rows / +22 sites are the pre-existing contents of
+# `scripts/`, unchanged and now merely visible; no source line under
+# `scripts/` gained a suppression in that commit.
 #
 # Format: <relpath>:<CODE>:<count>
 # Regenerate: python scripts/check_ruff_noqa_liveness.py --write-baseline
@@ -393,11 +415,19 @@ def scan_file(
             codes_str = (m.group("codes") or "").strip()
             if not codes_str:
                 # BARE / EMPTY class — must be flagged. Never allowlisted: a
-                # blanket suppression with no rule is ALWAYS a defect.
+                # blanket suppression with no rule is ALWAYS a defect. The
+                # two are reported apart (same `BARE:` prefix) because they
+                # are different typos: one forgot the codes, the other forgot
+                # the colon AND the codes.
+                shape = (
+                    "empty `# noqa:` (colon, no rule code)"
+                    if m.group("colon")
+                    else "bare `# noqa` (no colon, no rule code)"
+                )
                 hard_errors.append(
-                    f"BARE: {rel}:{lineno}: bare `# noqa` (no rule code) — "
-                    "specify the rule you are suppressing, or ruff treats it "
-                    "as a blanket suppression that no lint pass can audit."
+                    f"BARE: {rel}:{lineno}: {shape} — specify the rule you "
+                    "are suppressing, or ruff treats it as a blanket "
+                    "suppression that no lint pass can audit."
                 )
                 continue
             # Split on comma, validate each code.
@@ -423,26 +453,31 @@ def scan_file(
 def collect_inert(
     repo_root: Path, select: set[str], ignore: set[str]
 ) -> tuple[list[str], BaselineCounts]:
-    """Walk ``yadgar/`` and return ``(hard_errors, {(relpath, code): count})``.
+    """Walk every directory in ``_SCAN_DIRS``; return ``(hard_errors, counts)``.
 
-    The counts are the OBSERVED state of the tree — the same shape the
-    baseline stores, which is what lets ``--write-baseline`` and the gate
-    share one scan.
+    ``counts`` is ``{(relpath, code): count}`` — the OBSERVED state of the
+    tree, the same shape the baseline stores, which is what lets
+    ``--write-baseline`` and the gate share one scan.
+
+    A missing scan directory is skipped, not an error: the tests build
+    synthetic repos with only ``yadgar/`` in them, and a repo that has no
+    ``scripts/`` has no operator scripts to gate.
     """
     hard_errors: list[str] = []
     counts: BaselineCounts = {}
-    yadgar = repo_root / "yadgar"
-    if not yadgar.is_dir():
-        return hard_errors, counts
-    for path in sorted(yadgar.rglob("*.py")):
-        errs, inert = scan_file(path, select, ignore, repo_root)
-        hard_errors.extend(errs)
-        try:
-            rel = path.relative_to(repo_root).as_posix()
-        except ValueError:  # pragma: no cover - defensive
-            rel = str(path)
-        for code, linenos in inert.items():
-            counts[(rel, code)] = len(linenos)
+    for scan_dir in _SCAN_DIRS:
+        root = repo_root / scan_dir
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            errs, inert = scan_file(path, select, ignore, repo_root)
+            hard_errors.extend(errs)
+            try:
+                rel = path.relative_to(repo_root).as_posix()
+            except ValueError:  # pragma: no cover - defensive
+                rel = str(path)
+            for code, linenos in inert.items():
+                counts[(rel, code)] = len(linenos)
     return hard_errors, counts
 
 
@@ -469,11 +504,12 @@ def _format_growth(rel: str, code: str, observed: int, allowed: int) -> str:
 
 
 def check(repo_root: Path | None = None) -> list[str]:
-    """Walk yadgar/ for BARE noqa sites and inert-rule GROWTH.
+    """Walk `_SCAN_DIRS` for BARE noqa sites and inert-rule GROWTH.
 
     Returns a list of formatted error strings. Empty list means clean.
     Missing pyproject → empty list (no config to drift against, nothing to gate).
     Missing baseline → every inert site reported (no allowlist).
+    Missing scan directory → skipped (see ``collect_inert``).
     """
     repo_root = repo_root or _REPO_ROOT
     pyproject = repo_root / "pyproject.toml"

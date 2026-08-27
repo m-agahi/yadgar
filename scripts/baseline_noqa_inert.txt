@@ -37,8 +37,27 @@
 # `backend/admin_exec/seed_adr_tier_subsystem.py:PLC0415:2` (site cleaned up)
 # were stale over-allowances the ratchet had been carrying.
 #
+# TASK 394 (2026-08-27) — SAME AGAIN, ONE DIRECTORY WIDER.
+# 448 rows / 1355 sites -> 460 rows / 1377 sites. The scan walked `yadgar/`
+# only, so `scripts/` — the directory this gate itself lives in — was never
+# audited. Those +12 rows / +22 sites are the pre-existing contents of
+# `scripts/`, unchanged and now merely visible; no source line under
+# `scripts/` gained a suppression in that commit.
+#
 # Format: <relpath>:<CODE>:<count>
 # Regenerate: python scripts/check_ruff_noqa_liveness.py --write-baseline
+scripts/audit_dispatch_prelude_markers.py:BLE001:1
+scripts/audit_dispatch_prelude_markers.py:PLC0415:1
+scripts/backfill_agent_pattern_from_wiki.py:BLE001:3
+scripts/backfill_agent_pattern_from_wiki.py:PLC0415:3
+scripts/backfill_agent_pattern_from_wiki.py:S101:1
+scripts/check_capability_coverage.py:BLE001:2
+scripts/check_complexity.py:BLE001:1
+scripts/check_image_size.py:S603:2
+scripts/check_ruff_ignores_liveness.py:S603:1
+scripts/check_type_ratchet.py:BLE001:1
+scripts/heal_global_reach_scope_drift.py:BLE001:3
+scripts/scan_db_for_secrets.py:PLC0415:3
 yadgar/_shared/astrocyte_pool/__init__.py:PLC0415:1
 yadgar/_shared/astrocyte_pool/astrocyte_pool.py:PLC0415:1
 yadgar/_shared/blocks_render/__init__.py:PLC0415:1

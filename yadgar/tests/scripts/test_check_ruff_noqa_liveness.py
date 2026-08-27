@@ -683,3 +683,52 @@ class TestUnscannableFileIsAHardError:
             sources={"yadgar/core/mod.py": "def f():\n    return 1\n"},
         )
         assert nql.check(repo) == []
+
+
+# ---------------------------------------------------------------------------
+# (j) WHAT THE SCANNER WALKS (task 394, 2026-08-27)
+# ---------------------------------------------------------------------------
+
+
+class TestScriptsDirectoryIsScanned:
+    """``scripts/`` is walked too — the gate is not exempt from itself.
+
+    The scan was ``yadgar/`` only, and this gate lives in ``scripts/``. Every
+    operator script could carry an inert suppression that nothing would ever
+    report, including the script doing the reporting. 12 (file, rule) pairs /
+    22 sites were sitting there unseen when the scan was extended.
+    """
+
+    def test_inert_site_under_scripts_is_flagged(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"scripts/op.py": "import os  # noqa: BLE001 — inert here\n"},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "scripts/op.py" in e and "BLE001" in e], (
+            f"a noqa under scripts/ must be scanned, not exempt; got {errors}"
+        )
+
+    def test_scripts_row_is_baselined_under_its_own_relpath(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"scripts/op.py": "import os  # noqa: BLE001 — inert here\n"},
+        )
+        nql.write_baseline(repo)
+        assert nql.load_baseline(repo) == {("scripts/op.py", "BLE001"): 1}
+        assert nql.check(repo) == []
+
+    def test_scan_dirs_names_both_trees(self) -> None:
+        assert nql._SCAN_DIRS == ("yadgar", "scripts")
+
+    def test_missing_scan_dir_is_skipped_not_an_error(self, tmp_path: Path) -> None:
+        """A repo with no ``scripts/`` has no operator scripts to gate."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "def f():\n    return 1\n"},
+        )
+        assert not (repo / "scripts").is_dir()
+        assert nql.check(repo) == []

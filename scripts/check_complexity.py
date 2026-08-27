@@ -124,7 +124,9 @@ _CAP_TO_ALLOWLIST_METRIC: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Noqa pattern — matches: # noqa: C901 - cohesive: <reason>
+# Cohesive-marker pattern — matches a hash + ``noqa: C901 - cohesive:
+# <reason>`` on a def line. Written hash-first so this comment is not
+# itself read as a directive (ruff matches the marker case-insensitively).
 # Accepts dashes (-, –, —) and optional whitespace variations
 # ---------------------------------------------------------------------------
 
@@ -410,7 +412,7 @@ def _check_function(  # noqa: C901 - cohesive: dispatch function; each branch = 
                 )
             # Worsened beyond baseline — fall through to full enforcement
 
-        # noqa suppresses SOFT only
+        # The cohesive marker suppresses SOFT only
         if has_noqa:
             return Violation(
                 filepath=r.filepath,
