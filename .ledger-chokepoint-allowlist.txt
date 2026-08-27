@@ -1,33 +1,48 @@
 # Allowlist for scripts/check_ledger_chokepoint.py (D20 ledger chokepoint guard).
 #
-# Format: path:lineno:reason  (one per line; '#'-prefixed / blank lines ignored)
+# THIS FILE IS INTENTIONALLY EMPTY. It carries no entries and the scan exits 0
+# with it and without it. That is the correct state, not an oversight: the
+# mechanism is kept, the debt it recorded is paid.
 #
-# Use sparingly — the allowlist is for documented pre-existing violations,
-# not a general escape hatch. Every entry below states plainly whether it is
-# a checker-precision artifact (not actually a D20 violation) or genuine
-# technical debt (a real violation, tracked for a fix) — do NOT add a vague
-# shared reason; a reader six months from now must be able to tell which is
-# which without re-deriving it.
+# Format (when an entry IS needed): path:lineno:reason  (one per line;
+# '#'-prefixed / blank lines ignored). Paths are repo-root-relative — matched
+# via _allowlist_key(), which prefers Path.relative_to(_REPO_ROOT) and falls
+# back to an absolute path only for out-of-repo scans like a test's tmp_path
+# fixture. Do NOT hand-author an absolute-path entry; it will only ever match
+# the one machine+checkout it was written on.
 #
-# STALENESS WARNING: this file is keyed on path:lineno. An unrelated edit
-# that shifts line numbers in the target file silently detaches the entry —
-# _load_allowlist has no fuzzy match, so a stale lineno just stops matching
-# and the checker starts re-flagging the (now differently-numbered) site on
-# the next run. That is the correct failure mode (the gate re-fires rather
-# than staying silently green), but it means an entry can go stale without
-# anyone touching this file. Re-verify line numbers here whenever the target
-# file changes.
+# WHY IT IS EMPTY (ledger task 388, gate-honesty train 2026-08-27). It held two
+# entries; BOTH were dead, and one of them lied:
 #
-# Paths here are repo-root-relative (matched via _allowlist_key(), which
-# prefers Path.relative_to(_REPO_ROOT) and falls back to an absolute path
-# only for out-of-repo scans like a test's tmp_path fixture). This is what
-# makes the entries survive a checkout at a different absolute location —
-# including a git worktree of this same repo, whose absolute path prefix
-# differs from the main checkout. Do NOT hand-author an absolute-path entry
-# here; it will only ever match the one machine+checkout it was written on.
-
-# --- checker-precision artifact: metadata read, not ledger data access ---
-yadgar/backend/admin_exec/adr_seed.py:483:reads the `adr` table's AUTO_INCREMENT counter out of information_schema.TABLES (INFORMATION_SCHEMA is MariaDB's metadata catalog, not the ledger). The table actually queried is information_schema.TABLES; `adr` appears only as a quoted string VALUE in a WHERE predicate (TABLE_NAME = 'adr'), not as SQL FROM/INTO target. This is a metadata read about the ledger table, not an access to its rows — the checker's table-name regex cannot distinguish "adr" as a queried table from "adr" as a filter literal. Pre-existing. Tracked as ledger task 201.
-
-# --- genuine D20 violation: real ledger data access outside MariaStorageEngine ---
-yadgar/backend/admin_exec/seed_adr_tier_subsystem.py:164:GENUINE D20 violation — a direct `UPDATE adr SET tier = :tier, subsystem = :subsystem WHERE id = :id` against storage._engine (behind a `# type: ignore[attr-defined]`), bypassing MariaStorageEngine entirely. This is real technical debt, not a checker artifact: the row write must be routed through a MariaStorageEngine method. Pre-existing. Tracked as ledger task 202.
+#   1. yadgar/backend/admin_exec/adr_seed.py:483 — labelled a checker-precision
+#      artifact for the `SELECT AUTO_INCREMENT FROM information_schema.TABLES
+#      WHERE TABLE_NAME = 'adr'` metadata read. True when written, obsolete
+#      since the matcher went POSITIONAL: `'adr'` there is a string VALUE in a
+#      WHERE predicate, and the only table position is qualified by
+#      `information_schema.`, so nothing is flagged and nothing needs excusing.
+#
+#   2. yadgar/backend/admin_exec/seed_adr_tier_subsystem.py:164 — labelled a
+#      "GENUINE D20 violation — a direct `UPDATE adr SET ...` against
+#      storage._engine". FALSE at the time of removal. Ledger task 202 had
+#      already routed that write through
+#      `MariaStorageEngine.update_adr_tier_subsystem`; no such SQL existed in
+#      the file, and line 164 was an unrelated `if` statement. The entry was
+#      excusing a violation that no longer existed while telling readers to
+#      trust its "genuine vs artifact" labels.
+#
+# WHEN ADDING AN ENTRY: state plainly whether it is a checker-precision
+# artifact (not actually a D20 violation) or genuine technical debt (a real
+# violation, tracked for a fix). Do NOT add a vague shared reason; a reader six
+# months from now must be able to tell which is which without re-deriving it.
+# PREFER A MATCHER FIX over an entry: a false positive means the positional
+# matcher is imprecise, and fixing it protects every future call site rather
+# than one line number.
+#
+# STALENESS WARNING: this file is keyed on path:lineno. An unrelated edit that
+# shifts line numbers in the target file silently detaches the entry —
+# _load_allowlist has no fuzzy match, so a stale lineno just stops matching and
+# the checker starts re-flagging the (now differently-numbered) site on the next
+# run. That is the correct failure mode (the gate re-fires rather than staying
+# silently green), but it means an entry can go stale without anyone touching
+# this file. Re-verify line numbers here whenever the target file changes —
+# entry 1 above is exactly what an unre-verified entry decays into.

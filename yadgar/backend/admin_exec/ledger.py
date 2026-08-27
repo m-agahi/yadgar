@@ -410,11 +410,13 @@ async def update_adr_tier_subsystem(payload: dict) -> dict:
     ``subsystem`` is the D28 free-form VARCHAR(128) (may be ``None`` when
     the row carries no subsystem yet — operator reviews).
 
-    Car B (task #202): the seed op that backfills these columns on the
-    legacy corpus used to write via a direct ``storage._engine.begin()``
-    UPDATE — a D20 chokepoint violation. This admin op is the sanctioned
-    chokepoint surface: every ``adr`` row write goes through
-    ``MariaStorageEngine.update_adr_tier_subsystem``, no exceptions.
+    NOT REACHABLE OVER ``/admin``, and NOT the chokepoint (task #389). It is
+    admin-op SHAPED but absent from ``_ADMIN_OPS``, so the route rejects the
+    op before dispatch; and the live writer ``seed_adr_tier_subsystem._apply_row_update``
+    calls the ENGINE METHOD ``MariaStorageEngine.update_adr_tier_subsystem``
+    — the real D20 chokepoint — directly. Unregistered on purpose: that would
+    open a remote ``adr``-mutation endpoint no caller needs. Not dead —
+    ``test_every_ledger_handler_reraises_admin_refusal`` pins the arm below.
     """
     storage = _get_sql_storage()
     if storage is None:

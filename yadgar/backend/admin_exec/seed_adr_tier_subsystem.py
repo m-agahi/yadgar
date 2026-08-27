@@ -239,8 +239,11 @@ async def seed_adr_tier_subsystem(
             for the per-ADR body fetch. Defaults to ``wiki_read`` from the
             core sanctioned read path.
         row_updater: optional callable ``(adr_id, tier, subsystem) -> None``
-            for the row UPDATE (test seam). Defaults to a direct SQL
-            UPDATE on the storage's ``_engine`` connection.
+            for the row UPDATE (test seam). Defaults to
+            ``MariaStorageEngine.update_adr_tier_subsystem`` — the D20
+            chokepoint surface. It used to default to a direct SQL UPDATE on
+            the storage's ``_engine`` connection; task #202 removed that and
+            this line kept describing it (task #389).
 
     Returns:
         ``{"ok": True, "rows_scanned": N, "rows_updated": N, "rows_skipped": N,
