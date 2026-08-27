@@ -164,9 +164,17 @@ run_leg() {
     # a leg that installs a smaller dependency set than the group it mirrors is
     # not mirroring it. (`make test` deliberately keeps the smaller set —
     # asyncmy is a compiled driver and that is the everyday target.)
+    #
+    # --extra analytics (task 390) is the same defect with a second dependency:
+    # all 26 tests in yadgar/tests/core/test_export_duckdb.py open with
+    # `pytest.importorskip("duckdb")`, and NO extra in pyproject.toml provided
+    # duckdb at all, so unlike the sqlalchemy set they had never executed
+    # anywhere — not here, not in CI, not on a developer's machine. The extra is
+    # restored; this leg installs it. duckdb ships prebuilt wheels, so the
+    # compiled-driver argument that keeps `sql` out of `make test` does not apply.
     if TEST_TIMEOUT="${TEST_TIMEOUT:-5400}" TEST_MEM_MAX="$leg_mem" \
         "$script_dir/test-capped.sh" \
-        uv run --extra test --extra ml --extra sql python -m pytest "$@" \
+        uv run --extra test --extra ml --extra sql --extra analytics python -m pytest "$@" \
           -q -rs --tb=short -n 4 --dist loadgroup --reruns 2 --reruns-delay 2 \
           -m "$CI_LOCAL_MARKER" ${PYTEST_ARGS:-} > "$log" 2>&1; then
       echo pass > "$status_file"
