@@ -853,3 +853,185 @@ def test_scan_dirs_names_scripts(tmp_path, monkeypatch):
     (partial / "yadgar").mkdir(parents=True)  # no scripts/ dir at all
     monkeypatch.setattr(module, "_REPO_ROOT", partial)
     assert [p.name for p in module.default_roots()] == ["yadgar"]
+
+
+# ---------------------------------------------------------------------------
+# Task 403 — execution shapes the {text, execute, exec} set could not see
+# ---------------------------------------------------------------------------
+
+
+def test_storage_underscore_q_outside_engine_fails(tmp_path):
+    """``storage._q("SELECT ... FROM task")`` is an execution shape, not prose.
+
+    Ledger task 403: ``_SQL_EXEC_FUNCS`` was ``{text, execute, exec}``, so a
+    raw statement handed to the storage client's own query method walked past
+    the gate untouched. ``scripts/rederive_wiki_links.py:76`` demonstrates the
+    live call shape (it targets SurrealDB, so it is not itself a D20 violation).
+    """
+    root = _make_root(
+        tmp_path,
+        """\
+        def read_things(storage):
+            return storage._q("SELECT id, title FROM task")
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 1, res.stdout
+    assert "task" in res.stdout
+
+
+def test_storage_underscore_q_inside_engine_passes(tmp_path):
+    """The engine class is still the chokepoint — ``_q`` there is sanctioned."""
+    root = _make_root(
+        tmp_path,
+        """\
+        class MariaStorageEngine:
+            def read_things(self):
+                return self._q("SELECT id FROM task")
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 0, res.stdout
+
+
+def test_underscore_q_family_variants_are_scanned(tmp_path):
+    """``_q_ro`` / ``_q_timeout`` are the same execution shape under other names."""
+    root = _make_root(
+        tmp_path,
+        """\
+        def read_ro(storage):
+            return storage._q_ro("SELECT id FROM adr")
+
+        def read_slow(storage):
+            return storage._q_timeout("SELECT id FROM agent_pattern", None, 5.0)
+        """,
+    )
+    res = run_script("--root", str(root), "--list-all")
+    assert res.returncode == 1, res.stdout
+    assert "adr" in res.stdout
+    assert "agent_pattern" in res.stdout
+
+
+def test_underscore_q_multi_nested_tuple_is_scanned(tmp_path):
+    """``_q_multi`` carries its statements inside a list of tuples, not bare args."""
+    root = _make_root(
+        tmp_path,
+        """\
+        def batch(storage):
+            return storage._q_multi([("DELETE FROM task_blocked_by", None)])
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 1, res.stdout
+    assert "task_blocked_by" in res.stdout
+
+
+def test_subprocess_mariadb_argv_with_ledger_sql_fails(tmp_path):
+    """``subprocess.run(["mariadb", "-e", "<ledger SQL>"])`` bypasses the engine."""
+    root = _make_root(
+        tmp_path,
+        """\
+        import subprocess
+
+        def wipe():
+            subprocess.run(["mariadb", "--batch", "-e", "DELETE FROM task"])
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 1, res.stdout
+    assert "task" in res.stdout
+
+
+def test_subprocess_mysql_shell_string_with_ledger_sql_fails(tmp_path):
+    """A shell command string does not START with SQL — it still runs it.
+
+    ``_is_sql_literal`` anchors on the FIRST token, so ``mysql -e "UPDATE
+    adr ..."`` is not an SQL literal by that rule. Inside a call already
+    identified as invoking a client binary, the SQL keyword is looked for
+    anywhere in the string instead.
+    """
+    root = _make_root(
+        tmp_path,
+        """\
+        import subprocess
+
+        def retier():
+            subprocess.run("mysql -e \\"UPDATE adr SET tier='binding'\\"", shell=True)
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 1, res.stdout
+    assert "adr" in res.stdout
+
+
+def test_subprocess_client_binary_by_absolute_path_fails(tmp_path):
+    """``shutil.which`` yields ``/usr/bin/mariadb``; the path form must match too."""
+    root = _make_root(
+        tmp_path,
+        """\
+        import subprocess
+
+        def wipe():
+            subprocess.check_call(["/usr/bin/mariadb", "-e", "TRUNCATE TABLE agent_pattern"])
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 1, res.stdout
+    assert "agent_pattern" in res.stdout
+
+
+def test_subprocess_mariadb_inside_engine_passes(tmp_path):
+    """The subprocess branch honours the same in-engine exemption as every other."""
+    root = _make_root(
+        tmp_path,
+        """\
+        import subprocess
+
+        class MariaStorageEngine:
+            def wipe(self):
+                subprocess.run(["mariadb", "-e", "DELETE FROM task"])
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 0, res.stdout
+
+
+def test_subprocess_mariadb_without_ledger_sql_passes(tmp_path):
+    """Invoking the client is not itself a violation — touching a ledger row is."""
+    root = _make_root(
+        tmp_path,
+        """\
+        import subprocess
+
+        def ping():
+            subprocess.run(["mariadb", "-e", "SELECT 1 FROM wiki_page"])
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 0, res.stdout
+
+
+def test_subprocess_without_sql_client_binary_passes(tmp_path):
+    """No mariadb/mysql client named → not an execution shape this guard owns."""
+    root = _make_root(
+        tmp_path,
+        """\
+        import subprocess
+
+        def echo():
+            subprocess.run(["echo", "DELETE FROM task"])
+        """,
+    )
+    res = run_script("--root", str(root))
+    assert res.returncode == 0, res.stdout
+
+
+def test_real_repo_tree_is_clean_under_the_widened_scan():
+    """The widening is a tripwire for the NEXT bypass, not a bug-finder today.
+
+    Runs the DEFAULT scan (``yadgar/`` + ``scripts/``) with no ``--root``. A
+    non-zero exit here means the widened detection found a real violation —
+    read the output, do not narrow the matcher to silence it.
+    """
+    res = run_script("--list-all")
+    assert res.returncode == 0, res.stdout + res.stderr
