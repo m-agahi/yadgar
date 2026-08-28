@@ -234,30 +234,14 @@ def adr_add(
     (``adr_render._car_shaped_decision_error``). If a car taught you something,
     file the thing it taught, and put the car in ``context``.
 
-    Car F: writes one ``adr`` ledger row (MariaDB; ADR-0197: AUTO_INCREMENT id
-    IS the ADR number) + one CANONICAL wiki body page (SurrealDB, D4) linked
-    by ``body_slug``. Supersede targets are linked via ``adr_supersedes`` with
-    the target row's status flipped to ``superseded`` (D23, status-flip only;
-    the page-type retype is Car G).
+    Writes one ``adr`` ledger row — the AUTO_INCREMENT id IS the ADR number —
+    plus a canonical wiki body page linked by ``body_slug``; a supersede
+    target is linked and its own status flipped to ``superseded``.
 
-    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override lets a caller
-    write an ADR into another project's namespace without leaving the current
-    working tree. Precedence: ``project`` (override) > ``session_project`` >
-    raise — C5 deleted the ``directory``-derived and ``"global"`` tiers this
-    used to name. The validated project_id is forwarded to the backend write
-    (``create_adr_row(project_id=...)``) so the row stamps the override
-    namespace; the body page's slug follows the same project_id (D32 ③
-    scheme — ``{project_id}_adr-NNNN``). When BOTH ``project`` and
-    ``directory`` are supplied, ``project`` wins and ``directory`` is logged-
-    and-ignored (§9 [VERIFY]). Core enforces the shape guard (Car 5: sentinels
-    included); the registry check runs un-bypassably INSIDE the ledger write,
-    ``create_adr_row`` → ``MariaStorageEngine.assert_project_registered`` — NOT
-    the standalone backend guard this used to name, which has no call site.
-
-    Car H: accepts ``tier`` (D27 enum: ``binding|historical``) and
-    ``subsystem`` (D28 explicit; §10 Q2 normalizer → lowercase + trim, empty
-    → None). On success the per-subsystem rollup page is regenerated via
-    ``_regenerate_subsystem_rollup`` (§10 Q1 on-write trigger, D29).
+    ``project`` is the namespace override and beats the session's project. No
+    identity is derived from ``directory`` (ADR-0227), so if neither resolves
+    the call is REJECTED; when both are given ``project`` wins and
+    ``directory`` remains only the body page's ``directory_context``.
 
     Args:
         directory: Absolute path to the project root.
