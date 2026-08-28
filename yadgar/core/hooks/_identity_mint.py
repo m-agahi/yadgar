@@ -121,6 +121,13 @@ def mint_failure_notice(cwd: str, reason: str) -> str:
     Deliberately free of anything shaped like a project_id: an agent reading
     this must not be able to copy a plausible value out of the error and pass
     it, which would reintroduce the guess through the human in the loop.
+
+    Task 423: the notice also tells the reader to ASK THE USER. "Fail loud"
+    used to end at the shell one-liner, which an agent has no standing to run
+    on the user's behalf — it cannot know the right key, and inventing one is
+    exactly what ADR-0227 forbids. Asking is therefore the sanctioned recovery,
+    not a courtesy. The closing line names the OTHER failure (identity present,
+    registry row absent) so the two are not treated with the same fix.
     """
     return (
         f"[yadgar] ERROR: no project identity for {cwd}.\n"
@@ -128,7 +135,17 @@ def mint_failure_notice(cwd: str, reason: str) -> str:
         "[yadgar] Yadgar tool calls needing an identity will FAIL until this is "
         "fixed — no default is assumed (ADR-0227).\n"
         "[yadgar] Fix: add a git 'origin' remote, or write the key explicitly:\n"
-        "[yadgar]   mkdir -p .yadgar && echo owner/repo > .yadgar/project-id"
+        "[yadgar]   mkdir -p .yadgar && echo owner/repo > .yadgar/project-id\n"
+        "[yadgar] Only the user knows the right key, and deriving one is forbidden "
+        "(ADR-0227), so ASKING THEM IS THE SANCTIONED PATH: surface this now — say "
+        "identity is missing, name what it blocks (ADR capture, task-ledger sync, "
+        "checkpoint), and hand over the line above. Do not proceed silently and do "
+        "not fall back to the directory name. The mint runs only at session start, "
+        "so a new session is needed once it is fixed.\n"
+        "[yadgar] A DIFFERENT failure looks similar but is not this one: if an "
+        'identity IS present and calls answer "unknown project_id", the mint '
+        "worked and the project registry has no row — diagnose with "
+        "`yadgar project list`, not with the fix above."
     )
 
 
