@@ -204,6 +204,9 @@ class TestPlistlibParseability:
         substituted = _substitute(raw)
         try:
             data = plistlib.loads(substituted.encode())
+        # The assertion is "plistlib parses this at all". Narrowing would let an
+        # unexpected parser error escape as a collection error instead of this
+        # named, template-identifying failure.
         except Exception as exc:
             pytest.fail(f"{template}: plistlib parse error: {exc}")
         assert isinstance(data, dict), f"{template}: plist root is not a dict"

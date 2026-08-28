@@ -54,7 +54,8 @@ def _reset_tracer_provider() -> None:
         _tr._SETUP_DONE.clear()
         _tr._stop_span_log_queue()
         logging.getLogger("yadgar.tracing").propagate = True
-    except Exception:
+    # Guards the `_tr` import and the private OTel/tracing attributes it pokes.
+    except (ImportError, AttributeError):  # fmt: skip
         pass
 
 
@@ -120,7 +121,10 @@ def _recording_provider():
     finally:
         try:
             provider.shutdown()
-        except Exception:
+        # SDK shutdown flushes the BatchSpanProcessor over its exporter; a
+        # second shutdown logs rather than raising, so the residual surface is
+        # an already-closed exporter stream (ValueError) or its socket (OSError).
+        except (OSError, ValueError):  # fmt: skip
             pass
         if once is not None and hasattr(once, "_done"):
             once._done = False

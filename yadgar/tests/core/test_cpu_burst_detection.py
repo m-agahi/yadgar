@@ -73,7 +73,7 @@ class TestPhaseDurationWarn:
 
             settings = get_settings()
             monkeypatch.setattr(settings, "PHASE_DURATION_WARN_MS", 1, raising=False)
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
 
         orchestrator = self._make_orchestrator()
@@ -110,7 +110,7 @@ class TestPhaseDurationWarn:
 
             settings = get_settings()
             monkeypatch.setattr(settings, "PHASE_DURATION_WARN_MS", 60_000, raising=False)
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
 
         orchestrator = self._make_orchestrator()

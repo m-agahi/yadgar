@@ -122,7 +122,10 @@ def _table_count(url: str, table: str) -> int:
     """
     try:
         res = _sql(url, f"SELECT count() FROM {table} GROUP ALL;")
-    except Exception:
+    # Exactly the docstring's contract: unreachable backend or a non-OK status
+    # (httpx.HTTPError, via raise_for_status), or an unparseable body
+    # (ValueError from .json()).
+    except (httpx.HTTPError, ValueError):  # fmt: skip
         return -1
     # SurrealDB /sql returns a list of result-blocks. A successful block is a
     # dict {"result": [{"count": N}], "status": "OK"}; an empty table yields

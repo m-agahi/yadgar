@@ -242,6 +242,9 @@ class TestLoadDurationHistogram:
         with patch.dict("sys.modules", {"sentence_transformers": mock_st}):
             try:
                 client.score_cross_encoder("q", ["text"])
+            # `sys.modules` is patched with a MagicMock stand-in for
+            # sentence_transformers, so the scoring call can fail in any way the
+            # mock produces. The assertion below is on the load ATTEMPT.
             except Exception:
                 pass  # load attempt is what matters
 
@@ -343,6 +346,7 @@ class TestSpanEmission:
         with patch.dict("sys.modules", {"sentence_transformers": mock_st}):
             try:
                 client.score_cross_encoder("q", ["text"])
+            # Same mocked-module surface as above; the assertion is on the spans.
             except Exception:
                 pass
 

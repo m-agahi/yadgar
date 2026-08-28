@@ -120,7 +120,9 @@ class TestSeedAnchorsHTTP:
             if data and b"content" in data:
                 try:
                     captured_bodies.append(_json.loads(data.decode()))
-                except Exception:
+                # A non-JSON or non-UTF-8 body: JSONDecodeError and
+                # UnicodeDecodeError are both ValueError subclasses.
+                except ValueError:
                     pass
             return original_request_cls(url, data=data, headers=headers or {})
 
@@ -164,7 +166,9 @@ class TestSeedAnchorsHTTP:
             if data and b"content" in data:
                 try:
                     captured_bodies.append(_json.loads(data.decode()))
-                except Exception:
+                # A non-JSON or non-UTF-8 body: JSONDecodeError and
+                # UnicodeDecodeError are both ValueError subclasses.
+                except ValueError:
                     pass
             return original_request_cls(url, data=data, headers=headers or {})
 
@@ -205,7 +209,9 @@ class TestSeedAnchorsHTTP:
             if data and b"content" in data:
                 try:
                     captured_bodies.append(_json.loads(data.decode()))
-                except Exception:
+                # A non-JSON or non-UTF-8 body: JSONDecodeError and
+                # UnicodeDecodeError are both ValueError subclasses.
+                except ValueError:
                     pass
             return original_request_cls(url, data=data, headers=headers or {})
 

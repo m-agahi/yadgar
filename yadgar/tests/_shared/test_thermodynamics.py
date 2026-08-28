@@ -21,6 +21,9 @@ _engine = EmbeddingEngine()
 try:
     _engine._ensure_model()
     _model_available = not _engine._unavailable
+# The probe IS "can this model load at all". `_ensure_model` reaches
+# sentence-transformers / torch / the HF hub, whose exception classes are not
+# importable in the very environment this branch exists to detect.
 except Exception:
     _model_available = False
 

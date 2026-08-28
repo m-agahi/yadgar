@@ -225,6 +225,9 @@ class TestGcCallbackShutdownSafe:
             ga.time = None  # type: ignore[attr-defined]
             # Must not raise — shutdown guard must return early
             ga._gc_callback("start", {"generation": 0})
+        # BLE001 kept broad: the assertion IS "must not raise", so any
+        # narrowing would let an unexpected type escape as an error
+        # instead of this named failure.
         except Exception as exc:
             pytest.fail(
                 f"_gc_callback raised {type(exc).__name__}: {exc} "
@@ -247,6 +250,9 @@ class TestGcCallbackShutdownSafe:
             ga._gc_start_times = None  # type: ignore[attr-defined]
             # Must not raise
             ga._gc_callback("stop", {"generation": 0})
+        # BLE001 kept broad: the assertion IS "must not raise", so any
+        # narrowing would let an unexpected type escape as an error
+        # instead of this named failure.
         except Exception as exc:
             pytest.fail(
                 f"_gc_callback raised {type(exc).__name__}: {exc} "
@@ -282,6 +288,9 @@ class TestGcCallbackShutdownSafe:
         try:
             # Must not raise — pop(..., None) guards against missing key
             ga._gc_callback("stop", {"generation": 0})
+        # BLE001 kept broad: the assertion IS "must not raise", so any
+        # narrowing would let an unexpected type escape as an error
+        # instead of this named failure.
         except Exception as exc:
             pytest.fail(f"_gc_callback stop without start raised: {exc}")
         finally:

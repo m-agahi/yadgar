@@ -132,6 +132,9 @@ class TestAtomicSettingsWrite:
 
         try:
             srv.install_hooks(str(project_dir), scope="project")
+        # `install_hooks` walks the whole client-install orchestrator against a
+        # tmp_path HOME; the assertion is on the os.replace calls it made
+        # before failing, not on whether it completed.
         except Exception:
             pass  # May fail due to missing hooks dir, but we check the replace calls
 

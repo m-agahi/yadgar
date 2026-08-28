@@ -52,9 +52,11 @@ def _reset_tracer_provider() -> None:
             _tr._SETUP_DONE.clear()
             _tr._stop_span_log_queue()
             logging.getLogger("yadgar.tracing").propagate = True
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
-    except Exception:
+    # The outer arm guards `trace._TRACER_PROVIDER` — a private OTel attribute
+    # that a version bump can rename.
+    except (ImportError, AttributeError):  # fmt: skip
         pass
 
 
@@ -113,7 +115,10 @@ def recording_provider_with_log_span_processor():
         # Drain/stop our provider so no pending export fires against a sibling.
         try:
             provider.shutdown()
-        except Exception:
+        # SDK shutdown flushes the BatchSpanProcessor over its exporter; a
+        # second shutdown logs rather than raising, so the residual surface is
+        # an already-closed exporter stream (ValueError) or its socket (OSError).
+        except (OSError, ValueError):  # fmt: skip
             pass
         # Restore the prior global provider + once-guard so the recording provider
         # cannot leak onto the worker and contaminate later tests.
@@ -170,7 +175,7 @@ class TestLogSpanAmplification:
                 import yadgar._shared.observability.tracing as _tr
 
                 _tr._stop_span_log_queue()
-            except Exception:
+            except (ImportError, AttributeError):  # fmt: skip
                 pass
 
         spans = exporter.get_finished_spans()

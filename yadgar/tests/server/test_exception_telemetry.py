@@ -52,9 +52,12 @@ def _reset_otel():
             import yadgar._shared.observability.tracing as _tr
 
             _tr._SETUP_DONE.clear()
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
-    except Exception:
+    # The outer arm guards `trace._TRACER_PROVIDER` — a private OTel attribute
+    # that a version bump can rename. `set_tracer_provider` logs rather than
+    # raising when a provider is already set.
+    except (ImportError, AttributeError):  # fmt: skip
         pass
 
 
@@ -370,6 +373,8 @@ def test_consolidation_orchestrator_link_similar_failure():
     # _consolidation_cycle should not raise even when a phase fails
     try:
         consolidator._consolidation_cycle()
+    # The test consolidator's phase raises on purpose; the assertion is on the
+    # exception-telemetry counter, so the cycle's own outcome is irrelevant.
     except Exception:
         pass
 

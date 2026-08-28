@@ -33,9 +33,12 @@ def _reset_tracer_provider():
             import yadgar._shared.observability.tracing as _tr
 
             _tr._SETUP_DONE.clear()
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
-    except Exception:
+    # The outer arm guards `trace._TRACER_PROVIDER` — a private OTel attribute
+    # that a version bump can rename. `set_tracer_provider` logs rather than
+    # raising when a provider is already set.
+    except (ImportError, AttributeError):  # fmt: skip
         pass
 
 

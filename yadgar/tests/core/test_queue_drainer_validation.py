@@ -109,7 +109,9 @@ def queue_and_drainer(tmp_path, _isolate_file_queue):
     finally:
         try:
             drainer.stop()
-        except Exception:
+        except RuntimeError:
+            # `stop()` is `_stop_event.set()` + `join(timeout=5.0)`; join raises
+            # RuntimeError for a never-started or self-joining thread.
             pass
         server._queue_drainer = None
 
