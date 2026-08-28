@@ -120,3 +120,23 @@ class TestSentinelCarriesCoverage:
         content = _written_content(storage)
         assert "coverage" in content
         assert content["coverage"] == {"error": "coverage absent from audit result"}
+
+    def test_empty_coverage_is_not_reported_as_absent(self, monkeypatch):
+        """A present-but-empty block is recorded verbatim, not relabelled "absent".
+
+        Guards the `or` / `is None` distinction: `or` fires on `{}` too, and the
+        sentinel would then assert coverage was never handed over when it was —
+        a false statement in the exact field added to stop false statements.
+        """
+        import yadgar._shared.runtime.state as _st
+        from yadgar.backend.admin_exec.audit import write_audit_sentinel
+
+        storage = _storage_mock()
+        monkeypatch.setattr(_st, "_storage", storage)
+
+        write_audit_sentinel(
+            {"directory": "/repo", "audit_result": {"actions": [], "scanned": 3, "coverage": {}}}
+        )
+
+        content = _written_content(storage)
+        assert content["coverage"] == {}

@@ -177,7 +177,12 @@ def write_audit_sentinel(payload: dict) -> dict:
     try:
         # An audit_result with no coverage says so, rather than omitting the key:
         # a reader could otherwise not tell "not computed" from "pre-391 build".
-        coverage = audit_result.get("coverage") or {"error": "coverage absent from audit result"}
+        # ``is None``, NOT ``or``: an empty-but-present coverage block is recorded
+        # verbatim. Claiming "absent" for a block that was in fact handed over
+        # would be a false statement in the one field added to prevent those.
+        coverage = audit_result.get("coverage")
+        if coverage is None:
+            coverage = {"error": "coverage absent from audit result"}
         sentinel_content = json.dumps(
             {
                 "actions": audit_result.get("actions", []),
