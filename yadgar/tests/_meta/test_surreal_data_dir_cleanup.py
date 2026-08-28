@@ -339,3 +339,119 @@ class TestReapScriptDirSweep:
                 import shutil
 
                 shutil.rmtree(stray, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# 7. Task 416 — the SECOND fixture leak, which the 307 sweep cannot see
+#
+# `sweep_orphan_surreal_data_dirs` is prefix-gated on the surrealkv store
+# names, so 40 `/tmp/yadgar-session-end-test-*` dirs accumulated in front of a
+# reaper that was structurally incapable of noticing them.  Two halves again:
+# the PRODUCER must clean up after itself, and the SIBLING sweep must cover the
+# prefix for the runs where it did not (an interrupted or SIGKILL'd session).
+# ---------------------------------------------------------------------------
+
+
+def _make_scratch(root: Path, name: str, *, age_s: float = 0.0) -> Path:
+    """Create a fake non-surreal test scratch dir, optionally back-dated."""
+    d = root / name
+    d.mkdir()
+    (d / "test-load.json").write_text("{}")
+    if age_s:
+        old = time.time() - age_s
+        os.utime(d, (old, old))
+    return d
+
+
+class TestSessionEndScratchPrefixIsInvisibleToThe307Sweep:
+    """Pins WHY a sibling exists rather than a widened prefix tuple."""
+
+    def test_307_prefix_gate_does_not_match_the_session_end_prefix(self):
+        from yadgar.core._surreal_runner._surreal_runner import _is_test_data_dir
+
+        assert _is_test_data_dir("/tmp/yadgar-session-end-test-abcd1234") is False
+
+    def test_307_remover_refuses_a_session_end_scratch_dir(self, tmp_path):
+        d = _make_scratch(tmp_path, "yadgar-session-end-test-abcd1234")
+        assert remove_test_data_dir(str(d)) is False
+        assert d.exists()
+
+
+class TestOrphanTestTmpSweep:
+    def test_sweep_removes_an_aged_orphan(self, _tmp_root):
+        from yadgar.tests._surreal_helpers import sweep_orphan_test_tmp_dirs
+
+        orphan = _make_scratch(_tmp_root, "yadgar-session-end-test-aaaaaaaa", age_s=3600)
+
+        assert sweep_orphan_test_tmp_dirs() >= 1
+        assert not orphan.exists(), "sibling sweep left the orphan scratch dir on disk"
+
+    def test_sweep_skips_a_freshly_created_dir(self, _tmp_root):
+        """The age floor is the whole of this sweep's concurrency safety."""
+        from yadgar.tests._surreal_helpers import sweep_orphan_test_tmp_dirs
+
+        fresh = _make_scratch(_tmp_root, "yadgar-session-end-test-bbbbbbbb")
+
+        sweep_orphan_test_tmp_dirs()
+        assert fresh.exists(), "sweep deleted a dir a concurrent session had just created"
+
+    def test_sweep_ignores_directories_it_does_not_own(self, _tmp_root):
+        from yadgar.tests._surreal_helpers import sweep_orphan_test_tmp_dirs
+
+        keep = _make_scratch(_tmp_root, "yadgar-session-ends", age_s=3600)
+        foreign = _make_scratch(_tmp_root, "tmpabcd1234", age_s=3600)
+
+        sweep_orphan_test_tmp_dirs()
+        assert keep.exists() and foreign.exists()
+
+    def test_remover_refuses_a_dir_it_does_not_own(self, tmp_path):
+        from yadgar.tests._surreal_helpers import remove_test_tmp_dir
+
+        d = _make_scratch(tmp_path, "surreal_session_cccccccc")
+        assert remove_test_tmp_dir(str(d)) is False
+        assert d.exists()
+
+
+class TestSessionEndProducerCleansUpAfterItself:
+    """The producer half — red before task 416, green after.
+
+    A child pytest with ``TMPDIR`` pointed at ``tmp_path`` runs the one module
+    whose IMPORT minted the scratch dir. Nothing may survive the run: the
+    sweeps fire at ``pytest_configure``, i.e. BEFORE collection, so a dir
+    created at import time is not something they could paper over.
+    """
+
+    _TARGET = "yadgar/tests/core/test_session_end_capture_module.py"
+
+    def test_module_import_leaves_no_scratch_dir_behind(self, tmp_path):
+        import sys
+
+        env = os.environ.copy()
+        env["TMPDIR"] = str(tmp_path)
+        env.pop("PYTEST_XDIST_WORKER", None)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                str(_REPO_ROOT / self._TARGET),
+                "--no-header",
+                "-q",
+                "--tb=short",
+                "-p",
+                "no:cacheprovider",
+                "-p",
+                "no:randomly",
+                "--override-ini=addopts=",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        assert result.returncode == 0, f"child pytest failed:\n{result.stdout}\n{result.stderr}"
+        leaked = sorted(p.name for p in tmp_path.glob("yadgar-session-end-test-*"))
+        assert not leaked, (
+            f"importing {self._TARGET} leaked {len(leaked)} scratch dir(s) into TMPDIR: {leaked}"
+        )

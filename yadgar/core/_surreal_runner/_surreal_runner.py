@@ -471,6 +471,98 @@ def sweep_orphan_surreal_data_dirs(min_age_s: float = _SWEEP_MIN_AGE_S) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Task 416 — the SECOND leak the 307 sweep structurally cannot see.
+#
+# ``sweep_orphan_surreal_data_dirs`` is prefix-gated on
+# ``_TEST_DATA_DIR_PREFIXES`` — surrealkv stores only — and that narrowness is
+# the safety property that keeps ``/data`` and the benchmark dirs unreachable
+# from it.  Widening that tuple to cover non-surreal fixture debris would trade
+# the property away, so this is a SIBLING with its own prefix tuple, its own
+# gate and its own remover.  It carries no in-use guard because these are plain
+# scratch dirs, not databases a live process serves out of — the age floor is
+# the whole of its concurrency safety.
+#
+# It lives beside the surreal sweep rather than in a new module because the
+# no-lone-files law (ADR-0084) would make a package out of one function; the
+# cost is a mild semantic smell (a non-surreal sweeper inside
+# ``_surreal_runner``) accepted deliberately.
+# ---------------------------------------------------------------------------
+
+_TEST_TMP_DIR_PREFIXES: tuple[str, ...] = ("yadgar-session-end-test-",)
+"""Basename prefixes owned by NON-surreal pytest scratch dirs.
+
+Same narrowness rule as ``_TEST_DATA_DIR_PREFIXES``: a prefix belongs here only
+when it can be created by nothing but a test.  ``yadgar-session-end-test-`` is
+minted at module-import time by
+``yadgar/tests/core/test_session_end_capture_module.py`` and by nothing in
+production — the hook itself writes to ``_paths.SESSION_ENDS_DIR``.
+"""
+
+
+def _is_test_tmp_dir(path: str) -> bool:
+    """True when *path*'s basename carries a non-surreal test-scratch prefix."""
+    return os.path.basename(os.path.normpath(path)).startswith(_TEST_TMP_DIR_PREFIXES)
+
+
+@observe(tier="stage")
+def remove_test_tmp_dir(path: str) -> bool:
+    """Delete *path* if — and ONLY if — it is a test-owned scratch dir.
+
+    Deliberately NOT routed through ``remove_test_data_dir``: that one is gated
+    on the surreal prefixes and would refuse every path here, returning False
+    while the caller reported a plausible-looking zero.
+
+    Best-effort (``ignore_errors=True``): cleanup must never fail a run.
+    Returns True when the directory is gone afterwards.
+    """
+    if not _is_test_tmp_dir(path):
+        logger.warning("remove_test_tmp_dir: refused non-test path %s", path)
+        return False
+    import shutil
+
+    shutil.rmtree(path, ignore_errors=True)
+    return not os.path.exists(path)
+
+
+@observe(tier="boundary")
+def sweep_orphan_test_tmp_dirs(min_age_s: float = _SWEEP_MIN_AGE_S) -> int:
+    """Delete abandoned non-surreal pytest scratch dirs (task 416).
+
+    Runs from ``pytest_configure`` (master only) next to the 307 sweep.  Two
+    guards keep it from deleting a dir somebody is using:
+      1. prefix gate — only ``_TEST_TMP_DIR_PREFIXES`` basenames under a tmp
+         root, so nothing outside the fixtures' own naming is reachable;
+      2. age gate — *min_age_s* keeps a concurrently-running session's freshly
+         created dir out of reach.
+
+    Returns the number of directories removed.
+    """
+    import glob
+    import tempfile as _tempfile
+
+    # Same root set (and the same reason) as the surreal sweep: `/tmp`
+    # unconditionally, because a TMPDIR-unset `uv run pytest` puts its scratch
+    # dirs at the top of /tmp — which is exactly where the 416 backlog was.
+    roots = {_tempfile.gettempdir(), _session_tmp_base(), "/tmp"}
+    now = time.time()
+    removed = 0
+    for root, prefix in ((r, p) for r in roots if r for p in _TEST_TMP_DIR_PREFIXES):
+        for path in glob.glob(os.path.join(root, prefix + "*")):
+            if not os.path.isdir(path):
+                continue
+            try:
+                if now - os.stat(path).st_mtime < min_age_s:
+                    continue
+            except OSError:
+                continue
+            if remove_test_tmp_dir(path):
+                removed += 1
+    if removed:
+        logger.warning("sweep_orphan_test_tmp_dirs: removed %d orphan dir(s)", removed)
+    return removed
+
+
+# ---------------------------------------------------------------------------
 # Deterministic port allocation (xdist-aware)
 # ---------------------------------------------------------------------------
 

@@ -223,6 +223,7 @@ def pytest_configure(config):
         from yadgar.tests._surreal_helpers import (
             reap_stale_surreal,
             sweep_orphan_surreal_data_dirs,
+            sweep_orphan_test_tmp_dirs,
         )
 
         reap_stale_surreal()
@@ -233,6 +234,11 @@ def pytest_configure(config):
         # because the leaked dirs sat at the top of /tmp (TMPDIR unset), i.e.
         # they came from bare `uv run pytest`, which never touches that script.
         sweep_orphan_surreal_data_dirs()
+        # Task 416 sibling. The 307 sweep above is prefix-gated on the surreal
+        # store names, so it structurally cannot see the non-surreal fixture
+        # scratch dirs (``/tmp/yadgar-session-end-test-*``) — 40 of which had
+        # accumulated. Same master-only placement, same start-of-run rationale.
+        sweep_orphan_test_tmp_dirs()
         _clamp_workers_to_ram(config)
 
 

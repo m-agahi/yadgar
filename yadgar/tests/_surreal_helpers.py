@@ -19,7 +19,9 @@ from yadgar.core._surreal_runner import (  # noqa: F401
     reap_stale_surreal,
     register_test_data_dir,
     remove_test_data_dir,
+    remove_test_tmp_dir,
     spawn_surreal,
     sweep_orphan_surreal_data_dirs,
+    sweep_orphan_test_tmp_dirs,
     teardown_surreal_proc,
 )
