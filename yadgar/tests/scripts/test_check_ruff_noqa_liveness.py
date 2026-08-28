@@ -21,6 +21,12 @@ This test pins the gate's contracts:
       laundering channel.
   (f) THE GENERATOR OWNS THE HEADER — ``--write-baseline`` re-emits the
       unreviewed-debt declaration, so it cannot be dropped by a regeneration.
+  (k) THE COLON IS THE DISCRIMINATOR (task 404) — ``# noqa CODE`` with no
+      colon is a BLANKET suppression; ruff never parses the word after the
+      marker as a code, so the gate must not either.
+  (l) FILE-LEVEL DIRECTIVES (task 405) — ``# ruff: noqa: CODES`` is held by
+      the same liveness rule as an inline marker, plus the two shapes ruff
+      itself refuses (not on its own line; naming no codes).
 
 Notes on ruff interaction: the test fixtures intentionally contain malformed
 noqa directives (the whole point of the gate). Each is suppressed with
@@ -731,4 +737,246 @@ class TestScriptsDirectoryIsScanned:
             sources={"yadgar/core/mod.py": "def f():\n    return 1\n"},
         )
         assert not (repo / "scripts").is_dir()
+        assert nql.check(repo) == []
+
+
+# ---------------------------------------------------------------------------
+# (k) THE COLON IS THE DISCRIMINATOR (task 404, 2026-08-28)
+# ---------------------------------------------------------------------------
+
+
+class TestColonlessMarkerIsBlanket:
+    """``# noqa CODE`` — no colon — is a BLANKET suppression, not a named one.
+
+    Measured on ruff 0.15.21 (repo-pinned) and 0.16.1 (``select = ["F"]``, unused ``import os``)::
+
+        import os  # noqa: E501 is disabled  -> Found 1 error   (E501 only)
+        import os  # noqa E501 is disabled   -> All checks passed
+
+    The second names E501 while the violation is F401, and F401 vanished: no
+    colon means ruff never parses the following word as a code. The gate used
+    to capture that word and run it through ``is_live``, so a colon-less
+    marker naming a LIVE rule passed silently while ruff blanket-suppressed
+    the whole line. The BARE class is therefore keyed on the colon, NOT on
+    whether a code-shaped token follows.
+    """
+
+    def test_colonless_marker_with_a_live_code_is_flagged(self, tmp_path: Path) -> None:
+        # F401 IS live here. Under the old logic the code parsed, resolved
+        # live, and the site passed — the silent case with no signal anywhere.
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "import os  # noqa F401 unused on purpose\n"},
+        )
+        errors = nql.check(repo)
+        bare = [e for e in errors if "BARE" in e]
+        assert bare, (
+            "a colon-less marker followed by a code-shaped word is a blanket "
+            f"suppression and must be flagged; got {errors}"
+        )
+        assert "no colon" in bare[0], f"the message must name the missing colon: {bare[0]}"
+
+    def test_colonless_marker_with_an_inert_code_is_flagged_as_bare(self, tmp_path: Path) -> None:
+        """Not merely re-reported as INERT-RULE — the shape itself is the defect.
+
+        An INERT-RULE report is baselineable; this shape must never be, so it
+        has to come out of the BARE class.
+        """
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "import os  # noqa BLE001 blind except\n"},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "BARE" in e], f"expected a BARE report; got {errors}"
+
+    def test_the_colonless_shape_is_never_baselined(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "import os  # noqa F401 unused on purpose\n"},
+            baseline={},  # creates scripts/ so --write-baseline has a home
+        )
+        nql.write_baseline(repo)
+        assert nql.load_baseline(repo) == {}, "a blanket suppression must not be allowlisted"
+        assert nql.check(repo), "a regenerated baseline must not silence the BARE class"
+
+    def test_the_colon_form_still_passes(self, tmp_path: Path) -> None:
+        """The green half of the red-check: add the colon and the gate clears."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "import os  # noqa: F401 unused on purpose\n"},
+        )
+        assert nql.check(repo) == []
+
+
+# ---------------------------------------------------------------------------
+# (l) FILE-LEVEL hash + `ruff: noqa` DIRECTIVES (task 405, 2026-08-28)
+# ---------------------------------------------------------------------------
+# Written hash-first on purpose: ruff finds a file-level directive anywhere in
+# a comment line, so the literal form in a comment here would arm it (and
+# backticks around it only downgrade it to a dead directive ruff warns about).
+# ---------------------------------------------------------------------------
+
+
+class TestFileLevelDirective:
+    """``# ruff: noqa: CODES`` suppresses file-wide and was invisible here.
+
+    ``_NOQA_RE`` requires ``noqa`` to follow the ``#`` directly, which
+    ``# ruff: noqa`` does not, so six such directives under ``yadgar/`` were
+    never audited. All six name live codes, so this was a STRUCTURAL blind
+    spot with no live violation — but a file-level directive is strictly
+    BROADER than an inline one, and leaving the broader form unaudited while
+    ratcheting the narrower one is the wrong way round.
+    """
+
+    def test_inert_code_in_a_file_level_directive_is_flagged(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F", "BLE"],
+            ignore=["BLE001"],
+            sources={"yadgar/core/mod.py": "# ruff: noqa: BLE001\nimport os\n"},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "INERT-RULE" in e and "BLE001" in e], (
+            f"a file-level directive naming a dead rule must be flagged; got {errors}"
+        )
+
+    def test_live_code_in_a_file_level_directive_passes(self, tmp_path: Path) -> None:
+        """The green half — and the reason the repo baseline did not move."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "# ruff: noqa: F401\nimport os\n"},
+        )
+        assert nql.check(repo) == []
+
+    def test_bare_file_level_directive_is_flagged(self, tmp_path: Path) -> None:
+        """``# ruff: noqa`` with no codes suppresses EVERY rule in the file."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "# ruff: noqa\nimport os\n"},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "FILE-NOQA" in e], (
+            f"a whole-file blanket suppression must be flagged; got {errors}"
+        )
+
+    def test_empty_file_level_directive_is_flagged(self, tmp_path: Path) -> None:
+        """``# ruff: noqa:`` — ruff calls this an invalid directive and drops it."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "# ruff: noqa:\nimport os\n"},
+        )
+        assert [e for e in nql.check(repo) if "FILE-NOQA" in e]
+
+    def test_directive_sharing_a_line_with_code_is_flagged(self, tmp_path: Path) -> None:
+        """Ruff warns "must appear on their own line" and applies nothing."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "x = 1  # ruff: noqa: F401\nimport os\n"},
+        )
+        errors = nql.check(repo)
+        assert [e for e in errors if "FILE-NOQA" in e and "own line" in e], (
+            f"a trailing file-level directive is dead and must be flagged; got {errors}"
+        )
+
+    def test_indented_own_line_directive_is_accepted(self, tmp_path: Path) -> None:
+        """Indentation does not disqualify it — measured: it still applies."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "def f():\n    # ruff: noqa: F401\n    return 1\n"},
+        )
+        assert nql.check(repo) == []
+
+    def test_directive_below_line_one_is_still_seen(self, tmp_path: Path) -> None:
+        """The directive is position-independent; the scan must not anchor."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F", "BLE"],
+            ignore=["BLE001"],
+            sources={"yadgar/core/mod.py": "import os\n\n# ruff: noqa: BLE001\n"},
+        )
+        assert [e for e in nql.check(repo) if "BLE001" in e]
+
+    def test_no_space_after_the_ruff_prefix_is_seen(self, tmp_path: Path) -> None:
+        """``# ruff:noqa: CODE`` works in ruff, so the gate must see it too."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F", "BLE"],
+            ignore=["BLE001"],
+            sources={"yadgar/core/mod.py": "# ruff:noqa: BLE001\nimport os\n"},
+        )
+        assert [e for e in nql.check(repo) if "BLE001" in e]
+
+    def test_uppercase_noqa_in_a_file_level_directive_is_seen(self, tmp_path: Path) -> None:
+        """``noqa`` is case-insensitive to ruff (the ``ruff:`` prefix is not)."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F", "BLE"],
+            ignore=["BLE001"],
+            sources={"yadgar/core/mod.py": "# ruff: NOQA: BLE001\nimport os\n"},
+        )
+        assert [e for e in nql.check(repo) if "BLE001" in e]
+
+    def test_colonless_file_level_directive_is_flagged_as_blanket(self, tmp_path: Path) -> None:
+        """``# ruff: noqa F401`` — same colon trap as inline, file-wide.
+
+        Measured: a file whose only directive was ``# ruff: noqa E501`` had
+        its F401 violation suppressed, so the codes are not parsed.
+        """
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F"],
+            sources={"yadgar/core/mod.py": "# ruff: noqa F401\nimport os\n"},
+        )
+        assert [e for e in nql.check(repo) if "FILE-NOQA" in e]
+
+    def test_directive_later_in_a_comment_line_is_seen(self, tmp_path: Path) -> None:
+        """Ruff honours it anywhere in a comment line — so ``search``, not ``match``.
+
+        Measured on ruff 0.15.21 (repo-pinned) and 0.16.1: a file whose only comment was
+        ``# see also `` plus a second ``#`` plus ``ruff: noqa: F401`` had its
+        F401 violation suppressed. An anchored scan would have called that
+        file clean while the whole file was suppressed.
+        """
+        body = "# see also " + "#" + " ruff: noqa: BLE001\nimport os\n"
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F", "BLE"],
+            ignore=["BLE001"],
+            sources={"yadgar/core/mod.py": body},
+        )
+        assert [e for e in nql.check(repo) if "BLE001" in e]
+
+    def test_file_level_directive_in_a_string_literal_is_not_a_site(self, tmp_path: Path) -> None:
+        """Ruff ignores one inside a string; tokenising keeps the gate honest."""
+        body = 'FIXTURE = """\\\n# ruff: noqa: BLE001\n"""\n'
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F", "BLE"],
+            ignore=["BLE001"],
+            sources={"yadgar/core/mod.py": body},
+        )
+        assert nql.check(repo) == []
+
+    def test_file_level_inert_site_folds_into_the_existing_baseline_key(
+        self, tmp_path: Path
+    ) -> None:
+        """One ``(relpath, code)`` row covers both spellings — no format change."""
+        repo = _make_repo(
+            tmp_path,
+            select=["E", "F", "BLE"],
+            ignore=["BLE001"],
+            sources={"yadgar/core/mod.py": "# ruff: noqa: BLE001\nimport os  # noqa: BLE001\n"},
+            baseline={},  # creates scripts/ so --write-baseline has a home
+        )
+        nql.write_baseline(repo)
+        assert nql.load_baseline(repo) == {("yadgar/core/mod.py", "BLE001"): 2}
         assert nql.check(repo) == []
