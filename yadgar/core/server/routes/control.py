@@ -35,7 +35,7 @@ import os
 import time
 from pathlib import Path
 
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 
 from yadgar._shared.config.config_registry import clear_config_caches, list_config
@@ -368,7 +368,7 @@ async def control_config_post_handler(request: Request) -> JSONResponse:
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
 
     if not isinstance(body, dict):
@@ -497,7 +497,7 @@ async def _vacuum_confirmed(request: Request) -> bool:
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return False
     return isinstance(body, dict) and body.get("confirm") == "vacuum"
 
@@ -578,7 +578,7 @@ async def control_restart_handler(request: Request) -> JSONResponse:
     # Parse body
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
 
     if not isinstance(body, dict):
@@ -654,7 +654,7 @@ async def _maintenance_ttl(request: Request) -> float | None:
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return None
     if not isinstance(body, dict):
         return None
@@ -665,7 +665,7 @@ async def _maintenance_ttl(request: Request) -> float | None:
     # its route table.  A malformed TTL is a no-TTL either way.
     try:
         ttl = float(body.get("ttl_seconds") or 0)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):  # fmt: skip
         return None
     return ttl if ttl > 0 else None
 
@@ -683,7 +683,7 @@ async def _maintenance_label(request: Request) -> dict:
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return {"operation": None, "phase": None}
     if not isinstance(body, dict):
         return {"operation": None, "phase": None}

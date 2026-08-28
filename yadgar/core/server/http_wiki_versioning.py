@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 
 import yadgar._shared.runtime.state as _st
@@ -294,7 +294,7 @@ async def api_wiki_restore(request: Request) -> JSONResponse:
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse(
             {"restored": False, "reason": "invalid_json"}, status_code=400, headers=_CORS
         )

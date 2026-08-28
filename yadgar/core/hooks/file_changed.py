@@ -62,7 +62,7 @@ def _post_file_changed(file_path: str, file_action: str) -> None:
     except urllib.error.HTTPError as e:
         # Close the file wrapper (py3.14 ResourceWarning leak guard).
         e.close()
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         pass
 
 
@@ -71,7 +71,7 @@ def main() -> None:
     try:
         try:
             data = json.loads(sys.stdin.read() or "{}")
-        except Exception:
+        except (OSError, ValueError):  # fmt: skip
             return
 
         file_path = str(data.get("file_path", "")).strip()

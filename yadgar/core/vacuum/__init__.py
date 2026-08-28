@@ -290,7 +290,7 @@ def _assert_backend_quiesced(backend_url: str) -> bool:
     """
     try:
         r = httpx.get(f"{backend_url}/health", timeout=2.0)
-    except Exception:
+    except (OSError, httpx.HTTPError, httpx.InvalidURL):  # fmt: skip
         return True  # connection refused / timeout → nothing serving → quiesced
     print(
         f"[vacuum] ERROR: backend at {backend_url} is LIVE (HTTP {r.status_code}) at swap "
@@ -313,7 +313,7 @@ def _wait_for_health(
             r = httpx.get(f"{url}/health", timeout=2.0)
             if r.status_code == 200:
                 return True
-        except Exception:
+        except (OSError, httpx.HTTPError, httpx.InvalidURL):  # fmt: skip
             pass
         time.sleep(poll_interval)
     return False
@@ -332,7 +332,7 @@ def _wait_for_yadgar_health(
             r = httpx.get(f"{url}/health", timeout=2.0)
             if r.status_code == 200:
                 return True
-        except Exception:
+        except (OSError, httpx.HTTPError, httpx.InvalidURL):  # fmt: skip
             pass
         time.sleep(poll_interval)
     return False
@@ -398,7 +398,7 @@ def _log_consolidation_row(row: dict) -> None:
             params=row,
         )
         client.close()
-    except Exception as exc:
+    except (OSError, httpx.HTTPError, httpx.InvalidURL) as exc:
         print(f"[vacuum] warning: could not insert consolidation_log row: {exc}", file=sys.stderr)
 
 
@@ -1137,7 +1137,7 @@ def _check_invariants_verified(yadgar_url: str) -> tuple[bool, str]:
             headers=_ci_headers,
             timeout=120.0,
         )
-    except Exception as exc:
+    except (OSError, httpx.HTTPError, httpx.InvalidURL) as exc:
         return False, f"check_invariants request failed: {exc}"
     if ci_resp.status_code != 200:
         return False, (
@@ -1145,7 +1145,7 @@ def _check_invariants_verified(yadgar_url: str) -> tuple[bool, str]:
         )
     try:
         payload = ci_resp.json()
-    except Exception as exc:
+    except ValueError as exc:
         return False, f"check_invariants returned unparseable body: {exc}"
     if payload.get("ok"):
         return True, "ok"
@@ -1318,7 +1318,7 @@ def _check_backend_reachable(backend_url: str, http_timeout: float) -> bool:
         )
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code}")
-    except Exception as exc:
+    except (OSError, RuntimeError, httpx.HTTPError, httpx.InvalidURL) as exc:
         print(
             f"[vacuum] ERROR: backend at {backend_url} is not reachable: {exc}\n"
             "Start yadgar-backend first, then run `yadgar vacuum`.",

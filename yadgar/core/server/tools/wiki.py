@@ -725,7 +725,7 @@ def _current_wiki_epoch() -> int:
         from yadgar._shared.runtime.cache_epoch import _current_epoch
 
         return _current_epoch(None)
-    except Exception:
+    except ImportError:
         return 0
 
 
@@ -977,7 +977,7 @@ def wiki_query(
             )
 
             yadgar_wiki_query_duration_ms.observe((_time.monotonic() - _wiki_query_t0) * 1000)
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
 
 

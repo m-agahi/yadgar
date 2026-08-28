@@ -381,7 +381,7 @@ def _write_global_stop_hooks(
     if global_settings_path.exists():
         try:
             global_settings = json.loads(global_settings_path.read_text())
-        except Exception:
+        except (OSError, ValueError):  # fmt: skip
             global_settings = {}
     global_hooks = global_settings.get("hooks", {})
     _register_global_stop_hooks(global_hooks, stop_entry, session_end_entry)
@@ -411,7 +411,7 @@ def _load_settings(settings_path: Path) -> dict:
         return {}
     try:
         return json.loads(settings_path.read_text())
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         return {}
 
 
@@ -451,6 +451,6 @@ def _atomic_write(directory: Path, target: Path, data: dict) -> None:
     except Exception:
         try:
             os.unlink(tmp_path_str)
-        except Exception:
+        except OSError:
             pass
         raise

@@ -176,7 +176,7 @@ def _observe_auth_duration(t0: float) -> None:
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         yadgar_mcp_auth_check_duration_ms.observe(elapsed_ms)
-    except Exception:
+    except (ImportError, ValueError):  # fmt: skip
         pass
 
 

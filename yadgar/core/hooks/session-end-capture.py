@@ -111,7 +111,7 @@ if not ENABLED:
 
 try:
     data = json.loads(sys.stdin.read() or "{}")
-except Exception:
+except (OSError, ValueError):  # fmt: skip
     data = {}
 
 cwd = data.get("cwd", os.getcwd())
@@ -349,7 +349,7 @@ def _collect_straggler_findings(tp: str, project_cwd: str) -> list[dict]:
         return collect_pending_findings(
             tp, project_cwd, _default_sweep_state_path(), tasks_root=tasks_root
         )
-    except Exception:
+    except (ImportError, OSError):  # fmt: skip
         return []
 
 

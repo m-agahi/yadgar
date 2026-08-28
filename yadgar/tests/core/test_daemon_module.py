@@ -123,9 +123,19 @@ def test_default_image_uses_package_version():
 
 
 def test_default_image_falls_back_to_latest():
+    """The fallback fires on the exception the stdlib actually raises.
+
+    ``importlib.metadata.version`` signals an uninstalled distribution with
+    ``PackageNotFoundError`` (a ``ModuleNotFoundError`` and therefore an
+    ``ImportError``). This used to patch in a bare ``Exception``, which only
+    passed because the handler was a blind ``except Exception`` — it asserted
+    the blindness rather than the fallback (ADR-0465).
+    """
+    from importlib.metadata import PackageNotFoundError
+
     from yadgar.core.daemon import _default_image
 
-    with patch("importlib.metadata.version", side_effect=Exception("not found")):
+    with patch("importlib.metadata.version", side_effect=PackageNotFoundError("myrepo")):
         result = _default_image("myrepo/img")
     assert result == "myrepo/img:latest"
 

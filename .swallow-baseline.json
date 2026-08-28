@@ -95,48 +95,6 @@
     "log_level": "debug",
     "lineno_at_baseline": 109
   },
-  "yadgar/core/hooks/findings_capture.py:_load_sweep_state:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "dict",
-    "log_level": "none",
-    "lineno_at_baseline": 173
-  },
-  "yadgar/core/hooks/findings_capture.py:_scan_pending:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "list",
-    "log_level": "none",
-    "lineno_at_baseline": 272
-  },
-  "yadgar/core/hooks/findings_capture.py:collect_pending_findings:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "list",
-    "log_level": "none",
-    "lineno_at_baseline": 312
-  },
-  "yadgar/core/hooks/session-end-capture.py:_collect_straggler_findings:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "list",
-    "log_level": "none",
-    "lineno_at_baseline": 353
-  },
-  "yadgar/core/hooks/stop-memory-checkpoint.py:_load_state:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "dict",
-    "log_level": "none",
-    "lineno_at_baseline": 159
-  },
-  "yadgar/core/install/_settings.py:_load_settings:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "dict",
-    "log_level": "none",
-    "lineno_at_baseline": 415
-  },
   "yadgar/core/server/http.py:_viz_exact_title_node_ids:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",

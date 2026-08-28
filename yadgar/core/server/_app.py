@@ -260,7 +260,7 @@ class MCPTraceSpanMiddleware:
 
             self._tracer = trace.get_tracer("yadgar.server.mcp")
             self._propagator = propagate
-        except Exception:
+        except ImportError:
             pass  # OTel not available — degrade gracefully
 
     async def __call__(self, scope, receive, send) -> None:
@@ -494,7 +494,7 @@ def _tool(power: bool = False, always_load: bool = False):
             else:
                 text = json.dumps(result, default=str)
             return max(1, len(text) // 4)
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             return 0
 
     def decorator(func):
@@ -602,7 +602,7 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
             _elapsed_ms = (_time.monotonic() - _t0) * 1000
             yadgar_mcp_request_duration_ms.labels(tool=func.__name__).observe(_elapsed_ms)
             yadgar_mcp_request_count.labels(tool=func.__name__, status=_status).inc()
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
         try:
             from yadgar._shared.observability.metrics import (
@@ -610,7 +610,7 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
             )
 
             yadgar_tool_token_estimate_total.labels(tool=func.__name__).inc(estimate_tokens(result))
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
 
     def _maintenance():
