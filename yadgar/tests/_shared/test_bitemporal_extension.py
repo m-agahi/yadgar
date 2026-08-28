@@ -603,6 +603,16 @@ class TestBackwardCompat:
         )
         invalidate_edge(storage, "derived_belief", bid)
 
+        # POSITIVE CONTROL first — without it the assertion below passes for
+        # free whenever the FTS query simply matches nothing (analyzer casing,
+        # tokenization, index coverage), which would make this test vacuous
+        # rather than a check of the ``valid_until IS NONE`` default.
+        with_invalidated = storage.search_beliefs_fts("Stale", include_invalidated=True)
+        assert any(b.get("content") == "Stale belief content" for b in with_invalidated), (
+            "FTS must match the seeded belief when invalidated rows are included — "
+            "otherwise the default-exclusion assertion below proves nothing"
+        )
+
         beliefs = storage.search_beliefs_fts("Stale")
         assert not any(b.get("content") == "Stale belief content" for b in beliefs), (
             "Invalidated belief should not appear in search_beliefs_fts by default"

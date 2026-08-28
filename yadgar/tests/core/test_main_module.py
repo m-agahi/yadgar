@@ -507,7 +507,9 @@ class TestSubcommandExitCodePropagates:
     missing snapshot returns 2 without attempting a single write.
     """
 
-    def test_nonzero_handler_return_becomes_nonzero_exit(self, tmp_path, monkeypatch) -> None:
+    def test_nonzero_handler_return_becomes_nonzero_exit(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
         import pytest as _pytest
 
         import yadgar.__main__ as main_mod
@@ -520,6 +522,11 @@ class TestSubcommandExitCodePropagates:
         with _pytest.raises(SystemExit) as caught:
             main_mod.cli()
         assert caught.value.code == 2
+        # argparse ALSO exits 2 on a malformed command line, so the code alone
+        # cannot tell "the handler returned 2" from "the parser rejected the
+        # args" — which is the whole mechanism under test. The handler's own
+        # stderr line is the discriminator.
+        assert "snapshot restore: snapshot does not exist" in capsys.readouterr().err
 
     def test_handler_returning_none_still_exits_zero(self, monkeypatch) -> None:
         """Most handlers return None — they must keep exiting 0."""
