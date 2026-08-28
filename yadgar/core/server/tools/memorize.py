@@ -108,8 +108,10 @@ def memorize(  # noqa: PLR0913 — MCP tool with frozen 11-arg signature
 
     Persistence options:
     - is_protected=True: memory is exempt from heat decay and will never be aged out.
-      Use this for facts that must persist indefinitely (credentials locations, key
-      decisions, permanent constraints). Equivalent to calling anchor() but inline.
+      Use this for facts that must persist indefinitely (credentials locations,
+      permanent constraints). A DECISION does not belong here at all — file it
+      with adr_add, which validates the schema and gives it an ADR number.
+      Equivalent to calling anchor() but inline.
     - Alternatively, include "_anchor" in tags for the same effect.
     - Without either flag, memories decay naturally based on heat and last-access time.
 
