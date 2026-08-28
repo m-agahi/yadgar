@@ -99,7 +99,7 @@ class EnrichmentPipeline:
                 concepts = self._get_conceptnet().expand(content, settings)
                 concepts = self._apply_fpa(embedding, concepts, threshold)
                 result.concepts = concepts
-            except Exception as e:
+            except Exception as e:  # BLE001-KEEP: per-enricher isolation: ConceptNet reaches conceptnet_lite (SQLite) or the remote HTTP API, whose failures share no common base, and one dead enricher must not sink the other three
                 logger.warning("ConceptNet enrichment failed: %s", e)
 
         # COMET commonsense inference
@@ -113,7 +113,7 @@ class EnrichmentPipeline:
                 result.comet_inferences = inferences
                 if self._get_comet()._model is not None:
                     result.model_versions["comet"] = settings.COMET_MODEL
-            except Exception as e:
+            except Exception as e:  # BLE001-KEEP: per-enricher isolation: COMET loads a seq2seq model (torch/transformers), whose failures share no common base; ADR-0004 keeps this path dormant but reachable
                 logger.warning("COMET enrichment failed: %s", e)
 
         # Doc2Query synthetic queries
@@ -124,7 +124,7 @@ class EnrichmentPipeline:
                 result.queries = queries
                 if self._get_doc2query()._model is not None:
                     result.model_versions["doc2query"] = settings.DOC2QUERY_MODEL
-            except Exception as e:
+            except Exception as e:  # BLE001-KEEP: per-enricher isolation: Doc2Query loads a seq2seq model (torch/transformers), whose failures share no common base
                 logger.warning("Doc2Query enrichment failed: %s", e)
 
         # Logic expansion (no external deps, no FPA needed — these are structural)
@@ -132,7 +132,7 @@ class EnrichmentPipeline:
             try:
                 expansions = self._get_logic().expand(content)
                 result.logic_expansions = expansions
-            except Exception as e:
+            except (AttributeError, TypeError) as e:  # fmt: skip
                 logger.warning("Logic enrichment failed: %s", e)
 
         # Build enriched content

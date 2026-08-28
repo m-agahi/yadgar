@@ -258,7 +258,7 @@ class JSONLogFormatter(logging.Formatter):
                 payload["trace_id"] = tid
             if sid is not None:
                 payload["span_id"] = sid
-        except Exception:
+        except ImportError:
             pass  # tracing not available / not yet initialized — skip silently
 
     def format(self, record: logging.LogRecord) -> str:
@@ -268,7 +268,7 @@ class JSONLogFormatter(logging.Formatter):
         self._append_trace_context(payload)
         try:
             return json.dumps(payload, default=str)
-        except Exception:
+        except (TypeError, ValueError, RecursionError):  # fmt: skip
             return json.dumps(
                 {
                     "ts": payload.get("ts", ""),
@@ -343,7 +343,7 @@ class JsonFormatter(logging.Formatter):
 
         try:
             return json.dumps(payload, default=str)
-        except Exception:
+        except (TypeError, ValueError, RecursionError):  # fmt: skip
             return json.dumps({"message": str(record.getMessage()), "level": record.levelname})
 
 
@@ -393,7 +393,7 @@ def _increment_request_metric(scope: dict) -> None:
         from yadgar._shared.observability.metrics import yadgar_requests_total  # noqa: PLC0415
 
         yadgar_requests_total.labels(route=_resolve_route_label(scope)).inc()
-    except Exception:
+    except ImportError:
         pass
 
 
@@ -645,7 +645,7 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
             _m = self._metrics_module
             self._rotation_counter = _m.yadgar_log_file_rotations_total
             self._size_gauge = _m.yadgar_log_file_size_bytes
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
 
     def doRollover(self) -> None:  # noqa: N802 (stdlib name)
@@ -654,7 +654,7 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
         if self._rotation_counter is not None:
             try:
                 self._rotation_counter.labels(logger=self._logger_name).inc()
-            except Exception:
+            except Exception:  # BLE001-KEEP: inside doRollover on a logging handler: a metrics failure here would propagate through logging.Handler.handleError and can silence the log stream itself, which is worse than a lost rotation count
                 pass
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -715,7 +715,7 @@ class RateLimitFilter(logging.Filter):
 
                 self._metrics_module = _m
             self._dropped_counter = getattr(self._metrics_module, "yadgar_log_dropped_total", None)
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -748,7 +748,7 @@ class RateLimitFilter(logging.Filter):
                         level=record.levelname,
                         reason="rate_limit",
                     ).inc()
-                except Exception:
+                except Exception:  # BLE001-KEEP: inside a logging Filter: a metrics failure here would propagate into every log call the filter guards, so the drop counter is best-effort
                     pass
 
             # Emit summary at most once per minute
@@ -780,7 +780,7 @@ class RateLimitFilter(logging.Filter):
         for handler in root.handlers:
             try:
                 handler.emit(summary)
-            except Exception:
+            except Exception:  # BLE001-KEEP: emits directly into third-party root handlers; one broken handler must not stop the others, mirroring logging's own handleError contract
                 pass
 
 
@@ -803,7 +803,7 @@ def _resolve_metrics_module(process: str):
         from yadgar._shared.observability import metrics as _m  # noqa: PLC0415
 
         return _m
-    except Exception:
+    except ImportError:
         return None
 
 

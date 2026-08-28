@@ -76,7 +76,7 @@ def _read_counter(path: Path) -> int:
     """Read a single-int counter file. Missing/partial/error → 0 (safe MISS)."""
     try:
         return int(path.read_text().strip())
-    except Exception:  # pragma: no cover - missing file / transient error → 0
+    except (OSError, ValueError):  # pragma: no cover - missing/partial file → 0  # fmt: skip
         return 0
 
 
@@ -111,7 +111,7 @@ def bump_epoch(directory: str | None) -> None:
     """
     try:
         _incr_counter(_counter_path(directory))
-    except Exception:  # pragma: no cover - instrumentation must never break writes
+    except OSError:  # pragma: no cover - instrumentation must never break writes
         pass
 
 
@@ -125,7 +125,7 @@ def _current_epoch(directory: str | None) -> int:
         dir_count = _read_counter(_counter_path(directory)) if directory else 0
         global_count = _read_counter(_counter_path(None))
         return int(dir_count + global_count)
-    except Exception:  # pragma: no cover - read must never break a cache-key build
+    except OSError:  # pragma: no cover - read must never break a cache-key build
         return 0
 
 
@@ -134,7 +134,7 @@ def _unlink_quiet(path: Path) -> None:
     """Best-effort unlink — swallows errors (test cleanup only)."""
     try:
         path.unlink()
-    except Exception:  # pragma: no cover - best-effort test cleanup
+    except OSError:  # pragma: no cover - best-effort test cleanup
         pass
 
 
@@ -144,7 +144,7 @@ def _reset_for_test() -> None:
     try:
         base = _epoch_base_dir()
         children = list(base.iterdir()) if base.is_dir() else []
-    except Exception:  # pragma: no cover - best-effort test cleanup
+    except OSError:  # pragma: no cover - best-effort test cleanup
         children = []
     for child in children:
         _unlink_quiet(child)

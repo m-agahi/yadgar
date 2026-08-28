@@ -278,7 +278,7 @@ def _list_worktrees(worktree_path: str) -> list[str]:
             timeout=5,
             check=False,
         )
-    except Exception:  # best-effort worktree capture; never blocks the drain
+    except (OSError, subprocess.SubprocessError):  # best-effort worktree capture  # fmt: skip
         return []
     if out.returncode != 0:
         return []

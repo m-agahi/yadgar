@@ -251,7 +251,7 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
             try:
                 rows = self._s._q(f"SELECT count() AS c FROM {table} GROUP ALL")
                 total = int(rows[0]["c"]) if rows else 0
-            except Exception:
+            except Exception:  # BLE001-KEEP: best-effort hidden-node count: the COUNT goes through storage._q (RuntimeError over HTTP, arbitrary SDK types embedded, no common base) and a missing count must leave the payload intact, per the comment on the continue below
                 continue  # best-effort: a count failure must not break the payload
             hidden += max(0, total - rendered.get(node_type, 0))
         return hidden
@@ -279,7 +279,7 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
                 "SELECT count() AS c FROM memory_transition WHERE count >= 2 GROUP ALL"
             )
             total = int(rows[0]["c"]) if rows else 0
-        except Exception:
+        except Exception:  # BLE001-KEEP: best-effort hidden-edge count; same untypeable storage._q surface as the node-count helper above
             return 0  # best-effort: a count failure must not break the payload
         return max(0, total - rendered)
 
@@ -336,7 +336,7 @@ class GraphAPI(GraphAPINodesMixin, GraphAPIEdgesMixin):
             wiki_count = (self._s._q("SELECT count() FROM wiki_page GROUP ALL") or [{}])[0].get(
                 "count", 0
             )
-        except Exception as exc:
+        except Exception as exc:  # BLE001-KEEP: graph_stats is a whole-payload best-effort read over several storage._q counts with no common base; an empty stats dict degrades the viz header rather than failing the request
             logger.debug("graph_stats error: %s", exc)
             return {}
 

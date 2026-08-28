@@ -49,7 +49,7 @@ def phase_contradiction(ctx: MemorizeContext) -> dict | None:
         if op == "DELETE" and target_id is not None:
             return _handle_delete(target_id, cr_reason)
 
-    except Exception as exc:
+    except Exception as exc:  # BLE001-KEEP: outer guard over the whole conflict-resolver phase: it spans an Ollama HTTP call, JSON decode and storage writes, which share no common base, and any failure must degrade to a plain ADD rather than lose the memory
         logger.warning("conflict_resolver outer error (%s) — degrading to ADD", exc)
 
     return None  # ADD or fallback — continue to store
@@ -67,7 +67,7 @@ def _handle_update(ctx: MemorizeContext, target_id: int, cr_reason: str) -> dict
             "memory_id": target_id,
             "cr_reason": cr_reason,
         }
-    except Exception as exc:
+    except Exception as exc:  # BLE001-KEEP: the UPDATE arm: storage raises with no common base, and a failed update must fall through to ADD so the write is never lost
         logger.warning("conflict_resolver UPDATE failed (%s), falling back to ADD", exc)
         return None  # fall through to ADD
 
@@ -78,6 +78,6 @@ def _handle_delete(target_id: int, cr_reason: str) -> dict:
     storage = _get_storage()
     try:
         storage.delete_memory(target_id)
-    except Exception as exc:
+    except Exception as exc:  # BLE001-KEEP: the DELETE arm: storage raises with no common base, and a failed delete must still return the resolver's decision envelope
         logger.warning("conflict_resolver DELETE failed (%s), skipping", exc)
     return {"stored": False, "reason": "conflict_resolver_delete", "cr_reason": cr_reason}

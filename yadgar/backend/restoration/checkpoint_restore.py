@@ -372,7 +372,7 @@ class CheckpointRestore:
             in_flight = parse_in_flight(transcript_path)
             in_flight["worktrees"] = _list_worktrees(worktree_path or "")
             return in_flight
-        except Exception:
+        except Exception:  # BLE001-KEEP: in-flight capture during pre-compact drain: it spans a lazy import, transcript parsing and a git subprocess, which share no common base, and a failed capture must return None rather than block the drain
             logger.debug("pre_compact_drain in-flight capture failed", exc_info=True)
             return None
 
@@ -402,7 +402,7 @@ class CheckpointRestore:
             for m in memories:
                 m.pop("embedding", None)
             return memories
-        except Exception:
+        except Exception:  # BLE001-KEEP: per-section degradation in the restore payload: the recent-memories read goes through storage with no common base, and an empty section still lets the other sections restore
             logger.debug("Failed to fetch recently stored memories for restore")
             return []
 
@@ -562,7 +562,7 @@ class CheckpointRestore:
             return []
         try:
             return self._metacognition.detect_gaps(project_id)[:3]
-        except Exception:
+        except Exception:  # BLE001-KEEP: per-section degradation: gap detection drives metacognition over storage and the embedding engine, which share no common base
             logger.debug("Gap detection failed during restore")
             return []
 
@@ -791,7 +791,7 @@ class CheckpointRestore:
                 directory=directory if directory else None,
                 project_id=project_id or None,
             )
-        except Exception:
+        except Exception:  # BLE001-KEEP: per-section degradation for memory blocks; same untypeable storage surface, and the documented contract is 'returns [] on failure'
             logger.debug("Failed to fetch memory blocks for restore")
             return []
 

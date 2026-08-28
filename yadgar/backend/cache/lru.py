@@ -190,7 +190,7 @@ class LRUCache:
                     if self._max > 0 and len(self._store) > self._max:
                         self._store.popitem(last=False)
                         self.evictions += 1
-        except Exception as exc:
+        except Exception as exc:  # BLE001-KEEP: deserialising an on-disk snapshot possibly written by an older build: msgpack raises its own package-private unpack errors alongside OSError and ValueError, with no common base, and the documented recovery is to discard the cache
             logger.warning("cache.load_snapshot: error loading %s: %s — discarding", path, exc)
             with self._lock:
                 self._store.clear()

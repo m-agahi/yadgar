@@ -215,7 +215,7 @@ class KnowledgeGraph:
                 )
 
                 yadgar_entity_extract_duration_ms.observe(_elapsed_ms)
-            except Exception:
+            except ImportError:
                 pass
 
     @observe(tier="stage", metric="knowledge_graph.extract_entities_typed_inner")

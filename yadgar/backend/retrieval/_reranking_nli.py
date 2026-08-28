@@ -24,7 +24,7 @@ class _NLIMixin:
 
         try:
             raw_scores = self._ml.score_nli(hypothesis, texts)
-        except Exception as e:
+        except Exception as e:  # BLE001-KEEP: ML client boundary: score_nli reaches a local torch model or the remote embed service over httpx with no common base, and the degrade is a 0.0 entailment score on every memory
             logger.warning("NLI reranking failed: %s", e)
             for mem in memories:
                 mem["_nli_entailment_score"] = 0.0

@@ -18,14 +18,14 @@ def _coerce_record_id(raw_id) -> int | None:
     if hasattr(raw_id, "id"):
         try:
             return int(raw_id.id)
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             return None
     s = str(raw_id)
     if ":" in s:
         s = s.rsplit(":", 1)[-1]
     try:
         return int(s.strip("'\""))
-    except Exception:
+    except ValueError:
         return None
 
 

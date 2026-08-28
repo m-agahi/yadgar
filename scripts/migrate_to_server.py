@@ -44,7 +44,7 @@ def wait_for_server(url: str, timeout: int = 30) -> None:
         try:
             urllib.request.urlopen(url, timeout=1)
             return
-        except Exception:
+        except OSError:
             time.sleep(0.2)
     raise RuntimeError(f"SurrealDB server did not start within {timeout}s")
 
@@ -131,7 +131,7 @@ def main() -> None:
                         {"table": table, "rid": str(rid).split(":")[-1], "content": content},
                     )
                     ok += 1
-                except Exception as exc:
+                except Exception as exc:  # BLE001-KEEP: per-record isolation in a one-shot migration: the surrealdb SDK raises no common base, and one bad row must not abandon the remaining records
                     print(f"   WARNING: {table}:{rid} — {exc}")
             print(f"   {table}: {ok}/{len(records)} records imported")
 

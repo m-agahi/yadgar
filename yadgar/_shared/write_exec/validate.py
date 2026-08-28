@@ -139,7 +139,7 @@ def _validate_gate_and_policy(ctx: MemorizeContext) -> dict | None:
             from yadgar._shared.observability.metrics import yadgar_writegate_outcome
 
             yadgar_writegate_outcome.labels(outcome="rejected_secret").inc()
-        except Exception:
+        except ImportError:
             pass
         return gate
 

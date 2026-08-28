@@ -79,7 +79,7 @@ def _fetch_remote_db_size(embed_url: str, threshold: int, timeout_sec: float) ->
     except _httpx.TimeoutException as exc:
         _log.warning("backend timeout: get_db_size /admin/dbsize timed out: %s", exc)
         return _zero_size_dict()
-    except Exception as exc:
+    except Exception as exc:  # BLE001-KEEP: trailing arm after the typed httpx HTTPStatusError/TimeoutException handlers above; a size telemetry read must degrade to zeros rather than fail its caller
         _log.warning("get_db_size: backend /admin/dbsize request failed: %s", exc)
         return _zero_size_dict()
 

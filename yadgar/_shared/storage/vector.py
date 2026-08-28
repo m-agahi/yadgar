@@ -149,10 +149,10 @@ class _VectorMixin:
         # update_vector is a no-op distinction in SurrealDB (already done above)
         try:
             self.update_vector(memory_id, embedding)
-        except Exception:
+        except Exception:  # BLE001-KEEP: upsert emulation: update-then-insert against storage, whose failures share no common base; a miss here falls through to the insert below
             try:
                 self.insert_vector(memory_id, embedding)
-            except Exception:
+            except Exception:  # BLE001-KEEP: second half of the upsert emulation; the row was already written by the UPDATE above, so the sidecar write is best-effort
                 pass
         # Car 2 (backend 5.22.0): the memory_doc cache holds content+embedding by id.
         # This is the reembed path (reembed_stale / reembed_all) — a raw embedding
@@ -181,7 +181,7 @@ class _VectorMixin:
                 "(SELECT id, embedding FROM memory WHERE embedding IS NOT NONE)"
             )
             _log.info("recreate_vector_table: embedding backup written to memory_embedding_backup")
-        except Exception as exc:
+        except Exception as exc:  # BLE001-KEEP: best-effort pre-flight backup before non-transactional DDL: it runs DEFINE/DELETE/INSERT whose failures share no common base, and a missing backup must not block the index rebuild it protects
             _log.warning("recreate_vector_table: backup failed (%s) — proceeding anyway", exc)
 
         # DDL statements (REMOVE INDEX, DEFINE INDEX) are not transactional in
@@ -223,7 +223,7 @@ class _VectorMixin:
                 {"qv": zero},
             )
             return True
-        except Exception:
+        except Exception:  # BLE001-KEEP: corruption probe: its contract is that ANY failure of the KNN read means the MTREE index is unusable, so the catch breadth IS the answer being computed
             return False
 
     @observe(tier="stage")
@@ -233,6 +233,6 @@ class _VectorMixin:
             self._q("REBUILD INDEX memory_embedding_idx ON memory")
             self._q("REBUILD INDEX memory_implicit_idx ON memory")
             return True
-        except Exception:
+        except Exception:  # BLE001-KEEP: same corruption contract as probe_vector_indexes: any REBUILD failure means the container must restart, so the breadth IS the answer
             _log.critical("MTREE index rebuild failed — container restart required")
             return False

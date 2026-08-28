@@ -44,7 +44,7 @@ try:
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{PORT}/health", timeout=1)
             break
-        except Exception:
+        except OSError:
             time.sleep(0.2)
     else:
         print("FAIL: server did not start")

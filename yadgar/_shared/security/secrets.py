@@ -290,7 +290,7 @@ def gate_or_reject(
                 )
 
                 yadgar_writegate_outcome.labels(outcome="allowlisted").inc()
-            except Exception:
+            except ImportError:
                 pass
             # Field is allowlisted — skip pattern scan for this field
             continue
@@ -304,7 +304,7 @@ def gate_or_reject(
                 )
 
                 yadgar_writegate_outcome.labels(outcome="rejected_secret").inc()
-            except Exception:
+            except ImportError:
                 pass
             return {"stored": False, "reason": reason, "pattern_preview": preview}
     return None

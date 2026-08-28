@@ -131,5 +131,5 @@ def _emit_cold_purge_candidates_metric(count: int) -> None:
         )
 
         yadgar_cold_purge_candidates.set(count)
-    except Exception:
+    except ImportError:
         pass

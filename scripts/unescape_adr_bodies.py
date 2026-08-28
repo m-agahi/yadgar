@@ -162,7 +162,7 @@ def repair(
             if residue:
                 logger.warning("%s: %d entities remain after repair", slug, residue)
             tally["repaired"] += 1
-        except Exception as exc:
+        except Exception as exc:  # BLE001-KEEP: per-page isolation: update_wiki_page reaches storage, whose failures share no common base, and one unrepairable page must not abort the sweep
             tally["failed"] += 1
             logger.error("failed to repair %s: %s", slug, exc)
 
@@ -205,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     db_path = os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")
     try:
         storage = StorageEngine(db_path)
-    except Exception as exc:
+    except Exception as exc:  # BLE001-KEEP: CLI top-level: StorageEngine() reaches config, filesystem and DB connect, which raise with no common base; the contract is exit-2-with-a-message
         logger.error("cannot open storage: %s", exc)
         return 2
 
@@ -219,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         try:
             storage.close()
-        except Exception:
+        except Exception:  # BLE001-KEEP: close() in finally: a teardown failure must not replace the real exit status of the sweep above
             pass
 
     logger.info(

@@ -444,7 +444,7 @@ class RulesEngine:
                 kind: len(self._storage.get_all_active_rules_by_scope(kind))
                 for kind in _LEGACY_SCOPE_KINDS
             }
-        except Exception:  # reporting must never break rule application
+        except Exception:  # BLE001-KEEP: one-shot legacy-scope census: it queries storage, which raises RuntimeError over HTTP and arbitrary SDK types embedded with no common base, and a census is reporting — it must never break rule application
             logger.debug("legacy rule-scope census failed", exc_info=True)
             return
         total = sum(stale.values())
@@ -642,7 +642,7 @@ class RulesEngine:
                     mem = {**mem, "content": modified}
                 except re.error as exc:
                     logger.warning("Bad redact pattern %r: %s", pattern, exc)
-                except Exception as exc:
+                except Exception as exc:  # BLE001-KEEP: the timeout this catches is regex.TimeoutError, a type from the OPTIONAL `regex` package; naming it would require importing the very dependency whose absence the stdlib-re fallback above exists to tolerate
                     # Catches regex.TimeoutError and any other runtime error from the
                     # `regex` library. Log and continue without applying this redact rule.
                     logger.warning(

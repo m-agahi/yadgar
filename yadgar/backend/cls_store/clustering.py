@@ -109,7 +109,7 @@ class _ClusteringMixin:
             if len(arr) == 0 or norm == 0:
                 return None
             return arr / norm
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             return None
 
     @staticmethod
