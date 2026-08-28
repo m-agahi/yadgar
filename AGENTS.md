@@ -288,6 +288,27 @@ curl -s http://127.0.0.1:8765/metrics | head
   - `check-skip-markers` now scans `importorskip`, not just `skip`/`skipif`.
   - `check-ledger-chokepoint` now sees `_q` and a shelled-out `mariadb` client, so those are no longer routes around it.
 
+## ADR discipline
+
+Four stores, one destination each — decide before you write:
+
+- **Durable decision** — architecture, a contract, an approach committed to, a scope cut → `adr_add`.
+- **Repo structure, convention, or how a mechanism works** → `wiki_add` on the page that already owns the topic (no near-duplicate pages).
+- **Useful working fact or gotcha** → `memorize`.
+- **Reusable subagent dispatch prompt** → `agent_prompt_save`.
+
+The same split is enforced at runtime by the stop-hook checkpoint protocol (`yadgar/core/hooks/templates/stop_checkpoint_prompt.md`, steps 1 and 4).
+
+**Form (HARD).** An ADR's `decision` states the RULE, not the work that produced it. The incident belongs in `context`; `decision` is what holds from now on. A car, a train, or a ledger row may be *referenced* inside a rule — it may never be the rule's *subject*.
+
+Judgment is not what fails here. The 272-ADR audit (2026-08-28) found every ADR authored since 2026-08-19 carries a substantive rejected-alternatives list; what drifts is form, and the offenders cluster entirely in bug-bag trains. ADR-0450 already contained its own rule — in its title:
+
+> Train cars lock in coverage of shipped fixes when the bug already has a structural fix; they do not re-derive.
+
+Its `decision` field then restated the errand: *"Car-F (train/bug-bag-2-2026-08-23) ships TESTS for the floor... Closes #94 in the ledger."* A reader a year out learns which branch did a chore, not what to do next time. The fix was one field wide.
+
+Mentioning a train is not the offence — this is a subject test, not a mention test. ADR-0444's decision names `origin/train/<name>` and is clean, because its subject is the worktree: *"When the orchestrator worktree is the canonical mirror for an external train ref ... resync with `git reset --hard` instead of `git merge --ff-only`."*
+
 ## Subagent contract
 
 **Verify subagent claims before integrating.** File edits, contract flips, test assertions, and command output from a subagent are claims, not truth. Re-read the artifact (the actual file, `gh pr view --json body`, `aws describe-*`, etc.) before relaying the result as done. A passing-looking diff excerpt in a report is not a passing test.

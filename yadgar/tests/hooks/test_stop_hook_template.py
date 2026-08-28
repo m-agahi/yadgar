@@ -142,6 +142,10 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
        )
      adr_add assigns the ADR-NNNN id and formats the entry.
      ALL fields mandatory — write "none" if truly empty (keeps it machine-parseable).
+     FORM: `decision` states the RULE — what holds from now on. A car, a train
+     or a ledger row belongs in `context` as the incident that prompted it; it
+     may be REFERENCED inside the rule but is never its SUBJECT. Title states
+     the rule while `decision` restates the work → rewrite `decision`.
      A decision still unresolved this session → status: open, revisit_trigger = pending question.
      Same when YOU have settled it but the user has not ruled on it: `accepted`
      means chosen AND ratified, so a decision whose own text says proposed /
@@ -534,6 +538,44 @@ def test_adr_status_must_agree_with_its_own_text():
     step1 = content.index("1. ADR CAPTURE")
     step2 = content.index("2. STRUCTURAL WRITE-BACK")
     assert step1 < content.index("means chosen AND ratified") < step2
+
+
+def test_adr_decision_states_the_rule_not_the_work():
+    """Step 1 pins the FORM of an ADR, not only what qualifies for capture.
+
+    Car C. The 272-ADR audit (2026-08-28) measured that instances ARE filing
+    real decisions — all 35 ADRs authored since 2026-08-19 carry substantive
+    rejected-alternatives lists. What drifts is form: a `decision` whose
+    subject is a car, a train or a ledger row, over a `context` that reads as
+    a session narrative (ADR-0437 / 0438 / 0445 / 0450, all bug-bag trains).
+    ADR-0450 states the rule correctly in its own TITLE and then restates the
+    errand in `decision` — the miss was one field wide, not a judgment failure,
+    which is why the KEEP/SKIP capture criteria above could not have caught it.
+
+    The rule is a SUBJECT test, not a MENTION test: ADR-0444's decision names
+    `origin/train/<name>` while stating a general rule about the orchestrator
+    worktree, and is clean. A guard that flagged the mention would flag that
+    ADR too, so the reference-vs-subject distinction is asserted explicitly.
+
+    NOTE ON SCOPE: structural guard only — it asserts the criterion is present
+    in the template and reachable inside step 1. A prompt's effect on model
+    behaviour is not unit-testable, and this test claims no such assurance.
+    """
+    content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    # The rule itself: the decision field carries the rule, not the errand.
+    assert "`decision` states the RULE" in content
+    # The incident has a home — it is not banned, it is relocated.
+    assert "belongs in `context` as the incident that prompted it" in content
+    # Reference-vs-subject. Both halves, because dropping either inverts the
+    # rule: mention-only would flag ADR-0444, subject-only would read as a ban.
+    assert "may be REFERENCED inside the rule" in content
+    assert "is never its SUBJECT" in content
+    # The concrete tripwire — title-states-the-rule is the observed signature.
+    assert "rewrite `decision`" in content
+    # Reachable inside step 1 (ADR CAPTURE), not stranded after a later step.
+    step1 = content.index("1. ADR CAPTURE")
+    step2 = content.index("2. STRUCTURAL WRITE-BACK")
+    assert step1 < content.index("`decision` states the RULE") < step2
 
 
 def test_agent_prompt_step_is_read_first():
