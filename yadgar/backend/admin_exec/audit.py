@@ -156,9 +156,18 @@ def audit_apply_mutations(payload: dict) -> dict:
 def write_audit_sentinel(payload: dict) -> dict:
     """Write the latest-wins _audit_anchors sentinel memory for a directory. Storage-write half.
 
-    payload: {"directory": str, "audit_result": {actions, scanned, _truncated}}
+    payload: {"directory": str, "audit_result": {actions, scanned, coverage, _truncated}}
     Deletes any existing _audit_anchors sentinel for the directory, then creates
     a fresh one. Matches prior core behaviour: NO epoch bump (system marker).
+
+    ``coverage`` (task 408) is carried through VERBATIM from the ``audit_anchors``
+    result — it is not recomputed here. Task 391 built that block in
+    ``core/server/tools/_audit_coverage.py`` because the scan selector
+    (``'_anchor' INSIDE tags AND directory_context = $dir``) is narrower than
+    "this project's protected rows", so a bare ``scanned`` overstates coverage.
+    ``_run_anchor_audit_pass`` already forwards the whole result across this
+    boundary; this serialiser simply dropped the key, so the UNATTENDED nightly
+    sentinel kept recording the exact unqualified number 391 exists to qualify.
 
     Returns {"written": bool}.
     """
@@ -166,10 +175,19 @@ def write_audit_sentinel(payload: dict) -> dict:
     audit_result = payload.get("audit_result") or {}
     storage = _get_storage()
     try:
+        # An audit_result with no coverage says so, rather than omitting the key:
+        # a reader could otherwise not tell "not computed" from "pre-391 build".
+        # ``is None``, NOT ``or``: an empty-but-present coverage block is recorded
+        # verbatim. Claiming "absent" for a block that was in fact handed over
+        # would be a false statement in the one field added to prevent those.
+        coverage = audit_result.get("coverage")
+        if coverage is None:
+            coverage = {"error": "coverage absent from audit result"}
         sentinel_content = json.dumps(
             {
                 "actions": audit_result.get("actions", []),
                 "scanned": audit_result.get("scanned", 0),
+                "coverage": coverage,
                 "_truncated": audit_result.get("_truncated", False),
                 "audited_at": storage._now_iso(),
             }

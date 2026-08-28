@@ -103,6 +103,27 @@ repos:
         always_run: true
         pass_filenames: false
 
+      - id: check-ci-viz-version
+        name: Check Dockerfile.ci-viz's two version strings agree (and don't lead pyproject)
+        language: system
+        entry: python3 scripts/check_ci_viz_version.py
+        # always_run: same gate-blindness class as the three hooks above
+        # (ADR-0080). Dockerfile.ci-viz carries the yadgar-ci base tag TWICE
+        # (`ARG BASE_TAG` + the OCI version LABEL) and its own comment says
+        # "Bump both together" — but the drift direction that actually happens
+        # is pyproject.toml moving while Dockerfile.ci-viz sits still, and a
+        # `files: ^Dockerfile\.ci-viz$` filter is inert on exactly that commit.
+        # Both strings sat at 5.190.0 while 5.191.0 was the base being built
+        # from (task 415); nothing noticed, because nothing was looking.
+        #
+        # The gate cannot compare against the tag CI actually pulls — ADR-0135
+        # moved that OUT of git into the Forgejo `vars.YADGAR_VERSION` repo
+        # variable. It enforces the two things this tree CAN decide: the pair
+        # agrees with itself, and it does not name a base newer than any
+        # version this repo produced. See the script's own docstring.
+        always_run: true
+        pass_filenames: false
+
       - id: check-complexity
         name: Enforce I13 complexity caps (LOC / nesting / class / file)
         language: system
