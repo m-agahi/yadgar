@@ -135,7 +135,8 @@ def _wait_http_200(url: str, timeout: float = 60.0, interval: float = 1.0) -> bo
             resp = urllib.request.urlopen(url, timeout=2)
             if resp.status == 200:
                 return True
-        except Exception:
+        except OSError:
+            # URLError / HTTPError / socket.timeout while the server boots.
             pass
         time.sleep(interval)
     return False

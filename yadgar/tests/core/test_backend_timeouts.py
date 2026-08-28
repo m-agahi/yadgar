@@ -53,16 +53,19 @@ class _SlowServer:
             conn.setblocking(False)
             try:
                 conn.recv(4096)
-            except Exception:
+            except OSError:
+                # Non-blocking recv with nothing buffered raises BlockingIOError.
                 pass
             conn.setblocking(True)
             time.sleep(self.delay_s)
             try:
                 conn.sendall(self.response)
-            except Exception:
+            except OSError:
+                # The client already gave up: BrokenPipeError / ConnectionReset.
                 pass
             conn.close()
-        except Exception:
+        except OSError:
+            # accept() on the closed listening socket during teardown.
             pass
 
     def close(self) -> None:

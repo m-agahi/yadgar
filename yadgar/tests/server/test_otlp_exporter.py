@@ -42,7 +42,7 @@ def _reset_tracing():
         # listener (idempotent install) and the propagate flag don't bleed across
         # tests (e.g. caplog on yadgar.tracing relies on propagation).
         _tr._stop_span_log_queue()
-    except Exception:
+    except (ImportError, AttributeError):  # fmt: skip
         pass
 
 
@@ -54,7 +54,7 @@ def reset_otel():
         from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
-    except Exception:
+    except (ImportError, AttributeError):  # fmt: skip
         pass
     yield
     _reset_tracing()
@@ -62,7 +62,7 @@ def reset_otel():
         from yadgar._shared.config import get_settings
 
         get_settings.cache_clear()
-    except Exception:
+    except (ImportError, AttributeError):  # fmt: skip
         pass
 
 

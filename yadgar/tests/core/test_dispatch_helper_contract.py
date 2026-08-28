@@ -42,7 +42,7 @@ def _flush_prompt_cache() -> None:
 
     try:
         _prompt_cache.clear()
-    except Exception:
+    except AttributeError:
         # Fallback: clear by draining (some Cache implementations may not have .clear)
         pass
 
@@ -184,6 +184,10 @@ class TestContractReseedOnDelete:
                 page_id = storage._extract_id(page.get("id"))
                 if page_id is not None:
                     storage._q(f"DELETE wiki_page:{page_id}")
+        # `get_wiki_page_by_slug` / `_extract_id` / `_q` all reach the storage
+        # driver, whose error surface differs between the httpx and embedded
+        # backends — which is precisely the "not available in this fixture"
+        # condition the skip names.
         except Exception:
             pytest.skip("Storage delete not available in this fixture — skip delete test")
 

@@ -332,6 +332,9 @@ def test_the_class_is_real_returning_the_envelope_breaks_output_models() -> None
             continue
         try:
             meta.convert_result(env)
+        # The REJECTION is the assertion. `convert_result` is fastmcp's
+        # pydantic-backed validator and the class it raises is an
+        # implementation detail of that stack, not of this test.
         except Exception:
             rejected.append(tool.name)
     assert rejected, "no tool rejects the envelope — re-evaluate the raise-based gate"

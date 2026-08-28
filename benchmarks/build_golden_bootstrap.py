@@ -156,6 +156,9 @@ def build_bootstrap(
         )
         rows = storage._q(pool_sql)
         memories = storage._rows_to_dicts(rows) if rows else []
+    # `_q` has two backends with disjoint error surfaces (httpx raises
+    # HTTPError/ValueError/RuntimeError; the embedded path raises surrealdb-SDK
+    # classes not importable here). Printed with the cause, then sys.exit(1).
     except Exception as exc:
         print(f"ERROR: could not query memories: {exc}", file=sys.stderr)
         print("Is the DB running? Use YADGAR_DB_URL or --db-path.", file=sys.stderr)

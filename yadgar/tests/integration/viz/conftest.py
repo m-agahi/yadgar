@@ -128,6 +128,8 @@ def _daemon(tmp_path_factory):
                         "heat": float(i + 1) / 4.0,
                     }
                 )
+            # `insert_memory` fans out over the embedding engine and the storage
+            # driver — no importable common base.
             except Exception:
                 pass  # seeding failure is non-fatal — test still validates no-JS-error path
 
@@ -160,7 +162,9 @@ def _daemon(tmp_path_factory):
         except urllib.error.HTTPError as _http_err:
             _http_err.close()  # file-like; unclosed → ResourceWarning at GC (zero-warning gate)
             time.sleep(0.25)
-        except Exception:
+        except OSError:
+            # URLError / socket.timeout; HTTPError is handled above (it is an
+            # OSError subclass, so it must stay first).
             time.sleep(0.25)
     else:
         uv_server.should_exit = True
@@ -225,7 +229,8 @@ def viz_server(_daemon):
         except urllib.error.HTTPError as _http_err:
             _http_err.close()  # file-like; unclosed → ResourceWarning at GC (zero-warning gate)
             time.sleep(0.1)
-        except Exception:
+        except OSError:
+            # URLError / socket.timeout; HTTPError is handled above.
             time.sleep(0.1)
     else:
         server.shutdown()

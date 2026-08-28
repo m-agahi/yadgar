@@ -95,7 +95,9 @@ class TestV5_46_2DetectRuntimeInstallHints:
         for p in self._tmp_files:
             try:
                 Path(p).unlink(missing_ok=True)
-            except Exception:
+            except OSError:
+                # `missing_ok=True` already covers absence; a permission or
+                # is-a-directory failure is all that is left.
                 pass
 
     def _run_with_distro(self, distro_id: str, id_like: str = "") -> subprocess.CompletedProcess:

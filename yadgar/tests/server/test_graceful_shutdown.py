@@ -194,12 +194,16 @@ def test_uvicorn_abandons_hanging_request_within_budget():
             return
         # Find the actual bound port.
         port = server.servers[0].sockets[0].getsockname()[1]
-        try:
-            import httpx
+        # Imported OUTSIDE the try: the handler names `httpx.HTTPError`, so an
+        # import failure inside the try would surface as NameError.
+        import httpx
 
+        try:
             async with httpx.AsyncClient(timeout=35) as client:
                 await client.get(f"http://127.0.0.1:{port}/hang")
-        except Exception:
+        except httpx.HTTPError:
+            # The point is that the request was in flight when shutdown began;
+            # it ends as ReadError / RemoteProtocolError / ReadTimeout.
             pass
 
     async def _trigger_shutdown():

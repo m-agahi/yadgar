@@ -56,6 +56,9 @@ class TestVacuumImplEnvRead:
             # The 200 response lets it proceed to the next step, but we only need capture
             try:
                 vac_mod.cmd_vacuum_impl(args)
+            # The call runs against a deliberately partial mock set, so it fails
+            # somewhere past the URL resolution this test asserts on. Which
+            # unmocked step it reaches first is not this test's business.
             except Exception:
                 pass  # expected — vacuum does more work we haven't mocked fully
 

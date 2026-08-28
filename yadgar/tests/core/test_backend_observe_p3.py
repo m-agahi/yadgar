@@ -74,6 +74,9 @@ def _client(es, provider):
     # spans (and the nested @observe boundary spans) export to our exporter.
     try:
         FastAPIInstrumentor.instrument_app(es.app, tracer_provider=provider)
+    # Re-instrumenting an app that a previous test already instrumented raises
+    # opentelemetry.instrumentation.dependencies errors whose classes differ by
+    # instrumentation version and are not imported here.
     except Exception:
         pass
     return TestClient(es.app, raise_server_exceptions=False)

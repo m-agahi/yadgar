@@ -335,7 +335,10 @@ def _get_rotation_counter(metrics_module, logger_name: str) -> float:
         return 0.0
     try:
         return counter.labels(logger=logger_name)._value.get()
-    except Exception:
+    # prometheus_client: `labels()` raises ValueError on a wrong label set and
+    # KeyError on an unknown child; `._value` is a private attribute that a
+    # client bump can move (AttributeError).
+    except (AttributeError, KeyError, ValueError):  # fmt: skip
         return 0.0
 
 
@@ -450,7 +453,9 @@ def _get_dropped_counter(metrics_module) -> float:
                 if s.name.endswith("_total"):
                     total += s.value
         return total
-    except Exception:
+    # `collect()` and the `.samples` / `.name` / `.value` attributes are the
+    # prometheus_client exposition API; a client bump moves them.
+    except AttributeError:
         return 0.0
 
 
@@ -675,5 +680,8 @@ def _get_size_gauge(metrics_module, logger_name: str) -> float:
         return 0.0
     try:
         return gauge.labels(logger=logger_name)._value.get()
-    except Exception:
+    # prometheus_client: `labels()` raises ValueError on a wrong label set and
+    # KeyError on an unknown child; `._value` is a private attribute that a
+    # client bump can move (AttributeError).
+    except (AttributeError, KeyError, ValueError):  # fmt: skip
         return 0.0

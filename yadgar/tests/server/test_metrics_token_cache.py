@@ -80,7 +80,10 @@ def test_token_estimate_nonzero_for_nonempty_result():
             else:
                 text = json.dumps(result, default=str)
             return max(1, len(text) // 4)
-        except Exception:
+        # `json.dumps(default=str)` raises ValueError on a recursive structure
+        # and TypeError on an unserialisable key; `.decode` on a non-bytes
+        # result raises AttributeError.
+        except (TypeError, ValueError, AttributeError):  # fmt: skip
             return 0
 
     assert _estimate_tokens("hello world") > 0

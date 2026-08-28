@@ -69,12 +69,15 @@ def _health(port: int, timeout: float) -> tuple[int | None, float, dict | None]:
         # (an error under the zero-warning gate).
         try:
             payload = json.loads(e.read())
-        except Exception:
+        # `e.read()` is a socket read (OSError); an unparseable body raises
+        # ValueError (JSONDecodeError is a subclass).
+        except (OSError, ValueError):  # fmt: skip
             payload = None
         finally:
             e.close()
         return e.code, time.monotonic() - t0, payload
-    except Exception:
+    except OSError:
+        # URLError / socket.timeout; HTTPError is handled above.
         return None, time.monotonic() - t0, None
 
 
@@ -104,13 +107,15 @@ def _call_tool(
     except urllib.error.HTTPError as e:
         e.close()  # file-like; unclosed → ResourceWarning at GC (zero-warning gate)
         return None
-    except Exception:
+    except (OSError, UnicodeDecodeError):  # fmt: skip
+        # URLError / socket.timeout; a non-UTF-8 body raises UnicodeDecodeError.
         return None
     for line in raw.splitlines():
         if line.startswith("data:"):
             try:
                 return json.loads(line[len("data:") :].strip())
-            except Exception:
+            except ValueError:
+                # JSONDecodeError is a ValueError subclass.
                 return None
     return None
 

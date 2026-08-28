@@ -227,6 +227,10 @@ class TestCuratorEnrichmentWiring:
         try:
             pipeline = EnrichmentPipeline(settings)
             result = pipeline.enrich(content, emb, settings)
+        # `enrich` loads the seq2seq + NLI models; when they are absent the
+        # failure comes from transformers / torch / the HF hub, whose classes
+        # are not importable in exactly that environment. The `exc` text is
+        # carried into the skip reason so the cause is never hidden.
         except Exception as exc:
             pytest.skip(f"EnrichmentPipeline raised (env issue, not regression): {exc}")
 

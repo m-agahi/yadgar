@@ -375,6 +375,9 @@ class TestMaintenanceExitInFinally:
             # main() must still reach _step_start_core → maintenance exit.
             try:
                 mod.main(args)
+            # `_step_consolidation` is patched to raise unconditionally; whether
+            # main() swallows it is the thing under test, so both outcomes must
+            # reach the assertion below.
             except Exception:
                 pass  # if main() propagates, we still check below
 
