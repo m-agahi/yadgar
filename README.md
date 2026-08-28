@@ -13,7 +13,7 @@
 
 > **Why this repo lives on GitHub (moved from Codeberg, 2026):** Codeberg's [updated Terms of Use](https://codeberg.org/Codeberg/org/commit/71149c7fc95ccfeae36109b5cddca339e4aa1473) — § 2 (1) 7, added in *"Proposal Assembly 2026: prohibit LLM-extrusions"* (2026-06-29) — now ask that people **not** host projects that *"mostly consist of code written by 'generative AI'-tools."* Yadgar is built with heavy AI-agent assistance and is candid about it, so it no longer fits Codeberg's hosting policy and has moved here. No hard feelings — Codeberg is an excellent home for human-authored free software; this is a policy-fit decision, nothing more.
 
-**A persistent memory engine for MCP clients.** Tell it what matters and it survives across sessions — decaying what you stop touching, promoting what repeats, filtering recall to the git branch you're on, and pairing every memory with a curated wiki that searches through the same ranking pipeline.
+**A persistent memory engine for MCP clients.** Tell it what matters and it survives across sessions — decaying what you stop touching, promoting what repeats, scoping recall to the project you're in, and pairing every memory with a curated wiki that searches through the same ranking pipeline.
 
 > **Supported clients:** one shared streamable-HTTP daemon (`http://127.0.0.1:8765/mcp`) serves the memory and wiki MCP surface to all 9 supported clients: `claude-code`, `codex`, `gemini`, `cursor`, `cline`, `windsurf`, `kiro`, `amp`, `opencode`. Claude Code additionally gets the full harness integration (hooks, task-list mirror, CLAUDE.md sync). All other clients receive MCP registration and a rules file (AGENTS.md-equivalent).
 >
@@ -36,14 +36,14 @@
 Claude Code forgets everything when a session ends, when you `/clear`, or when context compacts. Yadgar is the layer that remembers. It runs as an [MCP](https://modelcontextprotocol.io/) server alongside Claude Code and gives it two durable stores:
 
 1. **Memory** — episodic + semantic facts, each carrying a `heat` value that decays over time. Access reheats; disuse decays; recurring episodes get promoted to semantic memory by a nightly consolidation cycle modelled on how brains sleep.
-2. **A curated wiki** — long-lived, versioned, branch-scoped pages: conventions, module purpose, past decisions, where subsystems live. Written deliberately, not captured incidentally.
+2. **A curated wiki** — long-lived, versioned, project-scoped pages: conventions, module purpose, past decisions, where subsystems live. Written deliberately, not captured incidentally.
 
-A single `recall()` query searches **both stores at once**, fuses and re-ranks the results, weights them by heat, gates out decayed entries, and boosts matches on your current git branch. Critical context can be *anchored* so it never decays; whole working states can be *checkpointed* and *restored* across a `/compact`.
+A single `recall()` query searches **both stores at once**, fuses and re-ranks the results, weights them by heat, gates out decayed entries, and scopes them to your project. Critical context can be *anchored* so it never decays; whole working states can be *checkpointed* and *restored* across a `/compact`.
 
 ### Why
 
 - **Survives sessions.** Heat decay drops what you stopped using; surprise gating drops duplicates on arrival; anchors pin what must never be lost.
-- **Branch-aware.** Recall boosts current-branch matches; wiki pages resolve in branch precedence (current → default → unscoped) so canonical knowledge stays reachable from feature work.
+- **Project-scoped.** Every memory and wiki page is owned by a `project_id` (`owner/repo`), and recall resolves against it: your project's rows first, then the global-reach library. Branch scoping was removed in ADR-0215 — nothing filters or boosts on the git branch any more, and the `branch` column is gone (migrations 029 + 032).
 - **One ranking pipeline for memory + wiki.** Curated knowledge and episodic memory come back in a single ranked result, not two separate searches.
 - **Consolidates while you sleep.** A nightly brain cycle decays heat, promotes episodes to semantics, discovers causal links, forms associative links, and merges duplicates — without dropping the MCP connection.
 - **Self-documenting.** Architecture Decision Records, a reusable agent-prompt library, a harness task-list mirror, and an interactive 3D knowledge-graph all live in the same store.
@@ -70,10 +70,10 @@ A single `recall()` query searches **both stores at once**, fuses and re-ranks t
 - **Bookmarks** — pin wiki pages in the viz UI (`bookmark_*`); drag-to-reorder, dense-integer positions.
 
 ### Unified recall
-- One `recall()` query retrieves **memory + wiki together**, fused through WRRF, cross-encoder reranked, NLI- and MMR-filtered, and run through the rules engine — heat-weighted, decay-gated, branch-scoped. Filter by `type=` (`"memory"`, `"wiki"`, or both). `wiki_query` remains for wiki-only search.
+- One `recall()` query retrieves **memory + wiki together**, fused through WRRF, cross-encoder reranked, NLI- and MMR-filtered, and run through the rules engine — heat-weighted, decay-gated, project-scoped. Filter by `type=` (`"memory"`, `"wiki"`, or both). `wiki_query` remains for wiki-only search.
 
 ### Harness task-list mirror
-- `wiki_write_task_list(project, content, directory)` persists the Claude Code harness task list (TaskCreate/TaskList) to the wiki store so it survives `/clear` and session exit. The stop-hook checkpoint step writes it out; the SessionStart restore-nudge re-injects open tasks. Written canonical (branch-NULL) so it resolves from any branch. A dedicated MCP tool — not a raw `wiki_add` — because the canonical-write path is structurally bounded to the `{project}-task-list` slug.
+- `wiki_write_task_list(project, content, directory)` persists the Claude Code harness task list (TaskCreate/TaskList) to the wiki store so it survives `/clear` and session exit. The stop-hook checkpoint step writes it out; the SessionStart restore-nudge re-injects open tasks. Written through the canonical seam and resolved by directory, so it is reachable from any working tree. A dedicated MCP tool — not a raw `wiki_add` — because the canonical-write path is structurally bounded to the `{project}-task-list` slug.
 
 ### Architecture Decision Records (ADR)
 - `adr_add(...)` writes a per-ADR wiki page (`yadgar-adr-NNNN`) enforcing an 11-field schema with auto-incrementing IDs. Each ADR gets its own page indexed in a thin `yadgar-adr-index`; `recall()` IS the read path (pages are recall-visible and immortal — no decay). `adr_get(directory, adr_id)` fetches a single ADR; `adr_list(directory, status=)` reads the index with optional status filter. A stop-hook prompt captures decisions at session end. Yadgar dogfoods its own system with 138 real ADRs.
@@ -143,7 +143,7 @@ Three physical layers (ADR-0056 / ADR-0060 / ADR-0062):
 
 **Write path (ADR-0075):** MCP tool → core → file queue (`YADGAR_QUEUE_BASE=/data/queue`) → backend drainer → SurrealDB. Writes are async by default; `wait=True` blocks until drainer commits.
 
-**Recall path (ADR-0044):** `recall()` in core is a thin forwarder → backend `POST /recall` runs the full pipeline (FTS + KNN + PPR + spreading activation → WRRF fusion → Ettin-32m CE rerank → NLI → MMR → adversarial → rules). Branch filter (`branch IN (current, default, NULL)`) and current-branch boost applied post-fetch.
+**Recall path (ADR-0044):** `recall()` in core is a thin forwarder → backend `POST /recall` runs the full pipeline (FTS + KNN + PPR + spreading activation → WRRF fusion → Ettin-32m CE rerank → NLI → MMR → adversarial → rules). Scoping is by `project_id` plus the global-reach tag, applied post-fetch; the branch filter and current-branch boost this line used to describe were removed by ADR-0215.
 
 Deeper detail: [docs/reference/architecture.md](docs/reference/architecture.md) · [docs/reference/retrieval.md](docs/reference/retrieval.md) · [docs/reference/memory-lifecycle.md](docs/reference/memory-lifecycle.md).
 
@@ -327,14 +327,14 @@ yadgar context                      # (hook-internal) session-start context inje
 
 ## MCP tools
 
-Yadgar exposes **~79 MCP tools** (excluding test-only stubs). ⚡ marks `power=True` tools (gated in the minimal MCP profile). A categorized selection — full list via the running server's tool catalog:
+Yadgar exposes **87 MCP tools** (89 `@_tool` decorators minus 2 test-only stubs; counted 2026-08-28). ⚡ marks `power=True` tools (gated in the minimal MCP profile). A categorized selection — full list via the running server's tool catalog:
 
 <details><summary><b>Memory</b></summary>
 
 | Tool | Power | Purpose |
 |---|:---:|---|
-| `memorize(content, context, tags)` | | Store a memory; auto-captures branch + surprise gate |
-| `recall(query, type, max_results)` | | Unified branch-aware search over memory **and** wiki |
+| `memorize(content, project, tags)` | | Store a memory; `project` is the scope key, surprise gate on write |
+| `recall(query, project, type, max_results)` | | Unified project-scoped search over memory **and** wiki |
 | `recent_memories()` | | Newest-first listing, no classifier dependency |
 | `memory_get(id)` | | Fetch by numeric ID |
 | `memory_update(id, fields)` | ⚡ | Patch `content` / `tags` / flags |
@@ -495,7 +495,7 @@ Full consolidated latency history, measurement protocol, comparability caveats, 
 ## Roadmap
 
 ### Shipped highlights (v5.78 → current)
-- **Unified recall** (v5.78–v5.81) — memory + wiki merged into one ranked, heat-weighted, branch-scoped result; now the default.
+- **Unified recall** (v5.78–v5.81) — memory + wiki merged into one ranked, heat-weighted, project-scoped result; now the default.
 - **ADR tooling** (`adr_add` / `adr_get` / `adr_list`, v5.85+) + capture-first Stop-hook prompt. Per-ADR wiki pages with thin index; `recall()` is the read path. 138 real ADRs dogfooded.
 - **Agent-prompt library** (v5.85, ADR-0007) — wiki-backed, tagged-recall lookup; `agent_dispatch_prelude` builds compliant subagent preludes.
 - **Harness task-list mirror** — `wiki_write_task_list` (stop-hook out) + session-start restore-nudge (in); persists the Claude Code task list across `/clear`.
@@ -526,7 +526,7 @@ Full history: [CHANGELOG.md](docs/CHANGELOG.md).
 - [AGENTS.md](AGENTS.md) — operational guide for AI coding agents (setup, dev env, tests, code style, PR rules)
 - [Architecture](docs/reference/architecture.md) — component map, retrieval, security, observability
 - [Memory lifecycle](docs/reference/memory-lifecycle.md) — heat, archiving, pruning, consolidation phases
-- [Retrieval](docs/reference/retrieval.md) — fusion, rerank, branch filter, pipeline stages
+- [Retrieval](docs/reference/retrieval.md) — fusion, rerank, project scoping, pipeline stages
 - [Configuration](docs/reference/configuration.md) — configuration reference (env vars, precedence, key knobs)
 - [Install](docs/reference/install.md) — per-platform setup + the `yadgar setup --doctor` probe
 - [JS/TS SDK](docs/reference/sdk-js.md) — typed client for the MCP tool surface

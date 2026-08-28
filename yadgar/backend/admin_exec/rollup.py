@@ -37,8 +37,11 @@ logger = logging.getLogger(__name__)
 def _get_sql_storage() -> Any:
     """The composed ``MariaStorageEngine``, or None when engine #2 is absent.
 
-    Matches the seam at ``admin_exec/ledger.py:63`` so tests patch one
-    symbol across the admin_exec surface.
+    Matches the seam at ``admin_exec/ledger.py``, ``admin_exec/ledger_agent.py``
+    and ``admin_exec/ledger_project.py`` — one patchable symbol per module
+    across the admin_exec surface. (The old ``ledger.py:63`` coordinate was
+    stale before ledger task 402 split that file in three; the symbol name, not
+    a line number, is the durable reference.)
     """
     from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
 

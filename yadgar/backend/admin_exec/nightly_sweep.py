@@ -102,8 +102,11 @@ _ADR_SWEEP_STATUSES: tuple[str, ...] = ("superseded", "rejected", "deprecated")
 def _get_sql_storage() -> Any:
     """The composed ``MariaStorageEngine`` (engine #2), or None when absent.
 
-    Mirrors the seam at ``yadgar/backend/admin_exec/ledger.py:63`` so tests
-    patch one symbol across the admin_exec ledger surface.
+    Mirrors the seam at ``admin_exec/ledger.py``, ``admin_exec/ledger_agent.py``
+    and ``admin_exec/ledger_project.py`` — one patchable symbol per module
+    across the admin_exec ledger surface. (The old ``ledger.py:63`` coordinate
+    was stale before ledger task 402 split that file in three; the symbol name,
+    not a line number, is the durable reference.)
     """
     from yadgar._shared.runtime.lifecycle import _get_sql_storage  # noqa: PLC0415
 

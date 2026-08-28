@@ -253,8 +253,13 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    length" / "this feels minor" are NOT on the list and do NOT authorize a skip.
    For each entry in recommended_actions:
    - ANCHOR HYGIENE: if audit_anchors appears, run it once:
-     audit_anchors("{directory}", dry_run=True) → review actions list →
-     audit_anchors("{directory}", dry_run=False) to apply forget/merge. The tool
+     audit_anchors("{directory}", project="{project}", dry_run=True) → review the
+     actions list → audit_anchors("{directory}", project="{project}",
+     dry_run=False) to apply forget/merge. (Without project= the coverage block
+     falls back to the SessionStart contextvar, which is unbound on the ordinary
+     stateless_http path — `coverage.scope_keys.project_id` then comes back null
+     and the report loses its project_id arm. Same rule as every other call in
+     this protocol.) The tool
      self-guards (never drops semantic_immortal or protected-legacy anchors). For
      any promote draft it returns, wiki_add it only if wiki-worthy (step-2 rules),
      else skip. Run this flow at most once.

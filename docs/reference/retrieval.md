@@ -179,7 +179,7 @@ Enriched text is appended to the embedding input, improving retrieval of memorie
 
 ## Directory Scoping (v5.62–v5.65)
 
-`recall()` and `wiki_query()` filter results by `directory_context` before returning them to the caller. This is a separate, earlier gate than the branch filter — it prevents cross-project memory leakage entirely.
+`recall()` and `wiki_query()` filter results by `directory_context` before returning them to the caller. It prevents cross-project memory leakage entirely. (It was described here as "a separate, earlier gate than the branch filter"; since ADR-0215 removed that filter it is simply the scoping gate.)
 
 ### Eligible-set rule
 
