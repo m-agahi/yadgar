@@ -38,6 +38,8 @@ from yadgar.backend.admin_exec import (
     identity_stamp,
     invariants,
     ledger,
+    ledger_agent,
+    ledger_project,
     memory,
     nightly_sweep,
     project,
@@ -149,16 +151,18 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     # Car B: ledger READ ops (task / adr / agent_prompt) over MariaStorageEngine
     # methods. Async because asyncmy is async-only. Closes the in-process
     # _get_storage() read path core used to take for ledger tables.
-    # C6: the ``project`` registry seed + read. The registry is load-bearing
-    # (ADR-0202/0223) and ships with zero rows, so seeding it is the FIRST
-    # operator step on a new deployment — every task/adr row FKs to it. These
-    # two ops are deliberately NOT registry-guarded: they are the bootstrap.
-    "create_project_row": ledger.create_project_row,
-    "list_project_rows": ledger.list_project_rows,
+    # C6: the ``project`` registry seed + read (bodies in ``ledger_project`` —
+    # ledger task 402 split them out of ``ledger``: ``project`` is not a D20
+    # chokepoint table, it is what those tables FK into). The registry is
+    # load-bearing (ADR-0202/0223) and ships with zero rows, so seeding it is
+    # the FIRST operator step on a new deployment — every task/adr row FKs to
+    # it. These two ops are deliberately NOT registry-guarded: the bootstrap.
+    "create_project_row": ledger_project.create_project_row,
+    "list_project_rows": ledger_project.list_project_rows,
     # Car C11-#88 (task #88): staleness surface for ``yadgar project list
     # --stale``. The threshold comes from Settings; the op echoes it so the
     # CLI can render "stale since N days" without a second admin call.
-    "list_stale_projects": ledger.list_stale_projects,
+    "list_stale_projects": ledger_project.list_stale_projects,
     # C6: the operator-invoked project_id backfill (T2). Dry-run by default —
     # it returns a manifest and writes nothing until the operator re-runs with
     # dry_run=False AND acknowledges the unmapped bucket and the deletes.
@@ -183,18 +187,19 @@ _ADMIN_OPS: dict[str, AdminOp] = {
     "update_task_row": ledger.update_task_row,
     "list_adr_rows": ledger.list_adr_rows,
     "get_adr_row": ledger.get_adr_row,
-    "list_agent_prompt_rows": ledger.list_agent_prompt_rows,
-    "list_agent_discipline_rows": ledger.list_agent_discipline_rows,
+    "list_agent_prompt_rows": ledger_agent.list_agent_prompt_rows,
+    "list_agent_discipline_rows": ledger_agent.list_agent_discipline_rows,
     # Car I additions: uses-DESC list, single-row lookup, composes reads,
     # ledger-row upserts for ``agent_prompt_save`` / ``discipline_save``,
-    # and ``uses`` increment over the table (D40).
-    "list_agent_pattern_rows_uses_desc": ledger.list_agent_pattern_rows_uses_desc,
-    "get_agent_pattern_row": ledger.get_agent_pattern_row,
-    "list_pattern_composes": ledger.list_pattern_composes,
-    "save_agent_pattern_row": ledger.save_agent_pattern_row,
-    "save_agent_discipline_row": ledger.save_agent_discipline_row,
-    "increment_agent_pattern_uses": ledger.increment_agent_pattern_uses,
-    "get_agent_prompt_toc_updated_at": ledger.get_agent_prompt_toc_updated_at,
+    # and ``uses`` increment over the table (D40). Bodies in ``ledger_agent``
+    # (ledger task 402 — the agent-library table family).
+    "list_agent_pattern_rows_uses_desc": ledger_agent.list_agent_pattern_rows_uses_desc,
+    "get_agent_pattern_row": ledger_agent.get_agent_pattern_row,
+    "list_pattern_composes": ledger_agent.list_pattern_composes,
+    "save_agent_pattern_row": ledger_agent.save_agent_pattern_row,
+    "save_agent_discipline_row": ledger_agent.save_agent_discipline_row,
+    "increment_agent_pattern_uses": ledger_agent.increment_agent_pattern_uses,
+    "get_agent_prompt_toc_updated_at": ledger_agent.get_agent_prompt_toc_updated_at,
     # Car F: ADR WRITE ops over MariaStorageEngine — create_adr_row is the new
     # ID source of truth (ADR-0197: AUTO_INCREMENT id IS the ADR number),
     # set_adr_body_slug links the row to the wiki body page (D4 — body stays

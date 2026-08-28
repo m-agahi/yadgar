@@ -1,6 +1,6 @@
 """Car A (2026-08-14 identity train, §2) — project-registry seed tests.
 
-Closes the gap where ``backend.admin_exec.ledger.create_project_row``
+Closes the gap where ``backend.admin_exec.ledger_project.create_project_row``
 existed and was registered in ``backend/admin_exec/__init__.py:152`` but
 had no CLI / MCP path. Mirrors the style of
 ``test_car_m_project_param.py`` (the car that pinned the registry

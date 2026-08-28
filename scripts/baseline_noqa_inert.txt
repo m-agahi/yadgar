@@ -148,7 +148,9 @@ yadgar/backend/admin_exec/identity_stamp.py:SLF001:3
 yadgar/backend/admin_exec/invariants.py:PLC0415:1
 yadgar/backend/admin_exec/invariants_cross_engine.py:BLE001:11
 yadgar/backend/admin_exec/invariants_cross_engine.py:PLC0415:6
-yadgar/backend/admin_exec/ledger.py:BLE001:26
+yadgar/backend/admin_exec/ledger.py:BLE001:14
+yadgar/backend/admin_exec/ledger_agent.py:BLE001:9
+yadgar/backend/admin_exec/ledger_project.py:BLE001:3
 yadgar/backend/admin_exec/memory.py:BLE001:5
 yadgar/backend/admin_exec/memory.py:PLC0415:5
 yadgar/backend/admin_exec/nightly_sweep.py:PLC0415:2

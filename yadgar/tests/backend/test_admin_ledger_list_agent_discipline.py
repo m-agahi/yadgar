@@ -1,7 +1,8 @@
 """Bug-bag-2 train 2026-08-23, C5 — ``list_agent_discipline_rows`` admin op tests.
 
 ``save_agent_discipline_row`` landed in Car I but the READ counterpart never
-did: neither the body function in ``yadgar/backend/admin_exec/ledger.py`` nor
+did: neither the body function in ``yadgar/backend/admin_exec/ledger_agent.py``
+(``ledger.py`` until the ledger-task-402 split) nor
 an ``_ADMIN_OPS`` entry existed, so ``run_admin_op("list_agent_discipline_rows",
 {})`` raised ``KeyError`` on the op NAME — the dispatch table simply had no such
 key. C5 adds both halves so the op returns ``{"rows": ...}`` the way the sister
@@ -9,7 +10,7 @@ key. C5 adds both halves so the op returns ``{"rows": ...}`` the way the sister
 
 The op name was NOT dangling before this car, and it could not have been:
 ``_ADMIN_OPS`` is a dict literal whose values are direct attribute references
-(``"list_agent_discipline_rows": ledger.list_agent_discipline_rows``), so an
+(``"list_agent_discipline_rows": ledger_agent.list_agent_discipline_rows``), so an
 entry naming a symbol the module does not define raises ``AttributeError`` at
 IMPORT — the whole backend fails to load, loudly. ``KeyError`` at call time is
 the signature of a MISSING entry, which is what this was.
@@ -35,9 +36,16 @@ def _admin_ops():
 
 
 def _ledger_module():
-    from yadgar.backend.admin_exec import ledger
+    """The module the op body lives in.
 
-    return ledger
+    ``ledger_agent`` since ledger task 402 split ``ledger.py`` by table family
+    (it was 998 of the I13 HARD file_loc cap of 1000). The ``_get_sql_storage``
+    seam moved WITH the body — each ledger module owns its own — so this is
+    also the module to monkeypatch.
+    """
+    from yadgar.backend.admin_exec import ledger_agent
+
+    return ledger_agent
 
 
 class TestListAgentDisciplineRowsRegistered:

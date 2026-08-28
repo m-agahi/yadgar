@@ -252,7 +252,7 @@ def _ns(map_path: str):
 
 
 class TestLedgerCreateProjectRowErrorEnrichment:
-    """``ledger.create_project_row``'s error envelope IS the operator's only
+    """``ledger_project.create_project_row``'s error envelope IS the operator's only
     signal (``cli/project.py``'s ``FAIL: <key>: <err>`` print), so it must
     carry the driver's own reason — the MySQL errno and the column the
     server named — not SQLAlchemy's full ``str(exc)``.
@@ -261,7 +261,7 @@ class TestLedgerCreateProjectRowErrorEnrichment:
     test raised a duck-typed exception whose ``str()`` was a message the test
     itself supplied, then asserted that same message came back out. Since the
     wrapper did ``str(exc)``, it passed at the merge base while
-    ``ledger.create_project_row`` was byte-identical to master; the
+    ``ledger_project.create_project_row`` was byte-identical to master; the
     production half named in this module's "Fix scope 2" was never written
     (``git show 7419084b --stat`` touches only ``cli/project.py`` and this
     file). The tests below construct a REAL ``sqlalchemy.exc.DataError``
@@ -296,14 +296,14 @@ class TestLedgerCreateProjectRowErrorEnrichment:
         )
 
     async def _envelope(self, exc: BaseException) -> dict:
-        from yadgar.backend.admin_exec import ledger
+        from yadgar.backend.admin_exec import ledger_project
 
         class _FakeStorage:
             async def create_project_row(self, **_kw):
                 raise exc
 
-        with patch.object(ledger, "_get_sql_storage", return_value=_FakeStorage()):
-            return await ledger.create_project_row(
+        with patch.object(ledger_project, "_get_sql_storage", return_value=_FakeStorage()):
+            return await ledger_project.create_project_row(
                 {"key": "m-agahi/yadgar", "kind": "git", "display_name": "x" * 200}
             )
 
