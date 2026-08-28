@@ -80,7 +80,7 @@ def _observe_dbsize_ms(elapsed_ms: float) -> None:
         )
 
         yadgar_viz_dbsize_sample_duration_ms.observe(elapsed_ms)
-    except Exception:
+    except (ImportError, ValueError):  # fmt: skip
         pass
 
 
@@ -161,7 +161,7 @@ def _sample_db_size(storage: object, db_path: str) -> float:
         if db_dir.is_dir():
             size_bytes = sum(f.stat().st_size for f in db_dir.rglob("*") if f.is_file())
             return round(size_bytes / 1024 / 1024, 1)
-    except Exception:
+    except (OSError, RuntimeError):  # fmt: skip
         pass
     return 0.0
 
@@ -199,13 +199,13 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
     # CPU% (two-sample delta via /proc/<pid>/stat; Fields 13=utime, 14=stime)
     try:
         result["daemon_cpu_pct"] = _sample_cpu_pct(pid, clk_tck)
-    except Exception:
+    except (OSError, IndexError, ValueError):  # fmt: skip
         result.setdefault("daemon_cpu_pct", 0.0)
 
     # RSS + thread count from /proc/{pid}/status
     try:
         rss_kb, threads = _sample_rss_threads(pid)
-    except Exception:
+    except (OSError, IndexError, ValueError):  # fmt: skip
         rss_kb, threads = 0, 0
     result["daemon_rss_mb"] = round(rss_kb / 1024, 1)
     result["rss_bytes"] = rss_kb * 1024
@@ -214,13 +214,13 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
     # Open file descriptors (self — /proc/self/fd is always accessible)
     try:
         result["open_fds"] = _sample_open_fds()
-    except Exception:
+    except OSError:
         result.setdefault("open_fds", 0)
 
     # System RAM
     try:
         total_ram_kb, avail_ram_kb = _sample_meminfo()
-    except Exception:
+    except (OSError, IndexError, ValueError):  # fmt: skip
         total_ram_kb = avail_ram_kb = 0
     result["system_ram_total_mb"] = round(total_ram_kb / 1024, 1)
     result["system_ram_available_mb"] = round(avail_ram_kb / 1024, 1)
@@ -231,7 +231,7 @@ def sample_system_metrics(pid: int, db_path: str, storage: object = None) -> dic
         result["load_avg_1m"] = la1
         result["load_avg_5m"] = la5
         result["load_avg_15m"] = la15
-    except Exception:
+    except (OSError, IndexError, ValueError):  # fmt: skip
         result.setdefault("load_avg_1m", 0.0)
         result.setdefault("load_avg_5m", 0.0)
         result.setdefault("load_avg_15m", 0.0)

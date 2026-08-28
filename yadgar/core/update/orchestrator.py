@@ -446,7 +446,7 @@ def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult
     ctx.log(OrchestratorState.WRITING_ENV_FILE, {"version": ctx.to_version})
     try:
         _write_env_file(ctx.env_path, ctx.to_version)
-    except Exception as exc:
+    except OSError as exc:
         rlog = ctx.rollback_daemon(pulled_new=True)
         return ctx.result(
             _rollback_final_state(rlog), error=f"env-file write failed: {exc}", rollback_log=rlog
@@ -492,7 +492,7 @@ def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult
     ctx.log(OrchestratorState.RE_EXECING, {"version": ctx.to_version})
     try:
         prune_old_snapshots(retention=ctx.retention, base_dir=ctx.snaps_dir)
-    except Exception as exc:
+    except OSError as exc:
         logger.warning("Snapshot pruning failed (non-fatal): %s", exc)
 
     snap_path = ctx.snapshot.path if ctx.snapshot is not None else Path("/tmp")  # type: ignore[union-attr]
@@ -557,7 +557,7 @@ def _rollback_daemon(
     if prev_tag:
         try:
             _write_env_file(env_path, _extract_version_from_tag(prev_tag), full_tag=prev_tag)
-        except Exception as exc:
+        except OSError as exc:
             logger.error("Failed to restore env-file during rollback: %s", exc)
             _rlog("env_file_restore_failed", {"error": str(exc)})
 

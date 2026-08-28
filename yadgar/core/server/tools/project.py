@@ -301,7 +301,7 @@ def _compute_row_age_hours(rows: list) -> float | None:
                 dt = dt.replace(tzinfo=UTC)
         now = datetime.now(UTC)
         return (now - dt).total_seconds() / 3600.0
-    except Exception:
+    except (AttributeError, TypeError, ValueError):  # fmt: skip
         logger.debug("_compute_row_age_hours: failed to parse created_at=%r", created_at)
         return None
 
@@ -879,7 +879,7 @@ def _get_master_head_info(resolved: str) -> dict | None:
             m = re.search(r'^\s*version\s*=\s*["\']([^"\']+)["\']', pyp_out, re.MULTILINE)
             if m:
                 pyproject_version = m.group(1)
-        except Exception:
+        except (OSError, subprocess.SubprocessError, ValueError):  # fmt: skip
             pass
 
         return {
@@ -887,7 +887,7 @@ def _get_master_head_info(resolved: str) -> dict | None:
             "commit_msg": msg_out,
             "pyproject_version": pyproject_version,
         }
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError):  # fmt: skip
         return None
 
 
@@ -936,7 +936,7 @@ def _get_pyproject_version_at_ts(resolved: str, ts: float) -> str | None:
         ).decode()
         m = re.search(r'^\s*version\s*=\s*["\']([^"\']+)["\']', pyp_out, re.MULTILINE)
         return m.group(1) if m else None
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError):  # fmt: skip
         return None
 
 
@@ -1127,7 +1127,7 @@ def _check_session_end_sentinel(storage, project_id: str | None) -> dict | None:
     row = sentinel_rows[0]
     try:
         sentinel_data = _json.loads(row.get("content", "{}"))
-    except Exception:
+    except (TypeError, ValueError):  # fmt: skip
         return None
 
     transcript_path = sentinel_data.get("transcript_path", "")
@@ -1341,9 +1341,9 @@ def _compute_pending_rejections(resolved: str) -> int:
                 )
                 if caller_dir and caller_dir == resolved:
                     count += 1
-            except Exception:
+            except (AttributeError, OSError, ValueError):  # fmt: skip
                 continue
-    except Exception:
+    except OSError:
         pass
     return count
 
@@ -1937,7 +1937,7 @@ def _project_brief_signals(  # noqa: PLR0913 — internal payload builder; every
             from yadgar._shared.observability.metrics import yadgar_signals_payload_oversized_total
 
             yadgar_signals_payload_oversized_total.inc()
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass  # non-fatal; metrics not available in all environments
     return result
 
@@ -2443,7 +2443,7 @@ def _register_active_work_directory(resolved: str) -> None:
         entry_dir = tracked_dir / key
         entry_dir.mkdir(parents=True, exist_ok=True)
         (entry_dir / "directory.txt").write_text(resolved)
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         logger.debug("_register_active_work_directory: failed to write marker for %r", resolved)
 
 

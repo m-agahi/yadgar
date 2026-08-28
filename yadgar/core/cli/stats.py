@@ -197,7 +197,7 @@ def _try_http_path(args):
         # Close the file wrapper (py3.14 ResourceWarning leak guard).
         e.close()
         return False  # daemon not running or unreachable — fall back to direct DB
-    except Exception:
+    except (AttributeError, OSError, TypeError, ValueError):  # fmt: skip
         return False  # daemon not running or unreachable — fall back to direct DB
 
 
@@ -413,7 +413,7 @@ def _query_temporal_stats(db, project, sd):
             oldest_str = str(sd.oldest)
             oldest_dt = datetime.fromisoformat(oldest_str.replace("Z", "+00:00"))
             sd.age_days = (now - oldest_dt).days
-        except Exception:
+        except (AttributeError, TypeError, ValueError):  # fmt: skip
             pass
 
 
@@ -502,7 +502,7 @@ def _query_top_tags(db, project, sd):
         try:
             for tag in row.get("tags") or []:
                 tag_counts[tag] = tag_counts.get(tag, 0) + 1
-        except Exception:
+        except (AttributeError, TypeError):  # fmt: skip
             pass
     sd.top_tags = sorted(tag_counts.items(), key=lambda x: -x[1])[:10]
 

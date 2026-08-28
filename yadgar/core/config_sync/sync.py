@@ -97,7 +97,7 @@ def _atomic_yaml_write(path: Path, y: YAML, data: CommentedMap) -> None:
     except Exception:
         try:
             os.unlink(tmp_path_str)
-        except Exception:
+        except OSError:
             pass
         raise
 

@@ -122,6 +122,19 @@ def check_runtime() -> dict:
     return {"ok": False, "reason": "No container runtime found — install podman or docker"}
 
 
+# ── Source root detection ──────────────────────────────────────────────────────
+
+
+@observe(tier="hot")
+def _source_root() -> Path:
+    """Walk up from this file to find the repo root (contains pyproject.toml)."""
+    here = Path(__file__).resolve().parent
+    for candidate in [here, *here.parents]:
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+    return here.parent
+
+
 @observe(tier="hot")
 def _default_image(repo: str) -> str:
     """Return repo:version using the installed package version, fallback to :latest."""
@@ -129,7 +142,7 @@ def _default_image(repo: str) -> str:
         from importlib.metadata import version as _pkg_version
 
         return f"{repo}:{_pkg_version('yadgar')}"
-    except Exception:
+    except ImportError:
         return f"{repo}:latest"
 
 
@@ -147,13 +160,13 @@ def _backend_version() -> str:
         _server_json = _source_root() / "server.json"
         _data = _json.loads(_server_json.read_text())
         return _data.get("backend_version", "latest")
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         pass
     try:
         from yadgar import BACKEND_VERSION  # noqa: PLC0415
 
         return BACKEND_VERSION
-    except Exception:
+    except ImportError:
         return "latest"
 
 
@@ -202,16 +215,3 @@ def _container_memory_mb() -> int:
     """1/8 of host RAM, clamped to [512, 8192] MB."""
     eighth = _host_memory_bytes() // (8 * 1024 * 1024)
     return max(512, min(int(eighth), 8192))
-
-
-# ── Source root detection ──────────────────────────────────────────────────────
-
-
-@observe(tier="hot")
-def _source_root() -> Path:
-    """Walk up from this file to find the repo root (contains pyproject.toml)."""
-    here = Path(__file__).resolve().parent
-    for candidate in [here, *here.parents]:
-        if (candidate / "pyproject.toml").exists():
-            return candidate
-    return here.parent

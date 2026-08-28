@@ -95,7 +95,7 @@ def _call_daemon(file_path: str, load_reason: str) -> str:
         # Close the file wrapper (py3.14 ResourceWarning leak guard).
         e.close()
         return ""
-    except Exception:
+    except (AttributeError, OSError, ValueError):  # fmt: skip
         return ""
 
 
@@ -105,7 +105,7 @@ def main() -> None:
     try:
         try:
             data = json.loads(sys.stdin.read() or "{}")
-        except Exception:
+        except (OSError, ValueError):  # fmt: skip
             return
 
         if not _should_fire(data):

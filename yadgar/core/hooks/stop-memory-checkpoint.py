@@ -155,7 +155,7 @@ def _load_state() -> dict:
         return {}
     try:
         return json.loads(sf.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         return {}
 
 
@@ -168,7 +168,7 @@ def _save_state(state: dict) -> None:
         tmp = sf.parent / (sf.name + ".tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         os.replace(str(tmp), str(sf))
-    except Exception:
+    except (OSError, TypeError, ValueError):  # fmt: skip
         pass
 
 
@@ -241,7 +241,7 @@ def _code_graph_enabled(cwd: str | None = None) -> bool:
         from yadgar.core.code_graph import config as _cg_config
 
         return bool(_cg_config.is_enabled(cwd))
-    except Exception:
+    except (ImportError, OSError, ValueError):  # fmt: skip
         return False
 
 
@@ -299,7 +299,7 @@ def main() -> None:
     try:
         try:
             data = json.loads(sys.stdin.read() or "{}")
-        except Exception:
+        except (OSError, ValueError):  # fmt: skip
             data = {}
 
         session_id = data.get("session_id", "unknown")

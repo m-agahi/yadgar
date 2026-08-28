@@ -227,7 +227,7 @@ def _read_file_safe(path: Path) -> str | None:
         if path.stat().st_size > _MAX_FILE_SIZE:
             return None
         return path.read_text(errors="replace")
-    except Exception:
+    except OSError:
         return None
 
 

@@ -452,7 +452,7 @@ class DuckDBExporter:
             if isinstance(tags, str):
                 try:
                     tags = json.loads(tags)
-                except Exception:
+                except (TypeError, ValueError):  # fmt: skip
                     tags = []
             for tag in tags:
                 if tag and isinstance(tag, str):

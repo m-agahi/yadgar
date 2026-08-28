@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, RedirectResponse
 
 import yadgar._shared.runtime.state as _st
@@ -68,7 +68,7 @@ async def api_bookmarks_add(request: Request) -> JSONResponse:
 
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse(
             {"added": False, "reason": "invalid_json"}, status_code=400, headers=_CORS
         )
@@ -117,7 +117,7 @@ async def api_bookmarks_reorder(request: Request) -> JSONResponse:
     slug = request.path_params.get("slug", "")
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse(
             {"reordered": False, "reason": "invalid_json"}, status_code=400, headers=_CORS
         )

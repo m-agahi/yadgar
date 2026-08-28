@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 
 import httpx
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 
 from yadgar import __version__
@@ -62,7 +62,7 @@ async def control_update_handler(request: Request) -> JSONResponse:
     # Parse optional request body
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         body = {}
 
     action = body.get("action", "check") if isinstance(body, dict) else "check"

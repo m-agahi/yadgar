@@ -70,7 +70,7 @@ def _daemon_health_ok() -> bool:
         # Close the file wrapper (py3.14 ResourceWarning leak guard).
         e.close()
         return False
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         return False
 
 
@@ -165,7 +165,7 @@ def _seed_anchors(anchors: list[dict], db_path: str | None, dry_run: bool) -> di
             else:
                 print(f"  WARN: seed-anchor HTTP {e.code}: {e}", file=sys.stderr)
                 results["skipped"] += 1
-        except Exception as e:
+        except (AttributeError, OSError, ValueError) as e:
             print(f"  WARN: seed-anchor failed: {e}", file=sys.stderr)
             results["skipped"] += 1
 
@@ -237,7 +237,7 @@ def _seed_agent_prompts(db_path: str | None, dry_run: bool) -> dict:
         print(f"  WARN: seed-agent-prompts failed: {e}", file=sys.stderr)
         results["skipped"] = len(_STARTER_PATTERNS)
         results["reason"] = "request_failed"
-    except Exception as e:
+    except (AttributeError, OSError, ValueError) as e:
         print(f"  WARN: seed-agent-prompts failed: {e}", file=sys.stderr)
         results["skipped"] = len(_STARTER_PATTERNS)
         results["reason"] = "request_failed"

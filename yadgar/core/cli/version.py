@@ -33,7 +33,7 @@ def _probe_daemon() -> dict:
         # Close the file wrapper (py3.14 ResourceWarning leak guard).
         e.close()
         return {"running": False}
-    except Exception:
+    except (AttributeError, OSError, ValueError):  # fmt: skip
         return {"running": False}
 
 

@@ -286,7 +286,7 @@ def _resolve_shape_limit(config_key: str, settings_field: str, directory: str) -
 
         value = _resolver_get(config_key, directory=directory, default=default)
         return int(value)
-    except Exception:
+    except (ImportError, TypeError, ValueError):  # fmt: skip
         return default
 
 
@@ -624,7 +624,7 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
 
             yadgar_recall_duration_ms.observe((_time_f.monotonic() - _recall_t0) * 1000)
             yadgar_recall_result_count.observe(len(merged))
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
 
 

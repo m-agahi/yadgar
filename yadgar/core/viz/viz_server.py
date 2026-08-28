@@ -169,7 +169,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 resolved = candidate.resolve()
                 static_resolved = STATIC_DIR.resolve()
-            except Exception:
+            except (OSError, RuntimeError):  # fmt: skip
                 self.send_error(400, "Bad Request")
                 return
             if resolved.is_file() and str(resolved).startswith(str(static_resolved)):

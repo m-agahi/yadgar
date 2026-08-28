@@ -197,7 +197,7 @@ class YadgarDaemon:
                     from yadgar.core.daemon import sd_notify as _sd  # noqa: PLC0415
 
                     _sd.ready()
-                except Exception:
+                except (ImportError, OSError):  # fmt: skip
                     pass
                 return {
                     "status": "started",
@@ -441,7 +441,7 @@ class YadgarDaemon:
                 "backend_container": backend_name,
                 **health,
             }
-        except Exception:
+        except (OSError, ValueError):  # fmt: skip
             return {
                 "running": True,
                 "container": profile.container_name,
@@ -690,7 +690,7 @@ class YadgarDaemon:
             # Close the file wrapper (py3.14 ResourceWarning leak guard).
             e.close()
             return True
-        except Exception:
+        except (OSError, ValueError):  # fmt: skip
             return False
 
     @observe(tier="stage")
@@ -709,5 +709,5 @@ class YadgarDaemon:
             # Close the file wrapper (py3.14 ResourceWarning leak guard).
             e.close()
             return True
-        except Exception:
+        except (OSError, ValueError):  # fmt: skip
             return False

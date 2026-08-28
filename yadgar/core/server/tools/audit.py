@@ -133,7 +133,7 @@ def _anchor_rank(row: dict) -> float:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=UTC)
             epoch = dt.timestamp()
-        except Exception:
+        except (AttributeError, TypeError, ValueError):  # fmt: skip
             pass
     return access_count * 1_000_000.0 + epoch
 

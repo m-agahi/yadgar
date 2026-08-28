@@ -207,7 +207,7 @@ def _ms_histogram_p95(hist) -> float:
             if cumulative >= target:
                 return float(le_val)
         return 0.0
-    except Exception:
+    except (AttributeError, IndexError, TypeError, ValueError):  # fmt: skip
         return 0.0
 
 
@@ -221,7 +221,7 @@ def _ms_queue_depth() -> int:
         for s in gauge_samples:
             if s.labels.get("queue") == "queue":
                 return int(s.value)
-    except Exception:
+    except (AttributeError, ImportError, IndexError, TypeError, ValueError):  # fmt: skip
         pass
     return 0
 
@@ -243,7 +243,7 @@ def _ms_circuit_breaker_states() -> dict[str, int]:
                 cb = getattr(_ml, f"_cb_{ep}", None)
                 if cb is not None:
                     cb_states[ep] = state_map.get(cb._state, 0)
-    except Exception:
+    except (AttributeError, TypeError):  # fmt: skip
         pass
     return cb_states
 

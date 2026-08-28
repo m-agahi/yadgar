@@ -45,7 +45,7 @@ def _lifecycle_span(name: str):
         from opentelemetry import trace as _ot  # noqa: PLC0415
 
         return _ot.get_tracer("yadgar.lifecycle").start_as_current_span(name)
-    except Exception:
+    except ImportError:
         return contextlib.nullcontext()
 
 

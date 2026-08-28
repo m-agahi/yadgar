@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
 import yadgar._shared.paths as _paths
@@ -447,7 +447,7 @@ def _sentinel_retire_to_failed(marker: Path, failed_dir: Path) -> None:
     try:
         failed_dir.mkdir(parents=True, exist_ok=True)
         marker.rename(failed_dir / marker.name)
-    except Exception as mv_e:
+    except OSError as mv_e:
         logger.warning("sentinel move to failed/ error: %s", mv_e)
 
 
@@ -462,7 +462,7 @@ def _sentinel_handle_failure(marker: Path, record: dict, retries: int, failed_di
             tmp = marker.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
             tmp.rename(marker)
-        except Exception as wb_e:
+        except OSError as wb_e:
             logger.warning("sentinel retry write-back error: %s", wb_e)
 
 
@@ -487,7 +487,7 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
     for marker in sorted(sentinel_dir.glob("*.json")):
         try:
             record = json.loads(marker.read_text(encoding="utf-8"))
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.warning("sentinel parse error for %s: %s", marker, e)
             continue
 
@@ -763,7 +763,7 @@ def _handshake_block(peer_url: str | None) -> dict:
         if _r.status_code != 200:
             return handshake_status(__version__, "unknown", side="core")
         _peer_version = _r.json().get("version") or "unknown"
-    except Exception:
+    except (AttributeError, OSError, ValueError, _httpx.HTTPError, _httpx.InvalidURL):  # fmt: skip
         return handshake_status(__version__, "unknown", side="core")
     return handshake_status(__version__, _peer_version, side="core")
 
@@ -894,7 +894,7 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
     """Called by PreCompact hook before context compaction."""
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         body = {}
 
     directory = body.get("cwd", os.getcwd())
@@ -1048,7 +1048,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
     try:
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, ClientDisconnect):  # fmt: skip
             _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
             _hook_observe_response("auto_capture", _resp.status_code)
             return _resp
@@ -2147,7 +2147,7 @@ async def hook_seed_anchor(request: Request) -> JSONResponse:
     try:
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, ClientDisconnect):  # fmt: skip
             _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
             _hook_observe_response("seed_anchor", _resp.status_code)
             return _resp
@@ -2267,7 +2267,7 @@ async def hook_file_changed(request: Request) -> JSONResponse:
     try:
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, ClientDisconnect):  # fmt: skip
             body = {}
 
         # Accept path from query param OR body (hook script sends both)
@@ -2275,7 +2275,7 @@ async def hook_file_changed(request: Request) -> JSONResponse:
         if file_path:
             try:
                 file_path = _urlparse.unquote(file_path)
-            except Exception:
+            except (AttributeError, TypeError):  # fmt: skip
                 pass
         body.get("file_action", "modified")
 
@@ -2345,7 +2345,7 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
                 fh.seek(current_pos)
                 new_lines = fh.readlines()
                 new_pos = fh.tell()
-        except Exception as _e:
+        except OSError as _e:
             logger.debug("team_inbox read error %s: %s", file_path, _e)
             _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
             _hook_observe_response("team_inbox", _resp.status_code)
@@ -2447,7 +2447,7 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
 
         try:
             content = p.read_text(encoding="utf-8", errors="ignore")
-        except Exception as _e:
+        except OSError as _e:
             logger.debug("PLAN file read error %s: %s", file_path, _e)
             _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
             _hook_observe_response("plan_file", _resp.status_code)
@@ -2465,16 +2465,16 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
 
         # Attempt to capture current git commit ref for provenance
         git_ref = ""
-        try:
-            import subprocess as _sp
+        import subprocess as _sp
 
+        try:
             _git_args = ["git", "-C", str(p.parent.parent), "rev-parse", "--short", "HEAD"]
             result = await _asyncio.to_thread(
                 lambda: _sp.run(_git_args, capture_output=True, text=True, timeout=3)
             )
             if result.returncode == 0:
                 git_ref = result.stdout.strip()
-        except Exception:
+        except (OSError, _sp.SubprocessError):  # fmt: skip
             pass
 
         filename = match.group(1)
@@ -2631,7 +2631,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
 
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, ClientDisconnect):  # fmt: skip
             body = {}
 
         description = sanitize_log_field(str(body.get("description", "")), max_len=2000)
@@ -2645,7 +2645,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
             )
 
             yadgar_subagent_dispatch_count.labels(agent_type=agent_type).inc()
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
 
         # Use description as primary query; fall back to agent_type if empty
@@ -2762,7 +2762,7 @@ async def api_graph(request: Request) -> JSONResponse:
             )
 
             yadgar_viz_api_graph_duration_ms.observe(_elapsed_ms)
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
         return JSONResponse(data, headers=_CORS)
     except Exception as _exc:
@@ -2992,7 +2992,7 @@ async def api_runtime_config_set(request: Request) -> JSONResponse:
 
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
 
     key = request.path_params.get("key", "")
@@ -3181,7 +3181,7 @@ async def _make_event_stream(request: Request):
         )
 
         _sse_g.inc()
-    except Exception:
+    except (ImportError, ValueError):  # fmt: skip
         _sse_g = None  # type: ignore[assignment]
     try:
         while True:
@@ -3632,7 +3632,7 @@ async def _session_bind(request: Request) -> JSONResponse:
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse(
             {"ok": False, "error": "session_not_bound", "fix": "POST a JSON body"},
             status_code=400,
@@ -3776,7 +3776,7 @@ def _register_session_bind_route() -> None:
     """
     try:
         _app = mcp_server.streamable_http_app()  # type: ignore[attr-defined]
-    except Exception:
+    except (AttributeError, RuntimeError):  # fmt: skip
         # Pre-serve / test context: streamable_http_app may not be available
         # (it raises RuntimeError on a fresh MCPServer until the first serve).
         # The route will be wired on the next /session_bind request via the

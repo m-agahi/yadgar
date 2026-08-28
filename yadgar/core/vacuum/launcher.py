@@ -381,7 +381,7 @@ class HostBinaryLauncher(SideBackendLauncher):
             try:
                 proc.kill()
                 proc.wait(timeout=5.0)
-            except Exception:
+            except (OSError, subprocess.SubprocessError):  # fmt: skip
                 pass
             raise RuntimeError(
                 f"side backend at {side_url} did not exit gracefully on SIGTERM "
@@ -392,7 +392,7 @@ class HostBinaryLauncher(SideBackendLauncher):
         while time.monotonic() < deadline:
             try:
                 httpx.get(f"{side_url}/health", timeout=1.0)
-            except Exception:
+            except (OSError, httpx.HTTPError, httpx.InvalidURL):  # fmt: skip
                 break  # connection refused → port released → process gone
             time.sleep(0.2)
 

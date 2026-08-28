@@ -63,7 +63,7 @@ def main(
     try:
         _pid_path.parent.mkdir(parents=True, exist_ok=True)
         _pid_path.write_text(str(os.getpid()))
-    except Exception:
+    except OSError:
         pass
 
     # H-7: Fail fast if REQUIRE_AUTH=True but no token configured.

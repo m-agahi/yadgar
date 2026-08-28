@@ -79,14 +79,14 @@
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 546
+    "lineno_at_baseline": 567
   },
   "yadgar/backend/restoration/checkpoint_restore.py:CheckpointRestore._fetch_blocks_safe:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 775
+    "lineno_at_baseline": 796
   },
   "yadgar/backend/restoration/checkpoint_restore.py:CheckpointRestore._fetch_recent_memories_safe:R1#0": {
     "category": "pre-existing",
@@ -102,103 +102,61 @@
     "log_level": "debug",
     "lineno_at_baseline": 109
   },
-  "yadgar/core/hooks/findings_capture.py:_load_sweep_state:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "dict",
-    "log_level": "none",
-    "lineno_at_baseline": 173
-  },
-  "yadgar/core/hooks/findings_capture.py:_scan_pending:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "list",
-    "log_level": "none",
-    "lineno_at_baseline": 272
-  },
-  "yadgar/core/hooks/findings_capture.py:collect_pending_findings:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "list",
-    "log_level": "none",
-    "lineno_at_baseline": 312
-  },
-  "yadgar/core/hooks/session-end-capture.py:_collect_straggler_findings:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "list",
-    "log_level": "none",
-    "lineno_at_baseline": 297
-  },
-  "yadgar/core/hooks/stop-memory-checkpoint.py:_load_state:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "dict",
-    "log_level": "none",
-    "lineno_at_baseline": 159
-  },
-  "yadgar/core/install/_settings.py:_load_settings:R1#0": {
-    "category": "pre-existing",
-    "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
-    "shape": "dict",
-    "log_level": "none",
-    "lineno_at_baseline": 360
-  },
   "yadgar/core/server/http.py:_viz_exact_title_node_ids:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 3144
+    "lineno_at_baseline": 3324
   },
   "yadgar/core/server/tools/audit.py:_fetch_anchored_by_prose_only_archives:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 452
+    "lineno_at_baseline": 453
   },
   "yadgar/core/server/tools/audit.py:_fetch_cross_project_anchor_pool:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 266
+    "lineno_at_baseline": 267
   },
   "yadgar/core/server/tools/audit.py:_fetch_expired_rows:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 159
+    "lineno_at_baseline": 160
   },
   "yadgar/core/server/tools/audit.py:_fetch_grace_expired_rows:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 229
+    "lineno_at_baseline": 230
   },
   "yadgar/core/server/tools/audit.py:_fetch_promote_rows:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 499
+    "lineno_at_baseline": 500
   },
   "yadgar/core/server/tools/audit.py:_fetch_redundant_pairs:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "debug",
-    "lineno_at_baseline": 205
+    "lineno_at_baseline": 206
   },
   "yadgar/core/server/tools/project.py:_build_recent_writes:R1#0": {
     "category": "pre-existing",
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "none",
-    "lineno_at_baseline": 1951
+    "lineno_at_baseline": 1962
   },
   "yadgar/core/server/tools/project.py:_fetch_cross_project_candidates_for_signals:R1#0": {
     "category": "pre-existing",
@@ -212,6 +170,6 @@
     "rationale": "Frozen day-one debt from the ADR-0420 detector's first run \u2014 UNREVIEWED, not a vetted exemption. See the file header.",
     "shape": "list",
     "log_level": "none",
-    "lineno_at_baseline": 654
+    "lineno_at_baseline": 656
   }
 }

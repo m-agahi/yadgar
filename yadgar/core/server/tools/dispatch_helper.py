@@ -91,7 +91,7 @@ def _current_wiki_epoch() -> int:
         from yadgar._shared.runtime.cache_epoch import _current_epoch  # noqa: PLC0415
 
         return _current_epoch(None)
-    except Exception:
+    except ImportError:
         return 0
 
 

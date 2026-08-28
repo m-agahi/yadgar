@@ -152,7 +152,7 @@ def main():
         except _err.HTTPError as _http_exc:
             # Close the file wrapper (py3.14 ResourceWarning leak guard).
             _http_exc.close()
-        except Exception:
+        except (ImportError, OSError, ValueError):  # fmt: skip
             pass  # Daemon down — skip; never use surrealkv directly from host
     finally:
         shutdown_tracing()
