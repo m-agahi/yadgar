@@ -116,7 +116,7 @@ def dlq_inspect(filter: str | None = None) -> list[dict]:  # noqa: A002 — shad
     for sidecar in sorted(fq.dlq_dir.glob("*.json.error.json")):
         try:
             meta = _json.loads(sidecar.read_text())
-        except Exception:
+        except (OSError, ValueError):  # fmt: skip
             meta = {}
         fname = sidecar.name[: -len(".error.json")]
         # v5.42.0: read failure_reason for filter + surface in output
@@ -203,7 +203,7 @@ def dlq_requeue(filename: str, force: bool = False) -> dict:
             failure_reason = meta.get("failure_reason") or "permanent_error"
             if failure_reason in _REJECTION_TAXONOMY:
                 return {"requeued": False, "error": _REQUEUE_REJECTION_ERROR}
-        except Exception:
+        except (AttributeError, OSError, ValueError):  # fmt: skip
             pass  # If sidecar unreadable, fall through to allow requeue
 
     dest = fq.queue_dir / filename

@@ -91,7 +91,7 @@ def _current_wiki_epoch() -> int:
         from yadgar._shared.runtime.cache_epoch import _current_epoch  # noqa: PLC0415
 
         return _current_epoch(None)
-    except Exception:
+    except ImportError:
         return 0
 
 
@@ -561,7 +561,7 @@ def agent_dispatch_prelude(
                 tail.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
             # Stage 3.4: count the assembly (pattern resolved → real usage).
             _record_pattern_usage(pattern)
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — prelude assembly spans discipline lookup, budget arithmetic and usage recording; a fault must drop the pattern snippet, never fail the dispatch prelude
             logger.debug("agent_dispatch_prelude: prompt assembly failed: %s", _e)
 
     # Recall hint

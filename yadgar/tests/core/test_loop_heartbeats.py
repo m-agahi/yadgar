@@ -191,7 +191,9 @@ def test_metrics_sampler_updates_heartbeat():
     # all db_path usage inside is guarded by try/except.
     try:
         ga.sample_system_metrics(pid=os.getpid(), db_path="/tmp/fake_yadgar_test.db")
-    except Exception:
+    # Samples /proc, psutil and the (deliberately absent) db_path; the comment
+    # below is the contract — only the heartbeat assertion after this matters.
+    except Exception:  # noqa: BLE001 — samples /proc + psutil + a missing db_path
         # Non-heartbeat failures are acceptable here
         pass
 
@@ -273,7 +275,10 @@ def _read_counter(counter_metric, labels: dict) -> float:
     """Read current value of a labeled counter, returning 0.0 if not yet seen."""
     try:
         return counter_metric.labels(**labels)._value.get()
-    except Exception:
+    # prometheus_client: `labels()` raises ValueError on a wrong label set and
+    # KeyError on an unknown child; `._value` is a private attribute that a
+    # client bump can move (AttributeError).
+    except (AttributeError, KeyError, ValueError):  # fmt: skip
         return 0.0
 
 

@@ -208,6 +208,43 @@ def test_resolve_session_project_failure_emits_no_guess(tmp_path):
     assert ".yadgar/project-id" in text, f"failure must be actionable: {text!r}"
 
 
+def test_mint_failure_notice_tells_the_agent_to_ask_the_user(tmp_path):
+    """Task 423: the notice must route the agent to the USER, not dead-end.
+
+    The pre-423 text stopped at a shell one-liner. An agent cannot know the
+    right key and may not invent one (ADR-0227), so the only move left is to
+    surface the problem — the notice has to say so, or the instruction is
+    "stop" with no recovery attached.
+    """
+    text = mint_mod.mint_failure_notice(str(tmp_path), "no origin remote")
+
+    low = text.lower()
+    assert "ask" in low or "surface this" in low, (
+        f"the notice must instruct surfacing the problem to the user: {text!r}"
+    )
+    assert "session" in low, f"the notice must say a new session is needed after the fix: {text!r}"
+    # The guess-free contract is unchanged by the addition.
+    assert "project_id=" not in text
+    assert "local/" not in text
+
+
+def test_mint_failure_notice_distinguishes_the_registry_failure(tmp_path):
+    """Mode 2 (identity present, registry row absent) must not be conflated.
+
+    ``unknown project_id`` means the mint SUCCEEDED — adding a remote or a
+    ``.yadgar/project-id`` file fixes nothing there. The notice names the
+    diagnostic that tells the two apart.
+    """
+    text = mint_mod.mint_failure_notice(str(tmp_path), "no origin remote")
+
+    assert "unknown project_id" in text, (
+        f"the notice must name the OTHER failure it is not: {text!r}"
+    )
+    assert "yadgar project list" in text, (
+        f"the notice must name the diagnostic for that other failure: {text!r}"
+    )
+
+
 # ── 4. The package boundary (C15's residue lint, in embryo) ───────────────
 
 # The mint is reachable ONLY from host-side entry points. `core/hooks/` is

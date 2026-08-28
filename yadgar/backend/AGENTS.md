@@ -11,7 +11,12 @@ heavy transformation, or stateless work over DB data. It runs next to the DB
 with 7 CPUs (ADR-0078); core has 1. When in doubt between core and backend
 for compute-shaped code: backend.
 
+- The recall pipeline behind `POST /recall` (`retrieval/`) — the largest
+  package in the layer
 - Embedding/rerank/NLI model serving (`embed_service/`, `ml_client/`)
+- Backend halves of the admin tools, including the engine-#2 ledger ops
+  (`admin_exec/`; ledger task 402 split those into `ledger.py` /
+  `ledger_agent.py` / `ledger_project.py` by table family)
 - Consolidation + sleep cycle (`consolidation/`, `sleep_compute/`,
   `curation/`, `cls_store/`, `causal_discovery/`)
 - Write-path execution (`write_exec/`, `queue_drainer/`, `predictive_coding/`)
@@ -31,8 +36,10 @@ for compute-shaped code: backend.
 
 - Don't import core, ever — including in tests' fixtures that construct
   backend objects.
-- Don't add a new flat `.py` at this layer root (ADR-0084 no-lone-files; the
-  flat files still here are back-compat shims from the T2 moves).
+- Don't add a new flat `.py` at this layer root (ADR-0084 no-lone-files). This
+  layer is already clean — `yadgar/backend/*.py` is `__init__.py` and nothing
+  else, so the "flat files still here are back-compat shims" clause this line
+  used to carry described a set that is empty (verified 2026-08-28).
 - Don't reach for `yadgar._shared.runtime.lifecycle` to grab core-ish
   singletons — receive dependencies via injection (Protocols from
   `_shared/contracts/`).

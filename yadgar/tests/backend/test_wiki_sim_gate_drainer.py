@@ -347,7 +347,9 @@ class TestDrainerRejectionMetric:
                 return yadgar_wiki_add_rejected_total.labels(
                     reason="duplicate_detected"
                 )._value.get()
-            except Exception:
+            # prometheus_client: ValueError on a wrong label set, KeyError on an
+            # unknown child, AttributeError if `._value` moves in a client bump.
+            except (ImportError, AttributeError, KeyError, ValueError):  # fmt: skip
                 return 0.0
 
         before = _get_count()

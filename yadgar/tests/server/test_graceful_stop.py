@@ -102,7 +102,10 @@ def test_graceful_stop_flushes_queue(tmp_path):
                     if d.get("id") == record.get("id"):
                         self._queue.archive(p)
                         break
-                except Exception:
+                # `read_text` on a file the drainer already archived raises
+                # OSError; an unparseable payload raises ValueError; a payload
+                # that parses to a non-dict raises AttributeError on `.get`.
+                except (OSError, ValueError, AttributeError):  # fmt: skip
                     pass
 
     drainer = _TrackingDrainer(fq, lambda: _FakeStorage(), drain_interval=0.05)

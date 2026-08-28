@@ -71,7 +71,7 @@ class _WikiMixin:
             from yadgar._shared.runtime.cache_epoch import bump_epoch  # noqa: PLC0415
 
             bump_epoch(None)
-        except Exception:  # pragma: no cover - must never break the write
+        except Exception:  # pragma: no cover  # noqa: BLE001 — bump_epoch reaches the epoch store, whose failures share no common base, and cache instrumentation must never roll back the wiki write it follows
             pass
 
     @trace_span()

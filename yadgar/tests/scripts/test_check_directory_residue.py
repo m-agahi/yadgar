@@ -32,6 +32,7 @@ test data, which makes the allowlist self-referential.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -424,31 +425,187 @@ class TestFloorsAreLoadBearing:
         )
 
     def test_the_allowlist_still_describes_a_real_surface(self) -> None:
+        """The recorded residue count must be EXACTLY what the tree measures.
+
+        ``>=`` was the old shape and it silently permitted the rise this
+        ratchet now exists to catch; equality is the whole point.
+        """
         residue, _ = C.find_residue(REPO_ROOT)
         total = sum(len(v) for v in residue.values())
-        assert total >= C.MIN_RESIDUE_HITS, (
-            f"only {total} residue sites found — below the measured floor of "
-            f"{C.MIN_RESIDUE_HITS}. Either the matcher broke or the sweep "
-            "finished; if it genuinely finished, LOWER the floor deliberately "
-            "rather than letting the guard rot."
+        recorded, errors = C.load_ratchet(C.ratchet_path(REPO_ROOT))
+        assert errors == [], errors
+        assert total == recorded["residue_hits"], (
+            f"{total} residue sites found, ratchet records "
+            f"{recorded['residue_hits']}. Rising means residue grew; falling "
+            "means the matcher broke or the cleanup worked. Either way the "
+            "sidecar and the tree must be re-synchronised IN THE SAME COMMIT: "
+            "`python scripts/check_directory_residue.py --update-ratchet`."
         )
 
-    def test_an_empty_matcher_trips_the_floor(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """MUTATION — the floor is load-bearing, not a comment.
+    def test_an_empty_matcher_trips_the_ratchet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """MUTATION — the ratchet is load-bearing, not a comment.
 
-        Blind the matcher and the floor, not silence, is what fires.
+        Blind the matcher and the ratchet, not silence, is what fires. The
+        falling arm names BOTH causes precisely because this case — a broken
+        matcher — is indistinguishable from a finished cleanup by count alone.
         """
         monkeypatch.setattr(C, "scan_source", lambda _src: [])
         errors = C.check(REPO_ROOT, check_sibling_lints=False)
-        assert any(e.startswith("VACUOUS") for e in errors), (
-            "a matcher returning nothing produced no VACUOUS error — the "
-            f"anti-vacuity floor is not wired: {errors[:3]}"
+        assert any(e.startswith("RATCHET: residue_hits 0 <") for e in errors), (
+            "a matcher returning nothing produced no RATCHET error — the "
+            f"anti-vacuity guard is not wired: {errors[:3]}"
         )
 
     def test_an_empty_walk_trips_the_files_floor(self) -> None:
         """MUTATION — scanning nothing must not read as a clean tree."""
         errors = C.check(REPO_ROOT, scan_roots=("does/not/exist",), check_sibling_lints=False)
         assert any("files walked" in e for e in errors)
+
+    def test_coverage_floors_stay_floors(self) -> None:
+        """The two COVERAGE measurements keep the shape they had.
+
+        ``MIN_FILES_SCANNED`` and ``MIN_TOOLS_CHECKED`` measure how much of the
+        tree the run reached. Coverage may only rise, so a lower bound is the
+        correct shape and converting them to ratchets would be the actual
+        mistake — a car that legitimately deletes a module would then be told
+        to re-record a SMALLER coverage number, which is the blindness the
+        floors exist to prevent.
+        """
+        assert C.MIN_FILES_SCANNED == 400
+        assert C.MIN_TOOLS_CHECKED == 70
+        assert not hasattr(C, "MIN_RESIDUE_HITS"), (
+            "MIN_RESIDUE_HITS is back as a constant — it is a ratchet in "
+            "scripts/directory_residue_ratchet.json now, and a second copy of "
+            "the number is a second thing to forget"
+        )
+        assert not hasattr(C, "MIN_SIBLING_ENTRIES")
+
+
+# ---------------------------------------------------------------------------
+# The descending ratchets — residue hits and sibling entries
+# ---------------------------------------------------------------------------
+def _ratchet_sidecar(tmp_path: Path, residue_hits: int, sibling_entries: int) -> Path:
+    path = tmp_path / "ratchet.json"
+    path.write_text(
+        json.dumps(
+            {
+                "_header": ["synthetic"],
+                "residue_hits": residue_hits,
+                "sibling_entries": sibling_entries,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+class TestTheResidueRatchet:
+    """Both directions fail, and each says something different.
+
+    The floors these replaced went RED FOR SUCCEEDING: a cleanup that deleted
+    residue drove the count under the constant and failed the build, and the
+    only documented remedy was a comment telling a human to lower the number
+    by hand. A descending ratchet keeps the anti-vacuity property (a blinded
+    matcher still fails) while making the deletion and the record land in one
+    commit.
+    """
+
+    def test_equal_passes(self) -> None:
+        assert C._ratchet_error("residue_hits", 436, 436) is None
+
+    def test_rising_fails_and_names_the_regression(self) -> None:
+        err = C._ratchet_error("residue_hits", 437, 436)
+        assert err is not None
+        assert "437 > recorded 436" in err
+        assert "GREW" in err
+        assert "ADR-0460" in err, (
+            "the rise message must say a re-baseline is legitimate when the "
+            "growth is load-bearing — a flat prohibition is what made a car "
+            "delete its own explanatory comments to fit under a ceiling"
+        )
+
+    def test_falling_fails_and_demands_the_baseline_bump(self) -> None:
+        err = C._ratchet_error("residue_hits", 300, 436)
+        assert err is not None
+        assert "300 < recorded 436" in err
+        assert "--update-ratchet" in err
+        assert "the matcher broke" in err, (
+            "the falling message must name BOTH causes: by count alone a "
+            "broken matcher is indistinguishable from a finished cleanup"
+        )
+
+    def test_the_live_tree_sits_exactly_on_the_ratchet(self) -> None:
+        """END-TO-END — the committed sidecar matches the committed tree."""
+        errors = C.check(REPO_ROOT)
+        assert errors == [], (
+            "the tree and scripts/directory_residue_ratchet.json disagree. If a "
+            "change legitimately moved the residue count, re-record it IN THE "
+            "SAME COMMIT: `python scripts/check_directory_residue.py "
+            f"--update-ratchet`. Errors: {errors[:3]}"
+        )
+
+    def test_a_grown_tree_fails_end_to_end(self, tmp_path: Path) -> None:
+        recorded, _ = C.load_ratchet(C.ratchet_path(REPO_ROOT))
+        sidecar = _ratchet_sidecar(
+            tmp_path, recorded["residue_hits"] - 1, recorded["sibling_entries"]
+        )
+        errors = C.check(REPO_ROOT, ratchet_file=sidecar)
+        assert any(e.startswith("RATCHET: residue_hits") and " > recorded " in e for e in errors), (
+            f"a tree carrying MORE residue than the record passed: {errors[:3]}"
+        )
+
+    def test_a_swept_tree_fails_end_to_end(self, tmp_path: Path) -> None:
+        recorded, _ = C.load_ratchet(C.ratchet_path(REPO_ROOT))
+        sidecar = _ratchet_sidecar(
+            tmp_path, recorded["residue_hits"] + 1, recorded["sibling_entries"] + 1
+        )
+        errors = C.check(REPO_ROOT, ratchet_file=sidecar)
+        assert any(e.startswith("RATCHET: residue_hits") and " < recorded " in e for e in errors)
+        assert any(e.startswith("RATCHET: sibling_entries") and " < recorded " in e for e in errors)
+
+    def test_a_missing_sidecar_is_an_error_not_a_skip(self, tmp_path: Path) -> None:
+        """MUTATION — deleting the record must not delete the guard."""
+        errors = C.check(REPO_ROOT, ratchet_file=tmp_path / "absent.json")
+        assert any(e.startswith("RATCHET FILE MISSING") for e in errors), errors[:3]
+
+    def test_check_floors_false_turns_the_ratchet_off_too(self, tmp_path: Path) -> None:
+        """The coupling is DELIBERATE, and pinned here so it cannot drift.
+
+        ``check_floors`` gates the coverage floors AND the ratchet together:
+        the synthetic tmp_path trees the other tests build satisfy neither, so
+        one flag turns off the whole measurement arm. A caller that disables
+        floors therefore also loses the missing-sidecar error — recorded as an
+        assertion rather than left for a future reader to discover.
+        """
+        assert C.check(REPO_ROOT, ratchet_file=tmp_path / "absent.json", check_floors=False) == []
+
+    def test_a_malformed_sidecar_is_an_error(self, tmp_path: Path) -> None:
+        bad = tmp_path / "bad.json"
+        bad.write_text('{"residue_hits": "many"}', encoding="utf-8")
+        errors = C.check(REPO_ROOT, ratchet_file=bad)
+        assert any(e.startswith("RATCHET FILE MALFORMED") for e in errors), errors[:3]
+
+    def test_update_refuses_when_a_coverage_floor_is_breached(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A record written from a run that never reached the tree is blindness.
+
+        Mirrors ``check_type_ratchet.py``'s gate on ``--update-baseline``.
+        """
+        monkeypatch.setattr(C, "SCAN_ROOTS", ("does/not/exist",))
+        target = tmp_path / "never-written.json"
+        assert C._update_ratchet(REPO_ROOT, target) == 1
+        assert not target.exists(), "a blind run recorded a ratchet anyway"
+
+    def test_update_round_trips_and_keeps_the_header(self, tmp_path: Path) -> None:
+        sidecar = _ratchet_sidecar(tmp_path, 1, 1)
+        assert C._update_ratchet(REPO_ROOT, sidecar) == 0
+        written = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert written["_header"] == ["synthetic"], (
+            "re-recording dropped the sidecar's documentation — the header is "
+            "where the two-direction contract is written down"
+        )
+        assert C.check(REPO_ROOT, ratchet_file=sidecar) == []
 
 
 # ---------------------------------------------------------------------------
@@ -458,9 +615,12 @@ class TestSiblingAllowlistsAreClosedIntoThisRun:
     def test_the_sibling_allowlists_parse_and_are_clean(self) -> None:
         errors, parsed = C.check_siblings(REPO_ROOT)
         assert errors == []
-        assert parsed >= C.MIN_SIBLING_ENTRIES, (
-            f"only {parsed} sibling entries parsed (floor {C.MIN_SIBLING_ENTRIES}) "
-            "— a renamed binding, not a finished sweep"
+        recorded, ratchet_errors = C.load_ratchet(C.ratchet_path(REPO_ROOT))
+        assert ratchet_errors == [], ratchet_errors
+        assert parsed == recorded["sibling_entries"], (
+            f"{parsed} sibling entries parsed, ratchet records "
+            f"{recorded['sibling_entries']} — a renamed binding, or a real "
+            "change that must re-record the sidecar in the same commit"
         )
 
     def test_a_renamed_sibling_binding_is_not_silently_green(

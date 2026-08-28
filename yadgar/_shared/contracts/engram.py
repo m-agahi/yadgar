@@ -57,7 +57,7 @@ class EngramAllocator:
                 )
 
                 yadgar_engram_allocate_duration_ms.observe((time.perf_counter() - _t0) * 1000)
-            except Exception:
+            except ImportError:
                 pass
 
     @observe(tier="stage", metric="engram.allocate_inner")

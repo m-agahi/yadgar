@@ -167,7 +167,7 @@ class MemoryCurator:
                 yadgar_curator_duration_ms.observe(_elapsed_ms)
                 outcome = _result.get("action", "error") if _result else "error"
                 yadgar_curator_merge_outcome.labels(outcome=outcome).inc()
-            except Exception:
+            except ImportError:
                 pass
 
     @observe(tier="stage")
@@ -198,9 +198,9 @@ class MemoryCurator:
 
                     for c in contradictions:
                         yadgar_write_time_contradiction_total.labels(reason=c["reason"]).inc()
-                except Exception:
+                except ImportError:
                     pass
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — write-time contradiction detection: the detector reaches storage and the embedding engine, which share no common base, and the documented contract is that it never blocks the write path
             logger.warning("write_time_contradiction detector failed (fail-soft): %s", exc)
 
     def _find_similar_memories(

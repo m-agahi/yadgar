@@ -72,7 +72,7 @@ def start_server(binary, path, port):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
             return proc
-        except Exception:
+        except OSError:
             time.sleep(0.2)
     proc.terminate()
     err = proc.stderr.read().decode()
@@ -139,7 +139,7 @@ def main():
                 rid_part = rid_str.split(":")[-1] if ":" in rid_str else rid_str
                 try:
                     rid_val = int(rid_part) if rid_part.isdigit() else rid_part
-                except Exception:
+                except ValueError:
                     rid_val = rid_part
                 try:
                     dst.query(
@@ -147,7 +147,7 @@ def main():
                         {"table": table, "rid": rid_val, "content": content},
                     )
                     ok += 1
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 — per-record isolation in a one-shot migration: the surrealdb SDK raises no common base, and one bad row must not abandon the remaining records
                     print(f"   WARNING {table}:{rid} — {exc}")
                     warn += 1
             print(f"   {table}: {ok} ok, {warn} warn")

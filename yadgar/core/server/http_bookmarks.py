@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, RedirectResponse
 
 import yadgar._shared.runtime.state as _st
@@ -68,7 +68,7 @@ async def api_bookmarks_add(request: Request) -> JSONResponse:
 
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse(
             {"added": False, "reason": "invalid_json"}, status_code=400, headers=_CORS
         )
@@ -117,7 +117,7 @@ async def api_bookmarks_reorder(request: Request) -> JSONResponse:
     slug = request.path_params.get("slug", "")
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse(
             {"reordered": False, "reason": "invalid_json"}, status_code=400, headers=_CORS
         )
@@ -173,7 +173,7 @@ async def api_wiki_search(request: Request) -> JSONResponse:
         results = await asyncio.to_thread(
             wiki.query, q, tags, None, limit, scope=RecallScope(unscoped=True)
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — public API boundary: any wiki-query fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.warning("api_wiki_search failed q=%s", q, exc_info=True)
         return JSONResponse({"error": "wiki search failed"}, status_code=500, headers=_NO_CACHE)
 
@@ -200,7 +200,7 @@ async def api_wiki_list(request: Request) -> JSONResponse:
 
     try:
         rows = await asyncio.to_thread(_st._storage.list_wiki_pages, None, slug_prefix, 100)
-    except Exception:
+    except Exception:  # noqa: BLE001 — public API boundary: any storage fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.warning("api_wiki_list failed slug_prefix=%s", slug_prefix, exc_info=True)
         return JSONResponse({"error": "wiki list failed"}, status_code=500, headers=_NO_CACHE)
 

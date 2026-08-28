@@ -185,7 +185,7 @@ class ConceptNetExpander:
                         end = edge.end.label if hasattr(edge.end, "label") else str(edge.end)
                         results.append(end.replace(" ", "_"))
             return results
-        except (ImportError, Exception) as _e:
+        except Exception:  # noqa: BLE001 — conceptnet_lite is an optional dep whose SQLite-backed query raises its own package types plus sqlite3 errors, with no common base; a failure permanently disables the lite path via the flag below
             self._lite_available = False
             return []
 
@@ -234,7 +234,7 @@ class ConceptNetExpander:
                     continue
             self._http_available = True if results else None
             return results
-        except Exception:
+        except Exception:  # noqa: BLE001 — outer arm after the typed httpx RequestError/HTTPStatusError/TimeoutError/OSError handler above; it disables the HTTP path so enrichment falls through to the hardcoded table
             self._http_available = False
             return []
 

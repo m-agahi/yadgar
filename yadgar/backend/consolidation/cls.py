@@ -37,7 +37,7 @@ def _bump_cache_epoch_global(updated: int) -> None:
         from yadgar._shared.runtime.cache_epoch import bump_epoch  # noqa: PLC0415
 
         bump_epoch(None)  # None → the shared "global" generation
-    except Exception:  # pragma: no cover - must never break consolidation
+    except Exception:  # pragma: no cover  # noqa: BLE001 — bump_epoch reaches the on-disk epoch store, whose failures share no common base, and cache instrumentation must never break the consolidation cycle
         pass
 
 
@@ -465,7 +465,7 @@ class _CLSMixin:
                 norm = np.linalg.norm(arr)
                 if len(arr) > 0 and norm > 0:
                     valid.append((m["id"], arr / norm))
-            except Exception:
+            except (TypeError, ValueError):  # fmt: skip
                 continue
 
         if len(valid) < min_count:
@@ -781,7 +781,7 @@ class _CLSMixin:
             if len(arr) == 0 or norm == 0:
                 return None
             return arr / norm
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             return None
 
     @staticmethod

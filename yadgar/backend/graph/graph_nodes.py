@@ -33,7 +33,7 @@ class GraphAPINodesMixin:
                 "ORDER BY heat DESC" + _suffix,
                 _params,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-node-type degradation in the viz payload builder: storage._q raises RuntimeError over HTTP and arbitrary SDK types embedded with no common base; an empty memory set still renders the wiki and entity layers
             memories = []
         mem_ids: set[int] = set()
         slot_map: dict[int, list[tuple[int, str]]] = {}
@@ -91,7 +91,7 @@ class GraphAPINodesMixin:
                 "updated_at FROM wiki_page ORDER BY updated_at DESC" + _suffix,
                 _params,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-node-type degradation for wiki_page rows; same untypeable storage._q surface
             wiki_pages = []
         wiki_slug_to_id: dict[str, str] = {}
         for wp in wiki_pages or []:
@@ -130,7 +130,7 @@ class GraphAPINodesMixin:
         """
         try:
             all_entities = self._s.get_all_entities(include_archived=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-node-type degradation for entity rows; same untypeable storage surface
             all_entities = []
         if max_entities > 0:
             all_entities = all_entities[:max_entities]
@@ -151,7 +151,7 @@ class GraphAPINodesMixin:
     def _expand_memory(self, raw_id: int, nodes: list, seen: set) -> None:
         try:
             m = self._s.get_memory(raw_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-node expansion: a single get_memory over the untypeable storage surface; an unreadable id is skipped so the rest of the expansion still returns
             return
         if m is None:
             return

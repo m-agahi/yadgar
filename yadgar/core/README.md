@@ -12,8 +12,9 @@ See `AGENTS.md` here for the placement rules.
 | `server/` | MCP server, tools, routes, middleware — the product surface |
 | `cli/` | `yadgar …` CLI entrypoints (host-ops; DB writes forward) |
 | `daemon/` | container orchestration, daemon threads, sd_notify, request draining |
-| `viz/` | knowledge-graph viz HTTP server (compute forwards to backend, Car E3) |
-| `graph/` | GraphAPI viz assembly + cached layout (Car E3 forwards the compute) |
+| `viz/` | knowledge-graph viz HTTP server (compute forwards to backend, Car E3). There is no `core/graph/` package — GraphAPI moved to `backend/graph/` in T2 Car E3 |
+| `config_sync/` | three-way config sync (repo ↔ `~/.config/yadgar/` ↔ runtime store) |
+| `migrations/` | host-side corpus migrations (e.g. `rekey_corpus.py`) |
 | `cache/` | core-side response caches with container-aware budgets |
 | `consolidation/` | core-side consolidation scheduler (compute runs in backend) |
 | `install/`, `update/`, `bootstrap/`, `hooks/` | install/bootstrap + Claude Code hook scripts |

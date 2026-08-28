@@ -5,14 +5,22 @@ ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect her
 
 1. **MCP endpoint**: `http://127.0.0.1:8765/mcp` — connect here for memory tools.
 2. **Recall first**: before answering questions about repo structure, external
-   resources, or past decisions, call `recall(query, directory=<cwd>)`.
+   resources, or past decisions, call
+   `recall(query, project="<owner/repo>", directory=<cwd>)`. `project` is the
+   scope key and is REQUIRED: yadgar never derives an identity from a directory
+   (ADR-0227), so omitting it is rejected, not guessed. The SessionStart banner
+   prints the value. `directory` alone resolves only when the SessionStart hook
+   has registered that exact path.
    Read-first triggers also include **WebFetch / WebSearch and external API calls**.
    Triage the result: **Hit** → use it. **Miss** → do the work, then write back.
    **Drift** (memory conflicts observed state) → do the work + update memory.
    **Observed state always wins.**
 3. **Write back**: after significant or multi-step work — call
-   `memorize(content, context=<cwd>, tags=[...])`. Tag all writes. Context MUST be
-   an absolute directory path (e.g. `/home/user/myapp`), never a description.
+   `memorize(content, project="<owner/repo>", tags=[...])`. Tag all writes.
+   `project` is the ONLY scope key — it is what the stored `directory_context` is
+   stamped from. `context` is a separate, OPTIONAL argument: the path of a real
+   file the memory is *about*, used for nothing but staleness detection. Never
+   pass a description there, and never use it for scoping.
    Also write back after any discovery that is non-obvious or reusable across sessions,
    or that contradicts prior memory; and on structural changes (new
    file/module/service). Stale = contradicted by observed state or explicitly
@@ -33,14 +41,17 @@ ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect her
 
 ### Tool reference
 
-- `memorize(content, context, tags)` — store memory with write gate.
-- `recall(query, directory, max_results)` — multi-signal retrieval.
-- `project_brief(directory, mode)` — hot memories and project context.
-- `checkpoint(directory, ...)` — snapshot working state.
-- `restore(directory)` — reconstruct context after compaction.
-- `anchor(content, context, reason)` — protect critical context.
-- `wiki_add(slug, content, tags)` — create or update a wiki page.
-- `wiki_query(query, tags)` — search wiki pages.
+Every scoped tool below takes `project="<owner/repo>"`; pass it on every call.
+
+- `memorize(content, project, tags)` — store memory with write gate.
+- `recall(query, project, max_results)` — multi-signal retrieval.
+- `project_brief(directory, mode, project)` — hot memories and project context.
+- `checkpoint(directory, project, ...)` — snapshot working state.
+- `restore(project)` — reconstruct context after compaction.
+- `anchor(content, context, project, reason)` — protect critical context
+  (`anchor`'s `context` IS the project directory — unlike `memorize`'s).
+- `wiki_add(title, content, project, tags)` — create or update a wiki page.
+- `wiki_query(query, project, tags)` — search wiki pages.
 - `agent_dispatch_prelude(pattern, task_topic)` — prelude for subagent dispatch.
 - `sync_instructions(claude_md_path)` — update rules file with latest content.
 
@@ -49,5 +60,5 @@ ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect her
 - NEVER write to `memory/` dirs or `MEMORY.md` — use Yadgar MCP tools only.
 - `recall` searches episodic memory; `wiki_query` / `wiki_read` read the curated
   wiki. Use both when unsure which store holds the answer.
-- Use `restore(directory=...)` after `/clear` or `/compact` — NOT `recall`.
+- Use `restore(project=...)` after `/clear` or `/compact` — NOT `recall`.
 - Don't memorize: ephemeral debug findings, single-use trivia, secrets.

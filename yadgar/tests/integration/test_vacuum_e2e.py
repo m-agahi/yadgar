@@ -127,7 +127,9 @@ def _get_db_size_bytes(embed_url: str, token: str = "test-token") -> int:
             )
             if resp.status_code == 200:
                 return resp.json().get("db_size_bytes", 0)
-        except Exception:
+        # httpx.HTTPError is the base of ConnectError/TimeoutException; a
+        # non-JSON body raises ValueError from .json().
+        except (httpx.HTTPError, ValueError):  # fmt: skip
             pass
         time.sleep(1.0)
     return 0
@@ -221,7 +223,8 @@ def _wait_for_yadgar_rw_auth(
             )
             if resp.status_code == 200:
                 return
-        except Exception:
+        except httpx.HTTPError:
+            # Base of ConnectError / TimeoutException — the server is still up.
             pass
         time.sleep(1.0)
     pytest.fail(
@@ -511,7 +514,8 @@ def test_vacuum_e2e_import_failure_restores_original(live_backend_container):
         try:
             urllib.request.urlopen(f"{backend_url}/health", timeout=2)
             break
-        except Exception:
+        except OSError:
+            # URLError / HTTPError / socket.timeout while the backend boots.
             time.sleep(1)
 
     resp = httpx.post(

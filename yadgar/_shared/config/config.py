@@ -34,7 +34,7 @@ class YamlConfigSource(PydanticBaseSettingsSource):
                 raw = y.load(f)
             if isinstance(raw, dict):
                 self._data = {k.upper(): v for k, v in raw.items() if v is not None}
-        except Exception:
+        except Exception:  # noqa: BLE001 — the optional YAML config layer: ruamel is a LAZY import inside this try, so its YAMLError has no importable name here, and it sits next to open()'s OSError with no common base. A broken or missing yaml means 'no yaml layer', never a failed startup
             import logging
 
             logging.getLogger(__name__).warning("YAML config load failed", exc_info=True)

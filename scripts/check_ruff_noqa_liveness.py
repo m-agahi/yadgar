@@ -13,7 +13,7 @@ violation of the named rule in that file with no signal — the same
 silent-suppression class the per-file-ignores gate was built to catch, one
 rung deeper.
 
-Two failure classes caught here:
+Four failure classes caught here:
 
   (a) INERT-RULE — ``# noqa: XXXX`` where ruff does not run ``XXXX``: it is
       absent from ``select``, OR it is selected by a family prefix and then
@@ -24,17 +24,45 @@ Two failure classes caught here:
       makes the rule live would suddenly find it suppressed with no audit
       trail.
 
-  (b) BARE / EMPTY — ``# noqa`` or ``# noqa:`` with no rule code stated.
-      A blanket suppression is too coarse to audit; the gate requires a
-      named rule. Prose after a bare marker does NOT make it prose: ruff
-      0.15.21 treats ``# noqa cannot suppress hard violations`` as a live
-      blanket suppression of that line (verified by probe), so the gate
-      flags it too.
+  (b) BARE / EMPTY — a marker that names no rule ruff will read. Three
+      spellings, all blanket suppressions and none auditable:
+      ``# noqa``, ``# noqa:``, and — task 404 — ``# noqa CODE prose``.
+      THE COLON IS WHAT MAKES A CODE A CODE. Measured on ruff 0.15.21 (repo-pinned) and 0.16.1, with
+      ``select = ["F"]`` over an unused ``import os``::
 
-  (c) UNSCANNABLE — a file :mod:`tokenize` cannot read. The gate reports it
+          import os  # noqa: E501 is disabled  -> Found 1 error   (E501 only)
+          import os  # noqa E501 is disabled   -> All checks passed
+
+      The second line names E501 and the violation is F401, yet F401 was
+      suppressed: without the colon ruff reads the marker as a BLANKET
+      suppression and never parses the word after it as a code. The gate
+      used to capture that word and route it through ``is_live``, so a
+      colon-less marker naming a LIVE rule (``# noqa F401``) passed the gate
+      silently while ruff blanket-suppressed the line. That is why the BARE
+      class is keyed on the colon and NOT on whether a code-shaped token
+      follows.
+
+  (c) FILE-NOQA — task 405. A file-level ``# ruff: noqa: CODES`` directive
+      held by the same liveness rule as an inline one, plus the two shapes
+      ruff itself refuses. See ``_FILE_NOQA_RE``.
+
+  (d) UNSCANNABLE — a file :mod:`tokenize` cannot read. The gate reports it
       rather than falling back to raw-line matching, because a guard that
       silently narrows its own coverage reports a cleanliness it did not
       check. See ``iter_comments``.
+
+WHAT THE GATE LOOKS AT — FILE-LEVEL DIRECTIVES TOO (task 405, 2026-08-28)
+--------------------------------------------------------------------------
+``# ruff: noqa: CODES`` suppresses the named rules across the WHOLE file,
+and it was invisible to this gate: ``_NOQA_RE`` requires ``noqa`` to follow
+the ``#`` directly, and in ``# ruff: noqa`` it does not. Six such directives
+(seven code mentions) sit under ``yadgar/`` today. This was a STRUCTURAL
+blind spot with no live violation behind it — all four codes named
+(``PLR0913``, ``I001``, ``F401``, ``E402``) are live under the current
+config, so nothing was being silently suppressed. The hole was that nothing
+would have reported it if one went dead: a file-level directive is strictly
+BROADER than an inline one, so leaving the broader form unaudited while
+ratcheting the narrower one is the wrong way round.
 
 WHAT THE GATE LOOKS AT (task 393, 2026-08-27)
 ---------------------------------------------
@@ -137,6 +165,9 @@ _SCAN_DIRS: tuple[str, ...] = ("yadgar", "scripts")
 #   hash + ``noqa:F401,E402 trailing`` -> suppressed (no space, trailing prose)
 #   hash + ``noqa cannot suppress X``  -> suppressed (BLANKET — prose after a
 #                                         bare marker is still a directive)
+#   hash + ``noqa E501 is disabled``   -> suppressed (BLANKET, task 404: named
+#                                         E501, the F401 violation went away
+#                                         anyway — no colon, no code parsing)
 #   hash + ``NOQA``                    -> suppressed (ruff is case-insensitive)
 #   hash + ``blah noqa blah``          -> NOT suppressed (must follow the hash)
 #   hash + ``noqable prose``           -> NOT suppressed (whole word only)
@@ -146,16 +177,63 @@ _SCAN_DIRS: tuple[str, ...] = ("yadgar", "scripts")
 # second.
 #
 # Capture groups:
-#   codes: raw code-string (possibly absent) — checked for INERT-RULE / BARE.
-#          Absent or empty → BARE, matching ruff, which treats a marker with
-#          no parsable code as a blanket suppression (or rejects it outright
-#          with an "Invalid directive" warning). Either way it names no rule,
-#          so it cannot be audited — which is what the gate demands.
+#   marker: the ``#``-to-``noqa`` span. Its ``end()`` is where the tail
+#           starts, which is what a colon-less report quotes back.
+#   colon:  present iff the directive can name codes AT ALL. See
+#           ``_marker_bare_shape`` — this is the discriminator, not ``codes``.
+#   codes:  raw code-string (possibly absent) — checked for INERT-RULE / BARE.
+#           Absent or empty → BARE, matching ruff, which treats a marker with
+#           no parsable code as a blanket suppression (or rejects it outright
+#           with an "Invalid directive" warning). Either way it names no rule,
+#           so it cannot be audited — which is what the gate demands.
 _NOQA_RE = re.compile(
-    r"#[ \t]*(?i:noqa)"  # the marker, after a `#`; ruff is case-insensitive
+    r"(?P<marker>#[ \t]*(?i:noqa))"  # the marker, after a `#`; case-insensitive
     r"(?![A-Za-z0-9_])"  # ...as a whole word: `noqable` prose is not one
     r"(?P<colon>:)?[ \t]*"
     r"(?P<codes>[A-Z]+[0-9]+(?:[ \t]*,[ \t]*[A-Z]+[0-9]+)*)?"
+)
+
+# FILE-LEVEL directive (task 405). Applies to the WHOLE file, not one line,
+# so it is strictly broader than an inline marker — and it was entirely
+# invisible to ``_NOQA_RE`` above, whose ``#[ \t]*noqa`` cannot span the
+# ``ruff:`` prefix.
+#
+# EVERY SPELLING BELOW IS WRITTEN HASH-FIRST, for the same reason the inline
+# block above is: ruff finds a file-level directive ANYWHERE in a comment
+# line, not only at the comment's start, so writing the literal form here
+# would arm it. Measured — a file whose ONLY comment was
+# ``# see also `` + hash + `` ruff: noqa: F401`` had its F401 violation
+# suppressed. (Wrapping the form in backticks is not a defence either: that
+# earns an "Invalid `#` + `ruff: noqa` directive" warning, which is a dead
+# directive, which this gate would then rightly flag.)
+#
+# Every clause is a measured behaviour of ruff 0.15.21 (the version this repo
+# pins) and of 0.16.1 — identical on both — not an assumption
+# (probe: ``select = ["F"]``, unused ``import os``). Read "H+" as a literal
+# ``#`` followed by the quoted text:
+#
+#   H+ ``ruff: noqa``            -> whole file suppressed (BLANKET)
+#   H+ ``ruff: noqa: F401``      -> F401 suppressed file-wide
+#   H+ ``ruff: noqa: E501``      -> F401 still reported (codes are honoured)
+#   H+ ``ruff:noqa: F401``       -> works (space around the colon optional)
+#   H+ ``ruff: NOQA: F401``      -> works (``noqa`` is case-insensitive...)
+#   H+ ``RUFF: noqa: F401``      -> INERT (...but ``ruff`` is NOT — no `(?i)`)
+#   indented, own line           -> works (column 0 is NOT required)
+#   directive on line 2, 3, ...  -> works (position-independent, NOT anchored)
+#   mid-comment on a comment
+#     line, e.g. ``# see also``  -> WORKS. Hence ``search``, not ``match``.
+#   after code on the same line  -> INERT + ruff warns "must appear on their
+#                                   own line" (handled by ``own_line``)
+#   H+ ``ruff: noqa F401``       -> BLANKET (no colon → no code parsing, the
+#                                   same trap as inline; hence ``codes`` is
+#                                   reachable only THROUGH the colon here)
+#   H+ ``ruff: noqa:``           -> INERT + ruff warns "Invalid directive"
+#   inside a string literal      -> not a directive (tokenize handles this)
+_FILE_NOQA_RE = re.compile(
+    r"#[ \t]*ruff[ \t]*:[ \t]*(?i:noqa)"  # `ruff` case-SENSITIVE, `noqa` not
+    r"(?![A-Za-z0-9_])"
+    r"(?:[ \t]*(?P<colon>:)[ \t]*"
+    r"(?P<codes>[A-Z]+[0-9]+(?:[ \t]*,[ \t]*[A-Z]+[0-9]+)*)?)?"
 )
 
 # A valid ruff code shape: 1-3 uppercase letters followed by 3-4 digits.
@@ -336,8 +414,16 @@ def is_live(code: str, select: set[str], ignore: set[str]) -> bool:
     return selected > _match_specificity(code, ignore)
 
 
-def iter_comments(path: Path) -> tuple[list[tuple[int, str]], str | None]:
-    """Return ``([(lineno, comment_text), ...], tokenize_error)`` for one file.
+def iter_comments(path: Path) -> tuple[list[tuple[int, bool, str]], str | None]:
+    """Return ``([(lineno, own_line, comment_text), ...], tokenize_error)``.
+
+    ``own_line`` is True when nothing but whitespace precedes the comment on
+    its physical line. It exists for the FILE-NOQA class (task 405): ruff
+    honours ``# ruff: noqa: CODES`` only on its own line — a trailing one
+    earns a "File-level suppression comments must appear on their own line"
+    warning and suppresses nothing. Indentation does not disqualify it
+    (measured: a 4-space-indented directive still applies file-wide), so the
+    test is "only whitespace before it", not "column 0".
 
     Comments come from :mod:`tokenize`, NOT from matching raw lines, and that
     is the point (task 393). A raw-line scan cannot tell a real ``# noqa``
@@ -363,14 +449,127 @@ def iter_comments(path: Path) -> tuple[list[tuple[int, str]], str | None]:
         body = path.read_text(encoding="utf-8")
     except (UnicodeDecodeError, OSError):  # fmt: skip
         return [], None  # not a text file we can read — skip silently
-    comments: list[tuple[int, str]] = []
+    comments: list[tuple[int, bool, str]] = []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(body).readline):
             if tok.type == tokenize.COMMENT:
-                comments.append((tok.start[0], tok.string))
+                own_line = not tok.line[: tok.start[1]].strip()
+                comments.append((tok.start[0], own_line, tok.string))
     except (tokenize.TokenError, IndentationError, SyntaxError, ValueError) as exc:  # fmt: skip
         return [], f"{type(exc).__name__}: {exc}"
     return comments, None
+
+
+def _marker_bare_shape(m: re.Match[str], comment: str) -> str | None:
+    """Describe why an inline marker names no auditable rule, or None.
+
+    THE COLON IS THE DISCRIMINATOR, not the presence of a code-shaped word
+    (task 404). ``m.group("codes")`` is deliberately NOT consulted on the
+    colon-less branch: ruff does not parse it either, so reading it here is
+    what re-creates the bug this branch exists to close — ``# noqa F401``
+    was passing the gate as a well-formed suppression of a live rule while
+    ruff blanket-suppressed the whole line.
+    """
+    if not m.group("colon"):
+        tail = comment[m.end("marker") :].strip()
+        if not tail:
+            return "bare `# noqa` (no colon, no rule code)"
+        return (
+            f"`# noqa` with no colon, followed by {tail!r} — ruff blanket-"
+            "suppresses the WHOLE line and does not read that text as a rule "
+            "code, however code-shaped it looks"
+        )
+    if not (m.group("codes") or "").strip():
+        return "empty `# noqa:` (colon, no rule code)"
+    return None
+
+
+def _split_codes(
+    rel: str,
+    lineno: int,
+    codes_str: str,
+    select: set[str],
+    ignore: set[str],
+    marker: str,
+) -> tuple[list[str], list[str]]:
+    """Return ``(hard_errors, inert_codes)`` for one directive's code list.
+
+    Shared by the inline and file-level paths so the two cannot drift: a rule
+    ruff does not run is equally dead whichever spelling names it. ``marker``
+    is the literal directive spelling (``# noqa`` / ``# ruff: noqa``) so a
+    failure names the shape the reader has to go and fix.
+    """
+    hard: list[str] = []
+    inert: list[str] = []
+    for code in (c.strip() for c in codes_str.split(",")):
+        if not code:
+            continue
+        if not _CODE_RE.match(code):
+            # Not a ruff-shaped code (e.g. typo). Flag as inert too — the
+            # gate's whole point is "names a rule ruff will run." Not
+            # allowlisted: a misspelled rule is ALWAYS a defect.
+            hard.append(
+                f"INERT-RULE: {rel}:{lineno}: `{marker}: {code}` names a rule "
+                "that is not a valid ruff code (expected one to three "
+                "uppercase letters + 3-4 digits). Either it is misspelled or "
+                "ruff silently ignores it."
+            )
+            continue
+        if not is_live(code, select, ignore):
+            inert.append(code)
+    return hard, inert
+
+
+def _scan_file_directive(
+    rel: str,
+    lineno: int,
+    own_line: bool,
+    m: re.Match[str],
+    select: set[str],
+    ignore: set[str],
+) -> tuple[list[str], list[str]]:
+    """Classify one ``# ruff: noqa`` comment (task 405).
+
+    Returns ``(hard_errors, inert_codes)``. The inert codes are folded into
+    the SAME ``(relpath, code)`` counts the inline path produces, so the
+    existing baseline format and ratchet cover both without change.
+    """
+    if not own_line:
+        return (
+            [
+                f"FILE-NOQA: {rel}:{lineno}: a `# ruff: noqa` directive sharing "
+                "its line with code is INERT — ruff warns that file-level "
+                "suppression comments must appear on their own line, and "
+                "applies nothing. Move it to its own line, or drop the `ruff:` "
+                "prefix to make it a line-level `# noqa: CODE`."
+            ],
+            [],
+        )
+    codes_str = (m.group("codes") or "").strip()
+    if not codes_str:
+        shape = (
+            "`# ruff: noqa:` with no codes (ruff rejects it outright as an "
+            "invalid directive, so it suppresses nothing)"
+            if m.group("colon")
+            else "bare `# ruff: noqa`, which suppresses EVERY rule in the "
+            "whole file and names none of them"
+        )
+        return (
+            [
+                f"FILE-NOQA: {rel}:{lineno}: {shape}. Name the rules "
+                "(`# ruff: noqa: CODE, CODE`) so the file-wide suppression "
+                "can be audited. If you were WRITING ABOUT the directive "
+                "rather than using one, that is the likelier cause — ruff "
+                "arms it anywhere in a comment line, so this file's "
+                'convention is to spell it hash-first (`hash + "ruff: '
+                'noqa"`), which is inert. Backticks around it are not a '
+                "defence: they leave a dead directive that ruff warns about "
+                "and this gate flags. There is no baseline escape for this "
+                "class."
+            ],
+            [],
+        )
+    return _split_codes(rel, lineno, codes_str, select, ignore, "# ruff: noqa")
 
 
 def scan_file(
@@ -383,14 +582,16 @@ def scan_file(
 
     Returns ``(hard_errors, inert_sites)`` where:
 
-      * ``hard_errors`` — BARE/EMPTY noqa, malformed rule codes, and files
-        that could not be tokenised. These are NEVER baselined: a blanket or
-        misspelled suppression is always a defect, at any count, and an
-        unscannable file is always a hole in the gate's own coverage.
+      * ``hard_errors`` — BARE/EMPTY noqa, malformed rule codes, unauditable
+        or misplaced ``# ruff: noqa`` directives, and files that could not be
+        tokenised. These are NEVER baselined: a blanket or misspelled
+        suppression is always a defect, at any count, and an unscannable file
+        is always a hole in the gate's own coverage.
       * ``inert_sites`` — ``{code: [lineno, ...]}`` for well-formed codes that
-        ruff does not run. The CALLER compares those counts against the
-        baseline allowance; this function does not, because the allowance is
-        per (file, code) and only the caller knows the file's rel-path key.
+        ruff does not run, from inline AND file-level directives alike. The
+        CALLER compares those counts against the baseline allowance; this
+        function does not, because the allowance is per (file, code) and only
+        the caller knows the file's rel-path key.
     """
     hard_errors: list[str] = []
     inert_sites: dict[str, list[int]] = defaultdict(list)
@@ -410,43 +611,49 @@ def scan_file(
         )
         return hard_errors, {}
 
-    for lineno, comment in comments:
+    for lineno, own_line, comment in comments:
+        file_m = _FILE_NOQA_RE.search(comment)
+        if file_m is not None:
+            # FILE-NOQA class (task 405). ``search``, not ``match``: ruff
+            # honours the directive anywhere in a comment line, measured — a
+            # file whose only comment was ``# see also `` followed by a second
+            # ``#`` and ``ruff: noqa: F401`` had its F401 violation suppressed.
+            # Handled apart from `_NOQA_RE`, which cannot match the DIRECTIVE
+            # itself (`noqa` does not follow the `#` directly), and the
+            # `continue` keeps it that way explicitly.
+            #
+            # STATED NARROWING: the `continue` means a comment carrying BOTH a
+            # file-level directive and a separate inline hash + ``noqa: CODE``
+            # is scanned for the former only. No such comment exists in the tree
+            # and the shape is pathological, but a gate that quietly checks
+            # less than it walks is the failure this file exists to refuse, so
+            # the limit is written down rather than discovered later.
+            errs, inert_codes = _scan_file_directive(rel, lineno, own_line, file_m, select, ignore)
+            hard_errors.extend(errs)
+            for code in inert_codes:
+                inert_sites[code].append(lineno)
+            continue
         for m in _NOQA_RE.finditer(comment):
-            codes_str = (m.group("codes") or "").strip()
-            if not codes_str:
-                # BARE / EMPTY class — must be flagged. Never allowlisted: a
-                # blanket suppression with no rule is ALWAYS a defect. The
-                # two are reported apart (same `BARE:` prefix) because they
-                # are different typos: one forgot the codes, the other forgot
-                # the colon AND the codes.
-                shape = (
-                    "empty `# noqa:` (colon, no rule code)"
-                    if m.group("colon")
-                    else "bare `# noqa` (no colon, no rule code)"
-                )
+            # BARE / EMPTY class — must be flagged. Never allowlisted: a
+            # blanket suppression with no auditable rule is ALWAYS a defect.
+            # The shapes are reported apart (same `BARE:` prefix) because they
+            # are different mistakes: one forgot the codes, one forgot the
+            # colon and the codes, one forgot only the colon and therefore
+            # LOOKS correct while suppressing everything (task 404).
+            shape = _marker_bare_shape(m, comment)
+            if shape is not None:
                 hard_errors.append(
                     f"BARE: {rel}:{lineno}: {shape} — specify the rule you "
-                    "are suppressing, or ruff treats it as a blanket "
-                    "suppression that no lint pass can audit."
+                    "are suppressing as `# noqa: CODE`, or ruff treats it as "
+                    "a blanket suppression that no lint pass can audit."
                 )
                 continue
-            # Split on comma, validate each code.
-            for code in (c.strip() for c in codes_str.split(",")):
-                if not code:
-                    continue
-                if not _CODE_RE.match(code):
-                    # Not a ruff-shaped code (e.g. typo). Flag as inert too —
-                    # the gate's whole point is "names a rule ruff will run."
-                    # Not allowlisted: a misspelled rule is ALWAYS a defect.
-                    hard_errors.append(
-                        f"INERT-RULE: {rel}:{lineno}: `# noqa: {code}` names a "
-                        "rule that is not a valid ruff code (expected one or two "
-                        "uppercase letters + 3-4 digits). Either it is misspelled "
-                        "or ruff silently ignores it."
-                    )
-                    continue
-                if not is_live(code, select, ignore):
-                    inert_sites[code].append(lineno)
+            errs, inert_codes = _split_codes(
+                rel, lineno, m.group("codes").strip(), select, ignore, "# noqa"
+            )
+            hard_errors.extend(errs)
+            for code in inert_codes:
+                inert_sites[code].append(lineno)
     return hard_errors, dict(inert_sites)
 
 
@@ -482,9 +689,18 @@ def collect_inert(
 
 
 def _format_growth(rel: str, code: str, observed: int, allowed: int) -> str:
+    """Render the ratchet message for one ``(file, code)`` pair.
+
+    The count folds INLINE ``# noqa: CODE`` and FILE-LEVEL
+    ``# ruff: noqa: CODE`` sites together (task 405) — the two spellings name
+    the same dead rule and the baseline has one row for both — so the message
+    names both spellings rather than sending the reader hunting for an inline
+    marker that may not exist in that file.
+    """
     if allowed == 0:
         return (
-            f"INERT-RULE: {rel}: {observed} `# noqa: {code}` site(s) suppress a "
+            f"INERT-RULE: {rel}: {observed} `# noqa: {code}` / "
+            f"`# ruff: noqa: {code}` site(s) suppress a "
             f"rule ruff does not run for this project — it is either absent from "
             f"pyproject `[tool.ruff.lint] select` or selected and then "
             f"ignore-overridden — and this (file, rule) pair is not in the "
@@ -493,7 +709,8 @@ def _format_growth(rel: str, code: str, observed: int, allowed: int) -> str:
             f"`ignore` entry) with a stated reason."
         )
     return (
-        f"INERT-RULE: {rel}: {observed} inert `# noqa: {code}` site(s), but the "
+        f"INERT-RULE: {rel}: {observed} inert `# noqa: {code}` / "
+        f"`# ruff: noqa: {code}` site(s), but the "
         f"ratchet allows {allowed}. {observed - allowed} NEW inert suppression(s) "
         f"of a rule ruff does not run. Drop the new noqa(s). The baseline is a "
         f"ratchet: it may shrink, never grow. If the growth is genuinely "

@@ -1,0 +1,31 @@
+{
+  "_header": [
+    "ADR-0225 `directory` residue ratchet \u2014 the recorded state of the sweep.",
+    "",
+    "These are NOT floors. They are DESCENDING RATCHETS, and both directions",
+    "are a failure:",
+    "",
+    "  rising  \u2014 residue grew. That is the regression the sweep exists to",
+    "            catch. Re-key the new sites onto `project_id`, or (ADR-0460)",
+    "            raise the number WITH a stated reason when the growth is",
+    "            load-bearing. Never raise it to absorb a car's own drift.",
+    "  falling \u2014 either the matcher broke or the cleanup finished. If it",
+    "            finished, commit the new number IN THE SAME CHANGE as the",
+    "            deletion, so the sweep's progress and its record never drift",
+    "            apart. If the matcher broke, fix the matcher.",
+    "  equal   \u2014 pass.",
+    "",
+    "Re-record with:",
+    "  python scripts/check_directory_residue.py --update-ratchet",
+    "",
+    "That path refuses to write when a COVERAGE floor (MIN_FILES_SCANNED,",
+    "MIN_TOOLS_CHECKED) is breached \u2014 a number recorded from a walk that never",
+    "reached the tree is the same blindness this file exists to prevent.",
+    "",
+    "`residue_hits`     \u2014 total `directory`-family tokens in a scoping position.",
+    "`sibling_entries`  \u2014 allowlist entries parsed out of the sibling lints",
+    "                     (C9a _ALLOWLIST + C9a _SWEPT + C9b ALLOWLIST)."
+  ],
+  "residue_hits": 417,
+  "sibling_entries": 81
+}

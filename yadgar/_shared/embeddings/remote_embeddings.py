@@ -75,7 +75,7 @@ class RemoteEmbeddingEngine:
                     arr = np.array(floats, dtype=np.float32)
                     results.append(arr.tobytes())
             return results
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — remote-embed RPC boundary. Narrowing was TRIED and reverted: test_remote_embeddings_module::test_http_error_returns_nones and ::test_returns_none_when_encode_fails inject a bare Exception and assert the [None, ...] degrade, so 'any failure yields Nones' is the tested contract, not an accident of the mock
             logger.warning("RemoteEmbeddingEngine: /embed call failed: %s", exc)
             return [None] * len(texts)
 

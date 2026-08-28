@@ -37,38 +37,48 @@ def _load_module_disabled():
     ~/.local/state/yadgar/session-ends/, which does not exist in the CI
     container (Errno 2 on the atomic rename) — the load failed and every test
     in this file skip-fired with a dynamic, un-sanctionable reason.
+
+    Task 416: the sentinel dir is a ``TemporaryDirectory`` context, not a bare
+    ``mkdtemp``. This loader runs at MODULE level (import time), so under xdist
+    it fires once per worker that collects this file and the old ``mkdtemp``
+    handed each of those a directory nothing ever removed — 40
+    ``/tmp/yadgar-session-end-test-*`` dirs had accumulated. Nothing reads the
+    dir after the two exec passes finish: the hook script resolves
+    ``YADGAR_SESSION_END_DIR`` at exec time (session-end-capture.py:398) and
+    the tests that exercise the sentinel write path build their own
+    ``tmp_path``-rooted dir, so the scope can end with this function.
     """
     import tempfile
 
-    _sentinel_dir = tempfile.mkdtemp(prefix="yadgar-session-end-test-")
-    with patch.dict(
-        os.environ,
-        {"SESSION_END_CAPTURE_ENABLED": "false", "YADGAR_SESSION_END_DIR": _sentinel_dir},
-    ):
-        # runpy runs the script; sys.exit(0) is raised and caught here
-        import runpy
-
-        try:
-            runpy.run_path(str(_SCRIPT_PATH), run_name="__main__")
-        except SystemExit:
-            pass
-    # Load again as a module to get the functions
-    spec = importlib.util.spec_from_file_location("session_end_capture", str(_SCRIPT_PATH))
-    mod = importlib.util.module_from_spec(spec)
-    # Patch sys.exit to prevent it from running during exec_module
-    with (
-        patch.dict(
+    with tempfile.TemporaryDirectory(prefix="yadgar-session-end-test-") as _sentinel_dir:
+        with patch.dict(
             os.environ,
             {"SESSION_END_CAPTURE_ENABLED": "false", "YADGAR_SESSION_END_DIR": _sentinel_dir},
-        ),
-        patch("sys.exit"),
-        patch("sys.stdin") as mock_stdin,
-    ):
-        mock_stdin.read.return_value = '{"end_reason": "other", "session_id": "test-load"}'
-        try:
-            spec.loader.exec_module(mod)
-        except SystemExit:
-            pass
+        ):
+            # runpy runs the script; sys.exit(0) is raised and caught here
+            import runpy
+
+            try:
+                runpy.run_path(str(_SCRIPT_PATH), run_name="__main__")
+            except SystemExit:
+                pass
+        # Load again as a module to get the functions
+        spec = importlib.util.spec_from_file_location("session_end_capture", str(_SCRIPT_PATH))
+        mod = importlib.util.module_from_spec(spec)
+        # Patch sys.exit to prevent it from running during exec_module
+        with (
+            patch.dict(
+                os.environ,
+                {"SESSION_END_CAPTURE_ENABLED": "false", "YADGAR_SESSION_END_DIR": _sentinel_dir},
+            ),
+            patch("sys.exit"),
+            patch("sys.stdin") as mock_stdin,
+        ):
+            mock_stdin.read.return_value = '{"end_reason": "other", "session_id": "test-load"}'
+            try:
+                spec.loader.exec_module(mod)
+            except SystemExit:
+                pass
     return mod
 
 
@@ -82,7 +92,11 @@ try:
     _extract_last_touched_files = _mod._extract_last_touched_files
     _SKIP_TAGS = _mod.SKIP_TAGS
     _MODULE_LOADED = True
-except Exception as _e:
+# `_load_module_disabled` runs `spec.loader.exec_module` over the session-end
+# hook SCRIPT: its module body can fail with anything at all (SyntaxError on a
+# bad edit, OSError, a missing dependency). The failure string is what the
+# module-level skipif below reports.
+except Exception as _e:  # noqa: BLE001 — exec_module runs an arbitrary script body
     _MODULE_LOADED = False
     _load_error = str(_e)
 

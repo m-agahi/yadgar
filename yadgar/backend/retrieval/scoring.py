@@ -16,7 +16,7 @@ def _observe_stage(stage: str, elapsed_ms: float) -> None:
         from yadgar._shared.observability.metrics import yadgar_recall_stage_ms  # noqa: PLC0415
 
         yadgar_recall_stage_ms.labels(stage=stage).observe(elapsed_ms)
-    except Exception:
+    except ImportError:
         pass
 
 
@@ -33,7 +33,7 @@ def _set_stage_attrs(**attrs: int) -> None:
         if span is not None and span.is_recording():
             for k, v in attrs.items():
                 span.set_attribute(k, v)
-    except Exception:
+    except Exception:  # noqa: BLE001 — sets dynamic attributes on the active OTel span; a degraded or swapped provider raises arbitrary types here (the I3 case documented in tracing.py), and span decoration must never fail the recall
         pass
 
 
@@ -98,7 +98,7 @@ class _ScoringMixin:
                 )
                 if hits:
                     _normalize_fts_hits(hits, scores, strength)
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-signal isolation in hybrid scoring: the FTS read reaches storage, which reports a missing full-text index as RuntimeError over HTTP but as an arbitrary SDK type embedded; a dead signal contributes no scores and the other signals still rank
             pass
 
     @observe(tier="hot", metric="retrieval.fts.entity")
@@ -124,7 +124,7 @@ class _ScoringMixin:
             if hits:
                 strength = 0.7 if params.open_domain_mode else 0.5
                 _normalize_fts_hits(hits, scores, strength)
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-signal isolation for the entity FTS pass; same untypeable storage surface as the content pass above
             pass
 
     @observe(tier="hot", metric="retrieval.fts.comet")
@@ -145,7 +145,7 @@ class _ScoringMixin:
             )
             if hits:
                 _normalize_fts_hits(hits, scores, 0.6)
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-signal isolation for the COMET-term FTS pass; same untypeable storage surface
             pass
 
     @observe(tier="stage", metric="retrieval.fts")
@@ -349,6 +349,6 @@ class _ScoringMixin:
                     self._apply_temporal_month_scores(month_matches, scores)
                     if w_temporal == 0.0:
                         w_temporal = 0.6
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-signal isolation for the temporal signal: it reaches storage and the date parser, which share no common base, and the weight is left at its pre-signal value so ranking continues without it
             logger.debug("Temporal retrieval failed, skipping signal")
         return w_temporal

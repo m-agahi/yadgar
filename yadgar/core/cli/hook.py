@@ -73,7 +73,7 @@ def _http_get(path: str, params: dict | None = None, timeout: float = 2.0) -> di
         # Close the file wrapper (py3.14 ResourceWarning leak guard).
         e.close()
         return None
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         return None
 
 
@@ -89,7 +89,7 @@ def _http_post(path: str, payload: dict, timeout: float = 1.0) -> dict | None:
         # Close the file wrapper (py3.14 ResourceWarning leak guard).
         e.close()
         return None
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         return None
 
 
@@ -226,7 +226,7 @@ def hook_session_start_context() -> None:
         data = json.load(sys.stdin)
         cwd = data.get("cwd", os.getcwd())
         source = data.get("source", "")
-    except Exception:
+    except (AttributeError, OSError, ValueError):  # fmt: skip
         cwd = os.getcwd()
         source = ""
 
@@ -249,7 +249,7 @@ def hook_post_compact_rehydrate() -> None:
     try:
         data = json.load(sys.stdin)
         directory = data.get("cwd", os.getcwd())
-    except Exception:
+    except (AttributeError, OSError, ValueError):  # fmt: skip
         directory = os.getcwd()
 
     params: dict = {"directory": directory}
@@ -285,7 +285,7 @@ def _log_hook_error(msg: str) -> None:
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(f"{stamp} pre-compact-drain {msg}\n")
-    except Exception:
+    except OSError:
         pass  # never block the hook on a logging failure
 
 
@@ -318,7 +318,7 @@ def hook_pre_compact_drain() -> None:
     """
     try:
         data = json.load(sys.stdin)
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         data = {}
 
     # Car fix-drain-inflight: parse in_flight HOST-SIDE (post-reinstall the
@@ -331,7 +331,7 @@ def hook_pre_compact_drain() -> None:
             in_flight = _capture_in_flight_host(transcript_path, directory)
             if in_flight is not None:
                 data["in_flight"] = in_flight
-        except Exception as e:  # import/parse failure → degrade, never crash
+        except Exception as e:  # noqa: BLE001 — in-flight capture is a best-effort enrichment behind a lazy import of the transcript parser; any fault degrades the drain payload rather than crashing the hook
             _log_hook_error(f"in_flight capture failed: {e!r}")
 
     # Car H: hand the drain to a daemon thread. ``/compact`` waits for our
@@ -348,7 +348,7 @@ def hook_pre_compact_drain() -> None:
             result = _http_post("/hooks/pre-compact", data, timeout=5.0)
             if result is None:
                 _log_hook_error("drain POST /hooks/pre-compact failed (backend unreachable?)")
-        except Exception as e:  # never let a daemon-thread error escape
+        except Exception as e:  # noqa: BLE001 — daemon-thread boundary: an escaping error here would be unhandled in a non-main thread, so every fault is logged to the hook-error file instead
             _log_hook_error(f"drain thread crashed: {e!r}")
 
     threading.Thread(target=_drain, daemon=True).start()
@@ -485,7 +485,7 @@ def hook_block_reflect() -> None:
     """
     try:
         data = json.load(sys.stdin)
-    except Exception:  # JSONDecodeError, ValueError
+    except (OSError, ValueError):  # fmt: skip
         return
 
     tool_name = data.get("tool_name", "")

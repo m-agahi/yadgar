@@ -230,7 +230,7 @@ def _migration_008_anchor_tier(storage) -> dict:
         from yadgar._shared.config import get_settings as _get_settings
 
         _ttl_days = int(_get_settings().ANCHOR_CONDITIONAL_TTL_DAYS)
-    except Exception:
+    except (ImportError, AttributeError, ValueError, TypeError):  # fmt: skip
         _ttl_days = 90
 
     valid_until_str = (datetime.now(UTC) + timedelta(days=_ttl_days)).isoformat()
@@ -598,7 +598,7 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
         # Extract numeric ID — SurrealDB HTTP returns "wiki_page:N"; type::record() needs N.
         try:
             num_id = storage._extract_id(raw_id)
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             _log.warning("migration_016: could not parse id %r — skipping", raw_id)
             continue
         try:
@@ -607,7 +607,7 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
                 {"id": num_id, "dc": dc},
             )
             backfilled += 1
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration: storage._q raises RuntimeError (SurrealDB), the httpx transport family and arbitrary embedded-SDK types with no common base, and the handler's whole job is the 'global' fallback write below
             _log.warning(
                 "migration_016: backfill failed for wiki_page id=%s (%s) — defaulting to 'global'",
                 raw_id,
@@ -619,7 +619,7 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
                     {"id": num_id},
                 )
                 backfilled += 1
-            except Exception as _e2:
+            except Exception as _e2:  # noqa: BLE001 — last-resort fallback write; same storage surface as above, and a migration must log-and-continue rather than abort half-applied
                 _log.error(
                     "migration_016: fallback backfill also failed for id=%s: %s",
                     raw_id,
@@ -648,7 +648,7 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
         raw_mem_id = row.get("id")
         try:
             num_mem_id = storage._extract_id(raw_mem_id)
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             _log.warning("migration_016: could not parse memory id %r — skipping", raw_mem_id)
             continue
         try:
@@ -657,7 +657,7 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
                 {"id": num_mem_id},
             )
             mem_backfilled += 1
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
             _log.warning(
                 "migration_016: memory backfill failed for id=%s: %s",
                 raw_mem_id,
@@ -729,7 +729,7 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
         raw_id = row.get("id")
         try:
             num_id = storage._extract_id(raw_id)
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             _log.warning("migration_018: could not parse id %r — skipping", raw_id)
             continue
         try:
@@ -739,7 +739,7 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
             )
             wiki_backfilled += 1
             wiki_buckets[dc] = wiki_buckets.get(dc, 0) + 1
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration: same storage surface, and the handler's whole job is the 'global' fallback write below
             _log.warning(
                 "migration_018: backfill failed for wiki_page id=%s (%s) — defaulting to 'global'",
                 raw_id,
@@ -752,7 +752,7 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
                 )
                 wiki_backfilled += 1
                 wiki_buckets["global"] = wiki_buckets.get("global", 0) + 1
-            except Exception as _e2:
+            except Exception as _e2:  # noqa: BLE001 — last-resort fallback write; same storage surface as above, and a migration must log-and-continue rather than abort half-applied
                 _log.error(
                     "migration_018: fallback backfill also failed for wiki_page id=%s: %s",
                     raw_id,
@@ -783,7 +783,7 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
         raw_mem_id = row.get("id")
         try:
             num_mem_id = storage._extract_id(raw_mem_id)
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             _log.warning("migration_018: could not parse memory id %r — skipping", raw_mem_id)
             continue
         try:
@@ -792,7 +792,7 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
                 {"id": num_mem_id},
             )
             mem_backfilled += 1
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
             _log.warning(
                 "migration_018: memory backfill failed for id=%s: %s",
                 raw_mem_id,
@@ -941,7 +941,7 @@ def _migration_023_memory_directory_context_backfill(storage) -> None:
         raw_id = row.get("id")
         try:
             num_id = storage._extract_id(raw_id)
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             _log.warning("migration_023: could not parse memory id %r — skipping", raw_id)
             continue
         try:
@@ -950,7 +950,7 @@ def _migration_023_memory_directory_context_backfill(storage) -> None:
                 {"id": num_id},
             )
             mem_backfilled += 1
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
             _log.warning(
                 "migration_023: memory backfill failed for id=%s: %s",
                 raw_id,

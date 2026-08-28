@@ -22,7 +22,7 @@ def _observe_action_batch(n: int) -> None:
         from yadgar._shared.observability.metrics import yadgar_action_batch_size  # noqa: PLC0415
 
         yadgar_action_batch_size.observe(n)
-    except Exception:
+    except ImportError:
         pass
 
 
@@ -40,7 +40,7 @@ def _observe_archive_purge(result: dict) -> None:
         )
         yadgar_archive_retention_skipped_total.labels(reason="anchor").inc(result["skipped_anchor"])
         yadgar_archive_retention_skipped_total.labels(reason="recent").inc(result["skipped_recent"])
-    except Exception:
+    except (ImportError, KeyError):  # fmt: skip
         pass
 
 
@@ -65,7 +65,7 @@ def _quarantine_action_group(action_ids: list, reason: str, directory: str) -> N
         quarantine_file = quarantine_dir / "action_log_poison.jsonl"
         with quarantine_file.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
-    except Exception:
+    except (OSError, TypeError, ValueError):  # fmt: skip
         logger.debug("quarantine write failed (non-fatal)", exc_info=True)
 
 
@@ -190,7 +190,7 @@ class _CleanupMixin:
 
         try:
             rows = self._storage.get_unprocessed_actions(limit=200)
-        except Exception:
+        except Exception:  # noqa: BLE001 — the action-log read that feeds the consolidation cycle: storage raises RuntimeError over HTTP and arbitrary SDK types embedded with no common base, and an unreadable batch returns zeroed stats so the cycle continues
             return stats
 
         # PR-E: observe batch size (including zero) into yadgar_action_batch_size
@@ -243,7 +243,7 @@ class _CleanupMixin:
         try:
             retention = self._settings.ACTION_LOG_RETENTION_DAYS
             self._storage.prune_processed_action_log(older_than_days=retention)
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-task isolation in the nightly retention sweep: the prune runs against storage, which raises with no common base, and an unprunable table must not stop the cycle
             logger.debug("action_log prune failed (non-fatal)", exc_info=True)
 
     @observe(tier="hot", metric="consolidation.try_store_action_summary")
@@ -312,7 +312,7 @@ class _CleanupMixin:
             pruned = self._storage.prune_old_episodes(older_than_days=retention)
             if pruned:
                 logger.info("phase: pruned %d old episodes (retention=%dd)", pruned, retention)
-        except Exception:
+        except Exception:  # noqa: BLE001 — per-task isolation; same untypeable storage surface
             logger.debug("Episode prune failed (non-fatal)", exc_info=True)
 
     @observe(tier="stage", metric="consolidation.run_retention_tasks")
@@ -342,7 +342,7 @@ class _CleanupMixin:
                 )
                 if pruned:
                     logger.info("retention: pruned %d old rows from %s", pruned, _table)
-            except Exception:
+            except Exception:  # noqa: BLE001 — per-table isolation inside the retention loop: same untypeable storage surface, and the remaining tables must still be pruned
                 logger.debug("retention prune failed for %s (non-fatal)", _table, exc_info=True)
 
         # cold-memory retention DRY-RUN visibility (#29)
@@ -357,7 +357,7 @@ class _CleanupMixin:
                         result["candidates"],
                         result["deleted"],
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001 — per-task isolation for the cold-memory dry-run report; same untypeable storage surface
                 logger.debug("retention: cold_memory report failed (non-fatal)", exc_info=True)
 
         # v5.49.0: archive retention — only when enabled
@@ -379,5 +379,5 @@ class _CleanupMixin:
                         result["skipped_recent"],
                     )
                 _observe_archive_purge(result)
-            except Exception:
+            except Exception:  # noqa: BLE001 — per-task isolation for the archive purge; same untypeable storage surface, and the purge's own circuit breaker already reports its stop condition through the result dict
                 logger.debug("retention: archive purge failed (non-fatal)", exc_info=True)

@@ -42,7 +42,7 @@ def _log_audit_action(storage, directory: str, action: str, payload: dict) -> No
             session_id="audit",
             timestamp=storage._now_iso(),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — audit-trail write: insert_action_log reaches storage, which raises with no common base, and a lost audit row must not abort the audit action it records
         logger.debug("_log_audit_action failed (non-fatal)", exc_info=True)
 
 
@@ -65,7 +65,7 @@ def _apply_forget_expired(storage, resolved: str, action_entry: dict) -> dict | 
             {"memory_id": mid, "expired_at": action_entry.get("expired_at", "")},
         )
         return {"action": "forget_expired", "id": mid, "status": "deleted"}
-    except Exception:
+    except Exception:  # noqa: BLE001 — per-action isolation in the anchor-audit sweep: delete_memory plus the audit write reach storage with no common base, and one failed forget must not abandon the remaining actions
         logger.debug("forget_expired failed for id=%s", mid, exc_info=True)
         return None
 
@@ -101,7 +101,7 @@ def _apply_merge(storage, resolved: str, action_entry: dict) -> dict | None:
             "forgotten_id": forget_id,
             "status": "merged",
         }
-    except Exception:
+    except Exception:  # noqa: BLE001 — per-action isolation for the merge action; same untypeable storage surface as _apply_forget_expired above
         logger.debug("merge failed for forget_id=%s", forget_id, exc_info=True)
         return None
 
@@ -156,9 +156,18 @@ def audit_apply_mutations(payload: dict) -> dict:
 def write_audit_sentinel(payload: dict) -> dict:
     """Write the latest-wins _audit_anchors sentinel memory for a directory. Storage-write half.
 
-    payload: {"directory": str, "audit_result": {actions, scanned, _truncated}}
+    payload: {"directory": str, "audit_result": {actions, scanned, coverage, _truncated}}
     Deletes any existing _audit_anchors sentinel for the directory, then creates
     a fresh one. Matches prior core behaviour: NO epoch bump (system marker).
+
+    ``coverage`` (task 408) is carried through VERBATIM from the ``audit_anchors``
+    result — it is not recomputed here. Task 391 built that block in
+    ``core/server/tools/_audit_coverage.py`` because the scan selector
+    (``'_anchor' INSIDE tags AND directory_context = $dir``) is narrower than
+    "this project's protected rows", so a bare ``scanned`` overstates coverage.
+    ``_run_anchor_audit_pass`` already forwards the whole result across this
+    boundary; this serialiser simply dropped the key, so the UNATTENDED nightly
+    sentinel kept recording the exact unqualified number 391 exists to qualify.
 
     Returns {"written": bool}.
     """
@@ -166,10 +175,19 @@ def write_audit_sentinel(payload: dict) -> dict:
     audit_result = payload.get("audit_result") or {}
     storage = _get_storage()
     try:
+        # An audit_result with no coverage says so, rather than omitting the key:
+        # a reader could otherwise not tell "not computed" from "pre-391 build".
+        # ``is None``, NOT ``or``: an empty-but-present coverage block is recorded
+        # verbatim. Claiming "absent" for a block that was in fact handed over
+        # would be a false statement in the one field added to prevent those.
+        coverage = audit_result.get("coverage")
+        if coverage is None:
+            coverage = {"error": "coverage absent from audit result"}
         sentinel_content = json.dumps(
             {
                 "actions": audit_result.get("actions", []),
                 "scanned": audit_result.get("scanned", 0),
+                "coverage": coverage,
                 "_truncated": audit_result.get("_truncated", False),
                 "audited_at": storage._now_iso(),
             }
@@ -194,6 +212,6 @@ def write_audit_sentinel(payload: dict) -> dict:
             },
         )
         return {"written": True}
-    except Exception:
+    except Exception:  # noqa: BLE001 — sentinel write via storage._q with no common base; the caller reads {written: False} as a soft outcome, so a failed sentinel must not fail the sweep
         logger.debug("write_audit_sentinel: failed for dir=%s", directory, exc_info=True)
         return {"written": False}

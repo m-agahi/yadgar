@@ -497,29 +497,36 @@ class TestSubcommandExitCodePropagates:
 
     ``cli()`` called ``args.func(args)`` and discarded the result, so a
     subcommand that returned non-zero still exited 0. Observed on the
-    sandbox VM 2026-08-15: ``yadgar migrate rekey --apply`` printed
-    ``migrate rekey: FAILED (registry_seed_failed)`` on stderr and exited
-    0 — a CI step or operator script reads that as success.
+    sandbox VM 2026-08-15: a handler printed its own ``FAILED`` line on
+    stderr and exited 0 — a CI step or operator script reads that as
+    success.
 
     Driven end-to-end through the real parser (``cli()`` builds it
-    inline, so there is no seam to patch) using the one subcommand whose
-    non-zero path needs no backend: ``--apply`` against a missing map
-    file returns 2 without attempting a single write.
+    inline, so there is no seam to patch) using a subcommand whose
+    non-zero path needs no backend: ``snapshot restore`` against a
+    missing snapshot returns 2 without attempting a single write.
     """
 
-    def test_nonzero_handler_return_becomes_nonzero_exit(self, tmp_path, monkeypatch) -> None:
+    def test_nonzero_handler_return_becomes_nonzero_exit(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
         import pytest as _pytest
 
         import yadgar.__main__ as main_mod
 
-        missing = tmp_path / "no-such-map.tsv"
+        missing = tmp_path / "no-such-snapshot.surql"
         monkeypatch.setattr(
             "sys.argv",
-            ["yadgar", "migrate", "rekey", "--map", str(missing), "--apply"],
+            ["yadgar", "snapshot", "restore", "--snapshot", str(missing)],
         )
         with _pytest.raises(SystemExit) as caught:
             main_mod.cli()
         assert caught.value.code == 2
+        # argparse ALSO exits 2 on a malformed command line, so the code alone
+        # cannot tell "the handler returned 2" from "the parser rejected the
+        # args" — which is the whole mechanism under test. The handler's own
+        # stderr line is the discriminator.
+        assert "snapshot restore: snapshot does not exist" in capsys.readouterr().err
 
     def test_handler_returning_none_still_exits_zero(self, monkeypatch) -> None:
         """Most handlers return None — they must keep exiting 0."""

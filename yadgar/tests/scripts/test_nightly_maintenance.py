@@ -375,7 +375,10 @@ class TestMaintenanceExitInFinally:
             # main() must still reach _step_start_core → maintenance exit.
             try:
                 mod.main(args)
-            except Exception:
+            # `_step_consolidation` is patched to raise unconditionally; whether
+            # main() swallows it is the thing under test, so both outcomes must
+            # reach the assertion below.
+            except Exception:  # noqa: BLE001 — a patched step raises unconditionally
                 pass  # if main() propagates, we still check below
 
         assert "exit" in maintenance_calls, (

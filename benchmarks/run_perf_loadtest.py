@@ -169,7 +169,9 @@ def _call_recall(daemon_url: str, query: str, *, req_id: int, timeout: float) ->
     )
     try:
         raw = urllib.request.urlopen(req, timeout=timeout).read().decode()
-    except Exception:
+    # urlopen raises URLError/HTTPError/socket.timeout (all OSError); a
+    # non-UTF-8 body raises UnicodeDecodeError.
+    except (OSError, UnicodeDecodeError):  # fmt: skip
         return False
     for line in raw.splitlines():
         if line.startswith("data:"):
@@ -185,7 +187,7 @@ def _scrape_metrics_text(metrics_url: str) -> str | None:
     """Fetch the backend /metrics exposition text, or None on failure."""
     try:
         return urllib.request.urlopen(metrics_url, timeout=5.0).read().decode()
-    except Exception:
+    except (OSError, UnicodeDecodeError):  # fmt: skip
         return None
 
 

@@ -309,29 +309,3 @@ class _UserMixin:
             params,
         )
         return self._rows_to_dicts(rows)
-
-    @observe(tier="stage")
-    def get_profiles_for_entity(
-        self,
-        entity_name: str,
-        directory_context: str | None = None,
-        include_invalidated: bool = False,
-    ) -> list[dict]:
-        """Return user_profile rows for an entity.
-
-        include_invalidated (v5.29.0): when False (default), returns only
-        currently-valid rows (valid_until IS NONE).
-        """
-        validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
-        if directory_context is not None:
-            rows = self._q(
-                f"SELECT * FROM user_profile WHERE entity_name = $en "
-                f"AND directory_context = $dc{validity_clause}",
-                {"en": entity_name, "dc": directory_context},
-            )
-        else:
-            rows = self._q(
-                f"SELECT * FROM user_profile WHERE entity_name = $en{validity_clause}",
-                {"en": entity_name},
-            )
-        return self._rows_to_dicts(rows)

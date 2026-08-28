@@ -38,7 +38,7 @@ def _parse_jsonl_line(line: str) -> dict | None:
         return None
     try:
         return json.loads(stripped)
-    except Exception:
+    except json.JSONDecodeError:
         return None
 
 

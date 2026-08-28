@@ -49,7 +49,7 @@ Semantic lookup of saved prompts is the unified recall path:
 
 ```python
 # Via MCP tool — SQL pre-filter over agent-prompt pages (dilution-safe)
-results = recall("audit this PR for vulns", type="wiki", tags=["agent-prompt"], directory="global")
+results = recall("audit this PR for vulns", type="wiki", tags=["agent-prompt"], project="<owner/repo>")
 # Each result carries the "agent-prompt" tag. General recall (no tags) EXCLUDES them.
 ```
 
@@ -60,7 +60,7 @@ not an MCP tool, not semantic recall.
 To save a prompt (upserts one page per pattern; second save bumps the wiki version):
 
 ```python
-result = agent_prompt_save("dispatch-fix-bug", "Updated prompt text...", directory="global")
+result = agent_prompt_save("dispatch-fix-bug", "Updated prompt text...", project="<owner/repo>")
 # Returns: {"saved": True, "version": 2, "slug": "agent-prompt-dispatch-fix-bug", "page_id": ...}
 ```
 
@@ -68,8 +68,15 @@ result = agent_prompt_save("dispatch-fix-bug", "Updated prompt text...", directo
 
 | Tool | Description |
 |---|---|
-| `agent_prompt_save(pattern, content, directory)` | Upserts one page per pattern; returns saved=True + version + slug |
-| `recall(query, type="wiki", tags=["agent-prompt"], directory)` | Semantic lookup of agent-prompt pages (replaces the removed `agent_prompt_search`) |
+| `agent_prompt_save(pattern, content, project)` | Upserts one page per pattern; returns saved=True + version + slug |
+| `agent_prompt_get(pattern)` | Exact-key read: the `agent_pattern` ledger row plus its wiki body (0047 Car I) |
+| `agent_prompt_list(status=None, limit=20)` | Discovery listing from the `agent_pattern` ledger table, ordered `uses` DESC (0047 Car I; the `agent-prompt-toc` wiki page is retired) |
+| `recall(query, type="wiki", tags=["agent-prompt"], project)` | Semantic lookup of agent-prompt pages (replaces the removed `agent_prompt_search`) |
+
+`project` is the scope key on every call above. Since C5 / ADR-0227 an identity
+is never derived from a directory, so `directory="global"` — which earlier
+revisions of this page used — no longer names anything: global REACH now travels
+as a tag on the page, never as a project identity.
 
 ## Using prompts at dispatch time
 
@@ -81,7 +88,7 @@ processes the subagent's `## Yadgar findings` section on return.
 To pull a prompt manually in your own dispatch prompt, use semantic recall:
 
 ```python
-hits = recall("fix the bug", type="wiki", tags=["agent-prompt"], directory="global")
+hits = recall("fix the bug", type="wiki", tags=["agent-prompt"], project="<owner/repo>")
 prompt_text = hits[0]["content"] if hits else DEFAULT_PROMPT
 
 Agent(

@@ -7,9 +7,34 @@
                           identity (two checkouts named `yadgar` are two projects), and
                           the task ledger is keyed on the minted value (ADR-0227).
                           If you cannot find that line, scroll for the `current_project`
-                          memory block, which carries the same value. If NEITHER exists,
-                          the mint failed — say so and SKIP the ledger steps below rather
-                          than inventing a key.
+                          memory block, which carries the same value.
+
+     IDENTITY MISSING OR REFUSED — two distinct modes. Tell them apart, then ASK
+     THE USER. Never invent, derive or guess a key (ADR-0227); asking is the
+     sanctioned path precisely BECAUSE deriving one is forbidden.
+       MODE 1 — no key at all (neither the banner nor the `current_project` block).
+         The SessionStart mint failed: no git `origin` remote, or no repo. SKIP
+         the ledger steps below rather than inventing a key.
+         Tell the user which yadgar writes are blocked and hand over the fix —
+         add an `origin` remote, or pin the key explicitly with
+         `mkdir -p .yadgar && echo owner/repo > .yadgar/project-id` — then a NEW
+         session, because the mint runs only at SessionStart.
+       MODE 2 — key present, but a scoped call answers `unknown project_id:
+         '<key>'` (reason `unknown_project`). You cannot detect this at header
+         time: it surfaces on the FIRST scoped call below, so when it arrives
+         come back here and treat it as this mode. It is not a transient tool
+         error and retrying will not clear it. The identity is fine; the
+         `project` registry has no row for it. Diagnose with
+         `yadgar project list` (read-only). An `ERROR:` line means the backend is
+         unreachable — that is UNDETERMINED, so report it and conclude nothing.
+         If it lists rows and yours is absent, ask the user to append one
+         5-column TAB-separated row (source_directory, project_id, 0, 0, note) to
+         `{directory}/.yadgar/project-id-map.tsv` and run `yadgar project seed
+         --map {directory}/.yadgar/project-id-map.tsv` — the only registration
+         path, and idempotent (existing rows come back `skipped`). The map path
+         must be absolute: `project seed` resolves a relative default against the
+         shell's cwd, not the project root. Do not run `seed` yourself; it writes
+         a shared registry.
 -->
 
 Yadgar checkpoint. CAPTURE FIRST (steps 1-5), THEN maintenance (steps 6-7).
@@ -228,8 +253,13 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    length" / "this feels minor" are NOT on the list and do NOT authorize a skip.
    For each entry in recommended_actions:
    - ANCHOR HYGIENE: if audit_anchors appears, run it once:
-     audit_anchors("{directory}", dry_run=True) → review actions list →
-     audit_anchors("{directory}", dry_run=False) to apply forget/merge. The tool
+     audit_anchors("{directory}", project="{project}", dry_run=True) → review the
+     actions list → audit_anchors("{directory}", project="{project}",
+     dry_run=False) to apply forget/merge. (Without project= the coverage block
+     falls back to the SessionStart contextvar, which is unbound on the ordinary
+     stateless_http path — `coverage.scope_keys.project_id` then comes back null
+     and the report loses its project_id arm. Same rule as every other call in
+     this protocol.) The tool
      self-guards (never drops semantic_immortal or protected-legacy anchors). For
      any promote draft it returns, wiki_add it only if wiki-worthy (step-2 rules),
      else skip. Run this flow at most once.

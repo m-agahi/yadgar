@@ -89,7 +89,7 @@ def observe_project_id_skip(writer: str, count: int = 1) -> None:
         )
 
         yadgar_project_id_skipped_total.labels(writer=writer).inc(count)
-    except Exception:
+    except ImportError:
         logger.debug("project_id skip metric unavailable (non-fatal)", exc_info=True)
 
 

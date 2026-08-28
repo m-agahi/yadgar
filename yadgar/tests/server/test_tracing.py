@@ -74,9 +74,11 @@ def _reset_tracer_provider():
             # not bleed into the next test and hide caplog records.
             _tr._stop_span_log_queue()
             logging.getLogger("yadgar.tracing").propagate = True
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
-    except Exception:
+    # The outer arm guards `trace._TRACER_PROVIDER` — a private OTel attribute
+    # that a version bump can rename.
+    except (ImportError, AttributeError):  # fmt: skip
         pass
 
 
@@ -970,7 +972,7 @@ class TestFallbackMode:
         # Should not raise regardless of environment
         try:
             setup_tracing("test-noop")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — the assertion IS "must not raise"
             pytest.fail(f"setup_tracing raised unexpectedly: {e}")
 
 
@@ -1072,7 +1074,7 @@ class TestThreadContextIsolation:
             with tracer.start_as_current_span("thread.error_span") as span:
                 try:
                     raise ValueError("thread error")
-                except Exception as exc:
+                except ValueError as exc:
                     span.record_exception(exc)
                     span.set_status(trace.Status(StatusCode.ERROR, str(exc)))
                     errors.append(exc)

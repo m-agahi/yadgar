@@ -216,11 +216,7 @@ class TestCmdStatsResolvesIdentityFirst:
         args = _make_args(project="m-agahi/yadgar", format="json")
         db = _make_db()
         with (
-            patch(
-                "yadgar._shared.storage.Surreal",
-                return_value=db,
-                create=True,
-            ),
+            patch("surrealdb.Surreal", return_value=db) as surreal_factory,
             patch("yadgar._shared.config.Settings"),
             patch(
                 "yadgar.core.cli._shared.resolve_cli_project", return_value="m-agahi/yadgar"
@@ -231,16 +227,19 @@ class TestCmdStatsResolvesIdentityFirst:
             with patch(
                 "yadgar.core.cli.stats.urllib.request.urlopen", side_effect=OSError("no daemon")
             ):
-                # The direct-DB branch tries to import Surreal from
-                # yadgar._shared.storage — patch that name too.
-                with patch.dict(
-                    "sys.modules",
-                    {"yadgar._shared.storage": MagicMock(Surreal=MagicMock(return_value=db))},
-                ):
-                    try:
-                        cmd_stats(args)
-                    except SystemExit:
-                        pass
+                try:
+                    cmd_stats(args)
+                except SystemExit:
+                    pass
+        # Task 412: the mock must actually have intercepted. The pre-412 patch
+        # targeted ``yadgar._shared.storage.Surreal`` + a ``sys.modules`` entry
+        # for that module, but ``_run_db_path`` does ``from surrealdb import
+        # Surreal`` — so the REAL client ran, opened a surrealkv store at
+        # ``str(Path(<mocked Settings>.DB_PATH))`` and left
+        # ``MagicMock/Settings().DB_PATH/<id>/`` in the repo root.
+        assert surreal_factory.called, (
+            "the Surreal client was not intercepted — the real one opened a store on disk"
+        )
         # resolve_cli_project was called.
         assert mock_resolve.called, (
             "cmd_stats must call resolve_cli_project — pre-333 it bypassed "
@@ -255,23 +254,22 @@ class TestCmdStatsResolvesIdentityFirst:
         args = _make_args(project="/nonexistent", format="json")
         db = _make_db()
         with (
-            patch(
-                "yadgar._shared.storage.Surreal",
-                return_value=db,
-                create=True,
-            ),
+            patch("surrealdb.Surreal", return_value=db) as surreal_factory,
             patch("yadgar._shared.config.Settings"),
             patch("yadgar.core.cli._shared.resolve_cli_project", return_value=None),
             patch("yadgar.core.cli.stats.urllib.request.urlopen", side_effect=OSError("no daemon")),
         ):
-            with patch.dict(
-                "sys.modules",
-                {"yadgar._shared.storage": MagicMock(Surreal=MagicMock(return_value=db))},
-            ):
-                try:
-                    cmd_stats(args)
-                except SystemExit:
-                    pass
+            try:
+                cmd_stats(args)
+            except SystemExit:
+                pass
+        # Task 412: same interception pin as the sibling test. It is also what
+        # keeps the binding assertion below honest — pre-412 the real client
+        # ran, ``db.query`` was never called, and the ``len(...) == 0`` arm
+        # made this test pass vacuously.
+        assert surreal_factory.called, (
+            "the Surreal client was not intercepted — the real one opened a store on disk"
+        )
         # At least one query must have bound ``p=None`` (the unresolvable
         # value) — never ``/nonexistent``.
         bound_p_values = [

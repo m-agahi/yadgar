@@ -76,7 +76,7 @@ def _summarize_package_json(content: str) -> str:
     """Extract key info from package.json."""
     try:
         pkg = json.loads(content)
-    except Exception:
+    except (TypeError, ValueError):  # fmt: skip
         return content[:500]
 
     parts = []
@@ -113,7 +113,7 @@ def _summarize_pyproject(content: str) -> str:
     """Extract key info from pyproject.toml using proper TOML parsing."""
     try:
         data = tomllib.loads(content)
-    except Exception:
+    except (TypeError, ValueError):  # fmt: skip
         # Fallback for malformed TOML
         return _truncate(content, 800)
 
@@ -159,7 +159,7 @@ def _summarize_cargo_toml(content: str) -> str:
     """Extract key info from Cargo.toml using proper TOML parsing."""
     try:
         data = tomllib.loads(content)
-    except Exception:
+    except (TypeError, ValueError):  # fmt: skip
         return _truncate(content, 800)
 
     parts = []

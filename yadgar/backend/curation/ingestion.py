@@ -128,7 +128,7 @@ def merge_memory(
         storage.update_memory_fields(existing_id, embedding=merged_embedding)
         try:
             storage.update_vector(existing_id, merged_embedding)
-        except Exception:
+        except Exception:  # noqa: BLE001 — the vector half of a two-part merge write: update_memory_fields above already committed the content, and update_vector reaches storage with no common base, so a failed sidecar write must not undo the merge
             pass
 
     # Update FTS content is handled by the trigger on memories table

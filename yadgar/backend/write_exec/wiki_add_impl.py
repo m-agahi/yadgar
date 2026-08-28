@@ -43,7 +43,7 @@ def _mirror_wiki(slug: str, content: str) -> None:
         return
     try:
         fq.write_wiki(slug, content)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort .md mirror through the FileQueue: it reaches the filesystem and the queue's own serialisation, which share no common base, and the page is already written so a failed mirror must stay non-fatal
         logger.debug("File queue wiki mirror failed (non-fatal): %s", exc)
 
 

@@ -24,7 +24,7 @@ try:
     )
 
     _encode_queue_depth.set(0)
-except Exception:
+except ImportError:
     pass
 
 
@@ -136,7 +136,7 @@ class EmbeddingEngine:
                 trust_remote_code=True,
                 local_files_only=local_only,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — SentenceTransformer construction reaches huggingface_hub, torch and the local cache, which raise OSError, hub-private validation errors and torch errors with no common base; the forced-local retry below IS this handler's purpose
             pass
 
         # Retry with forced local — handles corrupt cache / transient net error.
@@ -168,7 +168,7 @@ class EmbeddingEngine:
                 torch.set_num_interop_threads(_n)
             except RuntimeError:
                 pass  # inter-op pool already initialized — intra-op cap is enough
-        except Exception:
+        except (ImportError, RuntimeError):  # fmt: skip
             pass
 
     @observe(tier="stage")
@@ -324,7 +324,7 @@ class EmbeddingEngine:
                     # (removed on the scheduled-rename tick with a dashboard PR).
                     yadgar_embedding_cache_hits_total.inc()
                     record_cache_hit("embedding")
-                except Exception:
+                except ImportError:
                     pass
                 return self._query_cache[text]
             self._ensure_model()
@@ -358,7 +358,7 @@ class EmbeddingEngine:
                 record_cache_miss("embedding")
                 if _evicted:
                     record_cache_evict("embedding")
-            except Exception:
+            except ImportError:
                 pass
             return result
         finally:
@@ -369,7 +369,7 @@ class EmbeddingEngine:
                 )
 
                 yadgar_encode_duration_ms.labels(model=self.model_name).observe(_elapsed_ms)
-            except Exception:
+            except ImportError:
                 pass
 
     @trace_span()

@@ -106,7 +106,7 @@ class _CommunityMixin:
             from networkx.algorithms.community import louvain_communities
 
             communities = louvain_communities(G, seed=42)
-        except Exception:
+        except Exception:  # noqa: BLE001 — algorithm fallback: louvain_communities is absent on older networkx (ImportError) and raises its own errors on degenerate graphs, so the catch breadth IS the fallback condition for label_propagation_communities below
             from networkx.algorithms.community import label_propagation_communities
 
             communities = list(label_propagation_communities(G))

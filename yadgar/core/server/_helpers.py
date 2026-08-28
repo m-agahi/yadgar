@@ -90,7 +90,7 @@ def _build_dlq_alert_text() -> str:
                 meta = json.loads(sidecar.read_text())
                 meta["_file"] = sidecar.name[: -len(".error.json")]
                 alerts.append(meta)
-            except Exception:
+            except (OSError, ValueError):  # fmt: skip
                 logger.warning("DLQ alert: failed to parse sidecar %s", sidecar, exc_info=True)
         if not alerts:
             return ""
@@ -108,5 +108,5 @@ def _build_dlq_alert_text() -> str:
         if len(alerts) > 5:
             lines.append(f"  ... and {len(alerts) - 5} more")
         return "\n".join(lines)
-    except Exception:
+    except (AttributeError, OSError, TypeError, ValueError):  # fmt: skip
         return ""

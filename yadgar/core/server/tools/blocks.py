@@ -134,7 +134,7 @@ def block_get(
         result = storage.get_block(
             name=name, scope=scope, directory=directory, project_id=_project_id
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — MCP tool boundary: every storage fault is rendered as an {ok: False, error} envelope for the caller rather than a traceback
         logger.warning("block_get error name=%s: %s", name, exc)
         return {"ok": False, "error": str(exc)}
 
@@ -256,7 +256,7 @@ def block_list(
 
     try:
         rows = storage.list_blocks(scope=scope, directory=directory, project_id=_project_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — MCP tool boundary: every storage fault degrades to an empty list rather than a traceback
         logger.warning("block_list error scope=%s directory=%s: %s", scope, directory, exc)
         return []
 

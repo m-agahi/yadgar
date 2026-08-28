@@ -1,7 +1,8 @@
 """``yadgar project ...`` subcommand — project-registry operator surface.
 
 Car A (2026-08-14 identity train, plan §2). Closes the gap where
-``backend.admin_exec.ledger.create_project_row`` exists and is registered
+``backend.admin_exec.ledger_project.create_project_row`` exists and is
+registered
 (``backend/admin_exec/__init__.py:152``) but had no CLI / MCP path. The
 seeding function is the FIRST operator step on a new deployment — every
 ``task`` / ``adr`` / ``agent_prompt`` ledger row FKs to the ``project``
@@ -181,10 +182,10 @@ def is_duplicate_project_error(err: str) -> bool:
     Matching only on ``"DuplicateProject"``/``"duplicate"`` therefore never
     fired against a live backend, and every already-registered key came
     back as a hard failure. Observed on the sandbox VM 2026-08-15
-    (core 5.183.0 / backend 5.74.0): ``yadgar migrate rekey --apply``
-    aborted with ``registry_seed_failed`` on the first same-basename
-    collision, and — because the rows it had already created then
-    collided on every retry — could not be resumed at all.
+    (core 5.183.0 / backend 5.74.0): the corpus re-key migration (since
+    deleted) aborted with ``registry_seed_failed`` on the first
+    same-basename collision, and — because the rows it had already created
+    then collided on every retry — could not be resumed at all.
 
     The class-name patterns are kept for cross-version back-compat: a
     backend that does surface the class name stays supported.

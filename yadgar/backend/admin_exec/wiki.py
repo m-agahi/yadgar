@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # ``_toc_with_row`` / ``_upsert_toc_row`` / ``_set_toc_row_count`` /
 # ``_ensure_library_anchor``) and the memory-row ``increment_prompt_usage``
 # op all retired. The agent-prompt library now lives in the
-# ``agent_pattern`` ledger table (see backend/admin_exec/ledger.py and
+# ``agent_pattern`` ledger table (see backend/admin_exec/ledger_agent.py and
 # core/server/tools/agent_prompts.py).
 
 

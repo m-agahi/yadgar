@@ -5,17 +5,24 @@ This project uses **yadgar** — a persistent memory engine for Claude Code.
 
 ### Quick Reference
 
-- **Recall context:** `mcp__yadgar__recall(query="...")`
-- **Remember something:** `mcp__yadgar__remember(content="...", tags=[...])`
-- **Memorize with decay:** `mcp__yadgar__memorize(content="...", context="/abs/path")`
-- **Wiki lookup:** `mcp__yadgar__wiki_query(query="...", tags=[...])`
-- **Restore session:** `mcp__yadgar__restore(directory="/abs/path")`
+`project` is the scope key on every call below. It is an `owner/repo`-shaped
+identity (e.g. `m-agahi/yadgar`), printed by the SessionStart banner. Yadgar
+does NOT derive one from a directory (ADR-0227): omit it and the call is
+rejected, not guessed.
+
+- **Recall context:** `mcp__yadgar__recall(query="...", project="<owner/repo>")`
+- **Store a memory:** `mcp__yadgar__memorize(content="...", project="<owner/repo>", tags=[...])`
+- **Wiki lookup:** `mcp__yadgar__recall(query="...", type="wiki", project="<owner/repo>")`
+- **Restore session:** `mcp__yadgar__restore(project="<owner/repo>")`
 
 ### Rules
 
 1. Always check yadgar before answering questions about project structure, AWS resources, or past decisions.
 2. Write back to yadgar after discovering non-obvious, reusable facts.
-3. Use `restore(directory=...)` after `/clear` or `/compact` — not `recall`.
-4. Tag all writes; `wiki_query` accuracy degrades on untagged pages.
-5. Never write to `memory/` dirs or `MEMORY.md` — use yadgar MCP tools only.
+3. Use `restore(project=...)` after `/clear` or `/compact` — not `recall`.
+4. Tag all writes; wiki search accuracy degrades on untagged pages.
+5. `memorize(context=...)` is NOT a scope key — it is an optional path to a real
+   file the memory is *about*, used only for staleness detection. Never pass a
+   description there, and never rely on it for scoping.
+6. Never write to `memory/` dirs or `MEMORY.md` — use yadgar MCP tools only.
 <!-- YADGAR-RULES-END -->

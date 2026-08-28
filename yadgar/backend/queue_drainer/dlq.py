@@ -162,7 +162,7 @@ class _DLQMixin:
 
             if _is_degenerate_auto_abstracted(p.get("content", "")):
                 return "degenerate_content"
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — optional degenerate-content check inside a validator: the cls_store import pulls in the clustering stack (numpy/torch reachable), which raises with no common base, and a validator that cannot run this check must fall through to the remaining checks rather than reject the write
             logger.debug("_validate_wiki_add: degenerate check failed: %s", _e)
 
         # 4. v5.42.5: directory_context required for all writes.
@@ -452,7 +452,13 @@ class _DLQMixin:
             )
 
             yadgar_wiki_add_rejected_total.labels(reason=reason).inc()
-        except Exception:
+        # The docstring above names TWO failures and they are different types:
+        # "missing import" is ImportError, "registry uninitialised" is an
+        # AttributeError from `.labels` on whatever stands in for the counter
+        # when the registry never built a real one. Narrowing to ImportError
+        # alone (2026-08-28, BLE001 triage) silently dropped the second, which
+        # is the one the test actually exercises.
+        except (ImportError, AttributeError):  # fmt: skip
             pass
 
     @observe(tier="stage", metric="drainer.dlq.similarity_gate_for_drainer")
@@ -474,7 +480,7 @@ class _DLQMixin:
             sim_mode = getattr(cfg, "WIKI_SIM_MODE", "hard")
             sim_threshold = getattr(cfg, "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
             sim_top_k = getattr(cfg, "WIKI_SIM_TOP_K", 5)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — config read for the drainer similarity gate: get_settings raises pydantic validation errors and ImportError with no common base, and an unreadable config must SKIP the gate (return None) rather than reject a queued write
             logger.debug("_similarity_gate_for_drainer: config error (non-fatal): %s", exc)
             return None
 
@@ -529,6 +535,6 @@ class _DLQMixin:
                 suggested_update_slug=best_slug,
                 candidates=candidates,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — the gate body reaches the wiki store, the embedding engine and storage, which share no common base; a gate that cannot run must let the write through, never reject it on its own failure
             logger.debug("_similarity_gate_for_drainer: gate error (non-fatal): %s", exc)
             return None

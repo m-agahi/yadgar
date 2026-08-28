@@ -31,5 +31,5 @@ def _inc_relaxed(enforcement: str) -> None:
         )
 
         yadgar_writes_with_enforcement_relaxed.labels(enforcement=enforcement).inc()
-    except Exception:
+    except ImportError:
         pass

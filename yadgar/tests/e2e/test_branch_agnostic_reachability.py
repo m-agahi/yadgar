@@ -89,11 +89,16 @@ def _stamp_branch(storage, table: str, row_id: int, branch: str) -> bool:
             f"UPDATE type::record('{table}', $rid) SET branch = $b",
             {"rid": int(row_id), "b": branch},
         )
-    except Exception:
+    # `_q` has two backends with disjoint error surfaces: httpx raises
+    # HTTPError/ValueError/RuntimeError, the embedded path raises surrealdb-SDK
+    # classes not importable here. A missing `branch` column — the condition
+    # this probe exists to report — surfaces as the RuntimeError arm only when
+    # running server-mode.
+    except Exception:  # noqa: BLE001 — `_q` error surface is backend-dependent
         return False
     try:
         rows = storage._q(f"SELECT branch FROM type::record('{table}', $rid)", {"rid": int(row_id)})
-    except Exception:
+    except Exception:  # noqa: BLE001 — `_q` error surface is backend-dependent
         return False
     return bool(rows) and rows[0].get("branch") == branch
 

@@ -90,7 +90,7 @@ def _get_version() -> str:
         from yadgar import __version__  # noqa: PLC0415
 
         return __version__
-    except Exception:
+    except ImportError:
         return "unknown"
 
 

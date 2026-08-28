@@ -149,9 +149,13 @@ install-runtime:
 	  YADGAR_TEST_TTY="$(YADGAR_TEST_TTY)" \
 	  bash $(SCRIPTS_DIR)/install_runtime.sh
 
-## install-hooks: Install Claude Code git hooks (daemon-independent)
+## install-hooks: Install Claude Code hooks (daemon-independent)
+# `yadgar install-hooks` was hard-removed in v5.166.0 (Car 7, opencode port
+# train) and its stub exits 1. Because `setup` calls this target WITHOUT a `-`
+# prefix, that non-zero status aborted `make setup` before install-agents,
+# config-sync, install-rules, seed-anchors and code-graph-install could run.
 install-hooks:
-	python3 -m yadgar install-hooks
+	python3 -m yadgar install --client claude-code --hooks --scope global
 
 ## install-agents: Install yadgar subagents into Claude Code
 install-agents:

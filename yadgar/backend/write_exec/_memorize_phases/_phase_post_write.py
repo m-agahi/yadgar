@@ -67,7 +67,7 @@ def _bump_cache_epoch(ctx: MemorizeContext) -> None:
         # path, not on project_id, so this deliberately keeps passing the path.
         # Absent path → nothing to invalidate (the helper is fully guarded).
         _bump_epoch_for_context(ctx.context)
-    except Exception:  # pragma: no cover - must never break writes
+    except Exception:  # pragma: no cover  # noqa: BLE001 — _bump_epoch_for_context spans a lazy import, git-root resolution and the on-disk epoch store, which share no common base, and cache invalidation must never fail the write it follows
         pass
 
 
@@ -106,7 +106,7 @@ def _run_engram(ctx: MemorizeContext) -> None:
         return
     try:
         ctx.engram_result = _st._engram.allocate(ctx.memory_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 — post-write engram allocation: it reaches storage and the slot allocator, which share no common base, and the memory is already committed so a failed allocation must not fail the write
         logger.debug("Engram allocation failed for memory %s", ctx.memory_id)
 
 
@@ -178,7 +178,7 @@ def _zero_gap_4_micro_checkpoint(ctx: MemorizeContext, settings) -> None:
             # checkpoint row that restore can never find.
             _st._replay.create_micro_checkpoint(ctx.context or "", ctx.content, micro_reason)
             logger.debug("Micro-checkpoint created: %s", micro_reason)
-        except Exception:
+        except Exception:  # noqa: BLE001 — post-write micro-checkpoint: create_micro_checkpoint reaches storage with no common base, and the memory is already committed
             logger.debug("Micro-checkpoint failed")
 
 
@@ -240,7 +240,7 @@ def _zero_gap_6_reinjection(ctx: MemorizeContext, settings) -> None:
                 )
             if len(ctx.related_context) >= settings.REINJECTION_MAX_RESULTS:
                 break
-    except Exception:
+    except Exception:  # noqa: BLE001 — post-write reinjection recall: it runs the retrieval pipeline (storage + embeddings + rerankers) with no common base, and the memory is already committed so a failed recall only costs the related-context block
         logger.debug("Reinjection recall failed")
 
 

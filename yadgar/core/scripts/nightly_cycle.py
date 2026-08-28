@@ -324,7 +324,7 @@ def _step_stop_core(core_url: str | None = None) -> int:
             operation="nightly",
         )
         _log_step("stop_core", "ok", (time.monotonic() - t0) * 1000)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — nightly step boundary: every fault is recorded (record_exception + structured _log_step) and converted to a step outcome; the cycle must not die mid-maintenance
         record_exception("nightly_cycle.stop_core", exc)
         _log_step("stop_core", "warn", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.warning(
@@ -349,7 +349,7 @@ def _step_pre_backup(db_path: Path, snapshot_dir: Path, backend_url: str) -> int
         )
         _log_step("pre_backup", "ok", (time.monotonic() - t0) * 1000)
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — nightly step boundary: every fault is recorded (record_exception + structured _log_step) and converted to the step's exit code; the cycle must not die mid-maintenance
         record_exception("nightly_cycle.pre_backup", exc)
         _log_step("pre_backup", "error", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.error(
@@ -384,7 +384,7 @@ def _step_consolidation(db_path: Path, settings: Settings) -> int:
         stats = run_nightly_consolidation(storage=storage, settings=settings)
         _log_step("consolidation", "ok", (time.monotonic() - t0) * 1000, stats=str(stats))
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — nightly step boundary: every fault is recorded (record_exception + structured _log_step) and converted to the step's exit code; the cycle must not die mid-maintenance
         record_exception("nightly_cycle.consolidation", exc)
         _log_step("consolidation", "error", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.warning(
@@ -397,7 +397,7 @@ def _step_consolidation(db_path: Path, settings: Settings) -> int:
         if storage is not None:
             try:
                 storage.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — teardown inside `finally`: a close() fault must not mask the consolidation outcome being returned
                 pass
 
 
@@ -438,7 +438,7 @@ def _step_vacuum(db_path: Path, backend_url: str, service_mode: str | None) -> i
             raise RuntimeError(f"cmd_vacuum_impl returned exit code {vac_code}")
         _log_step("vacuum", "ok", (time.monotonic() - t0) * 1000)
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — nightly step boundary: every fault is recorded (record_exception + structured _log_step) and converted to the step's exit code; the cycle must not die mid-maintenance
         record_exception("nightly_cycle.vacuum", exc)
         _log_step("vacuum", "error", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.warning(
@@ -465,7 +465,7 @@ def _step_post_backup(db_path: Path, snapshot_dir: Path, backend_url: str) -> in
         )
         _log_step("post_backup", "ok", (time.monotonic() - t0) * 1000)
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — nightly step boundary: every fault is recorded (record_exception + structured _log_step) and converted to the step's exit code; the cycle must not die mid-maintenance
         record_exception("nightly_cycle.post_backup", exc)
         _log_step("post_backup", "error", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.warning(
@@ -528,7 +528,7 @@ def _step_cross_engine_backup(
             sql_dump=str(result.get("sql_dump")),
         )
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — nightly step boundary: every fault is recorded (record_exception + structured _log_step) and converted to the step's exit code; the cycle must not die mid-maintenance
         record_exception("nightly_cycle.cross_engine_backup", exc)
         _log_step("cross_engine_backup", "error", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.error(
@@ -560,7 +560,7 @@ def _step_prune(snapshot_dir: Path, mariadb_dir: Path, retention: int) -> int:
         removed += prune_snapshots(mariadb_dir, "mariadb.*.sql", retention=retention)
         _log_step("prune", "ok", (time.monotonic() - t0) * 1000, removed=len(removed))
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — nightly step boundary: every fault is recorded (record_exception + structured _log_step) and converted to the step's exit code; the cycle must not die mid-maintenance
         record_exception("nightly_cycle.prune", exc)
         _log_step("prune", "error", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.warning(
@@ -588,7 +588,7 @@ def _step_start_core(core_url: str | None = None) -> int:
     try:
         _maintenance_http("exit", core_url)
         _log_step("start_core", "ok", (time.monotonic() - t0) * 1000)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — nightly step boundary: every fault is recorded (record_exception + structured _log_step) and converted to a step outcome; the cycle must not die mid-maintenance
         record_exception("nightly_cycle.start_core", exc)
         _log_step("start_core", "warn", (time.monotonic() - t0) * 1000, error=str(exc))
         _log.warning(

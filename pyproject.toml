@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.191.0"
+version = "5.192.0"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -113,13 +113,19 @@ ignore = [
     "E501",   # line too long — handled by formatter
     "B008",   # do not perform function calls in default arguments
     "UP007",  # use X | Y for unions — already done where possible
-    # BLE001 (blind-except `except Exception:`) — added to select 2026-08-23
-    # by car C2 of the bug-bag-2 train. The 303 pre-existing sites carry an
-    # explicit `# noqa: BLE001 — <reason>` comment and remain live
-    # suppressions, not silent no-ops. Future `except Exception:` writes must
-    # name the rule and state a reason or get caught by the linter.
-    "BLE001",
 ]
+
+# BLE001 (blind-except) is LIVE and deliberately NOT ignored — see ADR-0465.
+# It reached `select` via the `BLE` prefix on 2026-08-23 and was immediately
+# ignore-overridden by an exact `BLE001` entry here; exact beats prefix, so the
+# rule never fired. The comment that used to sit in `ignore` asserted the
+# opposite in writing — that the annotated sites "remain live suppressions, not
+# silent no-ops" and that future writes would "get caught by the linter". By
+# 2026-08-28 there were 965 `except Exception:` sites, 305 annotated and 660
+# bare with no comment at all: the 660 are the measured proof nothing was ever
+# caught. All of them were then triaged — narrowed to real exception types
+# where possible, kept broad only with a stated site-specific reason.
+# A blanket `# noqa: BLE001` pass is not an acceptable way to satisfy this rule.
 
 [tool.ruff.lint.per-file-ignores]
 # Grandfathered C901/PLR0913 violations that predate strict enforcement.

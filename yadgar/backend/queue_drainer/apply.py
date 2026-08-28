@@ -22,7 +22,7 @@ def _apply_span():
         from opentelemetry import trace as _ot  # noqa: PLC0415
 
         return _ot.get_tracer("yadgar.file_queue").start_as_current_span("drainer.apply")
-    except Exception:
+    except Exception:  # noqa: BLE001 — span construction per replayed write: a degraded or swapped OTel provider raises arbitrary types from get_tracer (the I3 case documented in tracing.py), and the caller must fall through to nullcontext
         return contextlib.nullcontext()
 
 
@@ -34,7 +34,7 @@ def _set_apply_op(op: str) -> None:
         sp = _ot.get_current_span()
         if sp is not None and sp.is_recording():
             sp.set_attribute("op", op)
-    except Exception:
+    except Exception:  # noqa: BLE001 — same degraded-provider surface; setting the op attribute is decoration and must never fail the replay
         pass
 
 

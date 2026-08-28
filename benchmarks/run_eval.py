@@ -163,7 +163,10 @@ def seed_pairs_into_storage(
                 embeddings_engine=embeddings,
                 settings=settings,
             )
-        except Exception as exc:
+        # `insert_memory` fans out over the embedding engine and the storage
+        # driver (httpx or the embedded surrealdb SDK) — no importable common
+        # base. Reported per pair; the pair is then carried through unseeded.
+        except Exception as exc:  # noqa: BLE001 — insert spans embed + storage drivers
             print(f"  WARNING: seed failed for {pair['query_id']}: {exc}", file=sys.stderr)
             remapped.append(pair)
             continue
@@ -292,7 +295,9 @@ def evaluate_pair(
         # whole-corpus intent explicitly now that a falsy project_id raises
         # (Car H1 §1.3) instead of silently scoping to nothing.
         results = retriever.recall(query, max_results=max_results, min_heat=0.0, unscoped=True)
-    except Exception as exc:
+    # `recall` spans embeddings, storage and the HTTP backend; the exception is
+    # recorded into the result row as `error`, not swallowed.
+    except Exception as exc:  # noqa: BLE001 — recall spans the whole retrieval stack
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return {
             "query_id": pair["query_id"],
@@ -424,7 +429,9 @@ def evaluate_pair_unified(
         if project is not None:
             _fallback_kwargs["project"] = project
         results = recall_fn(query, **_fallback_kwargs)
-    except Exception as exc:
+    # `recall_fn` is caller-supplied (that is what the fallback above exists to
+    # tolerate), so its error surface is unknowable here. Recorded as `error`.
+    except Exception as exc:  # noqa: BLE001 — caller-supplied recall callable
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return {
             "query_id": pair["query_id"],

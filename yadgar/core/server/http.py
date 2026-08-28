@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
 import yadgar._shared.paths as _paths
@@ -447,7 +447,7 @@ def _sentinel_retire_to_failed(marker: Path, failed_dir: Path) -> None:
     try:
         failed_dir.mkdir(parents=True, exist_ok=True)
         marker.rename(failed_dir / marker.name)
-    except Exception as mv_e:
+    except OSError as mv_e:
         logger.warning("sentinel move to failed/ error: %s", mv_e)
 
 
@@ -462,7 +462,7 @@ def _sentinel_handle_failure(marker: Path, record: dict, retries: int, failed_di
             tmp = marker.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
             tmp.rename(marker)
-        except Exception as wb_e:
+        except OSError as wb_e:
             logger.warning("sentinel retry write-back error: %s", wb_e)
 
 
@@ -487,7 +487,7 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
     for marker in sorted(sentinel_dir.glob("*.json")):
         try:
             record = json.loads(marker.read_text(encoding="utf-8"))
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.warning("sentinel parse error for %s: %s", marker, e)
             continue
 
@@ -517,7 +517,7 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
                 perm_e,
             )
             _sentinel_retire_to_failed(marker, failed_dir)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-marker isolation: one unreadable/unwritable sentinel must not abort the scan of the rest (this function contracts "never raises")
             retries += 1
             logger.warning("sentinel import failed for %s (attempt %d): %s", marker, retries, e)
             _sentinel_handle_failure(marker, record, retries, failed_dir)
@@ -615,7 +615,7 @@ async def _probe_dependency(client, url: str) -> bool:
     try:
         r = await client.get(f"{url}/health")
         return r.status_code == 200
-    except Exception:
+    except Exception:  # noqa: BLE001 — `client` is duck-typed (httpx.AsyncClient in prod, a stub in tests), so the raisable set is not knowable here; the probe contracts "never raises" and reports unreachable as False
         return False
 
 
@@ -763,7 +763,7 @@ def _handshake_block(peer_url: str | None) -> dict:
         if _r.status_code != 200:
             return handshake_status(__version__, "unknown", side="core")
         _peer_version = _r.json().get("version") or "unknown"
-    except Exception:
+    except (AttributeError, OSError, ValueError, _httpx.HTTPError, _httpx.InvalidURL):  # fmt: skip
         return handshake_status(__version__, "unknown", side="core")
     return handshake_status(__version__, _peer_version, side="core")
 
@@ -894,7 +894,7 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
     """Called by PreCompact hook before context compaction."""
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         body = {}
 
     directory = body.get("cwd", os.getcwd())
@@ -933,7 +933,7 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
     if _st._consolidation is not None:
         try:
             _st._consolidation.force_consolidate()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort emergency consolidation on the pre-compact path; a consolidation fault must not fail the hook that is about to lose the context
             logger.debug("Emergency consolidation failed during pre-compact")
 
     return JSONResponse(result)
@@ -1030,7 +1030,7 @@ async def hook_block_reflect(request: Request) -> JSONResponse:
         # directory so the label is not blank when only the legacy arm fired.
         text = render_blocks_section(blocks, project or directory or "")
         return JSONResponse({"text": text})
-    except Exception as _e:
+    except Exception as _e:  # noqa: BLE001 — hook endpoint is fail-open by contract: any fault returns empty text rather than breaking the user's turn
         logger.debug("block-reflect hook error: %s", _e)
         return JSONResponse({"text": ""})
 
@@ -1048,7 +1048,7 @@ async def hook_auto_capture(request: Request) -> JSONResponse:
     try:
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, ClientDisconnect):  # fmt: skip
             _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
             _hook_observe_response("auto_capture", _resp.status_code)
             return _resp
@@ -1206,7 +1206,7 @@ async def _task_list_legacy_wiki_nudge(directory: str) -> str:
             slug,
             directory,
         )
-    except Exception as _ge:
+    except Exception as _ge:  # noqa: BLE001 — SessionStart nudge is fail-open: a storage fault must not block session start
         logger.debug("task-list page read failed: %s", _ge)
         return ""
     if not page:
@@ -1391,7 +1391,7 @@ async def _read_open_task_rows(ledger: Any, project: str) -> list[dict]:
             "nudge still renders",
             _sig,
         )
-    except Exception as _le:
+    except Exception as _le:  # noqa: BLE001 — SessionStart nudge is fail-open; the ledger read crosses a forward boundary whose raisable set is not enumerable here
         # Still fail-open (session start is never blocked), but audible: a read
         # that raised is not the same event as a ledger with no open tasks, and
         # only one of those two should be silent.
@@ -1400,7 +1400,7 @@ async def _read_open_task_rows(ledger: Any, project: str) -> list[dict]:
 
     try:
         return await asyncio.to_thread(ledger.task_list, **_kw)
-    except Exception as _re:
+    except Exception as _re:  # noqa: BLE001 — same fail-open contract as the with_edges attempt above
         logger.warning("task-list ledger retry without edges failed: %s", _re)
         return []
 
@@ -1472,7 +1472,7 @@ async def _task_list_restore_nudge(directory: str, project: str = "") -> tuple[s
 
         # ── Legacy path: wiki-page parse. Removed once Car D lands.
         return await _task_list_legacy_wiki_nudge(directory), []
-    except Exception as _te:
+    except Exception as _te:  # noqa: BLE001 — SessionStart nudge is fail-open by contract (helper documented to return "" on any error)
         logger.debug("session-context task-list nudge error: %s", _te)
         return "", []
 
@@ -1536,7 +1536,7 @@ def _code_graph_suggest_line(directory: str, blocks: list[dict]) -> str:
         # code_graph.enabled flag from its OWN DB (ADR-0163 container-blindness fix).
         line = session_suggest_line(directory, blocks, resolver=config_get)
         return f"\n{line}\n" if line else ""
-    except Exception as _cge:
+    except Exception as _cge:  # noqa: BLE001 — SessionStart soft-suggest is fail-open; code_graph is optional and must never break session start
         logger.debug("session-context code_graph suggest error: %s", _cge)
         return ""
 
@@ -1587,7 +1587,7 @@ async def _checkpoint_resume_hint(directory: str, source: str) -> str:
             + (f"  {_source_hint_prefix}" if _source_hint_prefix else "")
             + f'To resume: call `restore(directory="{directory}")`\n'
         )
-    except Exception as _ce:
+    except Exception as _ce:  # noqa: BLE001 — SessionStart hint is fail-open; a checkpoint read fault must not block session start
         logger.debug("session-context checkpoint hint error: %s", _ce)
         return ""
 
@@ -1645,7 +1645,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
     _sentinel_dir = _sentinel_dir_env if _sentinel_dir_env else str(_paths.SESSION_ENDS_DIR)
     try:
         _import_pending_sentinels(_sentinel_dir)
-    except Exception as _se:
+    except Exception as _se:  # noqa: BLE001 — defence in depth: _import_pending_sentinels contracts "never raises", and a breach of that contract must still not break session start
         logger.debug("sentinel import error in session-context: %s", _se)
 
     # v5.7.9: source-aware prefix — context line before the brief.
@@ -1703,7 +1703,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
                     # Reuses the _blocks list just fetched; the helper is fail-open and
                     # returns "" when the digest block already exists / opted out / off.
                     render = render + _code_graph_suggest_line(directory, _blocks)
-            except Exception as _be:
+            except Exception as _be:  # noqa: BLE001 — block injection is optional garnish on the session render; a fault drops the section, never the render
                 logger.debug("session-context blocks inject error: %s", _be)
 
         # v5.6.5 / v5.7.9: append checkpoint resume hint.
@@ -1730,7 +1730,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
             render = _nudge + render
 
         return JSONResponse({"text": render})
-    except Exception as _e:
+    except Exception as _e:  # noqa: BLE001 — top-level hook handler: fail-open with empty text so a fault here never breaks the user's session start
         logger.debug("session-context hook error: %s", _e)
         return JSONResponse({"text": ""})
 
@@ -2078,7 +2078,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
                 min_heat=0.0,
                 profile="fast",
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — prompt hook is fail-open: recall crosses a forward boundary and a fault must not swallow the user's prompt
             logger.debug("prompt-recall hook error: %s", e)
             _hook_observe("prompt_recall", _t0, e)
             _observed = True
@@ -2147,7 +2147,7 @@ async def hook_seed_anchor(request: Request) -> JSONResponse:
     try:
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, ClientDisconnect):  # fmt: skip
             _resp = JSONResponse({"status": "error", "message": "Invalid JSON"}, status_code=400)
             _hook_observe_response("seed_anchor", _resp.status_code)
             return _resp
@@ -2267,7 +2267,7 @@ async def hook_file_changed(request: Request) -> JSONResponse:
     try:
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, ClientDisconnect):  # fmt: skip
             body = {}
 
         # Accept path from query param OR body (hook script sends both)
@@ -2275,7 +2275,7 @@ async def hook_file_changed(request: Request) -> JSONResponse:
         if file_path:
             try:
                 file_path = _urlparse.unquote(file_path)
-            except Exception:
+            except (AttributeError, TypeError):  # fmt: skip
                 pass
         body.get("file_action", "modified")
 
@@ -2345,7 +2345,7 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
                 fh.seek(current_pos)
                 new_lines = fh.readlines()
                 new_pos = fh.tell()
-        except Exception as _e:
+        except OSError as _e:
             logger.debug("team_inbox read error %s: %s", file_path, _e)
             _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
             _hook_observe_response("team_inbox", _resp.status_code)
@@ -2412,7 +2412,7 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
                     },
                 )
                 stored += 1
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — per-message isolation: one failed action_log enqueue must not abort the remaining inbox messages (counted in `skipped`)
                 logger.debug("team_inbox action_log insert failed: %s", _e)
                 skipped += 1
 
@@ -2447,7 +2447,7 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
 
         try:
             content = p.read_text(encoding="utf-8", errors="ignore")
-        except Exception as _e:
+        except OSError as _e:
             logger.debug("PLAN file read error %s: %s", file_path, _e)
             _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
             _hook_observe_response("plan_file", _resp.status_code)
@@ -2465,16 +2465,16 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
 
         # Attempt to capture current git commit ref for provenance
         git_ref = ""
-        try:
-            import subprocess as _sp
+        import subprocess as _sp
 
+        try:
             _git_args = ["git", "-C", str(p.parent.parent), "rev-parse", "--short", "HEAD"]
             result = await _asyncio.to_thread(
                 lambda: _sp.run(_git_args, capture_output=True, text=True, timeout=3)
             )
             if result.returncode == 0:
                 git_ref = result.stdout.strip()
-        except Exception:
+        except (OSError, _sp.SubprocessError):  # fmt: skip
             pass
 
         filename = match.group(1)
@@ -2503,7 +2503,7 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
             return JSONResponse(
                 {"status": "ok", "memorized": True, "file": filename, "git_ref": git_ref}
             )
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — the memorize call crosses the queue/forward boundary; the handler renders any fault as a 500 envelope rather than a traceback
             logger.debug("PLAN memorize failed for %s: %s", file_path, _e)
             _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
             _hook_observe_response("plan_file", _resp.status_code)
@@ -2559,7 +2559,7 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
                 min_heat=0.0,
                 profile="fast",
             )
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — instructions-loaded hook is fail-open: recall crosses a forward boundary and a fault must not break the turn
             logger.debug("instructions-loaded hook recall error: %s", _e)
             _hook_observe("instructions_loaded", _t0, _e)
             _observed = True
@@ -2631,7 +2631,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
 
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, ClientDisconnect):  # fmt: skip
             body = {}
 
         description = sanitize_log_field(str(body.get("description", "")), max_len=2000)
@@ -2645,7 +2645,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
             )
 
             yadgar_subagent_dispatch_count.labels(agent_type=agent_type).inc()
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
 
         # Use description as primary query; fall back to agent_type if empty
@@ -2668,7 +2668,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
                 min_heat=0.0,
                 profile="fast",
             )
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — subagent-start hook is fail-open: recall crosses a forward boundary and a fault must not block the dispatch
             logger.debug("subagent-start hook recall error: %s", _e)
             _hook_observe("subagent_start", _t0, _e)
             _observed = True
@@ -2762,7 +2762,7 @@ async def api_graph(request: Request) -> JSONResponse:
             )
 
             yadgar_viz_api_graph_duration_ms.observe(_elapsed_ms)
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
         return JSONResponse(data, headers=_CORS)
     except Exception as _exc:
@@ -2992,7 +2992,7 @@ async def api_runtime_config_set(request: Request) -> JSONResponse:
 
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
 
     key = request.path_params.get("key", "")
@@ -3181,7 +3181,7 @@ async def _make_event_stream(request: Request):
         )
 
         _sse_g.inc()
-    except Exception:
+    except (ImportError, ValueError):  # fmt: skip
         _sse_g = None  # type: ignore[assignment]
     try:
         while True:
@@ -3242,7 +3242,7 @@ async def _make_event_stream(request: Request):
         try:
             if _sse_g is not None:
                 _sse_g.dec()
-        except Exception:
+        except Exception:  # noqa: BLE001 — teardown inside `finally`: a gauge-decrement fault must not mask the streaming error being unwound
             pass
 
 
@@ -3273,7 +3273,7 @@ async def api_wiki_read(request: Request) -> JSONResponse:
         return JSONResponse({"error": "wiki not initialized"}, status_code=503, headers=_CORS)
     try:
         page = await asyncio.to_thread(wiki.read, slug)
-    except Exception as _exc:
+    except Exception as _exc:  # noqa: BLE001 — public API boundary: any read fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.debug("api_wiki_read error for slug=%s: %s", slug, _exc)
         return JSONResponse({"error": str(_exc)}, status_code=500, headers=_CORS)
     if page is None:
@@ -3319,7 +3319,7 @@ async def _viz_exact_title_node_ids(q: str) -> list[str]:
             "ORDER BY heat DESC LIMIT 20",
             {"q": q},
         )
-    except Exception as _exc:
+    except Exception as _exc:  # noqa: BLE001 — viz search is best-effort; a raw-query fault degrades to no exact-title hits rather than failing the search
         logger.debug("viz_search exact-title error: %s", _exc)
         return []
     # Guard: only iterate a real list (mocked/None storage → skip).
@@ -3385,7 +3385,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
             mem_results = await asyncio.to_thread(
                 _HookRecallForwarder("").recall, q, max_results=5, min_heat=0.0, profile="fast"
             )
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — viz search is best-effort; a recall fault degrades to no memory hits rather than failing the search
             logger.debug("viz_search recall error: %s", _exc)
             mem_results = []
         for r in mem_results or []:
@@ -3408,7 +3408,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
                         nid = _extract_record_id(raw_id)
                         if nid is not None:
                             node_ids.append(f"wiki:{nid}")
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — viz search is best-effort; a wiki-query fault degrades to no wiki hits rather than failing the search
                 logger.debug("viz_search wiki_query error: %s", _exc)
 
         # Deduplicate while preserving order
@@ -3632,7 +3632,7 @@ async def _session_bind(request: Request) -> JSONResponse:
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse(
             {"ok": False, "error": "session_not_bound", "fix": "POST a JSON body"},
             status_code=400,
@@ -3776,7 +3776,7 @@ def _register_session_bind_route() -> None:
     """
     try:
         _app = mcp_server.streamable_http_app()  # type: ignore[attr-defined]
-    except Exception:
+    except (AttributeError, RuntimeError):  # fmt: skip
         # Pre-serve / test context: streamable_http_app may not be available
         # (it raises RuntimeError on a fresh MCPServer until the first serve).
         # The route will be wired on the next /session_bind request via the

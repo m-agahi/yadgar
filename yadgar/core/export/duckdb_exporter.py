@@ -332,7 +332,7 @@ class DuckDBExporter:
             if raw and isinstance(raw[0], list):
                 return raw[0]
             return raw or []
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — per-table isolation: a table absent from this DB (or any query fault) yields an empty table and the export continues over the rest
             _log.warning("Table %r not found or query failed: %s", table_name, exc)
             return []
 
@@ -351,7 +351,7 @@ class DuckDBExporter:
                     "SELECT * FROM action_log WHERE ts >= type::datetime($cutoff) ORDER BY ts DESC LIMIT $lim",
                     {"cutoff": cutoff, "lim": self._cfg.action_log_limit},
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — the typed-datetime variant is rejected by older SurrealDB builds; any fault falls through to the untyped fallback query below
                 raw = storage._q(
                     f"SELECT * FROM action_log "  # noqa: S608
                     f"ORDER BY id DESC LIMIT {self._cfg.action_log_limit}"
@@ -452,7 +452,7 @@ class DuckDBExporter:
             if isinstance(tags, str):
                 try:
                     tags = json.loads(tags)
-                except Exception:
+                except (TypeError, ValueError):  # fmt: skip
                     tags = []
             for tag in tags:
                 if tag and isinstance(tag, str):
@@ -482,5 +482,5 @@ class DuckDBExporter:
                 continue
             try:
                 con.execute(stmt)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — per-view isolation: DuckDB's error classes are not imported at this layer and one failing view must not abort the remaining ones
                 _log.warning("View creation failed: %s | stmt: %.80s", exc, stmt)

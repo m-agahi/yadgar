@@ -123,7 +123,10 @@ def wipe_benchmark_tables(storage: StorageEngine) -> None:
     for table in _BENCHMARK_WIPE_TABLES:
         try:
             storage._q(f"DELETE {table};")
-        except Exception as exc:
+        # `_q` has two backends with disjoint error surfaces (httpx raises
+        # HTTPError/ValueError/RuntimeError; the embedded path raises
+        # surrealdb-SDK classes not importable here). Reported, not swallowed.
+        except Exception as exc:  # noqa: BLE001 — `_q` error surface is backend-dependent
             logger.warning("wipe_benchmark_tables: DELETE %s failed: %s", table, exc)
 
 
@@ -136,7 +139,8 @@ def _wait_for_health(port: int, timeout: float = 30.0) -> None:
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
             return
-        except Exception:
+        except OSError:
+            # URLError / HTTPError / socket.timeout while the server boots.
             time.sleep(0.1)
     raise RuntimeError(f"SurrealDB did not start on port {port} within {timeout}s")
 
@@ -217,7 +221,9 @@ def get_yadgar_commit() -> str | None:
             .decode()
             .strip()
         )
-    except Exception:
+    # Binary absent -> FileNotFoundError (OSError); non-zero exit ->
+    # CalledProcessError; non-UTF-8 output -> UnicodeDecodeError.
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):  # fmt: skip
         return None
 
 
@@ -232,7 +238,9 @@ def get_claude_version() -> str | None:
             .decode()
             .strip()
         )
-    except Exception:
+    # Binary absent -> FileNotFoundError (OSError); non-zero exit ->
+    # CalledProcessError; non-UTF-8 output -> UnicodeDecodeError.
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):  # fmt: skip
         return None
 
 
@@ -247,7 +255,9 @@ def get_surreal_version() -> str | None:
             .decode()
             .strip()
         )
-    except Exception:
+    # Binary absent -> FileNotFoundError (OSError); non-zero exit ->
+    # CalledProcessError; non-UTF-8 output -> UnicodeDecodeError.
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):  # fmt: skip
         return None
 
 
@@ -666,7 +676,10 @@ def evaluate_retrieval(
             results = _unified_recall(query, max_results, directory, mode=mode)
         else:
             results = retriever.recall(query, max_results=max_results, min_heat=0.0)
-    except Exception as e:
+    # `recall` fans out over embeddings, storage and the HTTP backend; the
+    # comment above records FTS5 syntax errors as one observed cause, but the
+    # set is open. Logged with the question id, not swallowed.
+    except Exception as e:  # noqa: BLE001 — recall spans the whole retrieval stack
         logger.warning("Retrieval failed for question %s: %s", question["question_id"], e)
         results = []
 
@@ -780,7 +793,12 @@ def call_claude_pipe(prompt: str, system_prompt: str = "", timeout: int = 120) -
     except subprocess.TimeoutExpired:
         logger.warning("claude -p timed out after %ds", timeout)
         return ""
-    except (json.JSONDecodeError, Exception) as e:
+    # `Exception` used to be in this tuple alongside JSONDecodeError, which it
+    # subsumes — the pair read as a narrow catch and was a blind one.
+    # subprocess.run: OSError (claude not on PATH); json.loads: ValueError
+    # (JSONDecodeError is a subclass); .get on a non-dict: AttributeError.
+    # TimeoutExpired is handled above.
+    except (OSError, ValueError, AttributeError) as e:  # fmt: skip
         logger.warning("claude -p error: %s", e)
         return ""
 
@@ -858,7 +876,9 @@ def _load_processed(hyp_path: str) -> tuple[set[str], list[dict]]:
                 if qid:
                     processed_ids.add(qid)
                     prior_results.append(entry)
-            except Exception:
+            # A truncated last line raises ValueError (JSONDecodeError); a line
+            # that parses to a non-dict raises AttributeError on .get.
+            except (ValueError, AttributeError):  # fmt: skip
                 pass
     return processed_ids, prior_results
 
@@ -1104,7 +1124,10 @@ def run_benchmark(
                         retrieved = retriever.recall(
                             question["question"], max_results=max_results, min_heat=0.0
                         )
-                    except Exception:
+                    # Same open surface as the retrieval-phase call above.
+                    # NOTE: unlike that one this handler is SILENT — a failed
+                    # recall here degrades the generated answer with no record.
+                    except Exception:  # noqa: BLE001 — recall spans the whole retrieval stack
                         retrieved = []
 
                     t_gen = time.monotonic()
@@ -1143,7 +1166,7 @@ def run_benchmark(
                     with open(hyp_path, "a") as _hf:
                         _hf.write(json.dumps(query_result) + "\n")
                         _hf.flush()
-            except Exception as _qerr:
+            except Exception as _qerr:  # noqa: BLE001 — harness boundary over the whole per-question body
                 # Don't let one bad question kill the whole run — record it as error
                 # so per-type aggregates remain comparable across runs.
                 print(f"\n  ERROR on {qid}: {type(_qerr).__name__}: {_qerr}", flush=True)
@@ -1159,7 +1182,9 @@ def run_benchmark(
                 if storage is not None:
                     try:
                         storage.close()
-                    except Exception:
+                    except OSError:
+                        # `close()` already swallows its own httpx / SDK / flock
+                        # errors internally; only a raw fd failure escapes.
                         pass
                 # Clean up per-question embedded tmpdir (server mode: None, skip).
                 if _q_tmpdir_path is not None:

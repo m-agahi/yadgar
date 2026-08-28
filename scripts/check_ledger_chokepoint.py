@@ -37,8 +37,10 @@ ALLOWED
 
 DETECTION SCOPE
 ---------------
-- String arguments to ``text(...)`` / ``execute(...)`` / ``exec(...)`` calls
-  that start with an SQL statement keyword (``SELECT`` / ``INSERT`` /
+- String arguments to ``text(...)`` / ``execute(...)`` / ``exec(...)`` /
+  ``_q(...)`` and its ``_q_ro`` / ``_q_timeout`` / ``_q_multi`` / ... siblings
+  (``_SQL_EXEC_FUNCS``) that start with an SQL statement keyword
+  (``SELECT`` / ``INSERT`` /
   ``UPDATE`` / ``DELETE`` / ``MERGE`` / ``REPLACE`` / ``TRUNCATE``) AND name
   a ledger table in a TABLE POSITION — after ``FROM`` / ``JOIN`` / ``INTO`` /
   ``UPDATE`` / ``TABLE`` / ``TRUNCATE``, optionally schema-qualified. Prose
@@ -55,11 +57,38 @@ DETECTION SCOPE
 - The scan covers ``yadgar/`` and ``scripts/`` (``SCAN_DIRS``). ``scripts/``
   was added by ledger task 394 — an operator script is exactly where an
   un-chokepointed ledger write is most tempting and was, until then, invisible.
+- Subprocess invocations of the command-line client
+  (``subprocess.run(["mariadb", "-e", "DELETE FROM task"])``, and the
+  ``shell=True`` string form). Added by ledger task 403: a shelled-out ledger
+  write never touches sqlalchemy, so none of ``_SQL_EXEC_FUNCS`` could see it.
+  A subprocess call is only inspected when one of its string literals NAMES
+  the client (bare name, absolute path, or the head of a shell string); the
+  SQL keyword is then looked for ANYWHERE in a literal rather than at its
+  head, because ``"mysql -e \"UPDATE adr ...\""`` starts with the binary.
+  Invoking the client is not itself a violation — reaching a ledger table is.
+- Argument literals are read through list / tuple / set containers and
+  f-string parts, not only at the top level: ``["mariadb", "-e", sql]`` and
+  ``_q_multi([(stmt, params)])`` both bury the statement one or two
+  containers deep. A NESTED CALL is deliberately not entered, so
+  ``execute(text(...))`` is reported once, not twice.
 - Free-standing SQL strings (no ``text(...)`` wrapper) are out of scope.
   The guard is not a SQL parser — it is an AST walker over call shapes,
   by design. A reviewer who writes `conn.execute(raw_string)` must wrap
   the string in ``text(...)`` for the chokepoint to apply; that wrapping
   is also what makes the engine's emitted SQL dialect-correct.
+
+KNOWN GAPS (deliberate — see also the block in ``_violations_in_string_literal``)
+--------------------------------------------------------------------------------
+- A subprocess argv built into a LOCAL VARIABLE and then passed by name is
+  invisible: ``yadgar/backend/admin_exec/restore_sql.py:_run_sql`` assembles
+  ``argv = [binary, ..., "-e", sql]`` and calls ``subprocess.run(argv, ...)``,
+  so the call node carries no string literal at all. Following that needs
+  local dataflow analysis, which this stdlib-only AST walker does not do.
+  (Measured 2026-08-28: that helper's callers pass no ledger table name as a
+  literal — every table there is f-string-interpolated from a parameter.)
+- Equally, a statement bound to a variable and handed to ``_q``/``execute``
+  (``sql = "DELETE FROM task"; storage._q(sql)``) is not followed. Same
+  reason, same boundary: the guard matches call SHAPES carrying literals.
 
 Usage:
   python scripts/check_ledger_chokepoint.py                 # check yadgar/ + scripts/, exit 0/1
@@ -173,12 +202,57 @@ _TABLE_POSITION_RES: dict[str, re.Pattern[str]] = {t: _table_position_re(t) for 
 # Function names whose string-argument calls carry an SQL statement. A
 # Call whose ``func`` is one of these (Name or Attribute) and whose args
 # contain a string literal is the chokepoint's exact surface to inspect.
+#
+# The ``_q`` family joined the set in ledger task 403. Before it, the set was
+# ``{text, execute, exec}`` and a statement handed straight to the storage
+# client's own query method was invisible to the gate — the shape is live in
+# this repo (``scripts/rederive_wiki_links.py:76`` runs
+# ``storage._q("SELECT VALUE slug FROM wiki_page")``; that one targets
+# SurrealDB rather than a ledger table, so it is not itself a D20 violation,
+# but it is exactly the call shape the gate could not see). Detection is on
+# the SHAPE — a raw statement string passed to something that runs it —
+# not on which engine happens to be on the other end.
 _SQL_EXEC_FUNCS = frozenset(
     {
         "text",  # sqlalchemy.sql.text(...)
         "execute",  # conn.execute(...), session.execute(...), engine.execute(...)
         "exec",  # asyncio-style shortcut (rare)
+        # StorageClient query surface (yadgar/_shared/storage/client.py).
+        "_q",
+        "_q_ro",
+        "_q_timeout",
+        "_q_server",
+        "_q_embedded",
+        "_q_multi",
+        "_q_multi_server",
+        "_q_multi_embedded",
+        "_q_with_timeout",
     }
+)
+
+# Subprocess entry points. A ledger write shelled out to the command-line
+# client (``mariadb -e "DELETE FROM task"``) never touches sqlalchemy at all,
+# so none of ``_SQL_EXEC_FUNCS`` can see it. Matched on the function name
+# alone (``subprocess.run`` and a bare ``run`` after ``from subprocess import
+# run`` both land here); the name is generic, which is why a hit only counts
+# when the SAME call also names a client binary AND carries ledger SQL.
+_SUBPROCESS_FUNCS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
+
+# A string that NAMES the MariaDB/MySQL command-line client: a bare argv
+# element (``"mariadb"``), an absolute path (``"/usr/bin/mariadb"``, what
+# ``shutil.which`` returns), or the head of a ``shell=True`` command string
+# (``"mysql -e ..."``). ``mysqldump`` does not match (no word boundary before
+# ``d``); ``mariadb-dump`` does, harmlessly — it still needs ledger SQL in the
+# same call to be reported.
+_SQL_CLIENT_RE = re.compile(r"^(?:.*/)?(?:mariadb|mysql)\b", re.IGNORECASE)
+
+# SQL statement keyword ANYWHERE in the string, not just at its head. Used
+# only for the subprocess branch: ``mysql -e "UPDATE adr SET ..."`` is one
+# literal whose first token is the binary, so ``_SQL_START_RE`` — anchored at
+# the start by design, to keep prose out — cannot match it.
+_SQL_ANYWHERE_RE = re.compile(
+    r"\b(?:" + "|".join(_SQL_STARTERS) + r")\b",
+    re.IGNORECASE,
 )
 
 
@@ -201,6 +275,44 @@ def _is_sql_literal(literal: str) -> bool:
     when the SQL starter appears on any line.
     """
     return _SQL_START_RE.search(literal) is not None
+
+
+def _names_sql_client(literal: str) -> bool:
+    """True when ``literal`` names the MariaDB/MySQL command-line client.
+
+    Covers the three argv shapes that reach ``subprocess``: a bare program
+    name, an absolute path (``shutil.which``'s return), and the head of a
+    ``shell=True`` command string.
+    """
+    return _SQL_CLIENT_RE.match(literal) is not None
+
+
+def _iter_string_literals(node: ast.expr) -> list[tuple[str, int]]:
+    """Every ``(text, lineno)`` string literal reachable WITHOUT entering a Call.
+
+    Descends through the literal containers an argument can be built from —
+    list / tuple / set literals and f-string parts — because that is where
+    real call sites put their statements: ``subprocess.run(["mariadb", "-e",
+    sql])`` and ``storage._q_multi([(stmt, params)])`` both bury the string
+    one or two containers deep, and a top-level-args-only scan sees neither.
+
+    Deliberately does NOT descend into a nested ``ast.Call``. ``conn.execute(
+    text("..."))`` would otherwise be counted twice — once for the outer
+    ``execute`` and once when ``ast.walk`` reaches the inner ``text`` on its
+    own — turning one violation into two identical lines of output.
+    """
+    out: list[tuple[str, int]] = []
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str):
+            out.append((node.value, node.lineno))
+    elif isinstance(node, ast.JoinedStr):
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                out.append((value.value, value.lineno))
+    elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        for elt in node.elts:
+            out.extend(_iter_string_literals(elt))
+    return out
 
 
 def _referenced_in_table_position(literal: str, table: str) -> bool:
@@ -326,9 +438,20 @@ def _violations_in_call(
       SQL statement string for execution.
     - ``conn.execute(...)`` / ``session.execute(...)`` /
       ``engine.execute(...)`` — actually runs the SQL.
+    - ``storage._q(...)`` and its ``_q_ro`` / ``_q_timeout`` / ``_q_multi`` /
+      ... siblings — the storage client's own query surface, which runs the
+      statement without any sqlalchemy wrapper in sight (task 403).
 
     A string argument to one of these that mentions a ledger table is a
     chokepoint violation, UNLESS the call sits inside the engine class.
+
+    SEPARATELY (task 403), a ``subprocess`` entry point (``run`` / ``Popen`` /
+    ``check_output`` / ``check_call`` / ``call``) is inspected only when one
+    of its string literals NAMES the ``mariadb``/``mysql`` client — the
+    function names are too generic to key on alone. Inside such a call the
+    SQL keyword is matched ANYWHERE in a literal, because the shell-string
+    form (``"mysql -e \\"UPDATE adr ...\\""``) begins with the binary rather
+    than with SQL. The in-engine exemption applies identically.
 
     A bare ``Name`` call (``sql(...)``) is resolved through ``alias_map``
     before the ``_SQL_EXEC_FUNCS`` check — an aliased import
@@ -348,26 +471,35 @@ def _violations_in_call(
     elif isinstance(func, ast.Attribute):
         func_name = func.attr
 
-    if func_name is None or func_name not in _SQL_EXEC_FUNCS:
+    if func_name is None:
         return []
 
-    violations: list[Violation] = []
+    literals: list[tuple[str, int]] = []
     for arg in call.args:
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            violations.extend(_violations_in_string_literal(src_file, arg.value, arg.lineno))
-        elif isinstance(arg, ast.JoinedStr):  # f-string
-            for sub in ast.walk(arg):
-                if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-                    violations.extend(
-                        _violations_in_string_literal(src_file, sub.value, sub.lineno)
-                    )
-    return violations
+        literals.extend(_iter_string_literals(arg))
+
+    if func_name in _SQL_EXEC_FUNCS:
+        violations: list[Violation] = []
+        for text_value, lineno in literals:
+            violations.extend(_violations_in_string_literal(src_file, text_value, lineno))
+        return violations
+
+    if func_name in _SUBPROCESS_FUNCS and any(_names_sql_client(t) for t, _ln in literals):
+        violations = []
+        for text_value, lineno in literals:
+            violations.extend(
+                _violations_in_string_literal(src_file, text_value, lineno, anywhere=True)
+            )
+        return violations
+
+    return []
 
 
 def _violations_in_string_literal(
     src_file: Path,
     literal: str,
     lineno: int,
+    anywhere: bool = False,
 ) -> list[Violation]:
     """Find every ledger-table reference inside ``literal``.
 
@@ -413,7 +545,10 @@ def _violations_in_string_literal(
       and unrelated to the exemption; no such literal exists in this repo
       (measured 2026-08-26).
     """
-    if not _is_sql_literal(literal):
+    if anywhere:
+        if _SQL_ANYWHERE_RE.search(literal) is None:
+            return []
+    elif not _is_sql_literal(literal):
         return []
     out: list[Violation] = []
     for table in LEDGER_TABLES:
@@ -465,11 +600,11 @@ def _scan_function_body(
 ) -> list[Violation]:
     """Inspect one function's Call nodes for SQL-execution-shaped chokepoint uses.
 
-    Only calls to ``text(...)`` / ``execute(...)`` / ``exec(...)`` (resolved
-    through ``alias_map`` for aliased imports) whose string arguments mention
-    a ledger table are reported. Free-standing string literals are ignored —
-    that is the difference between an SQL statement and a docstring / log
-    message.
+    Only calls named in ``_SQL_EXEC_FUNCS`` (resolved through ``alias_map``
+    for aliased imports), plus ``_SUBPROCESS_FUNCS`` calls that name the
+    ``mariadb``/``mysql`` client, whose string arguments mention a ledger
+    table are reported. Free-standing string literals are ignored — that is
+    the difference between an SQL statement and a docstring / log message.
     """
     violations: list[Violation] = []
     for node in ast.walk(func):

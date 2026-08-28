@@ -498,10 +498,6 @@ class TestBackwardCompat:
         results = storage.search_profiles_fts("python")
         assert any(r.get("attribute_value") == "python" for r in results)
 
-        # get_profiles_for_entity still works
-        profiles = storage.get_profiles_for_entity("Alice", directory_context="/work")
-        assert any(r.get("attribute_key") == "language" for r in profiles)
-
     def test_insert_belief_via_record_works(self, storage):
         """Call insert_belief with BeliefRecord — returns int id, search/query still work."""
         bid = storage.insert_belief(
@@ -517,10 +513,6 @@ class TestBackwardCompat:
         # search_beliefs_fts still works
         results = storage.search_beliefs_fts("concise")
         assert any(r.get("content") and "concise" in r.get("content", "") for r in results)
-
-        # get_beliefs_for_subject still works
-        beliefs = storage.get_beliefs_for_subject("Alice")
-        assert any(b.get("belief_type") == "preference" for b in beliefs)
 
     def test_get_full_graph_default_unchanged(self, storage):
         """get_full_graph() with no args returns the same shape as before."""
@@ -598,8 +590,8 @@ class TestBackwardCompat:
             "Invalidated profile should not appear in FTS by default"
         )
 
-    def test_get_beliefs_for_subject_default_excludes_invalidated(self, storage):
-        """get_beliefs_for_subject() default excludes invalidated rows."""
+    def test_search_beliefs_fts_include_invalidated_default_excludes(self, storage):
+        """search_beliefs_fts() default excludes invalidated rows."""
         from yadgar._shared.storage.bitemporal import invalidate_edge
 
         bid = storage.insert_belief(
@@ -611,7 +603,17 @@ class TestBackwardCompat:
         )
         invalidate_edge(storage, "derived_belief", bid)
 
-        beliefs = storage.get_beliefs_for_subject("Max")
+        # POSITIVE CONTROL first — without it the assertion below passes for
+        # free whenever the FTS query simply matches nothing (analyzer casing,
+        # tokenization, index coverage), which would make this test vacuous
+        # rather than a check of the ``valid_until IS NONE`` default.
+        with_invalidated = storage.search_beliefs_fts("Stale", include_invalidated=True)
+        assert any(b.get("content") == "Stale belief content" for b in with_invalidated), (
+            "FTS must match the seeded belief when invalidated rows are included — "
+            "otherwise the default-exclusion assertion below proves nothing"
+        )
+
+        beliefs = storage.search_beliefs_fts("Stale")
         assert not any(b.get("content") == "Stale belief content" for b in beliefs), (
-            "Invalidated belief should not appear in get_beliefs_for_subject by default"
+            "Invalidated belief should not appear in search_beliefs_fts by default"
         )

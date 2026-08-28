@@ -609,7 +609,7 @@ def _set_config_gauges() -> None:
     """
     try:
         from yadgar._shared.observability.metrics import yadgar_config_value
-    except Exception:
+    except ImportError:
         return  # metrics not available (embed service, tests without metrics)
 
     for entry in list_config():

@@ -40,7 +40,7 @@ def _drainer_span():
         from opentelemetry import trace as _ot  # noqa: PLC0415
 
         return _ot.get_tracer("yadgar.file_queue").start_as_current_span("drainer.cycle")
-    except Exception:
+    except Exception:  # noqa: BLE001 — root-span construction for the drain loop: a degraded or swapped OTel provider raises arbitrary types from get_tracer (the I3 case documented in tracing.py), and the drainer must fall through to nullcontext rather than stop draining
         return contextlib.nullcontext()
 
 
@@ -178,7 +178,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             try:
                 with _drainer_span():
                     self._drain_once()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — the drainer's daemon loop: _drain_once spans JSON parsing, storage writes and every op handler, so no type covers it, and the loop must survive to the next pass or the queue stops draining for the process lifetime. The exception is recorded, counted and logged, not swallowed
                 from yadgar._shared.observability.exception_telemetry import (
                     record_exception,  # noqa: PLC0415
                 )
@@ -271,7 +271,11 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             )
 
             yadgar_drain_cycle_duration_ms.observe(_cycle_ms)
-        except Exception:
+        # A metric emit must never break the drain. ImportError: metrics
+        # module absent. TypeError/ValueError: the observed value is not a
+        # number (a mocked clock, or a timing computed from payload data).
+        # The 2026-08-28 BLE001 triage narrowed these to ImportError alone.
+        except (ImportError, TypeError, ValueError):  # fmt: skip
             pass
 
         # Periodic archive + DLQ cleanup (roughly once per hour)
@@ -307,7 +311,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         try:
             data = json.loads(path.read_text())
             op_type = data.get("op", "unknown")
-        except Exception as exc:
+        except (AttributeError, OSError, ValueError) as exc:  # fmt: skip
             # Parse error: can never succeed → treat as permanent
             self._record_failure(attempt, str(exc)[:500], "permanent", now)
             self._attempts[fname] = attempt
@@ -433,12 +437,22 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         return "policy_rejected", None
 
     def _observe_drainer_lag(self, data: dict, now: float) -> None:
-        """Observe P11 drainer lag metric (enqueue_ts -> drain start). Swallows all errors."""
+        """Observe P11 drainer lag (enqueue_ts -> drain start); never raises.
+
+        `data` is parsed queue JSON, so `data["ts"]` is whatever the producer
+        wrote — a string, None, or absent. The subtraction and the prometheus
+        `observe()` therefore raise TypeError/ValueError on a malformed
+        payload, and losing a lag sample must never stop the drain.
+        """
         try:
             from yadgar._shared.observability.metrics import yadgar_drainer_lag_ms  # noqa: PLC0415
 
             yadgar_drainer_lag_ms.observe((now - data.get("ts", now)) * 1000)
-        except Exception:
+        # ImportError: metrics module absent. TypeError/ValueError: `ts` is
+        # not a number. The 2026-08-28 BLE001 triage narrowed this to
+        # ImportError alone, which dropped the payload case the docstring had
+        # promised to swallow since P11.
+        except (ImportError, TypeError, ValueError):  # fmt: skip
             pass
 
     def _observe_secret_blocked_metric(self, err_str: str) -> None:
@@ -451,7 +465,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             )
 
             yadgar_writegate_outcome.labels(outcome="rejected_secret_at_storage").inc()
-        except Exception:
+        except ImportError:
             pass
 
     @observe(tier="hot", metric="drainer.apply_pending")
@@ -468,7 +482,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             self._apply_with_stage_metrics(data, path)
             self._attempts.pop(fname, None)
             return 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — this IS the transient/permanent classifier: the caught object is handed to _classify_error to pick a retry budget, and an op handler can raise anything from a storage RuntimeError to a refusal type, so narrowing would silently drop whole failure classes out of the retry ladder
             err_str = str(exc)
             # Task 229: a refusal is a DECISION, not a fault — it can never
             # succeed, so it must not consume the retry budget. Recognised by
@@ -537,7 +551,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                 yadgar_drain_stage_ms.labels(stage="archive").observe(
                     (time.perf_counter() - _t0) * 1000
                 )
-            except Exception:
+            except ImportError:
                 pass
 
     # ── v5.42.0 helpers ───────────────────────────────────────────────────────
@@ -567,7 +581,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                     None,
                 ):
                     rejection_count += 1
-            except Exception:
+            except (OSError, ValueError):  # fmt: skip
                 pass
         return dlq_count, rejection_count
 
@@ -588,7 +602,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             yadgar_dlq_size.set(dlq_count)
             yadgar_queue_depth.labels(queue="dlq").set(dlq_count)
             yadgar_dlq_rejection_count.set(rejection_count)
-        except Exception:
+        except (ImportError, OSError):  # fmt: skip
             pass
 
     @observe(tier="hot", metric="drainer.handle_sim_rejection")
@@ -602,13 +616,13 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         """
         try:
             _cwd = os.getcwd()
-        except Exception:
+        except OSError:
             _cwd = ""
         try:
             from yadgar._shared.config import get_settings as _get_settings  # noqa: PLC0415
 
             _threshold = getattr(_get_settings(), "WIKI_SIM_CONTENT_THRESHOLD", 0.80)
-        except Exception:
+        except ImportError:
             _threshold = 0.80
         # Car B (#83): the rejection may carry any gate-supplied reason (e.g. a
         # similarity duplicate) — carry it through instead of hardcoding
@@ -678,7 +692,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
                 yadgar_drain_stage_ms.labels(stage="insert").observe(
                     (time.perf_counter() - _insert_t0) * 1000
                 )
-            except Exception:
+            except ImportError:
                 pass
 
         self._archive_with_metrics(path)

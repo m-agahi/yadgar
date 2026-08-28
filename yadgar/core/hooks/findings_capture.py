@@ -133,7 +133,7 @@ def last_assistant_text(transcript_path: str) -> str:
                 last_assistant_content = text
 
         return last_assistant_content
-    except Exception:
+    except (OSError, TypeError, ValueError):  # fmt: skip
         return ""
 
 
@@ -169,7 +169,7 @@ def _load_sweep_state(state_path: str) -> dict:
             return {}
         data = json.loads(p.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except (OSError, TypeError, ValueError):  # fmt: skip
         return {}
 
 
@@ -184,7 +184,7 @@ def _save_sweep_state(state_path: str, state: dict) -> None:
         tmp = p.parent / (p.name + ".tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         os.replace(str(tmp), str(p))
-    except Exception:
+    except (OSError, TypeError, ValueError):  # fmt: skip
         pass
 
 
@@ -197,7 +197,7 @@ def _session_uuid_from_transcript(transcript_path: str) -> str:
         return ""
     try:
         return pathlib.Path(transcript_path).stem
-    except Exception:
+    except TypeError:
         return ""
 
 
@@ -268,7 +268,7 @@ def _scan_pending(
             pending.append((path, mtime, findings))
 
         return pending
-    except Exception:
+    except (OSError, TypeError, ValueError):  # fmt: skip
         return []
 
 
@@ -308,7 +308,7 @@ def collect_pending_findings(
             }
             for path, _mtime, findings in pending
         ]
-    except Exception:
+    except (OSError, TypeError, ValueError):  # fmt: skip
         return []
 
 
@@ -337,5 +337,5 @@ def advance_pending_state(pending: list[dict], state_path: str) -> None:
                 continue
             state[path] = mtime
         _save_sweep_state(state_path, state)
-    except Exception:
+    except (AttributeError, OSError, TypeError, ValueError):  # fmt: skip
         pass

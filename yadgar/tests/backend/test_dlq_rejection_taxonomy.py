@@ -292,7 +292,10 @@ class TestDrainerReroutesRejectionToDLQ:
                     metric_fired.append("fired")
 
             monkeypatch.setattr(labels_obj, "inc", _Tracker().inc)
-        except Exception:
+        # This is exactly "metrics not available": the module is missing
+        # (ImportError), the counter was renamed (AttributeError), or `labels()`
+        # rejects the label set (ValueError).
+        except (ImportError, AttributeError, ValueError):  # fmt: skip
             pytest.skip("Metrics not available in this env")
 
         _write_sync("Metrics Test A", _ROADMAP_CONTENT_A)

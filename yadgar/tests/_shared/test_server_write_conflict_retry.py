@@ -82,7 +82,10 @@ def test_conflict_then_ok_retries_and_returns(storage):
         ],
     )
 
-    out = storage._q_server("CREATE type::record('memory', $id) SET heat = 0.5", {"id": 1})
+    # UPDATE, not CREATE: only statements that are idempotent under replay are
+    # retried (see _is_idempotent_under_replay). A CREATE is refused — proved by
+    # test_a_create_is_never_replayed below.
+    out = storage._q_server("UPDATE type::record('memory', $id) SET heat = 0.5", {"id": 1})
 
     assert out == [{"id": 1}]
     assert calls["n"] == 2, f"expected one retry (2 posts), got {calls['n']}"
@@ -92,7 +95,7 @@ def test_clean_write_posts_once(storage):
     """Anti-regression: a clean write must not pay any retry overhead."""
     calls = _responses(storage, [[{"status": "OK", "result": [{"id": 1}]}]])
 
-    storage._q_server("CREATE memory:1 SET heat = 0.5", None)
+    storage._q_server("UPDATE memory:1 SET heat = 0.5", None)
 
     assert calls["n"] == 1, f"clean write should post once, got {calls['n']}"
 
@@ -102,7 +105,7 @@ def test_conflict_every_attempt_raises(storage):
     calls = _responses(storage, [[{"status": "ERR", "detail": _CONFLICT}]])
 
     with pytest.raises(RuntimeError, match="Transaction write conflict"):
-        storage._q_server("CREATE memory:1 SET heat = 0.5", None)
+        storage._q_server("UPDATE memory:1 SET heat = 0.5", None)
 
     assert calls["n"] > 1, "a retryable conflict must be retried at least once"
 
@@ -312,3 +315,58 @@ def test_begin_transaction_statement_is_retried_even_late_in_the_batch(storage):
 
     assert out == [{"ok": True}]
     assert calls["n"] == 2, f"expected one retry (2 posts), got {calls['n']}"
+
+
+def test_a_create_is_never_replayed(storage):
+    """A CREATE is refused even on a conflict that IS retryable.
+
+    OBSERVED 2026-08-28 in a full-suite run: a single-statement CREATE
+    reported a retryable conflict, the replay fired, and the second attempt
+    failed with ``Database record `wiki_page:1` already exists``. The first
+    attempt had COMMITTED while reporting a conflict, so the replay applied
+    it twice — the exact case the module's own docstring had called
+    hypothetical.
+
+    Re-applying a CREATE is never harmless, so it is no longer replayed at
+    all. This costs one caller-visible error on a genuine transient conflict;
+    the alternative is silent duplication.
+    """
+    calls = _responses(
+        storage,
+        [
+            [
+                {"status": "OK", "result": None},  # LET $id
+                {"status": "ERR", "detail": _CONFLICT},
+            ]
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="Transaction write conflict"):
+        storage._q_server("CREATE type::record('memory', $id) SET heat = 0.5", {"id": 1})
+
+    assert calls["n"] == 1, f"a CREATE must never be replayed, got {calls['n']} posts"
+
+
+def test_a_self_referencing_upsert_is_never_replayed(storage):
+    """`val = (val ?? 0) + 1` reads its own prior value, so a replay double-counts.
+
+    This is the id-counter shape (`UPSERT counter:memory SET val = (val ?? 0) + 1`).
+    A double-increment puts the counter ahead of MAX(id), which is the desync
+    that makes every subsequent insert fail with "already exists".
+    """
+    calls = _responses(
+        storage,
+        [
+            [
+                {"status": "OK", "result": None},
+                {"status": "ERR", "detail": _CONFLICT},
+            ]
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="Transaction write conflict"):
+        storage._q_server("UPSERT counter:memory SET val = (val ?? 0) + $n", {"n": 1})
+
+    assert calls["n"] == 1, (
+        f"a self-referencing UPSERT must never be replayed, got {calls['n']} posts"
+    )

@@ -177,7 +177,7 @@ def _detect_source() -> str:
                 return f"tool:{Path(filename).stem}"
             if "/curation/" in fname or "ingest" in fname:
                 return "doc-ingest"
-    except Exception:
+    except (OSError, ValueError):  # fmt: skip
         pass
     return "unknown"
 
@@ -224,7 +224,7 @@ def _write_audit(
         with _LOCK:
             with open(log_path, "a") as fh:
                 fh.write(json.dumps(entry) + "\n")
-    except Exception:
+    except (OSError, TypeError, ValueError):  # fmt: skip
         _log.exception("LOUD: failed to write allowlist audit entry — this must not be silenced")
 
 

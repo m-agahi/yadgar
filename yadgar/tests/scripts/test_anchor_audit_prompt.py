@@ -186,3 +186,88 @@ class TestAnchorAuditPromptSurfacesCoverage:
 
     def test_wrap_up_repeats_the_coverage_number(self):
         assert "coverage.unscanned" in _step_block(7)
+
+
+def _identity_recovery_header(content: str) -> str:
+    """Return the header comment block only (everything before the closing --> )."""
+    marker = "-->"
+    assert marker in content, "template lost its header comment"
+    return content.split(marker, 1)[0]
+
+
+def test_header_names_both_identity_failure_modes():
+    """Task 423: the header used to dead-end ("say so and stop / skip").
+
+    Two DIFFERENT failures reach the same symptom-space and need opposite
+    fixes: the mint failing (no key exists) versus the registry refusing a key
+    that does exist. Prose that conflates them sends the user to the wrong
+    remedy, so the header must name both.
+    """
+    header = _identity_recovery_header(_CONTENT)
+    assert "MODE 1" in header and "MODE 2" in header, (
+        "the header must separate the mint failure from the registry refusal"
+    )
+    assert "mint failed" in header, "MODE 1 must name the mint failure"
+    assert "unknown project_id" in header, "MODE 2 must name the error string that identifies it"
+
+
+def test_header_instructs_asking_the_user():
+    """The recovery is the USER's to make — the instance must surface it."""
+    header = _identity_recovery_header(_CONTENT)
+    assert "ASK" in header.upper(), "the header must instruct asking the user"
+    # The ADR-0227 prohibition stays intact alongside the new instruction.
+    assert "invent" in header, "the never-invent-a-key prohibition must survive"
+    assert "ADR-0227" in header
+
+
+def test_header_carries_the_verified_recovery_commands():
+    """Commands are pinned against the real parser (yadgar/core/cli/project.py).
+
+    ``project`` registers exactly two subcommands — ``seed`` (with ``--map``)
+    and ``list``. A header naming anything else would be inventing a flag.
+    """
+    header = _identity_recovery_header(_CONTENT)
+    assert ".yadgar/project-id" in header, "MODE 1 needs the override-file remedy"
+    assert "yadgar project list" in header, "MODE 2 needs the diagnostic"
+    assert "yadgar project seed" in header, "MODE 2 needs the registration path"
+    # ``DEFAULT_MAP_PATH`` in yadgar/core/cli/project.py is ``Path.cwd()`` bound
+    # at IMPORT time, so a relative ``--map`` resolves against the shell's cwd,
+    # not the project root the append instruction targeted. The header must
+    # anchor both halves on {directory} or the two lines disagree.
+    assert "{directory}/.yadgar/project-id-map.tsv" in header, (
+        "the map path must be anchored on {directory}, not left relative"
+    )
+    assert "--map {directory}/.yadgar/project-id-map.tsv" in header, (
+        "the seed command must carry the same anchored path as the append step"
+    )
+
+
+def test_header_says_mode_2_surfaces_mid_protocol():
+    """MODE 2 is invisible when the header is read.
+
+    The key and the ``current_project`` block are both present, so the
+    discriminator (``unknown project_id``) can only appear once a scoped call
+    has been made — i.e. after the instance has scrolled past this header. Left
+    unsaid, the refusal reads as a transient tool error and the instance
+    retries or gives up instead of recognising the mode.
+    """
+    header = _identity_recovery_header(_CONTENT)
+    low = header.lower()
+    assert "surfaces on the first scoped call" in low, (
+        "the header must say WHEN the MODE 2 signal appears"
+    )
+    assert "transient" in low, (
+        "the header must say the refusal is not a transient error to retry past"
+    )
+
+
+def test_header_guards_against_an_unreachable_backend():
+    """``yadgar project list`` exits 1 with an ``ERROR:`` line when the backend
+    is down (cmd_project_list). Reading that as "not registered" would send the
+    user to seed a registry that cannot be reached, so the header must call the
+    case undetermined rather than let it collapse into MODE 2."""
+    header = _identity_recovery_header(_CONTENT)
+    assert "ERROR:" in header, "the header must name the failure marker to look for"
+    assert "UNDETERMINED" in header.upper(), (
+        "an unreachable backend must be reported as undetermined, not as MODE 2"
+    )

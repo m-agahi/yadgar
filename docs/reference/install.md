@@ -85,7 +85,7 @@ Configures Yadgar in 10 steps (matches `make setup` chain):
 4. Bootstrap secrets (`~/.yadgar/secrets.env`)
 5. Generate daemon units (systemd on Linux, launchd on macOS)
 6. Enable units (systemctl --user / launchctl bootstrap)
-7. Install Claude Code git hooks (`yadgar install-hooks`)
+7. Install Claude Code hooks (`yadgar install --client claude-code --hooks --scope global` — what `_step_install_hooks` in `yadgar-setup.sh` actually runs; the `yadgar install-hooks` command this step used to name is hard-removed and exits 1)
 8. Install subagent templates (`yadgar install-subagents`)
 9. Sync config (`yadgar config sync`)
 10. Append CLAUDE.md rules fragment + seed canonical anchors

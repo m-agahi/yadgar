@@ -30,7 +30,9 @@ except PackageNotFoundError:
     try:
         with _pyproject.open("rb") as _f:
             __version__ = _tomllib.load(_f)["project"]["version"]
-    except Exception:
+    # open() -> OSError (installed wheels have no pyproject.toml beside them);
+    # tomllib.load() -> TOMLDecodeError, a ValueError; the two subscripts -> KeyError.
+    except (OSError, ValueError, KeyError):  # fmt: skip
         __version__ = "unknown"
 
 # Canonical source for runtime versions consumed by setup.sh and Makefile.
@@ -41,4 +43,4 @@ except PackageNotFoundError:
 # Keep this assignment on ONE line — scripts/sync_version.py matches
 # `^BACKEND_VERSION\s*=\s*"` and a wrapped form silently breaks the sync hook.
 
-BACKEND_VERSION = "5.85.0"
+BACKEND_VERSION = "5.86.0"

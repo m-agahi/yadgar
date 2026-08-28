@@ -58,7 +58,7 @@ def phase_embed(ctx: MemorizeContext, settings) -> dict | None:
                 )
 
                 yadgar_writegate_outcome.labels(outcome="skipped_low_surprise").inc()
-            except Exception:
+            except ImportError:
                 pass
             return {
                 "stored": False,

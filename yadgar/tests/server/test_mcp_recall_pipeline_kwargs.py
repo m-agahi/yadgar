@@ -179,7 +179,10 @@ class TestRecallInvalidProfile:
                     directory="/tmp/test",
                     project="owner/repo",
                 )
-            except Exception:
+            # `profile="bogus_profile"` is rejected somewhere in the recall
+            # pipeline; the assertion is that the forward never happened, not
+            # which validator refused first.
+            except Exception:  # noqa: BLE001 — a deliberately invalid profile is rejected
                 pass
             mock_fwd.assert_not_called()
 

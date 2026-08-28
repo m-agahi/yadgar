@@ -7,7 +7,6 @@ import pytest
 from yadgar._shared.config import Settings
 from yadgar._shared.contracts.models import (
     CausalDAGEdge,
-    Memory,
     MemoryArchive,
     MemoryRule,
     MemoryTransition,
@@ -38,94 +37,6 @@ def _make_memory(content="frontier test", directory="/tmp/frontier", **kwargs):
     }
     base.update(kwargs)
     return base
-
-
-# ---- Memory model field defaults ----
-
-
-class TestMemoryModelFields:
-    def test_plasticity_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.plasticity == 1.0
-
-    def test_stability_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.stability == 0.0
-
-    def test_excitability_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.excitability == 1.0
-
-    def test_last_excitability_update_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.last_excitability_update is None
-
-    def test_store_type_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.store_type == "episodic"
-
-    def test_compression_level_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.compression_level == 0
-
-    def test_original_content_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.original_content is None
-
-    def test_sr_coordinates_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.sr_x == 0.0
-        assert m.sr_y == 0.0
-
-    def test_reconsolidation_count_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.reconsolidation_count == 0
-
-    def test_last_reconsolidated_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.last_reconsolidated is None
-
-    def test_provenance_agent_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.provenance_agent == "default"
-
-    def test_vector_clock_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.vector_clock == "{}"
-
-    def test_is_protected_default(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.is_protected is False
-
-    def test_all_frontier_fields_settable(self):
-        m = Memory(
-            content="x",
-            directory_context="/tmp",
-            plasticity=0.5,
-            stability=0.8,
-            excitability=0.3,
-            store_type="semantic",
-            compression_level=2,
-            original_content="full text",
-            sr_x=1.5,
-            sr_y=-0.5,
-            reconsolidation_count=3,
-            provenance_agent="agent-2",
-            vector_clock='{"a":1}',
-            is_protected=True,
-        )
-        assert m.plasticity == 0.5
-        assert m.stability == 0.8
-        assert m.excitability == 0.3
-        assert m.store_type == "semantic"
-        assert m.compression_level == 2
-        assert m.original_content == "full text"
-        assert m.sr_x == 1.5
-        assert m.sr_y == -0.5
-        assert m.reconsolidation_count == 3
-        assert m.provenance_agent == "agent-2"
-        assert m.vector_clock == '{"a":1}'
-        assert m.is_protected is True
 
 
 # ---- New Pydantic model classes ----

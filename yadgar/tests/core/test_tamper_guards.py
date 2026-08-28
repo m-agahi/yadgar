@@ -566,6 +566,7 @@ def _responses(
     merge_base: str = "abc123",
     branch_diff: str = "",
     staged_diff: str = "",
+    unstaged_diff: str = "",
     base_green: str = "**5 ✅",
     head_green: str = "**5 ✅",
     index_green: str | None = None,
@@ -574,6 +575,7 @@ def _responses(
         ("merge-base", "origin/master", "HEAD"): merge_base,
         ("diff", merge_base, "HEAD"): branch_diff,
         ("diff", "--cached"): staged_diff,
+        ("diff",): unstaged_diff,
         ("show", f"{merge_base}:{_CONTRACT_PATH}"): base_green,
         ("show", f"HEAD:{_CONTRACT_PATH}"): head_green,
         ("show", f":{_CONTRACT_PATH}"): index_green if index_green is not None else "",
@@ -665,6 +667,116 @@ class TestLayer4BranchDiffMode:
 
     def test_ci_mode_requires_base(self) -> None:
         assert ctw.main(["--ci"]) == 1, "--ci without --base must error, not silently pass"
+
+
+class TestLayer4UnstagedWorkingTree:
+    """Layer 4 must see WORKING-TREE weakening that has not been staged yet.
+
+    Ledger task 410. ``collect_inputs`` sourced its diff from
+    ``merge-base(origin/master, HEAD)`` unioned with ``git diff --cached``.
+    Both of those read committed or indexed state, so an edit sitting in the
+    working tree was invisible: running the guard before ``git add`` printed
+    ``test-weakening guard OK.`` over a diff it had never looked at. Same
+    defect class as the ``--cached``-only blindness the module docstring
+    describes — an assertion structurally incapable of firing in the state the
+    caller was asking about.
+
+    The three segments telescope: ``merge_base..HEAD`` + ``HEAD..index`` +
+    ``index..worktree``. Nothing is double-counted, and the verdict becomes
+    "does the tree as it stands weaken a test", which is the question a
+    standalone run is actually asking.
+    """
+
+    def test_unstaged_weakening_is_caught(self) -> None:
+        """THE fix: the weakening exists ONLY in the working tree."""
+        git = _FakeGit(
+            _responses(branch_diff="", staged_diff="", unstaged_diff=_BRANCH_DIFF_WEAKENED)
+        )
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        errors = ctw.check_diff(diff_text, base_green, after_green)
+        assert errors, "an unstaged assert removal must fire, not report OK"
+        assert any("assert" in e for e in errors), errors
+
+    def test_the_unstaged_diff_is_actually_requested(self) -> None:
+        """Proves the input is READ, not merely that a fixture key exists."""
+        git = _FakeGit(_responses())
+        ctw.collect_inputs("origin/master", git)
+        assert ("diff",) in git.calls, git.calls
+
+    def test_all_three_segments_are_unioned(self) -> None:
+        git = _FakeGit(
+            _responses(
+                branch_diff="BRANCH_MARKER\n",
+                staged_diff="STAGED_MARKER\n",
+                unstaged_diff="UNSTAGED_MARKER\n",
+            )
+        )
+        diff_text, _, _ = ctw.collect_inputs("origin/master", git)
+        assert "BRANCH_MARKER" in diff_text
+        assert "STAGED_MARKER" in diff_text
+        assert "UNSTAGED_MARKER" in diff_text
+
+    def test_unstaged_segment_comes_last(self) -> None:
+        """Ordering is load-bearing, not cosmetic.
+
+        ``_per_file_metrics`` reads ``new file mode`` as it streams the diff
+        and applies it to every ``+``/``-`` body line that follows for that
+        file. A file created in the index and edited further in the working
+        tree must have its header read BEFORE the working-tree body lines, or
+        the ``skips``-on-a-new-file exemption stops applying to them.
+        """
+        git = _FakeGit(
+            _responses(
+                branch_diff="BRANCH_MARKER\n",
+                staged_diff="STAGED_MARKER\n",
+                unstaged_diff="UNSTAGED_MARKER\n",
+            )
+        )
+        diff_text, _, _ = ctw.collect_inputs("origin/master", git)
+        assert diff_text.index("BRANCH_MARKER") < diff_text.index("STAGED_MARKER")
+        assert diff_text.index("STAGED_MARKER") < diff_text.index("UNSTAGED_MARKER")
+
+    def test_new_file_staged_then_further_silenced_unstaged_stays_exempt(self) -> None:
+        """The ordering guarantee, exercised end to end rather than asserted about.
+
+        The file is created in the index; the working tree then adds another
+        skip guard to it. Nothing that used to run has been silenced — the
+        file did not exist at the merge-base — so this must not fire.
+        """
+        header = (
+            "diff --git a/yadgar/tests/core/test_brand_new.py"
+            " b/yadgar/tests/core/test_brand_new.py\n"
+            "new file mode 100644\n"
+        )
+        staged = header + '+    pytest.skip("brand new module")\n'
+        unstaged = '+    pytest.mark.skipif(True, reason="also brand new")\n'
+        git = _FakeGit(_responses(staged_diff=staged, unstaged_diff=unstaged))
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert ctw.check_diff(diff_text, base_green, after_green) == []
+
+    def test_clean_working_tree_changes_nothing(self) -> None:
+        """CI checks out clean, so the new segment is empty there — same verdict."""
+        git = _FakeGit(_responses(branch_diff=_BRANCH_DIFF_WEAKENED, unstaged_diff=""))
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        with_empty_worktree = ctw.check_diff(diff_text, base_green, after_green)
+        control = ctw.check_diff(_BRANCH_DIFF_WEAKENED, base_green, after_green)
+        assert with_empty_worktree == control, "an empty working tree must not alter the verdict"
+        assert control, "control must itself be non-vacuous"
+
+    def test_unreachable_base_still_reads_the_working_tree(self) -> None:
+        """The fresh-clone fallback must not lose the segment it just gained."""
+        git = _FakeGit(
+            {
+                ("merge-base", "origin/master", "HEAD"): "",  # unreachable
+                ("diff",): _BRANCH_DIFF_WEAKENED,
+                ("show", f"HEAD:{_CONTRACT_PATH}"): "**5 ✅",
+                ("show", f":{_CONTRACT_PATH}"): "**5 ✅",
+            }
+        )
+        diff_text, base_green, after_green = ctw.collect_inputs("origin/master", git)
+        assert ctw.check_diff(diff_text, base_green, after_green), (
+            "fallback mode must still see unstaged weakening"
+        )
 
 
 class TestLayer4PerFileDelta:

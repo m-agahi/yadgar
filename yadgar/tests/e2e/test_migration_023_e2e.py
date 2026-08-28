@@ -263,7 +263,21 @@ class TestMigration023E2E:
                     "emb": emb,
                 },
             )
-        except Exception:
+        # NARROWED deliberately: a broad catch here made ANY failure — an SQL
+        # typo, an unreachable backend — read as "the constraint rejected the
+        # insert", so the assertion below could pass without the schema ever
+        # being tested.
+        #
+        # Why RuntimeError specifically, when the other `_q` sites in this car
+        # stay broad: `_q` branches on `self._db_url`. The embedded branch
+        # (`_q_embedded`) re-raises surrealdb-SDK classes verbatim, which is why
+        # a general-purpose `_q` caller cannot enumerate them. THIS test runs on
+        # `e2e_engines`, which is wired against the session-scoped real
+        # SurrealDB server, so `_db_url` is always set and the call always takes
+        # `_q_server` -> `post_sql_with_conflict_retry`, which raises
+        # RuntimeError for a SurrealDB ERR entry. An ASSERT violation IS that
+        # ERR entry.
+        except RuntimeError:
             constraint_enforced = True
 
         # Migration Phase C re-tightened the schema, so the field-absent INSERT

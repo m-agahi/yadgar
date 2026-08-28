@@ -157,7 +157,7 @@ Two per-directory memory patterns surface project-level context that doesn't fit
 
 **`_active_work`** — single memory per directory tagged `_active_work`. No char cap. In-flight state Claude can read on session resume. Created via `update_active_work(directory, content)` (MCP tool, `power=True`). Atomic delete-then-insert in a single transaction; returns `previous_content` (or `None`) alongside the new memory dict.
 
-Both are `is_protected=True` (never decay) and intentionally leave the `branch` column unset — project-level state is not branch-scoped.
+Both are `is_protected=True` (never decay). (Earlier revisions noted that these rows left the `branch` column unset; that column was retired by ADR-0215 and dropped by migrations 029 + 032.)
 
 `project_brief(directory, mode)` surfaces these on session start. In `catalog` mode (default, ~500 tokens), only their presence is reported. In `full` mode (~1050 tokens), full content is inlined alongside top anchors, hot memories, and key wiki pages.
 

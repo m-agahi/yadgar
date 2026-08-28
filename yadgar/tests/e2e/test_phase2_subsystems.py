@@ -113,20 +113,22 @@ def _memorize_and_find(
         return result
     _drain(e2e_engines)
 
+    # Only the storage call is guarded — a broad catch around the scan would
+    # swallow a bug in the row comparison and silently return None.
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
-        for row in rows:
-            if row.get("content") == content and row.get("directory_context") == project:
-                return row
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
+        rows = []
+    for row in rows:
+        if row.get("content") == content and row.get("directory_context") == project:
+            return row
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
-        for row in recent:
-            if row.get("content") == content and row.get("directory_context") == project:
-                return row
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
+        recent = []
+    for row in recent:
+        if row.get("content") == content and row.get("directory_context") == project:
+            return row
     return None
 
 
@@ -961,7 +963,9 @@ def _require_model_cached(model_name: str) -> None:
         from transformers import AutoConfig  # noqa: PLC0415
 
         AutoConfig.from_pretrained(model_name, local_files_only=True)
-    except Exception:
+    # A cache miss surfaces from the HF hub / transformers stack, whose error
+    # classes are not importable when the model is absent.
+    except Exception:  # noqa: BLE001 — HF-hub cache probe error surface
         pytest.skip(
             f"{model_name} not in local HF cache — enrichment e2e runs only in the "
             "model-bundled CI image (yadgar-ci:5.72.0)"

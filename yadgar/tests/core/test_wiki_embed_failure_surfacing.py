@@ -45,7 +45,10 @@ def _get_counter(reason: str) -> float:
         from yadgar._shared.observability.metrics import yadgar_wiki_embedding_compute_failed_total
 
         return yadgar_wiki_embedding_compute_failed_total.labels(reason=reason)._value.get()
-    except Exception:
+    # prometheus_client: `labels()` raises ValueError on a wrong label set and
+    # KeyError on an unknown child; `._value` is a private attribute that a
+    # client bump can move (AttributeError).
+    except (ImportError, AttributeError, KeyError, ValueError):  # fmt: skip
         return 0.0
 
 

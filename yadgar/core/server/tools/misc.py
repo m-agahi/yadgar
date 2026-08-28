@@ -786,7 +786,7 @@ def project_seed(
     """Seed the engine-#2 ``project`` registry from a map TSV.
 
     Car A (2026-08-14 identity train, plan §2). Closes the gap where
-    ``backend.admin_exec.ledger.create_project_row`` is registered but
+    ``backend.admin_exec.ledger_project.create_project_row`` is registered but
     had no MCP / CLI path; engine-#2 ledger writes were blocked by the
     registry guard inside ``create_task_row`` / ``create_adr_row``
     (``MariaStorageEngine.assert_project_registered``) with no way to

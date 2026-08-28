@@ -253,7 +253,7 @@ def _build_otlp_exporter():  # type: ignore[return]
             },
         )
         return wrapped
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — optional OTLP exporter construction: it reaches the opentelemetry exporter package and the endpoint config, which raise with no common base, and tracing must degrade to no-export rather than block startup
         logger.warning(
             "otlp_exporter_init_failed",
             extra={
@@ -438,7 +438,7 @@ if _OTEL_AVAILABLE:
                     status = "OK"
                 else:
                     status = span.status.status_code.name
-            except Exception:  # pragma: no cover
+            except AttributeError:  # pragma: no cover
                 pass
 
             # Attributes dict (convert OTel BoundedAttributes to plain dict)
@@ -446,7 +446,7 @@ if _OTEL_AVAILABLE:
             if span.attributes:
                 try:
                     attrs = dict(span.attributes)
-                except Exception:  # pragma: no cover
+                except (TypeError, ValueError):  # pragma: no cover  # fmt: skip
                     pass
 
             payload: dict[str, Any] = {
@@ -533,7 +533,7 @@ def _instrument_httpx() -> None:
         instr = HTTPXClientInstrumentor()
         if not instr.is_instrumented_by_opentelemetry:
             instr.instrument()
-    except Exception:
+    except Exception:  # noqa: BLE001 — optional OTel httpx auto-instrumentation: the instrumentor raises its own package-private types when the dependency is absent, already instrumented, or version-mismatched, with no common base (I3)
         pass  # OTel/httpx instrumentation not available — no-op (I3)
 
 
@@ -613,6 +613,17 @@ def shutdown_tracing(timeout_sec: float = 3.0) -> None:
     """
     # C2 P2: stop the off-thread span-log listener first (drains + joins).
     _stop_span_log_queue()
+
+    # `_otel_trace` is only bound when the module-level opentelemetry import
+    # succeeded. Without this guard the reference below raises NameError, and
+    # because __main__ calls this unconditionally on every CLI exit, that
+    # NameError fires DURING the handling of whatever actually went wrong and
+    # buries it. Measured 2026-08-28: a real `ModuleNotFoundError: tomlkit`
+    # was reported as `NameError: name '_otel_trace' is not defined`.
+    # The docstring above promises this is "safe to call when tracing was
+    # never set up"; this is what makes that true.
+    if not _OTEL_AVAILABLE:
+        return
 
     provider = _otel_trace.get_tracer_provider()
     shutdown = getattr(provider, "shutdown", None)
@@ -702,7 +713,7 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
                 # exceptions still propagate + record via the span path below.
                 try:
                     tracer = _otel_trace.get_tracer(fn.__module__)
-                except Exception:
+                except Exception:  # noqa: BLE001 — guards ONLY get_tracer against a degraded/swapped provider (the hanging stub installed during shutdown_tracing); the provider is caller-replaceable third-party code, and the wrapped fn's own exceptions still propagate below
                     return await fn(*args, **kwargs)
                 with tracer.start_as_current_span(span_name) as span:
                     if attributes:
@@ -728,7 +739,7 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
                 # ONLY; the wrapped fn's own exceptions still propagate + record.
                 try:
                     tracer = _otel_trace.get_tracer(fn.__module__)
-                except Exception:
+                except Exception:  # noqa: BLE001 — same get_tracer-only guard as async_wrapper above; the wrapped fn's own exceptions still propagate below
                     return fn(*args, **kwargs)
                 with tracer.start_as_current_span(span_name) as span:
                     if attributes:

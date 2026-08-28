@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 
 import yadgar._shared.runtime.state as _st
@@ -127,7 +127,7 @@ async def api_wiki_query(request: Request) -> JSONResponse:
         else:
             results = await _wiki_search_keyword(storage, q, limit)
         return JSONResponse(results, headers=_CORS)
-    except Exception:
+    except Exception:  # noqa: BLE001 — public API boundary: any wiki-query fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.warning("api_wiki_query failed q=%s mode=%s", q, mode, exc_info=True)
         return JSONResponse({"error": "wiki query failed"}, status_code=500, headers=_CORS)
 
@@ -167,7 +167,7 @@ async def api_wiki_history(request: Request) -> JSONResponse:
         from yadgar.core.server.tools.wiki import wiki_history  # noqa: PLC0415
 
         result = await asyncio.to_thread(wiki_history, slug, limit)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — public API boundary: any wiki-tool fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.debug("api_wiki_history error slug=%s: %s", slug, exc)
         return JSONResponse({"error": str(exc)}, status_code=500, headers=_CORS)
 
@@ -211,7 +211,7 @@ async def api_wiki_read_version(request: Request) -> JSONResponse:
         from yadgar.core.server.tools.wiki import wiki_read_version  # noqa: PLC0415
 
         result = await asyncio.to_thread(wiki_read_version, slug, version)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — public API boundary: any wiki-tool fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.debug("api_wiki_read_version error slug=%s v=%s: %s", slug, version, exc)
         return JSONResponse({"error": str(exc)}, status_code=500, headers=_CORS)
 
@@ -260,7 +260,7 @@ async def api_wiki_diff(request: Request) -> JSONResponse:
         from yadgar.core.server.tools.wiki import wiki_diff  # noqa: PLC0415
 
         result = await asyncio.to_thread(wiki_diff, slug, v1, v2, fmt)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — public API boundary: any wiki-tool fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.debug("api_wiki_diff error slug=%s v1=%s v2=%s: %s", slug, v1, v2, exc)
         return JSONResponse({"error": str(exc)}, status_code=500, headers=_CORS)
 
@@ -294,7 +294,7 @@ async def api_wiki_restore(request: Request) -> JSONResponse:
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, ClientDisconnect):  # fmt: skip
         return JSONResponse(
             {"restored": False, "reason": "invalid_json"}, status_code=400, headers=_CORS
         )
@@ -321,7 +321,7 @@ async def api_wiki_restore(request: Request) -> JSONResponse:
         from yadgar.core.server.tools.wiki import wiki_restore  # noqa: PLC0415
 
         result = await asyncio.to_thread(wiki_restore, slug, version)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — public API boundary: any wiki-tool fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.debug("api_wiki_restore error slug=%s v=%s: %s", slug, version, exc)
         return JSONResponse({"error": str(exc)}, status_code=500, headers=_CORS)
 

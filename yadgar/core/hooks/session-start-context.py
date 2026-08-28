@@ -114,7 +114,7 @@ def main():
             cwd = data.get("cwd", os.getcwd())
             # Car C: names the harness task store to seed (~/.claude/tasks/<id>).
             session_id = data.get("session_id") or ""
-        except Exception:
+        except (AttributeError, OSError, ValueError):  # fmt: skip
             cwd = os.getcwd()
             session_id = ""
 
@@ -173,7 +173,7 @@ def main():
             # module helper to keep main() under the I13 nesting cap), then degrade
             # silently (same daemon-down contract as the broad except below).
             _close_http_error(_http_exc)
-        except Exception:
+        except (AttributeError, ImportError, OSError, ValueError):  # fmt: skip
             pass  # Daemon down — skip; never use surrealkv directly from host
     finally:
         shutdown_tracing()

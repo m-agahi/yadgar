@@ -34,7 +34,7 @@ try:
         "YADGAR_CORE_LOG_LEVEL", os.environ.get("CORE_LOG_LEVEL", "WARNING")
     )
     _configure_logging(log_format=_log_format, level=_log_level, process="core")
-except Exception:
+except Exception:  # noqa: BLE001 — module import-time boundary: a logging-config fault must fall back to the default root handlers, never abort the import of the server module
     pass  # Non-fatal: fall back to default root handlers
 
 # ── Distributed tracing — v5.6.3 ─────────────────────────────────────────────
@@ -119,7 +119,7 @@ def _instrument_starlette_app(app) -> None:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: PLC0415
 
         FastAPIInstrumentor.instrument_app(app)
-    except Exception:
+    except Exception:  # noqa: BLE001 — OTel instrumentation is optional: the package may be absent and instrument_app also raises when the app is already instrumented; both are no-ops here
         pass  # OTel not available or app already instrumented — no-op
 
 
@@ -260,7 +260,7 @@ class MCPTraceSpanMiddleware:
 
             self._tracer = trace.get_tracer("yadgar.server.mcp")
             self._propagator = propagate
-        except Exception:
+        except ImportError:
             pass  # OTel not available — degrade gracefully
 
     async def __call__(self, scope, receive, send) -> None:
@@ -494,7 +494,7 @@ def _tool(power: bool = False, always_load: bool = False):
             else:
                 text = json.dumps(result, default=str)
             return max(1, len(text) // 4)
-        except Exception:
+        except (TypeError, ValueError):  # fmt: skip
             return 0
 
     def decorator(func):
@@ -602,7 +602,7 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
             _elapsed_ms = (_time.monotonic() - _t0) * 1000
             yadgar_mcp_request_duration_ms.labels(tool=func.__name__).observe(_elapsed_ms)
             yadgar_mcp_request_count.labels(tool=func.__name__, status=_status).inc()
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
         try:
             from yadgar._shared.observability.metrics import (
@@ -610,7 +610,7 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
             )
 
             yadgar_tool_token_estimate_total.labels(tool=func.__name__).inc(estimate_tokens(result))
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
 
     def _maintenance():

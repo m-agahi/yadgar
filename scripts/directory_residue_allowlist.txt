@@ -111,13 +111,8 @@ carve-out-1  yadgar/core/hooks/post-tool-capture.py        # hook entry point; s
 # ── carve-out 3: genuine filesystem paths, permanent ────────────────────────
 carve-out-3  yadgar/core/install/**                        # install targets, config + interpreter paths (glob; see KNOWN GAP)
 carve-out-3  yadgar/core/cli/verify_hooks.py               # `yadgar verify-hooks` (task 306) is read-only: project_directory names a settings.json to OPEN (<project>/.claude/settings.json), exactly like its sibling home_dir, and is never compared against a project identity
-carve-out-3  yadgar/core/daemon/**                         # unit files and data dirs; watch_directory is a path to watch
-carve-out-3  yadgar/core/staleness/**                      # file-hash staleness inputs — real files on disk
-carve-out-3  yadgar/core/bootstrap/bootstrap.py            # watch_directory forwarded to the daemon watcher; a path, not a scope
-carve-out-3  yadgar/core/server/_startup.py                # watch_directory forwarded into core_init_engines
 carve-out-3  yadgar/core/seed/_scan.py                     # Path(directory).resolve() — a genuine filesystem walk
 carve-out-3  yadgar/core/code_graph/config.py              # the repo path code_graph indexes; resolver keys the knob off it
-carve-out-3  yadgar/_shared/runtime/lifecycle.py           # init_engines(watch_directory) — the directory the watcher watches
 carve-out-3  yadgar/_shared/runtime/cache_epoch.py         # hashes its argument into a counter FILE NAME; producer is _resolve_project_root
 carve-out-3  yadgar/_shared/server_helpers/server_helpers.py  # _resolve_project_root and the two worktree-root heuristics: paths on disk
 carve-out-3  yadgar/_shared/file_queue/queue.py            # _find_terminal walks the queue directory looking for a terminal file
@@ -129,13 +124,12 @@ carve-out-3  yadgar/backend/admin_exec/adr_seed_storage.py # internal storage he
 
 # ── carve-out 2: a signature named after the stored directory_context column ─
 carve-out-2  yadgar/_shared/storage/_project_id_writer.py  # _resolve_project_id_for_write(directory_context) — the column's own writer
-carve-out-2  yadgar/_shared/storage/user.py                # insert_profile / get_profiles_for_entity take the column value
-carve-out-2  yadgar/_shared/storage/narrative.py           # get_beliefs_for_subject(directory_context) + the NarrativeEntry field
+carve-out-2  yadgar/_shared/storage/user.py                # insert_profile(directory_context) — the supersession key on the stored column
+carve-out-2  yadgar/_shared/storage/narrative.py           # BeliefRecord.directory_context (the stamped column), insert_prospective_memory's 'target_directory' key, and get_narratives_for_directory(directory)
 carve-out-2  yadgar/_shared/wiki/store.py                  # the §25 read ladder: _gate_dir_eligible, find_similar_wiki_pages, read_by_directory
-carve-out-2  yadgar/_shared/contracts/models.py            # pydantic mirrors of stored rows (Episode, Checkpoint, NarrativeEntry, prospective)
 carve-out-2  yadgar/backend/write_exec/wiki_add_impl.py    # forwards directory_context= into the wiki write path
 carve-out-2  yadgar/backend/queue_drainer/dlq.py           # forwards directory_context= when re-applying a drained payload
-carve-out-2  yadgar/backend/admin_exec/identity_stamp.py   # Car 1 (task 309): the manifest REPORTS the legacy directory_context/directory column values it inherited project_id from, so an operator can review the basis and settle a conflicted one — a review artefact naming the retired column, never a scope key on any row; dies with the column in the drop migration, exactly like rekey_corpus.py below
+carve-out-2  yadgar/backend/admin_exec/identity_stamp.py   # Car 1 (task 309): the manifest REPORTS the legacy directory_context/directory column values it inherited project_id from, so an operator can review the basis and settle a conflicted one — a review artefact naming the retired column, never a scope key on any row; dies with the column in the drop migration
 
 # ── wire contracts: keys crossing a process boundary ────────────────────────
 wire-contract  yadgar/backend/embed_service/embed_service_models.py  # RecallRequest.directory retained OPTIONAL and deliberately not deleted;
@@ -204,5 +198,4 @@ tool-surface  yadgar/core/server/tools/task.py             # forwards directory=
 tool-surface  benchmarks/run_eval.py                       # drives recall() over the tool surface that still accepts directory
 tool-surface  benchmarks/run_longmemeval.py                # drives recall() over the tool surface that still accepts directory
 tool-surface  benchmarks/run_perf_loadtest.py              # recall load test driving the same still-accepting tool surface as the two eval harnesses
-carve-out-2  yadgar/core/migrations/rekey_corpus.py      # Car D (2026-08-14): the migration script that reads directory_context off the corpus and stamps project_id; dies with the column in the next PR's drop migration
 wire-contract  yadgar/_shared/runtime/session_map.py  # the directory->project_id translation table itself: `directory` is the LOOKUP KEY, which is the module's whole reason to exist. C5 removed `directory`'s ability to RESOLVE (derive a key from a path) and that stays removed — nothing here derives. The SessionStart hook mints host-side via _identity_mint, where the working tree exists, and registers the pair; the daemon only asks "has the hook told me about this exact path?". An unregistered directory returns None and the caller fails loud, exactly as before this tier existed, so no key is ever manufactured from a path. Needed because a client with ONE global `mcpServers` entry makes every MCP request identical on the wire, and the daemon runs stateless_http (core/server/_startup.py) so there is no Mcp-Session-Id either — `directory` is the only per-call signal that varies. Per-project `mcpServers` users take the X-Yadgar-Project-Id header path instead and never reach this module. Dies when the wire carries a real per-session identity.

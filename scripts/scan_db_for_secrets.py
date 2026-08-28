@@ -349,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"\nClean — no secrets detected. Report: {report_path}")
             return 0
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — CLI top-level: the whole scan is wrapped so any failure exits 2 with a message rather than a traceback
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 

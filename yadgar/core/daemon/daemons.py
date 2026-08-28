@@ -45,7 +45,7 @@ def _lifecycle_span(name: str):
         from opentelemetry import trace as _ot  # noqa: PLC0415
 
         return _ot.get_tracer("yadgar.lifecycle").start_as_current_span(name)
-    except Exception:
+    except ImportError:
         return contextlib.nullcontext()
 
 
@@ -98,7 +98,7 @@ def _metrics_loop(pid: int, db_path: str, storage: object) -> None:
                 # §9 Q6: update under lock to prevent torn reads.
                 with _st._metrics_lock:
                     _st._system_metrics_cache.update(result)
-        except Exception:
+        except Exception:  # noqa: BLE001 — daemon loop: one bad metrics sample must never kill the sampler thread
             pass
 
 
@@ -125,7 +125,7 @@ def _reranker_idle_loop() -> None:
                     _st._retriever.unload_rerankers_if_idle(
                         idle_seconds=_cfg.RERANKER_IDLE_UNLOAD_SEC
                     )
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — daemon loop: a reranker-unload fault is counted and the loop continues; it must never kill the thread
             _lc_record_exc("model_unload", _exc)  # PR-I: loop error counter
 
 
@@ -145,12 +145,12 @@ def _viz_loop(host: str, port: int) -> None:
         run_viz_server(host=host, port=port)
     except OSError as exc:
         logger.warning("Viz server could not bind port %d: %s", port, exc)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — daemon thread boundary: the viz server is optional and any fault must be logged, never propagate out of the thread
         logger.warning("Viz server error: %s", exc)
 
 
 @observe(tier="stage")
-def _start_daemon_threads(watch_directory: str | None, _settings) -> None:
+def _start_daemon_threads(_settings) -> None:
     """Start background daemon threads (metrics, reranker-idle, viz).
 
     Called only when start_daemons=True. Extracted from init_engines to
@@ -158,8 +158,8 @@ def _start_daemon_threads(watch_directory: str | None, _settings) -> None:
     """
     # v5.7.0 PR-0: consolidation daemon removed; cron takes over in PR-1.
     # _st._consolidation.start() intentionally removed.
-    if watch_directory:
-        _st._staleness.start(watch_directory)
+    # Car K: the staleness watchdog start went with the watch_directory param —
+    # its only production caller passed None, so it never fired.
 
     # Background system-metrics sampler for /api/system and SSE events
     _pid = os.getpid()

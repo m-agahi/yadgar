@@ -66,8 +66,21 @@ PAYLOAD SHAPES (contract for Cars D / F / I):
         ``None`` row stays ``None`` (the attach never resurrects a row the
         scoped lookup refused).
 
-    list_agent_prompt_rows(payload) -> {"rows": list[dict]}
-        payload: {}   # no parameters today
+SIBLING MODULES (ledger task 402). This file used to hold every ledger op and
+reached 998 of the I13 HARD ``file_loc`` cap of 1000, so the next paragraph
+anyone wrote would have failed the gate on someone else's behalf. The op
+bodies were split by LEDGER TABLE FAMILY, verbatim and behaviour-neutral:
+
+    ``ledger_agent.py``    ``agent_pattern`` / ``agent_discipline`` (+ the
+                           ``agent_pattern_composes`` join) — the agent library.
+    ``ledger_project.py``  the ``project`` REGISTRY, which is not one of the
+                           D20 chokepoint's ledger tables at all: it is what
+                           they FK into, and its ops are deliberately exempt
+                           from the registry guard every ledger write passes.
+
+This file keeps ``task`` + ``adr``, which is what the payload shapes above
+document. All three modules are dispatched from ``admin_exec/__init__``'s
+``_ADMIN_OPS`` and all three are walked by the refusal sweep below.
 
 ERROR MODEL: a FAULT never raises; a REFUSAL always does.
 
@@ -85,8 +98,12 @@ and silently wrong the first time someone adds a registry check to another
 engine method, which is exactly how ``update_adr_tier_subsystem`` shipped
 without the guard its three train siblings had. One documented exception:
 ``_attach_supersedes`` (best-effort degrade, no error envelope — see it).
-Driver failures route through ``driver_errors.driver_error_detail`` rather
-than ``str(exc)``.
+
+The sweep that enforces the refusal arm structurally
+(``test_car_c_admin_exec_refusal.py``) walks this module AND both siblings —
+it was widened from a single ``__file__`` to the module list in the same
+commit as the split, because a sweep that does not follow the code it audits
+reports a cleanliness it stopped checking.
 """
 
 from __future__ import annotations
@@ -96,7 +113,6 @@ from typing import Any
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.refusal import AdminRefusal
-from yadgar.backend.admin_exec.driver_errors import driver_error_detail
 from yadgar.backend.admin_exec.refusals import TaskEdgePartialStateError
 
 logger = logging.getLogger(__name__)
@@ -104,9 +120,11 @@ logger = logging.getLogger(__name__)
 # ``TaskEdgePartialStateError`` moved to ``refusals`` when this file hit its
 # I13 file cap. The import above re-binds the name here, so
 # ``from ...ledger import TaskEdgePartialStateError`` keeps working. NO
-# ``__all__``: this module's public surface is its ~26 op functions, which
-# ``admin_exec/__init__`` reaches as ``ledger.<op>``, and declaring one name
-# would read as "this module exports one thing".
+# ``__all__``: this module's public surface is its 16 task/adr op functions
+# (the agent-library and project-registry ops moved to ``ledger_agent`` /
+# ``ledger_project`` in ledger task 402), which ``admin_exec/__init__`` reaches
+# as ``ledger.<op>``, and declaring one name would read as "this module exports
+# one thing".
 
 
 def _get_sql_storage() -> Any:
@@ -563,219 +581,6 @@ async def get_adr_row(payload: dict) -> dict:
     return {"row": attached[0]}
 
 
-@observe(tier="boundary", metric="backend.admin.ledger.list_agent_prompt_rows")
-async def list_agent_prompt_rows(payload: dict) -> dict:
-    """List every ``agent_pattern`` row. payload: {} (no params)."""
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        rows = await storage.list_agent_prompt_rows()
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("list_agent_prompt_rows error: %s", exc)
-        return {"ok": False, "error": str(exc)}
-    return {"rows": rows}
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.list_agent_discipline_rows")
-async def list_agent_discipline_rows(payload: dict) -> dict:
-    """List every ``agent_discipline`` row, ordered by position then name. payload: {}.
-
-    Sister op to ``list_agent_prompt_rows``. Same engine-composed-or-not
-    contract; same error envelope on a storage exception. The admin op
-    surface for the discipline table was the half that never shipped —
-    ``save_agent_discipline_row`` landed in Car I but the read counterpart
-    was not added to the dispatch table, so any caller asking for a list
-    hit ``KeyError`` on the op name. C5 closes the gap.
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        rows = await storage.list_agent_discipline_rows()
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("list_agent_discipline_rows error: %s", exc)
-        return {"ok": False, "error": str(exc)}
-    return {"rows": rows}
-
-
-# ── Car I additions: uses-DESC list, single-row lookup, composes read ──────
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.list_agent_pattern_rows_uses_desc")
-async def list_agent_pattern_rows_uses_desc(payload: dict) -> dict:
-    """``agent_pattern`` rows ordered by ``uses`` DESC, then ``name`` ASC.
-
-    payload: ``{"limit": int = 20}`` — default 20 caps the restore token
-    budget (mirrors the old wiki-TOC page's 20-row cap). D40.
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        rows = await storage.list_agent_pattern_rows_uses_desc(
-            limit=int(payload.get("limit", 20)),
-        )
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("list_agent_pattern_rows_uses_desc error: %s", exc)
-        return {"ok": False, "error": str(exc)}
-    return {"rows": rows}
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.get_agent_pattern_row")
-async def get_agent_pattern_row(payload: dict) -> dict:
-    """Single ``agent_pattern`` lookup by ``name``.
-
-    payload: ``{"name": str}``. Returns ``{"row": dict | None}`` —
-    ``None`` for an unknown name so the caller can distinguish "absent"
-    from "engine unavailable".
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        row = await storage.get_agent_prompt_row(str(payload["name"]))
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("get_agent_pattern_row error name=%s: %s", payload.get("name"), exc)
-        return {"ok": False, "error": str(exc)}
-    return {"row": row}
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.list_pattern_composes")
-async def list_pattern_composes(payload: dict) -> dict:
-    """Ordered list of composed discipline slugs for one ``agent_pattern``.
-
-    payload: ``{"pattern_name": str}``. Returns
-    ``{"rows": [{"pattern_name", "discipline_name", "position"}, ...]}``,
-    ordered by ``position`` ASC. Empty list for an absent row.
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        rows = await storage.list_pattern_composes(
-            pattern_name=str(payload["pattern_name"]),
-        )
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "list_pattern_composes error pattern=%s: %s", payload.get("pattern_name"), exc
-        )
-        return {"ok": False, "error": str(exc)}
-    return {"rows": rows}
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.save_agent_pattern_row")
-async def save_agent_pattern_row(payload: dict) -> dict:
-    """Upsert one ``agent_pattern`` row by ``name``.
-
-    payload: ``{name, body_slug, content_hash, purpose?, status?, baseline_hash?}``.
-    Used by ``agent_prompt_save`` to mirror the wiki body page as a
-    ledger row (the cross-engine invariant arm compares the two via
-    ``content_hash``).
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        return await storage.save_agent_prompt(
-            name=str(payload["name"]),
-            body_slug=str(payload["body_slug"]),
-            content_hash=str(payload["content_hash"]),
-            purpose=payload.get("purpose"),
-            status=str(payload.get("status", "active")),
-            baseline_hash=payload.get("baseline_hash"),
-        )
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("save_agent_pattern_row error name=%s: %s", payload.get("name"), exc)
-        return {"ok": False, "error": str(exc)}
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.save_agent_discipline_row")
-async def save_agent_discipline_row(payload: dict) -> dict:
-    """Upsert one ``agent_discipline`` row by ``name``.
-
-    payload: ``{name, body_slug, content_hash, baseline_hash?, meta?}``.
-    ``meta`` carries ``{purpose?, always_applied?, position?, status?}``
-    (per the engine method's signature).
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        return await storage.save_agent_discipline(
-            name=str(payload["name"]),
-            body_slug=str(payload["body_slug"]),
-            content_hash=str(payload["content_hash"]),
-            baseline_hash=payload.get("baseline_hash"),
-            meta=payload.get("meta"),
-        )
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("save_agent_discipline_row error name=%s: %s", payload.get("name"), exc)
-        return {"ok": False, "error": str(exc)}
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.increment_agent_pattern_uses")
-async def increment_agent_pattern_uses(payload: dict) -> dict:
-    """``UPDATE agent_pattern SET uses = uses + 1 WHERE name = :name``.
-
-    payload: ``{"pattern": str}``. Replaces the old
-    ``increment_prompt_usage`` op (the memory-row read-modify-write
-    path is gone; ``uses`` is a SQL integer, D40).
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        await storage.increment_agent_prompt_uses(str(payload["pattern"]))
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("increment_agent_pattern_uses error: %s", exc)
-        return {"ok": False, "error": str(exc)}
-    return {"ok": True, "pattern": payload["pattern"]}
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.get_agent_prompt_toc_updated_at")
-async def get_agent_prompt_toc_updated_at(payload: dict) -> dict:
-    """Return ``MAX(agent_pattern.updated_at)`` as a unix timestamp float.
-
-    payload: ``{}``. The S6 restore-surface signal that used to read the
-    wiki-TOC page's ``updated_at`` now reads the table directly. Returns
-    ``{"timestamp": float | None}`` — ``None`` when the table is empty.
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {
-            "ok": False,
-            "error": "engine #2 not composed (MariaStorageEngine is None)",
-            "timestamp": None,
-        }
-    try:
-        dt = await storage.max_agent_pattern_updated_at()
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("get_agent_prompt_toc_updated_at error: %s", exc)
-        return {"ok": False, "error": str(exc), "timestamp": None}
-    if dt is None:
-        return {"timestamp": None}
-    return {"timestamp": dt.timestamp()}
-
-
 # ── Car F: ADR write ops ───────────────────────────────────────────────────────
 # Re-point of the ADR MCP tools (0047 §7 Car F): ``create_adr_row`` allocates
 # the new row (returns the AUTO_INCREMENT id — ADR-0197: id IS the ADR
@@ -896,103 +701,3 @@ async def max_adr_updated_at(payload: dict) -> dict:
     if dt is None:
         return {"updated_at": None}
     return {"updated_at": dt.timestamp()}
-
-
-# ── C6: the ``project`` registry seed + read ────────────────────────────────
-#
-# The registry is the FIRST thing an operator writes on a new deployment —
-# every ``task`` / ``adr`` row FKs to it, so with zero rows the ledger cannot
-# accept a single write. These two ops are the whole operator surface:
-# ``create_project_row`` seeds a project, ``list_project_rows`` shows what is
-# registered (and is what the C6 backfill validates its host-supplied mapping
-# against before applying anything).
-#
-# DELIBERATELY UNGUARDED by the registry check. They ARE the registry — a
-# guard here would be a bootstrap deadlock: nothing could ever be registered
-# because registering requires something to already be registered.
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.create_project_row")
-async def create_project_row(payload: dict) -> dict:
-    """Seed one ``project`` registry row.
-
-    payload: ``{"key": str, "kind": "git"|"local", "display_name"?: str,
-    "remote_url"?: str}``.
-
-    The storage layer raises ``DuplicateProjectError`` on a collision rather
-    than issuing ``INSERT OR IGNORE`` (ADR-0202/0223: auto-creating on
-    collision is how a typo mints a phantom namespace). This wrapper lets
-    that error PROPAGATE — the ``/admin`` route's ``except AdminRefusal`` arm
-    renders it as a structured 409 with ``reason="duplicate_project"``. The
-    prior swallow-to-``{"ok": False, "error": ...}`` shape masked the
-    rejection as a generic op failure; the structured 409 lets the caller
-    distinguish a refused registration from a genuine backend fault.
-    """
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        row = await storage.create_project_row(
-            key=str(payload["key"]),
-            kind=str(payload["kind"]),
-            display_name=payload.get("display_name"),
-            remote_url=payload.get("remote_url"),
-        )
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        reason, errno = driver_error_detail(exc)
-        logger.warning("create_project_row error key=%s: %s", payload.get("key"), reason)
-        envelope: dict[str, Any] = {"ok": False, "error": reason}
-        if errno is not None:
-            envelope["db_errno"] = errno
-        return envelope
-    return {"ok": True, "row": row}
-
-
-@observe(tier="boundary", metric="backend.admin.ledger.list_project_rows")
-async def list_project_rows(payload: dict) -> dict:
-    """Return every registered project. payload: ``{}`` (no parameters)."""
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    try:
-        rows = await storage.list_project_rows()
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("list_project_rows error: %s", exc)
-        return {"ok": False, "error": str(exc)}
-    return {"rows": rows}
-
-
-@observe(tier="stage", metric="backend.admin.ledger.list_stale_projects")
-async def list_stale_projects(payload: dict) -> dict:
-    """Return project rows whose ``last_validated_at`` is older than threshold.
-
-    Car C11-#88 (task #88). payload: ``{}`` (no parameters — the threshold
-    comes from ``Settings.PROJECT_STALENESS_DAYS``, env
-    ``YADGAR_PROJECT_STALENESS_DAYS``, default 90). Surfacing NULL
-    ``last_validated_at`` is the failure mode: a row that pre-dates the
-    column cannot be older than anything but IS stale in the operator's
-    intent.
-
-    Returns ``{"projects": [...], "threshold_days": int, "count": int}`` on
-    success, or ``{"ok": False, "error": str}`` on a missing engine /
-    raised exception. The CLI prints the threshold alongside the row
-    count so the operator does not need to re-read settings.
-    """
-    from yadgar._shared.config import get_settings
-
-    storage = _get_sql_storage()
-    if storage is None:
-        return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
-    threshold_days = int(get_settings().PROJECT_STALENESS_DAYS)
-    try:
-        result = await storage.list_stale_projects(threshold_days)
-    except AdminRefusal:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("list_stale_projects error: %s", exc)
-        return {"ok": False, "error": str(exc)}
-    return result
