@@ -427,7 +427,9 @@ def _wait_for_health(port: int, timeout: float = 30.0) -> None:
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1)
             return
-        except Exception:
+        except OSError:
+            # urllib raises URLError/HTTPError (both OSError) and socket.timeout
+            # (TimeoutError, also OSError) while the server is still booting.
             time.sleep(0.1)
     raise RuntimeError(f"SurrealDB did not start on port {port}")
 
@@ -538,13 +540,21 @@ def _teardown_surreal_handle(handle: dict, *, wait_timeout: float = 5.0) -> None
     if proc is not None:
         try:
             teardown_surreal_proc(proc, wait_timeout=wait_timeout)
-        except Exception:  # teardown must never mask a test failure
+        # `proc` is whatever the handle carried — a live Popen in a session, a
+        # MagicMock in ``_meta/test_surreal_data_dir_cleanup.py``, so its reap
+        # can raise anything. The guarantee this handler makes is that the
+        # data-dir removal below still runs, which
+        # ``test_teardown_removes_data_dir_even_when_proc_reap_raises`` asserts
+        # directly by making ``proc.terminate`` raise RuntimeError.
+        except Exception:
             pass
     data_dir = handle.get("data_dir")
     if data_dir:
         try:
             remove_test_data_dir(data_dir)
-        except Exception:  # ditto
+        except OSError:
+            # rmtree(ignore_errors=True) + os.path.exists — OSError is the
+            # whole surface; an AttributeError here would be a cleanup bug.
             pass
 
 
@@ -686,11 +696,15 @@ def _replace_module_binding(mod, canonical_gs) -> None:
     if gs is not canonical_gs:
         try:
             gs.cache_clear()
-        except Exception:
+        except TypeError:
+            # `gs` is duck-typed out of an arbitrary sys.modules entry; a stub
+            # whose cache_clear takes arguments is the only expected miss.
             pass
         try:
             mod.__dict__["get_settings"] = canonical_gs
-        except Exception:
+        except TypeError:
+            # `mod` may be a class-based module stand-in, whose __dict__ is a
+            # read-only mappingproxy.
             pass
 
 
@@ -721,7 +735,7 @@ def _resync_get_settings_bindings():
         import yadgar._shared.config as _cfg
 
         canonical_gs = _cfg.get_settings
-    except Exception:
+    except (ImportError, AttributeError):  # fmt: skip
         return
 
     # v5.58 fix: if canonical_gs is a plain monkeypatched function (no cache_clear),
@@ -875,7 +889,9 @@ def _restore_logging_state():
             logging.root.removeHandler(h)
             try:
                 h.close()
-            except Exception:
+            except (OSError, ValueError):  # fmt: skip
+                # File handlers close a real fd (OSError); a handler over an
+                # already-closed pytest capture stream raises ValueError.
                 pass
 
 
@@ -900,7 +916,7 @@ def _restore_mcp_server():
 
         saved_app_mcp = _app.mcp_server
         saved_srv_mcp = _srv.__dict__.get("mcp_server")
-    except Exception:
+    except (ImportError, AttributeError):  # fmt: skip
         yield
         return
     yield
@@ -911,7 +927,7 @@ def _restore_mcp_server():
         _app.mcp_server = saved_app_mcp
         if saved_srv_mcp is not None:
             _srv.__dict__["mcp_server"] = saved_srv_mcp
-    except Exception:
+    except ImportError:
         pass
 
 
@@ -947,7 +963,9 @@ def _reset_server_state():
         from yadgar._shared.server_helpers import server_helpers as _sh  # noqa: PLC0415
 
         _sh._worktree_canonical_root.cache_clear()
-    except Exception:
+    except (ImportError, AttributeError):  # fmt: skip
+        # Guards the imports and the module-global lookups only; .clear() on a
+        # dict and .cache_clear() on an lru_cache do not raise.
         pass
     # T3 Car 2: drain + drop the deferred recall side-effect executors so a
     # deferred session worker (or a forked DB task) from one test cannot fire
@@ -985,21 +1003,24 @@ def _reset_backend_caches() -> None:
     """
     try:
         from yadgar.backend import cache as _bc  # noqa: PLC0415
-    except Exception:
+    except ImportError:
         return
     try:
         for _c in list(_bc._REGISTRY.values()):
             try:
                 _c.clear()
-            except Exception:
+            except AttributeError:
+                # A registered entry without .clear(); skip it and keep
+                # flushing the rest of the registry.
                 pass
-    except Exception:
+    except AttributeError:
+        # _REGISTRY itself is gone — the module was refactored under us.
         pass
     try:
         _sv = _bc._SCOPE_VERSIONS
         with _sv._lock:
             _sv._versions.clear()
-    except Exception:
+    except AttributeError:
         pass
 
 
@@ -1120,6 +1141,10 @@ def _wipe_registered_module_engines() -> None:
     for engine in list(_MODULE_SCOPED_STORAGE_ENGINES):
         try:
             engine._q(_batched_delete_sql(_WIPE_TABLES))
+        # `_q` has two backends with disjoint error surfaces: the httpx path
+        # raises HTTPError/ValueError/RuntimeError, the embedded path raises
+        # surrealdb-SDK classes that are not importable here.  A closed engine
+        # also fails inside the driver, not at this boundary.
         except Exception:
             pass
 
@@ -1170,22 +1195,31 @@ def _wipe_tables_with_client(db_url: str, db_name: str, auth: str) -> None:
             },
             timeout=5.0,
         )
-    except Exception:
+    except (httpx.InvalidURL, ValueError):  # fmt: skip
+        # Only the caller-supplied base_url can make construction fail; a bad
+        # literal kwarg would be a TypeError and should surface.
         return
     try:
         _delete_tables_safe(client, _WIPE_TABLES)
     finally:
         try:
             client.close()
-        except Exception:
+        except (OSError, RuntimeError):  # fmt: skip
+            # Transport-pool shutdown: socket close (OSError) or an already
+            # torn-down event loop (RuntimeError).
             pass
 
 
 def _delete_tables_safe(client, tables) -> None:
-    """POST one batched DELETE covering all tables; ignore all errors."""
+    """POST one batched DELETE covering all tables; ignore transport errors."""
+    import httpx
+
     try:
         client.post("/sql", content=_batched_delete_sql(tables))
-    except Exception:
+    except httpx.HTTPError:
+        # Base of ConnectError / TimeoutException / ReadError — the server may
+        # already be gone by teardown. A non-2xx is not raised (no
+        # raise_for_status), so this is purely the transport surface.
         pass
 
 
@@ -1236,7 +1270,7 @@ def _do_wipe_after_test(db_url: str, pre_test_namespaces: frozenset[str]) -> Non
         from yadgar.core import server as _s
 
         storage = _s._storage
-    except Exception:
+    except (ImportError, AttributeError):  # fmt: skip
         storage = None
 
     if storage is not None:
@@ -1262,12 +1296,16 @@ def _wipe_via_live_storage(storage, db_url: str) -> None:
     """
     try:
         storage._q(_batched_delete_sql(_WIPE_TABLES))
+    # See `_wipe_registered_module_engines`: `_q`'s error surface depends on
+    # which backend the engine is running (httpx vs the embedded SDK).
     except Exception:
         pass
     # Always wipe "main" — CLI subprocesses write there bypassing isolation patch.
     try:
         _wipe_namespace_via_http(db_url, "main")
-    except Exception:
+    except (ImportError, ValueError):  # fmt: skip
+        # The callee swallows its own transport errors; only its local
+        # `import base64` / `import httpx` and the credential b64-encode escape.
         pass
 
 
@@ -1285,11 +1323,11 @@ def _wipe_via_http_fallback(db_url: str, pre_test_namespaces: frozenset[str]) ->
             continue
         try:
             _wipe_namespace_via_http(db_url, ns)
-        except Exception:
+        except (ImportError, ValueError):  # fmt: skip
             pass
     try:
         _wipe_namespace_via_http(db_url, "main")
-    except Exception:
+    except (ImportError, ValueError):  # fmt: skip
         pass
 
 
@@ -1439,37 +1477,40 @@ def memorize_sync(
     # Retrieve the just-stored memory by exact content match.
     # First try FTS (fast), then fall back to a full content scan (reliable).
     storage = _s._get_storage()
+    # Only the storage call is guarded: the scan below must NOT be, or a bug in
+    # `_row_in_scope` silently degrades this helper to "return the queued
+    # envelope", which is exactly the `KeyError: 'id'` failure described above.
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
-        for row in rows:
-            if row.get("content") == content and _row_in_scope(row, _scope):
-                row.pop("embedding", None)
-                return row
     except Exception:
-        pass
+        rows = []
+    for row in rows:
+        if row.get("content") == content and _row_in_scope(row, _scope):
+            row.pop("embedding", None)
+            return row
     # FTS may miss content with special chars or no tokenised match — fall back to
     # a recent hot-memories scan with exact content comparison.
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
-        for row in recent:
-            if row.get("content") == content and _row_in_scope(row, _scope):
-                row.pop("embedding", None)
-                return row
     except Exception:
-        pass
+        recent = []
+    for row in recent:
+        if row.get("content") == content and _row_in_scope(row, _scope):
+            row.pop("embedding", None)
+            return row
     # Merge case: curator may have merged new content into an existing memory,
     # changing stored content to "<existing>\n<new>".  Scan for a memory in the
     # same directory whose content *contains* the original string so callers
     # that test deduplication still get a dict with 'id'.
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
-        for row in recent:
-            stored = row.get("content", "")
-            if content in stored and _row_in_scope(row, _scope):
-                row.pop("embedding", None)
-                return row
     except Exception:
-        pass
+        recent = []
+    for row in recent:
+        stored = row.get("content", "")
+        if content in stored and _row_in_scope(row, _scope):
+            row.pop("embedding", None)
+            return row
     # Fallback: return the queued response if we can't find it
     return result
 
