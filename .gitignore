@@ -150,3 +150,10 @@ docs/_build/
 # Task-list / ADR backups are personal working data — never commit them.
 # The backfill procedures write them OUTSIDE the repo (~/yadgar-private-backups/).
 docs/prompts/backups/
+
+# Stray SurrealKV store from a test that mocks Settings() without configuring
+# DB_PATH: production code stringifies the mock, so `MagicMock/Settings().DB_PATH/`
+# becomes a real directory in the repo root. Ignored so it stops polluting
+# `git status`; the underlying test bug is ledger task 412 and ignoring this is
+# NOT the fix for it.
+MagicMock/
