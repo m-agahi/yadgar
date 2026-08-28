@@ -545,6 +545,9 @@ def run_eval(
                     top_k_context=top_k_context,
                 )
                 llm_calls += 1
+            # `generate_answer` calls out to an LLM provider SDK; provider
+            # exception hierarchies differ per backend and none is imported
+            # here. Logged per question and recorded in the sample.
             except Exception as e:
                 log(f"  [ERROR] Gen Q{qi}: {e}")
                 generated = "No information available."
@@ -567,6 +570,8 @@ def run_eval(
                     llm_calls += 1
                     j_correct = judgment["label"].upper() == "CORRECT"
                     j_reasoning = judgment.get("reasoning", "")
+                # Same provider-SDK surface as the generation call above; the
+                # judgment dict shape (`["label"]`) is also provider-dependent.
                 except Exception as e:
                     log(f"  [ERROR] Judge Q{qi}: {e}")
                     j_correct = False
