@@ -68,6 +68,7 @@ from yadgar.core.server.tools.adr_render import (
     _assemble_index_rows,
     _build_adr_body,
     _canonical_adr_payload,
+    _car_shaped_decision_error,
     _flip_superseded_target,
     _fmt_superseded_by,
     _fmt_supersedes,
@@ -150,9 +151,10 @@ def _row_to_adr_list_entry(row: dict) -> dict:
     exempt="trivial dict-field validation; no I/O, no external call, no error branch worth spanning"
 )
 def _validate_adr_add_input(provided: dict[str, str]) -> dict | None:
-    """Validate the 10 required schema fields + status. Returns an error dict on
-    failure, None when all checks pass. Extracted from ``adr_add`` for fn_loc
-    (I13) — the validation surface is large but flat (no logic branching)."""
+    """Validate the 10 required schema fields + status + decision FORM. Returns an
+    error dict on failure, None when all checks pass. Extracted from ``adr_add``
+    for fn_loc (I13) — the validation surface is large but flat (no logic
+    branching)."""
     for field in _REQUIRED_FIELDS:
         val = provided.get(field)
         if not val or not str(val).strip():
@@ -163,7 +165,9 @@ def _validate_adr_add_input(provided: dict[str, str]) -> dict | None:
             "ok": False,
             "error": (f"invalid status {status!r}; must be one of {sorted(_VALID_STATUSES)}"),
         }
-    return None
+    # Car B: form drift — a decision whose SUBJECT is the car/train/ledger row
+    # that produced it. Runs last so a blank field still reports as one.
+    return _car_shaped_decision_error(str(provided.get("decision") or ""))
 
 
 @observe(
@@ -218,30 +222,26 @@ def adr_add(
 ) -> dict:
     """Create a new Architecture Decision Record (ADR).
 
-    Car F: writes one ``adr`` ledger row (MariaDB; ADR-0197: AUTO_INCREMENT id
-    IS the ADR number) + one CANONICAL wiki body page (SurrealDB, D4) linked
-    by ``body_slug``. Supersede targets are linked via ``adr_supersedes`` with
-    the target row's status flipped to ``superseded`` (D23, status-flip only;
-    the page-type retype is Car G).
+    WHICH TOOL — decide this before writing:
+      a durable DECISION you will be bound by later  → ``adr_add``
+      repo structure, a convention, how a thing works → ``wiki_add``
+      a useful working fact or gotcha                 → ``memorize``
+      a reusable dispatch prompt                      → ``agent_prompt_save``
 
-    Car M (0047 §7, §16.6): the OPTIONAL ``project=`` override lets a caller
-    write an ADR into another project's namespace without leaving the current
-    working tree. Precedence: ``project`` (override) > ``session_project`` >
-    ``directory``-derived (Car A0 ``derive_project_id``) > ``"global"``. The
-    validated project_id is forwarded to the backend ledger write
-    (``create_adr_row(project_id=...)``) so the row stamps the override
-    namespace; the body page's slug follows the same project_id (D32 ③
-    scheme — ``{project_id}_adr-NNNN``). When BOTH ``project`` and
-    ``directory`` are supplied, ``project`` wins and ``directory`` is logged-
-    and-ignored (§9 [VERIFY]). Core enforces the shape guard (Car 5: sentinels
-    included); the registry check runs un-bypassably INSIDE the ledger write,
-    ``create_adr_row`` → ``MariaStorageEngine.assert_project_registered`` — NOT
-    the standalone backend guard this used to name, which has no call site.
+    FORM: the ``decision`` states the RULE, not the work that produced it.
+    ``context`` may cite the incident; ``decision`` may NOT name a car, a train
+    or a ledger row as its subject — such a decision is REFUSED at write time
+    (``adr_render._car_shaped_decision_error``). If a car taught you something,
+    file the thing it taught, and put the car in ``context``.
 
-    Car H: accepts ``tier`` (D27 enum: ``binding|historical``) and
-    ``subsystem`` (D28 explicit; §10 Q2 normalizer → lowercase + trim, empty
-    → None). On success the per-subsystem rollup page is regenerated via
-    ``_regenerate_subsystem_rollup`` (§10 Q1 on-write trigger, D29).
+    Writes one ``adr`` ledger row — the AUTO_INCREMENT id IS the ADR number —
+    plus a canonical wiki body page linked by ``body_slug``; a supersede
+    target is linked and its own status flipped to ``superseded``.
+
+    ``project`` is the namespace override and beats the session's project. No
+    identity is derived from ``directory`` (ADR-0227), so if neither resolves
+    the call is REJECTED; when both are given ``project`` wins and
+    ``directory`` remains only the body page's ``directory_context``.
 
     Args:
         directory: Absolute path to the project root.
@@ -1017,6 +1017,7 @@ __all__ = [
     "_assemble_index_rows",
     "_build_adr_body",
     "_canonical_adr_payload",
+    "_car_shaped_decision_error",
     "_flip_superseded_target",
     "_fmt_supersedes",
     "_fmt_superseded_by",
