@@ -71,6 +71,14 @@ class TestProcessGaugeBridge:
         # Fake /proc/1/status: minimal
         fake_status = "VmRSS: 10240 kB\nThreads: 4\n"
 
+        # Bound BEFORE builtins.open is patched below. The passthrough arm used to
+        # call the module-global `open`, which by then IS the mock — so any path
+        # other than the two faked ones (e.g. /proc/meminfo, opened later in the
+        # same sample) recursed into the mock until RecursionError. That error was
+        # invisible because `_sample_meminfo`'s caller caught bare `Exception` and
+        # zeroed the RAM fields; narrowing that handler surfaced it (ADR-0465).
+        _real_open = open
+
         def _fake_open(path, *args, **kwargs):
             import io
 
@@ -78,7 +86,7 @@ class TestProcessGaugeBridge:
                 return io.StringIO(fake_stat)
             if "status" in str(path) and "/proc/1" in str(path):
                 return io.StringIO(fake_status)
-            return open(path, *args, **kwargs)  # noqa: SIM115
+            return _real_open(path, *args, **kwargs)  # noqa: SIM115
 
         with patch("builtins.open", side_effect=_fake_open):
             graph_api.sample_system_metrics(pid=1, db_path=str(tmp_path))
