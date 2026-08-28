@@ -102,6 +102,8 @@ def _parse_transcript_line(raw: str) -> str:
         entry = json.loads(raw)
     except json.JSONDecodeError:
         return ""
+    if not isinstance(entry, dict):
+        return ""
     msg = entry.get("message", entry)
     if not isinstance(msg, dict) or msg.get("role") != "assistant":
         return ""
