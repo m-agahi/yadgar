@@ -614,6 +614,17 @@ def shutdown_tracing(timeout_sec: float = 3.0) -> None:
     # C2 P2: stop the off-thread span-log listener first (drains + joins).
     _stop_span_log_queue()
 
+    # `_otel_trace` is only bound when the module-level opentelemetry import
+    # succeeded. Without this guard the reference below raises NameError, and
+    # because __main__ calls this unconditionally on every CLI exit, that
+    # NameError fires DURING the handling of whatever actually went wrong and
+    # buries it. Measured 2026-08-28: a real `ModuleNotFoundError: tomlkit`
+    # was reported as `NameError: name '_otel_trace' is not defined`.
+    # The docstring above promises this is "safe to call when tracing was
+    # never set up"; this is what makes that true.
+    if not _OTEL_AVAILABLE:
+        return
+
     provider = _otel_trace.get_tracer_provider()
     shutdown = getattr(provider, "shutdown", None)
     if not callable(shutdown):
