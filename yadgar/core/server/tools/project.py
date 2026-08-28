@@ -414,7 +414,7 @@ def _build_wiki_catalog(storage, resolved: str) -> dict:
     """
     try:
         rows = storage.list_wiki_catalog(directory=resolved)
-    except Exception:
+    except Exception:  # noqa: BLE001 — project_brief must never fail on a catalog read; the storage boundary's raisable set spans DB transport and row-shape faults
         rows = []
 
     total = len(rows)
@@ -709,7 +709,7 @@ def _fetch_anchor_redundancy_pairs(
         all_pairs.sort(key=lambda p: p[2], reverse=True)
         truncated = len(all_pairs) > _SIGNALS_CANDIDATES_K
         return all_pairs[:_SIGNALS_CANDIDATES_K], truncated
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort: a raw-query or row-shape fault degrades to "no redundancy pairs" rather than failing project_brief
         return [], False
 
 
@@ -744,7 +744,7 @@ def _fetch_anchor_promote_ids(storage, resolved: str, _now: str, cfg) -> tuple[l
             all_promote.append(storage._extract_id(row.get("id")))
         truncated = len(all_promote) > _SIGNALS_CANDIDATES_K
         return all_promote[:_SIGNALS_CANDIDATES_K], truncated
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort: a raw-query or row-shape fault degrades to "no promote candidates" rather than failing project_brief
         return [], False
 
 
@@ -769,7 +769,7 @@ def _fetch_expired_anchor_count(storage, _now: str, directory: str) -> int:
             {"dir": directory, "now": _now},
         )
         return int(exp_rows[0]["cnt"]) if exp_rows else 0
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort: a raw-query or row-shape fault degrades to a zero count rather than failing project_brief
         return 0
 
 
@@ -787,7 +787,7 @@ def _fetch_cross_project_candidates_for_signals(storage, _now: str, cfg) -> list
         cross_threshold = float(cfg.ANCHOR_CROSS_PROJECT_COSINE)
         candidates = _fetch_cross_project_candidates(storage, _now, cross_threshold)
         return candidates[:_SIGNALS_CANDIDATES_K]
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort; the cross-project scan is an optional extra and must not fail project_brief
         return []
 
 
@@ -966,7 +966,7 @@ def _get_roadmap_wiki_updated_at(storage) -> float | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return dt.timestamp()
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort: a raw-query or timestamp-shape fault degrades to "unknown" rather than failing project_brief
         return None
 
 
@@ -1044,7 +1044,7 @@ def _compute_anchor_signals(storage, resolved: str, cfg) -> dict:
             {"dir": resolved, "now": _now},
         )
         anchor_count_project: int = int(count_rows[0]["cnt"]) if count_rows else 0
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort: a raw-query or row-shape fault degrades to a zero anchor count rather than failing project_brief
         anchor_count_project = 0
 
     redundancy_pairs, trunc_r = _fetch_anchor_redundancy_pairs(
@@ -1118,7 +1118,7 @@ def _check_session_end_sentinel(storage, project_id: str | None) -> dict | None:
             "ORDER BY created_at DESC LIMIT 1",
             {"project_id": project_id},
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort: a raw-query fault degrades to "no sentinel" rather than failing project_brief
         return None
 
     if not sentinel_rows:
@@ -1281,7 +1281,7 @@ def _apply_roadmap_signal(resolved: str, storage, actions: list) -> float:
         if action is not None:
             actions.append(action)
         return lag
-    except Exception:
+    except Exception:  # noqa: BLE001 — signal computation is best-effort; a fault degrades to the -1.0 "unknown" sentinel rather than failing project_brief
         return -1.0
 
 
@@ -1322,7 +1322,7 @@ def _compute_pending_rejections(resolved: str) -> int:
 
         fq = _get_file_queue()
         dlq_dir = fq.dlq_dir
-    except Exception:
+    except Exception:  # noqa: BLE001 — the file-queue lifecycle accessor is unavailable in several environments (import-time and not-yet-initialised both), and this signal must not fail project_brief
         return 0
     if not dlq_dir.exists():
         return 0
@@ -1366,7 +1366,7 @@ def _apply_rejection_signal(resolved: str, actions: list) -> int:
                 }
             )
         return count
-    except Exception:
+    except Exception:  # noqa: BLE001 — signal computation is best-effort; a fault degrades to a zero count rather than failing project_brief
         return 0
 
 
@@ -1492,7 +1492,7 @@ def _get_active_work_updated_at(storage, resolved: str) -> float | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return dt.timestamp()
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort: a raw-query or timestamp-shape fault degrades to "unknown" rather than failing project_brief
         return None
 
 
@@ -1594,7 +1594,7 @@ def _apply_adr_signal(resolved: str, storage, actions: list, project_id: str | N
                     ),
                 }
             )
-    except Exception:
+    except Exception:  # noqa: BLE001 — signal computation is best-effort; the ADR nudge stays silent on any fault rather than failing project_brief
         return
 
 
@@ -1613,7 +1613,7 @@ def _get_agent_prompt_toc_updated_at(storage, resolved: str) -> float | None:
     """
     try:
         result = _forward_admin("get_agent_prompt_toc_updated_at", {})
-    except Exception:
+    except Exception:  # noqa: BLE001 — crosses the admin forward boundary (HTTP + envelope decode); a fault degrades to "unknown" rather than failing project_brief
         return None
     if not isinstance(result, dict):
         return None
@@ -1653,7 +1653,7 @@ def _get_dispatch_prelude_updated_at(storage, resolved: str) -> float | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return dt.timestamp()
-    except Exception:
+    except Exception:  # noqa: BLE001 — signals are best-effort: a raw-query or timestamp-shape fault degrades to "unknown" rather than failing project_brief
         return None
 
 
@@ -1720,7 +1720,7 @@ def _apply_dispatch_prelude_signal(resolved: str, storage, actions: list) -> Non
                     "suggested_call": suggested_call,
                 }
             )
-    except Exception:
+    except Exception:  # noqa: BLE001 — signal computation is best-effort; the prelude nudge stays silent on any fault rather than failing project_brief
         return
 
 
@@ -1796,7 +1796,7 @@ def _apply_agent_prompt_signal(resolved: str, storage, actions: list) -> None:
                     "suggested_call": suggested_call,
                 }
             )
-    except Exception:
+    except Exception:  # noqa: BLE001 — signal computation is best-effort; the agent-prompt nudge stays silent on any fault rather than failing project_brief
         return
 
 
@@ -1958,7 +1958,7 @@ def _build_recent_writes(storage, resolved: str, limit: int = 10) -> list[dict]:
             limit=limit,
             directory=resolved if resolved else None,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — project_brief must never fail on a recent-writes read; the storage boundary's raisable set spans DB transport and row-shape faults
         return []
     result = []
     for row in rows:
@@ -2040,7 +2040,7 @@ def _build_agent_prompt_toc(storage) -> dict:
         if isinstance(result, dict) and result.get("ok") is not False:
             rows = result.get("rows") or []
             patterns = [str(r.get("name", "")) for r in rows if r.get("name")][:20]
-    except Exception:
+    except Exception:  # noqa: BLE001 — crosses the admin forward boundary (HTTP + envelope decode); a fault degrades to an empty TOC rather than failing project_brief
         patterns = []
     return {"slug": _TOC_POINTER_SLUG, "patterns": patterns}
 
@@ -2609,7 +2609,7 @@ def _compute_stale_wiki_count(resolved: str) -> int:
         with _stale_count_cache_lock:
             _stale_count_cache[resolved] = (count, now)
         return count
-    except Exception:
+    except Exception:  # noqa: BLE001 — the stale-wiki scan walks the filesystem and the config; a fault degrades to a zero count rather than failing project_brief
         return 0
 
 
@@ -2636,7 +2636,7 @@ def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
             data = yaml_mod.safe_load(fm_text)
             if isinstance(data, dict):
                 return data
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — `yaml_mod` is a caller-supplied module (PyYAML in prod, a stub in tests), so its parse-error class is not knowable here
             logger.debug("_parse_frontmatter: YAML parse error: %s", _e)
             return None
     # v5.53.1: try ruamel.yaml as second YAML backend (available in yadgar deps).
@@ -2650,7 +2650,7 @@ def _parse_frontmatter(raw: str, yaml_mod) -> dict | None:
         data = _ry.load(_io.StringIO(fm_text))
         if isinstance(data, dict):
             return dict(data)
-    except Exception:
+    except Exception:  # noqa: BLE001 — optional second YAML backend: the import and the parse are both in scope and ruamel's error class cannot be named in the clause without risking a NameError when the import is what failed
         pass
     # Terminal fallback: very minimal key: value parser (scalars only).
     result: dict = {}

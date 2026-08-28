@@ -98,7 +98,7 @@ def _metrics_loop(pid: int, db_path: str, storage: object) -> None:
                 # §9 Q6: update under lock to prevent torn reads.
                 with _st._metrics_lock:
                     _st._system_metrics_cache.update(result)
-        except Exception:
+        except Exception:  # noqa: BLE001 — daemon loop: one bad metrics sample must never kill the sampler thread
             pass
 
 
@@ -125,7 +125,7 @@ def _reranker_idle_loop() -> None:
                     _st._retriever.unload_rerankers_if_idle(
                         idle_seconds=_cfg.RERANKER_IDLE_UNLOAD_SEC
                     )
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — daemon loop: a reranker-unload fault is counted and the loop continues; it must never kill the thread
             _lc_record_exc("model_unload", _exc)  # PR-I: loop error counter
 
 
@@ -145,7 +145,7 @@ def _viz_loop(host: str, port: int) -> None:
         run_viz_server(host=host, port=port)
     except OSError as exc:
         logger.warning("Viz server could not bind port %d: %s", port, exc)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — daemon thread boundary: the viz server is optional and any fault must be logged, never propagate out of the thread
         logger.warning("Viz server error: %s", exc)
 
 

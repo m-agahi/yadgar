@@ -212,7 +212,7 @@ def _kill_all_spawned_surreal_atexit() -> None:
     # is still writing into a dir being removed.
     try:
         purge_registered_test_data_dirs()
-    except Exception:  # atexit cleanup must never raise
+    except Exception:  # noqa: BLE001 — atexit cleanup must never raise: an exception here is printed by the interpreter during shutdown and can mask the real exit path
         pass
 
 

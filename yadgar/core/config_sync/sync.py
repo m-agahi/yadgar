@@ -138,7 +138,7 @@ def cmd_config_sync(args) -> None:
     try:
         with open(path) as f:
             data = y.load(f)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — CLI top-level error reporting: ruamel's parse-error class is not imported at this layer, and every fault must print a one-line reason and exit 1 rather than a traceback
         print(f"YAML parse error in {path}: {e}", file=sys.stderr)
         sys.exit(1)
 

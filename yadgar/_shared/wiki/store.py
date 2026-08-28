@@ -1008,7 +1008,7 @@ class WikiStore:
                 for page_id, bm25_score in fts_results:
                     normalized = (bm25_score - bm25_min) / bm25_range if bm25_range > 1e-9 else 0.5
                     scores[page_id] = scores.get(page_id, 0.0) + 0.4 * normalized
-        except Exception:  # BLE001-KEEP: per-stage isolation in hybrid retrieval: the FTS stage reaches storage (no common base) and the vector stage below must still contribute its scores
+        except Exception:  # noqa: BLE001 — per-stage isolation in hybrid retrieval: the FTS stage reaches storage (no common base) and the vector stage below must still contribute its scores
             logger.debug("Wiki FTS search failed for query '%s'", query)
         finally:
             _wiki_observe_stage("fts", (_time.perf_counter() - _fts_t0) * 1000)
@@ -1040,7 +1040,7 @@ class WikiStore:
                     for page_id, distance in vec_results:
                         similarity = 1.0 / (1.0 + distance)
                         scores[page_id] = scores.get(page_id, 0.0) + 0.6 * similarity
-        except Exception:  # BLE001-KEEP: per-stage isolation in hybrid retrieval: the vector stage reaches the HNSW index and the embed service, which share no common base; a dead stage degrades the ranking, it must not fail the query
+        except Exception:  # noqa: BLE001 — per-stage isolation in hybrid retrieval: the vector stage reaches the HNSW index and the embed service, which share no common base; a dead stage degrades the ranking, it must not fail the query
             logger.debug("Wiki vector search failed for query '%s'", query)
 
     @observe(tier="stage")
@@ -1074,7 +1074,7 @@ class WikiStore:
                 if vec_results:
                     for page_id, sim in vec_results:
                         scores[page_id] = scores.get(page_id, 0.0) + 0.6 * sim
-        except Exception:  # BLE001-KEEP: per-stage isolation: same vector-stage surface as above, for the tag-filtered variant
+        except Exception:  # noqa: BLE001 — per-stage isolation: same vector-stage surface as above, for the tag-filtered variant
             logger.debug(
                 "Wiki tagged vector search failed for query '%s' tag '%s'", query, include_tag
             )
@@ -1169,7 +1169,7 @@ class WikiStore:
                     page_id = self._storage._extract_id(row.get("id"))
                     if page_id is not None:
                         scores[page_id] = scores.get(page_id, 0.0) + 0.5
-        except Exception:  # BLE001-KEEP: per-stage isolation: the tag-only fallback stage reaches storage._q with no common base, and a failure here simply contributes no scores
+        except Exception:  # noqa: BLE001 — per-stage isolation: the tag-only fallback stage reaches storage._q with no common base, and a failure here simply contributes no scores
             logger.debug("Wiki tag-only fallback failed for tag '%s'", include_tag)
 
     @staticmethod
@@ -1255,7 +1255,7 @@ class WikiStore:
                 _span.set_attribute("tags", ",".join(tags) if tags else "")
                 _span.set_attribute("category", category or "")
                 _span.set_attribute("max_results", max_results)
-        except Exception:  # BLE001-KEEP: sets dynamic attributes on the active OTel span; a degraded or swapped tracer provider raises arbitrary types here (the same I3 case documented in tracing.py), and span decoration must never fail the query
+        except Exception:  # noqa: BLE001 — sets dynamic attributes on the active OTel span; a degraded or swapped tracer provider raises arbitrary types here (the same I3 case documented in tracing.py), and span decoration must never fail the query
             pass
 
         scores: dict[int, float] = {}
@@ -2933,7 +2933,7 @@ class WikiStore:
                         continue
                     self._storage.update_wiki_page_embedding_only(pid, emb)
                     backfilled += 1
-                except Exception as exc:  # BLE001-KEEP: per-page isolation in a backfill sweep: it drives the embed service and a storage UPDATE, which share no common base, and one unembeddable page must not abandon the rest
+                except Exception as exc:  # noqa: BLE001 — per-page isolation in a backfill sweep: it drives the embed service and a storage UPDATE, which share no common base, and one unembeddable page must not abandon the rest
                     logger.warning(
                         "backfill_null_embeddings: failed for page_id=%d title=%r: %s — skipping",
                         pid,
@@ -2964,5 +2964,5 @@ class WikiStore:
                 if slug not in refs:
                     refs.append(slug)
                     self._storage.update_memory_fields(mid, wiki_refs=refs)
-            except Exception:  # BLE001-KEEP: per-memory isolation while linking refs: storage reads and writes share no common base, and one bad memory id must not drop the remaining links
+            except Exception:  # noqa: BLE001 — per-memory isolation while linking refs: storage reads and writes share no common base, and one bad memory id must not drop the remaining links
                 logger.debug("Failed to link memory %s to wiki page %s", mid, slug)

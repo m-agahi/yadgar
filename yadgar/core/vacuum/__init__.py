@@ -226,7 +226,7 @@ def _reap_step(label: str, reap, *args) -> None:  # type: ignore[no-untyped-def]
     """Run one reap, swallowing and naming any failure.  See _reap_vacuum_residue."""
     try:
         reap(*args)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — per-step isolation in the residue sweep: `reap` is a duck-typed callable and one failing reaper must not abort the remaining ones
         print(f"[vacuum] WARNING: residue reap ({label}) failed: {exc}", file=sys.stderr)
 
 
@@ -692,7 +692,7 @@ def _build_and_verify_side_db(
         print("[vacuum] side-build: verifying per-table row counts ...", flush=True)
         try:
             side_counts = _capture_table_counts(side_url)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — ABORT boundary: any fault reading the side DB must be reported and abort the swap with the canonical untouched, never propagate as a traceback mid-vacuum
             print(
                 f"[vacuum] ERROR: could not read side DB counts ({exc}).\n"
                 "[vacuum] ABORT: canonical untouched.",
@@ -722,7 +722,7 @@ def _build_and_verify_side_db(
         launcher.stop_clean(side_url)
         stopped_clean = True
         return True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — side-build phase boundary: every fault here (including the deliberate `stop_clean` raise on a non-graceful exit) must abort the swap with the canonical untouched
         print(f"[vacuum] ERROR in side-build: {exc}", file=sys.stderr)
         return False
     finally:
@@ -776,7 +776,7 @@ def _restart_services_after_abort(svc: ServiceController, *, backend: bool = Tru
             svc.start_backend()
         except ManualModeError:
             pass  # instructions already printed by the controller
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — post-abort recovery: a restart fault must be reported, never mask the abort that is already being unwound
             print(
                 f"[vacuum] WARNING: could not restart yadgar-backend after abort: {exc}",
                 file=sys.stderr,
@@ -785,7 +785,7 @@ def _restart_services_after_abort(svc: ServiceController, *, backend: bool = Tru
         svc.start_yadgar()
     except ManualModeError:
         pass  # instructions already printed by the controller
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — post-abort recovery: a restart fault must be reported, never mask the abort that is already being unwound
         print(
             f"[vacuum] CRITICAL: could not restart yadgar CORE after abort: {exc}\n"
             "[vacuum] The memory engine is DOWN — run `systemctl --user start yadgar`.",
@@ -820,7 +820,7 @@ def _restore_db(
         os.rename(str(old_path), str(db_path))
         svc.start_backend()
         print("[vacuum] restore: backend restarted on previous DB.", file=sys.stderr)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — rollback path: any fault must print the manual-recovery instructions rather than propagate, or the operator is left with no DB and no directions
         print(
             f"[vacuum] CRITICAL: restore failed: {exc}\n"
             f"Manual recovery needed: rename {old_path} → {db_path}",
@@ -912,7 +912,7 @@ def _side_build_swap_and_start(
     # 3b: atomic same-dir swap (canonical → .old, side → canonical).
     try:
         old_path = _atomic_swap(db_path, side_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — swap boundary: _atomic_swap has already rolled back, and the handler must restart on the original DB rather than propagate
         # _atomic_swap already rolled back rename-1 on a rename-2 failure.
         _abort_restart(
             f"[vacuum] ERROR: atomic swap failed: {exc}\n"
@@ -1806,7 +1806,7 @@ def _maintenance_release(entered: bool) -> None:
         return
     try:
         _maintenance_exit()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — write-gate release: any fault must print the un-wedge instructions rather than propagate, or every MCP tool stays fast-failing with no directions
         print(
             f"[vacuum] CRITICAL: could not release the core write-gate: {exc}\n"
             "[vacuum] Every MCP tool fast-fails until it clears. It self-clears after "
@@ -1843,7 +1843,7 @@ def _drain_queue_best_effort() -> None:
     """
     try:
         _drain_backend_queue()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort drain nudge before a destructive maintenance run; a fault must not abort the vacuum
         print(f"[vacuum] WARNING: queue drain nudge failed — proceeding: {exc}", file=sys.stderr)
 
 
@@ -1917,7 +1917,7 @@ def cmd_vacuum_impl(args) -> int:  # type: ignore[no-untyped-def]
     entered = False
     try:
         entered = not _maintenance_enter(_maintenance_ttl_seconds(settings))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — the write-gate is an optimisation, not a precondition; a fault proceeds without it rather than aborting the vacuum
         print(
             f"[vacuum] WARNING: could not engage the core write-gate — "
             f"proceeding without write-gate: {exc}",
@@ -1968,7 +1968,7 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     # concurrent vacuum's in-flight swap.
     try:
         _recover_interrupted_swap(yadgar_home, db_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — startup swap-recovery boundary: any fault must print the manual-recovery instructions and exit 1 rather than propagate
         print(
             f"[vacuum] CRITICAL: startup swap-recovery failed: {exc}\n"
             f"Manual recovery needed in {yadgar_home}.",
@@ -2018,7 +2018,7 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     try:
         source_counts = _capture_table_counts(backend_url)
         print(f"[vacuum] source per-table counts (surviving set): {source_counts}", flush=True)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — phase boundary: a fault capturing source counts must exit 1 with the canonical untouched, never propagate mid-vacuum
         print(f"[vacuum] ERROR capturing source counts: {exc}", file=sys.stderr)
         return 1
 
@@ -2027,7 +2027,7 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     filtered_path: Path | None = None
     try:
         raw_path, filtered_path = _vacuum_export(backend_url, yadgar_home)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — phase boundary: a fault in export must exit 1 with the canonical untouched, never propagate mid-vacuum
         print(f"[vacuum] ERROR in export phase: {exc}", file=sys.stderr)
         return 1
 
@@ -2035,7 +2035,7 @@ def _cmd_vacuum_body(  # type: ignore[no-untyped-def]
     # Canonical is NOT renamed/emptied here (only the verified swap touches it).
     try:
         snapshot_path = _vacuum_snapshot_and_drop(db_path, yadgar_home, svc, before_bytes)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — phase boundary: a fault in snapshot/drop must run the service-restart recovery below and exit 1, never propagate with units left down
         print(f"[vacuum] ERROR in snapshot/drop phase: {exc}", file=sys.stderr)
         # Best-effort: bring BOTH units back on the untouched canonical.
         # Phase 2 stops the BACKEND only (task:0111), so the core start is

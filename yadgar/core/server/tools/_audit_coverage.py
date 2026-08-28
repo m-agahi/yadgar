@@ -71,7 +71,7 @@ def _coverage_project_id(project: str | None) -> str | None:
         )
 
         return get_current_session_project() or None
-    except Exception:  # reporting must never break the audit
+    except Exception:  # noqa: BLE001 — coverage reporting must never break the audit it is only annotating; a session-identity lookup fault degrades to "no project"
         logger.warning("_coverage_project_id: session lookup failed", exc_info=True)
         return None
 
@@ -102,7 +102,7 @@ def _fetch_protected_rows(
             f"WHERE is_protected = true {clause}",
             params,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — coverage reporting must never break the audit; a raw-query fault returns None so coverage reports "unavailable" rather than a false zero
         logger.warning(
             "_fetch_protected_rows failed; coverage will report unavailable", exc_info=True
         )

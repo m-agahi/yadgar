@@ -149,7 +149,7 @@ def _load_default_rules(engine: RulesEngine) -> None:
             action="penalty:0.3",
             priority=-10,
         )
-    except Exception:  # BLE001-KEEP: default-rule seeding at startup: add_rule drives the rules engine over storage, which raises with no common base, and a daemon that cannot seed its defaults must still boot
+    except Exception:  # noqa: BLE001 — default-rule seeding at startup: add_rule drives the rules engine over storage, which raises with no common base, and a daemon that cannot seed its defaults must still boot
         logger.debug("Failed to load default rules", exc_info=True)
 
 
@@ -174,7 +174,7 @@ def _run_wiki_embedding_backfill(wiki) -> None:
                 "migration_014 backfill: %d wiki_page embeddings computed at startup",
                 null_count,
             )
-    except Exception as exc:  # BLE001-KEEP: startup backfill: it drives the embed service and storage, whose failures share no common base, and a degraded similarity gate must not stop the daemon from booting (the audit below reports it)
+    except Exception as exc:  # noqa: BLE001 — startup backfill: it drives the embed service and storage, whose failures share no common base, and a degraded similarity gate must not stop the daemon from booting (the audit below reports it)
         logger.warning("migration_014 backfill failed (non-fatal): %s", exc)
 
     # Post-backfill audit: CRITICAL if NULL rows remain (gate still degraded).
@@ -187,7 +187,7 @@ def _run_wiki_embedding_backfill(wiki) -> None:
                 "Re-run will retry automatically at next startup.",
                 len(remaining),
             )
-    except Exception:  # BLE001-KEEP: the audit that reports the degradation above; it reaches storage with no common base, and a failed audit must not stop startup
+    except Exception:  # noqa: BLE001 — the audit that reports the degradation above; it reaches storage with no common base, and a failed audit must not stop startup
         pass
 
 
@@ -675,19 +675,19 @@ def _emit_startup_diagnostics(settings) -> None:
 
     try:
         emit_startup_config_log()
-    except Exception:  # BLE001-KEEP: startup config telemetry: emit_startup_config_log walks the whole settings surface and the logging stack, which raise with no common base, and the three sibling calls below each have their own guard precisely so one failure does not silence the others
+    except Exception:  # noqa: BLE001 — startup config telemetry: emit_startup_config_log walks the whole settings surface and the logging stack, which raise with no common base, and the three sibling calls below each have their own guard precisely so one failure does not silence the others
         logger.debug("emit_startup_config_log failed (non-fatal)", exc_info=True)
 
     try:
         _set_config_gauges()
-    except Exception:  # BLE001-KEEP: startup config gauges: the prometheus set() path plus a full settings walk, with no common base; same one-guard-per-call contract as above
+    except Exception:  # noqa: BLE001 — startup config gauges: the prometheus set() path plus a full settings walk, with no common base; same one-guard-per-call contract as above
         logger.debug("_set_config_gauges failed (non-fatal)", exc_info=True)
 
     # BC-EN2b: announce COMET dormant state exactly once at startup (ADR-0004).
     # Own try/except — must always fire even if the calls above raised.
     try:
         warn_comet_dormant(settings)
-    except Exception:  # BLE001-KEEP: the ADR-0004 COMET-dormant announcement: its own guard so it always fires even when the two calls above raised, which is the stated reason for the split
+    except Exception:  # noqa: BLE001 — the ADR-0004 COMET-dormant announcement: its own guard so it always fires even when the two calls above raised, which is the stated reason for the split
         logger.debug("warn_comet_dormant failed (non-fatal)", exc_info=True)
 
 

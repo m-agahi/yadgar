@@ -37,7 +37,7 @@ def _bump_cache_epoch_global(updated: int) -> None:
         from yadgar._shared.runtime.cache_epoch import bump_epoch  # noqa: PLC0415
 
         bump_epoch(None)  # None → the shared "global" generation
-    except Exception:  # pragma: no cover  # BLE001-KEEP: bump_epoch reaches the on-disk epoch store, whose failures share no common base, and cache instrumentation must never break the consolidation cycle
+    except Exception:  # pragma: no cover  # noqa: BLE001 — bump_epoch reaches the on-disk epoch store, whose failures share no common base, and cache instrumentation must never break the consolidation cycle
         pass
 
 

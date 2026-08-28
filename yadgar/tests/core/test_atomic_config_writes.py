@@ -135,7 +135,7 @@ class TestAtomicSettingsWrite:
         # `install_hooks` walks the whole client-install orchestrator against a
         # tmp_path HOME; the assertion is on the os.replace calls it made
         # before failing, not on whether it completed.
-        except Exception:
+        except Exception:  # noqa: BLE001 — install orchestrator over a synthetic HOME
             pass  # May fail due to missing hooks dir, but we check the replace calls
 
         # At least one replace call must target settings.json

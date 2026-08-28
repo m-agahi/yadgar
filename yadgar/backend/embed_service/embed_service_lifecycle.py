@@ -225,7 +225,7 @@ async def _cancel_lifespan_task(task) -> None:
     task.cancel()
     try:
         await task
-    except (asyncio.CancelledError, Exception):  # BLE001-KEEP: cancel-and-await teardown: CancelledError is a BaseException so the tuple is not redundant; the awaited task is arbitrary caller code and shutdown must proceed regardless of what it raised  # fmt: skip
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cancel-and-await teardown: CancelledError is a BaseException so the tuple is not redundant; the awaited task is arbitrary caller code and shutdown must proceed regardless of what it raised  # fmt: skip
         pass
 
 

@@ -94,11 +94,11 @@ def _stamp_branch(storage, table: str, row_id: int, branch: str) -> bool:
     # classes not importable here. A missing `branch` column — the condition
     # this probe exists to report — surfaces as the RuntimeError arm only when
     # running server-mode.
-    except Exception:
+    except Exception:  # noqa: BLE001 — `_q` error surface is backend-dependent
         return False
     try:
         rows = storage._q(f"SELECT branch FROM type::record('{table}', $rid)", {"rid": int(row_id)})
-    except Exception:
+    except Exception:  # noqa: BLE001 — `_q` error surface is backend-dependent
         return False
     return bool(rows) and rows[0].get("branch") == branch
 

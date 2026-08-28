@@ -706,7 +706,7 @@ def main() -> None:
                     return
 
         print(json.dumps(_allow()))
-    except Exception as exc:  # fail-OPEN: never brick Bash on a router bug
+    except Exception as exc:  # noqa: BLE001 — fail-OPEN top level: a router bug must never brick Bash, so every fault prints an allow decision and a stderr note
         sys.stderr.write(f"[yadgar-pretooluse-router] error, failing open: {exc}\n")
         print(json.dumps(_allow()))
     finally:

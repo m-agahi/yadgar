@@ -231,7 +231,7 @@ class TestCuratorEnrichmentWiring:
         # failure comes from transformers / torch / the HF hub, whose classes
         # are not importable in exactly that environment. The `exc` text is
         # carried into the skip reason so the cause is never hidden.
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — enrich reaches torch/transformers/HF-hub
             pytest.skip(f"EnrichmentPipeline raised (env issue, not regression): {exc}")
 
         assert len(result.logic_expansions) > 0, "Expected logic expansions for outdoor content"

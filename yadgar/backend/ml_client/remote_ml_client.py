@@ -129,7 +129,7 @@ class RemoteMLClient:
             if self._breaker_enabled:
                 self._breakers[mode].record_success()  # type: ignore[index]
             return result
-        except Exception as e:  # BLE001-KEEP: the caught object IS this handler's input: it is isinstance-tested against httpx TimeoutException/ConnectError/HTTPStatusError to decide whether the circuit breaker records a failure, so the catch must be wider than the types it then classifies
+        except Exception as e:  # noqa: BLE001 — the caught object IS this handler's input: it is isinstance-tested against httpx TimeoutException/ConnectError/HTTPStatusError to decide whether the circuit breaker records a failure, so the catch must be wider than the types it then classifies
             import httpx as _httpx  # noqa: PLC0415
 
             if isinstance(e, (_httpx.TimeoutException, _httpx.ConnectError, _httpx.HTTPStatusError)):  # fmt: skip

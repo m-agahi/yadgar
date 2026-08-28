@@ -245,7 +245,7 @@ class TestLoadDurationHistogram:
             # `sys.modules` is patched with a MagicMock stand-in for
             # sentence_transformers, so the scoring call can fail in any way the
             # mock produces. The assertion below is on the load ATTEMPT.
-            except Exception:
+            except Exception:  # noqa: BLE001 — mocked sentence_transformers can fail any way
                 pass  # load attempt is what matters
 
         sum_after = _get_histogram_sum("ce")
@@ -347,7 +347,7 @@ class TestSpanEmission:
             try:
                 client.score_cross_encoder("q", ["text"])
             # Same mocked-module surface as above; the assertion is on the spans.
-            except Exception:
+            except Exception:  # noqa: BLE001 — mocked sentence_transformers can fail any way
                 pass
 
         span_names = [s.name for s in exporter.get_finished_spans()]

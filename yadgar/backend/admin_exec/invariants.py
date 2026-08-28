@@ -64,7 +64,7 @@ def _delete_record(storage, table: str, rid: int, label: str) -> None:
     """Delete a single record by integer id, logging on failure."""
     try:
         storage._q(f"DELETE type::record('{table}', $rid)", {"rid": rid})
-    except Exception as del_exc:  # BLE001-KEEP: single DELETE by record id; storage._q raises RuntimeError over HTTP, httpx transport errors and arbitrary embedded-SDK types with no common base, and the caller batch-deletes so one bad row must not stop the rest
+    except Exception as del_exc:  # noqa: BLE001 — single DELETE by record id; storage._q raises RuntimeError over HTTP, httpx transport errors and arbitrary embedded-SDK types with no common base, and the caller batch-deletes so one bad row must not stop the rest
         logger.warning("check_invariants: failed to delete %s row %s: %s", label, rid, del_exc)
 
 
@@ -119,7 +119,7 @@ def _check_memory_similarity_link(
             "check_invariants: auto-fixed %d dangling memory_similarity_link rows", dangling_msl
         )
         counts["memory_similarity_link_dangling"] = 0
-    except Exception as exc:  # BLE001-KEEP: the caught object IS this handler's input: it is passed to _is_timeout(exc) to split 'the DB was slow' from 'the check is broken', and _q_t reaches SurrealDB over HTTP (RuntimeError), httpx (transport errors) and the embedded SDK (arbitrary types) with no common base. check_invariants runs the checks in sequence and each must survive the previous one failing
+    except Exception as exc:  # noqa: BLE001 — the caught object IS this handler's input: it is passed to _is_timeout(exc) to split 'the DB was slow' from 'the check is broken', and _q_t reaches SurrealDB over HTTP (RuntimeError), httpx (transport errors) and the embedded SDK (arbitrary types) with no common base. check_invariants runs the checks in sequence and each must survive the previous one failing
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: memory_similarity_link check timed out after %ds; "
@@ -164,7 +164,7 @@ def _check_memory_transition(
             "check_invariants: auto-fixed %d dangling memory_transition row(s)", dangling_mt
         )
         counts["memory_transition_dangling"] = 0
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the memory_transition check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the memory_transition check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: memory_transition check timed out after %ds; skipping this cycle",
@@ -197,7 +197,7 @@ def _check_memory_archive(
             violations.append(
                 f"{dangling_ma} memory_archive rows reference non-existent memory IDs"
             )
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the memory_archive check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the memory_archive check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: memory_archive check timed out after %ds; skipping this cycle",
@@ -288,7 +288,7 @@ def _check_relationships(
         _repair_dangling_caused_by(
             storage, dangling_rel_rows, live_ent_ids, counts, violations, fixed
         )
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the relationship/caused_by check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the relationship/caused_by check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: relationship/caused_by check timed out after %ds; "
@@ -322,7 +322,7 @@ def _prune_caused_by_rows(storage, query_timeout: int, excess: int, ceiling: int
             # edge in cached adjacency — the read is pure-structural, no recheck).
             storage.delete_relationship(int(rid))
             pruned += 1
-        except Exception as del_exc:  # BLE001-KEEP: single caused_by prune DELETE; same untypeable storage surface, and the ceiling prune loop must continue
+        except Exception as del_exc:  # noqa: BLE001 — single caused_by prune DELETE; same untypeable storage surface, and the ceiling prune loop must continue
             logger.warning("check_invariants: failed to prune caused_by row %s: %s", rid, del_exc)
     return pruned
 
@@ -358,7 +358,7 @@ def _check_caused_by_ceiling(
                 pruned,
                 caused_by_ceiling,
             )
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the caused_by ceiling check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the caused_by ceiling check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: caused_by ceiling check timed out after %ds; "
@@ -398,14 +398,14 @@ def _check_wiki_crossref(
                     "DELETE wiki_crossref WHERE from_slug = $fs AND to_slug = $ts",
                     {"fs": ref.get("from_slug"), "ts": ref.get("to_slug")},
                 )
-            except Exception as del_exc:  # BLE001-KEEP: single wiki_crossref DELETE inside a repair loop; same untypeable storage surface, and the remaining dangling rows must still be cleaned
+            except Exception as del_exc:  # noqa: BLE001 — single wiki_crossref DELETE inside a repair loop; same untypeable storage surface, and the remaining dangling rows must still be cleaned
                 logger.warning("check_invariants: failed to delete wiki_crossref row: %s", del_exc)
         fixed.append(
             f"Deleted {dangling_xref} wiki_crossref rows referencing non-existent page slugs"
         )
         logger.info("check_invariants: auto-fixed %d dangling wiki_crossref rows", dangling_xref)
         counts["wiki_crossref_dangling"] = 0
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the wiki_crossref check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the wiki_crossref check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: wiki_crossref check timed out after %ds; skipping this cycle",
@@ -474,7 +474,7 @@ def _check_memory_entity_orphans(
         )
         logger.info("check_invariants: auto-fixed %d memory entity orphans", orphan_count)
         counts["memory_entity_orphans"] = 0
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the memory-entity orphan check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the memory-entity orphan check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: memory entity orphan check timed out after %ds; "
@@ -544,7 +544,7 @@ def _check_worktree_orphan_contexts(
                     root,
                 )
                 repaired += 1
-            except Exception as upd_exc:  # BLE001-KEEP: single re-point UPDATE inside a repair loop; same untypeable storage surface, and the remaining worktree-orphan rows must still be repaired
+            except Exception as upd_exc:  # noqa: BLE001 — single re-point UPDATE inside a repair loop; same untypeable storage surface, and the remaining worktree-orphan rows must still be repaired
                 logger.warning(
                     "check_invariants: failed to re-point worktree-orphan memory %s: %s",
                     rid,
@@ -557,7 +557,7 @@ def _check_worktree_orphan_contexts(
                 f"to their canonical repo root"
             )
             logger.info("check_invariants: auto-fixed %d worktree-orphan memory rows", repaired)
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the worktree-orphan context check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the worktree-orphan context check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: worktree-orphan context check timed out after %ds; "
@@ -589,7 +589,7 @@ def _check_row_count_ceilings(
             counts[table] = n
             if n > ceiling:
                 violations.append(f"{table} has {n} rows (ceiling {ceiling}) — consider pruning")
-        except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the per-table ceiling check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+        except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the per-table ceiling check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
             if _is_timeout(exc):
                 logger.warning(
                     "check_invariants: %s ceiling check timed out after %ds; skipping this cycle",
@@ -622,7 +622,7 @@ def _check_msl_ceiling(
             violations.append(
                 f"memory_similarity_link has {msl_count} rows (ceiling {msl_ceiling})"
             )
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the msl ceiling check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the msl ceiling check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: msl ceiling check timed out after %ds; skipping this cycle",
@@ -669,7 +669,7 @@ def _check_engram_slot_distribution(
                 violations.append(
                     f"Slot {slot} holds {n} memories (>{threshold}, >5% of {mem_count}) — engram collapse?"
                 )
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the slot distribution check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the slot distribution check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: slot distribution check timed out after %ds; skipping this cycle",
@@ -700,7 +700,7 @@ def _check_engram_slot_integrity(
             violations.append(
                 f"engram_slot has {engram_count} rows (expected {expected} = HOPFIELD_MAX_PATTERNS)"
             )
-    except Exception as exc:  # BLE001-KEEP: per-check isolation + timeout classification for the engram_slot check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
+    except Exception as exc:  # noqa: BLE001 — per-check isolation + timeout classification for the engram_slot check — same shape and same untypeable _q_t surface as _check_memory_similarity_link above
         if _is_timeout(exc):
             logger.warning(
                 "check_invariants: engram_slot check timed out after %ds; skipping this cycle",
@@ -731,7 +731,7 @@ def _check_db_size(storage, _settings) -> dict:
                     db_size["sstables_size_bytes"],
                     db_size["wal_size_bytes"],
                 )
-    except Exception as exc:  # BLE001-KEEP: db_size telemetry: get_db_size reaches the backend /admin/dbsize RPC and the filesystem, which share no common base, and a missing size reading must not fail the invariants run it decorates
+    except Exception as exc:  # noqa: BLE001 — db_size telemetry: get_db_size reaches the backend /admin/dbsize RPC and the filesystem, which share no common base, and a missing size reading must not fail the invariants run it decorates
         logger.warning("check_invariants: db_size telemetry failed: %s", exc)
         db_size = {}
     return db_size
@@ -762,7 +762,7 @@ def _check_per_table_size(storage, query_timeout: int) -> dict:
                 per_table[_tbl] = _entry
             else:
                 per_table[_tbl] = {"rows": 0}
-        except Exception as _tbl_exc:  # BLE001-KEEP: per-table isolation: the size query runs against a table that may not exist in this deployment, reported as RuntimeError over HTTP but as an arbitrary SDK type embedded; the error string is recorded per table and the loop continues
+        except Exception as _tbl_exc:  # noqa: BLE001 — per-table isolation: the size query runs against a table that may not exist in this deployment, reported as RuntimeError over HTTP but as an arbitrary SDK type embedded; the error string is recorded per table and the loop continues
             logger.warning(
                 "check_invariants: per_table size query failed for %s: %s", _tbl, _tbl_exc
             )

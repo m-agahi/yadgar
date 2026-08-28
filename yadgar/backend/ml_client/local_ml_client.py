@@ -79,7 +79,7 @@ class LocalMLClient:
                 pairs = [(query, t[:512]) for t in texts]
                 scores = self._gte_reranker.predict(pairs)
                 return [float(s) for s in scores]
-        except Exception as e:  # BLE001-KEEP: local model boundary: loading and running the GTE reranker reaches sentence-transformers, torch and huggingface_hub, which raise with no common base; the exception is recorded to telemetry and the caller degrades
+        except Exception as e:  # noqa: BLE001 — local model boundary: loading and running the GTE reranker reaches sentence-transformers, torch and huggingface_hub, which raise with no common base; the exception is recorded to telemetry and the caller degrades
             from yadgar._shared.observability.exception_telemetry import (
                 record_exception,  # noqa: PLC0415
             )
@@ -136,7 +136,7 @@ class LocalMLClient:
                 _load_dur = time.monotonic() - _t0
                 # Histogram + OTel span for cold load (v5.6.7 PR-G)
                 _record_model_load("ce", _load_dur)
-            except Exception as e:  # BLE001-KEEP: CrossEncoder construction: same torch/huggingface surface with no common base; recorded to telemetry and degraded to zero scores
+            except Exception as e:  # noqa: BLE001 — CrossEncoder construction: same torch/huggingface surface with no common base; recorded to telemetry and degraded to zero scores
                 from yadgar._shared.observability.exception_telemetry import (
                     record_exception,  # noqa: PLC0415
                 )
@@ -148,7 +148,7 @@ class LocalMLClient:
         try:
             scores = self._cross_encoder.predict(pairs, show_progress_bar=False)
             return [float(s) for s in scores]
-        except Exception as e:  # BLE001-KEEP: CrossEncoder.predict: same torch surface with no common base; recorded to telemetry and degraded to zero scores
+        except Exception as e:  # noqa: BLE001 — CrossEncoder.predict: same torch surface with no common base; recorded to telemetry and degraded to zero scores
             from yadgar._shared.observability.exception_telemetry import (
                 record_exception,  # noqa: PLC0415
             )
@@ -223,7 +223,7 @@ class LocalMLClient:
                     result.append(float(s))
             return result
 
-        except Exception as e:  # BLE001-KEEP: NLI model load + predict + numpy softmax: torch and numpy raise with no common base; recorded to telemetry and degraded
+        except Exception as e:  # noqa: BLE001 — NLI model load + predict + numpy softmax: torch and numpy raise with no common base; recorded to telemetry and degraded
             from yadgar._shared.observability.exception_telemetry import (
                 record_exception,  # noqa: PLC0415
             )

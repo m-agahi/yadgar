@@ -155,7 +155,7 @@ def _fetch_expired_rows(storage, directory: str, _now: str) -> list[dict]:
             {"dir": directory, "now": _now},
         )
         return rows
-    except Exception:
+    except Exception:  # noqa: BLE001 — audit fetchers are best-effort: a raw-query or row-shape fault degrades to an empty set rather than aborting the audit
         logger.debug("_fetch_expired_rows failed", exc_info=True)
         return []
 
@@ -201,7 +201,7 @@ def _fetch_redundant_pairs(
                     pairs.append((row_a, row_b, round(sim, 4)))
         pairs.sort(key=lambda p: p[2], reverse=True)
         return pairs
-    except Exception:
+    except Exception:  # noqa: BLE001 — audit fetchers are best-effort: a raw-query or row-shape fault degrades to an empty set rather than aborting the audit
         logger.debug("_fetch_redundant_pairs failed", exc_info=True)
         return []
 
@@ -225,7 +225,7 @@ def _fetch_grace_expired_rows(storage, directory: str, _now: str) -> list[dict]:
             {"dir": directory, "now": _now},
         )
         return rows
-    except Exception:
+    except Exception:  # noqa: BLE001 — audit fetchers are best-effort: a raw-query or row-shape fault degrades to an empty set rather than aborting the audit
         logger.debug("_fetch_grace_expired_rows failed", exc_info=True)
         return []
 
@@ -262,7 +262,7 @@ def _fetch_cross_project_anchor_pool(storage, _now: str) -> list[tuple[dict, lis
                 continue
             result.append((row, floats))
         return result
-    except Exception:
+    except Exception:  # noqa: BLE001 — audit fetchers are best-effort: a raw-query or row-shape fault degrades to an empty set rather than aborting the audit
         logger.debug("_fetch_cross_project_anchor_pool failed", exc_info=True)
         return []
 
@@ -448,7 +448,7 @@ def _fetch_anchored_by_prose_only_archives(storage) -> list[int]:
             "AND (heat IS NONE OR heat = 0)"
         )
         return [storage._extract_id(r.get("id")) for r in rows if r.get("id") is not None]
-    except Exception:
+    except Exception:  # noqa: BLE001 — audit fetchers are best-effort: a raw-query or row-shape fault degrades to an empty set rather than aborting the audit
         logger.debug("_fetch_anchored_by_prose_only_archives failed", exc_info=True)
         return []
 
@@ -495,7 +495,7 @@ def _fetch_promote_rows(storage, directory: str, _now: str, cfg) -> list[dict]:
                 continue
             result.append(row)
         return result
-    except Exception:
+    except Exception:  # noqa: BLE001 — audit fetchers are best-effort: a raw-query or row-shape fault degrades to an empty set rather than aborting the audit
         logger.debug("_fetch_promote_rows failed", exc_info=True)
         return []
 
@@ -721,7 +721,7 @@ def audit_anchors(
                 {"dir": audit_dir},
             )
             scanned += int(cnt_rows[0]["cnt"]) if cnt_rows else 0
-        except Exception:
+        except Exception:  # noqa: BLE001 — coverage accounting is best-effort: a raw-query or row-shape fault must not abort the audit it is only reporting on
             pass
         actions.extend(_build_expire_actions(storage, audit_dir, _now))
         actions.extend(_build_verify_grace_actions(storage, audit_dir, _now))
@@ -790,7 +790,7 @@ def _run_anchor_audit_pass(storage) -> dict:
         directories = list(
             {r.get("directory_context") for r in dir_rows if r.get("directory_context")}
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — audit pass boundary: a raw-query fault must return a zero-work summary rather than abort the nightly pass
         logger.debug("_run_anchor_audit_pass: could not list directories", exc_info=True)
         return {"directories_audited": 0, "sentinels_written": 0}
 
@@ -822,7 +822,7 @@ def _count_anchors_for_dir(storage, directory: str) -> int:
             {"dir": directory, "now": _now},
         )
         return int(cnt_rows[0]["cnt"]) if cnt_rows else 0
-    except Exception:
+    except Exception:  # noqa: BLE001 — coverage accounting is best-effort: a raw-query or row-shape fault degrades to a zero count rather than aborting the audit
         return 0
 
 
@@ -831,7 +831,7 @@ def _audit_dir_safe(directory: str) -> dict | None:
     """Run audit_anchors(dry_run=True) on a directory; return None on error."""
     try:
         return audit_anchors(directory=directory, dry_run=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 — per-directory isolation in the audit sweep: one directory's audit failing must not abort the remaining directories
         logger.debug("_run_anchor_audit_pass: audit failed for dir=%s", directory, exc_info=True)
         return None
 
@@ -850,6 +850,6 @@ def _write_audit_sentinel(directory: str, audit_result: dict) -> bool:
             {"directory": directory, "audit_result": audit_result},
         )
         return bool(result.get("written", False))
-    except Exception:
+    except Exception:  # noqa: BLE001 — crosses the admin forward boundary (HTTP + envelope decode); a sentinel-write fault is reported as False rather than aborting the audit pass
         logger.debug("_write_audit_sentinel: forward failed for dir=%s", directory, exc_info=True)
         return False

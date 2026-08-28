@@ -136,7 +136,7 @@ class EmbeddingEngine:
                 trust_remote_code=True,
                 local_files_only=local_only,
             )
-        except Exception:  # BLE001-KEEP: SentenceTransformer construction reaches huggingface_hub, torch and the local cache, which raise OSError, hub-private validation errors and torch errors with no common base; the forced-local retry below IS this handler's purpose
+        except Exception:  # noqa: BLE001 — SentenceTransformer construction reaches huggingface_hub, torch and the local cache, which raise OSError, hub-private validation errors and torch errors with no common base; the forced-local retry below IS this handler's purpose
             pass
 
         # Retry with forced local — handles corrupt cache / transient net error.

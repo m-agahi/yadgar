@@ -59,7 +59,7 @@ class TestVacuumImplEnvRead:
             # The call runs against a deliberately partial mock set, so it fails
             # somewhere past the URL resolution this test asserts on. Which
             # unmocked step it reaches first is not this test's business.
-            except Exception:
+            except Exception:  # noqa: BLE001 — deliberately partial mock set
                 pass  # expected — vacuum does more work we haven't mocked fully
 
         assert captured_url, "httpx.get was not called — test cannot validate URL"

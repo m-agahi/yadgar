@@ -972,7 +972,7 @@ class TestFallbackMode:
         # Should not raise regardless of environment
         try:
             setup_tracing("test-noop")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — the assertion IS "must not raise"
             pytest.fail(f"setup_tracing raised unexpectedly: {e}")
 
 

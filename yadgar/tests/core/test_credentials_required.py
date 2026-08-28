@@ -50,7 +50,7 @@ def test_storage_engine_allow_root_escape_hatch(monkeypatch, tmp_path):
         pytest.fail("KeyError raised even with YADGAR_ALLOW_ROOT=1")
     # BLE001 kept broad: the `except KeyError` arm above IS the assertion, and
     # this arm's whole job is to accept every other outcome.
-    except Exception:
+    except Exception:  # noqa: BLE001 — the assertion is "not KeyError", handled above
         # Connection refused, init error etc. are all fine — we only care
         # that KeyError is NOT raised.
         pass

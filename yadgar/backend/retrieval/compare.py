@@ -74,7 +74,7 @@ def recall_compare(
                 "results": state.result_memories,
                 "stage_stats": state.stage_stats,
             }
-        except Exception as exc:  # BLE001-KEEP: per-profile isolation in the A/B compare harness: a profile runs the whole retrieval pipeline, so no type covers it, and one broken profile must still let the others be compared
+        except Exception as exc:  # noqa: BLE001 — per-profile isolation in the A/B compare harness: a profile runs the whole retrieval pipeline, so no type covers it, and one broken profile must still let the others be compared
             logger.warning(
                 "recall_compare: profile=%r query=%r failed: %s",
                 profile_name,

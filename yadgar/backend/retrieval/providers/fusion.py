@@ -74,7 +74,7 @@ def _score_candidates_ce(
         # scores computed here are REUSED by cross_encoder / multi_passage later
         # in the same request (within-request dedup; get-or-compute).
         ce_scores = retriever._reranker.score_ce_cached(query, texts)
-    except Exception as exc:  # BLE001-KEEP: ML client boundary for cross-type CE scoring; same untypeable local-torch-or-remote-httpx surface, and the fallback to native_score is on the next line
+    except Exception as exc:  # noqa: BLE001 — ML client boundary for cross-type CE scoring; same untypeable local-torch-or-remote-httpx surface, and the fallback to native_score is on the next line
         logger.debug("Cross-type CE scoring failed: %s — using native_score fallback", exc)
 
     if not ce_scores or not isinstance(ce_scores, (list, tuple)) or len(ce_scores) == 0:

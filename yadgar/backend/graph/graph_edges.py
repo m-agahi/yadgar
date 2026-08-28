@@ -60,7 +60,7 @@ class GraphAPIEdgesMixin:
         role = EDGE_TYPES.get("transition", {}).get("role", "retrieval")
         try:
             transitions = self._s.get_all_transitions(limit=limit)
-        except Exception:  # BLE001-KEEP: per-edge-type degradation in the viz payload builder: the transition read goes through storage, which raises RuntimeError over HTTP and arbitrary SDK types embedded with no common base; a dead source contributes no edges and the other six types still render
+        except Exception:  # noqa: BLE001 — per-edge-type degradation in the viz payload builder: the transition read goes through storage, which raises RuntimeError over HTTP and arbitrary SDK types embedded with no common base; a dead source contributes no edges and the other six types still render
             transitions = []
         result = []
         weak_hidden = 0
@@ -102,7 +102,7 @@ class GraphAPIEdgesMixin:
         role = EDGE_TYPES.get("wiki_crossref", {}).get("role", "informational")
         try:
             crossrefs = self._s.get_all_wiki_crossrefs(limit=limit)
-        except Exception:  # BLE001-KEEP: per-edge-type degradation for wiki_crossref; same untypeable storage surface as _build_transition_edges above
+        except Exception:  # noqa: BLE001 — per-edge-type degradation for wiki_crossref; same untypeable storage surface as _build_transition_edges above
             crossrefs = []
         result = []
         for cr in crossrefs:
@@ -157,7 +157,7 @@ class GraphAPIEdgesMixin:
             causal_edges_raw = self._s.get_all_causal_edges(
                 include_invalidated=include_invalidated, as_of=as_of, limit=limit
             )
-        except Exception:  # BLE001-KEEP: per-edge-type degradation for causal edges; same untypeable storage surface
+        except Exception:  # noqa: BLE001 — per-edge-type degradation for causal edges; same untypeable storage surface
             causal_edges_raw = []
         result = []
         for ce in causal_edges_raw:
@@ -202,7 +202,7 @@ class GraphAPIEdgesMixin:
         _ENTITY_REL_TYPES = ["co_occurrence", "resolved_by", "caused_by", "derived_from"]
         try:
             entity_rels = self._s.get_relationships_by_types(_ENTITY_REL_TYPES, limit=limit)
-        except Exception:  # BLE001-KEEP: per-edge-type degradation for entity relationships; same untypeable storage surface
+        except Exception:  # noqa: BLE001 — per-edge-type degradation for entity relationships; same untypeable storage surface
             entity_rels = []
         result = []
         for rel in entity_rels:
@@ -235,7 +235,7 @@ class GraphAPIEdgesMixin:
         role = EDGE_TYPES.get("memory_similarity_link", {}).get("role", "informational")
         try:
             links = self._s.get_all_memory_similarity_links(limit=limit)
-        except Exception:  # BLE001-KEEP: per-edge-type degradation for memory_similarity_link; same untypeable storage surface
+        except Exception:  # noqa: BLE001 — per-edge-type degradation for memory_similarity_link; same untypeable storage surface
             links = []
         result = []
         for lnk in links:
@@ -285,11 +285,11 @@ class GraphAPIEdgesMixin:
         """
         try:
             cluster_rows = self._s.get_memory_clusters()
-        except Exception:  # BLE001-KEEP: per-source degradation for memory_cluster rows; same untypeable storage surface, and the member read below must still be attempted
+        except Exception:  # noqa: BLE001 — per-source degradation for memory_cluster rows; same untypeable storage surface, and the member read below must still be attempted
             cluster_rows = []
         try:
             all_members = self._s.get_all_cluster_members()
-        except Exception:  # BLE001-KEEP: per-source degradation for cluster members; same untypeable storage surface, and clusters still render with empty membership
+        except Exception:  # noqa: BLE001 — per-source degradation for cluster members; same untypeable storage surface, and clusters still render with empty membership
             all_members = {}
         result = []
         for cr in cluster_rows:
@@ -331,7 +331,7 @@ class GraphAPIEdgesMixin:
         """
         try:
             procs = self._s.get_astrocyte_processes()
-        except Exception:  # BLE001-KEEP: per-source degradation for astrocyte processes; same untypeable storage surface, and the documented contract is 'returns [] if storage is unavailable'
+        except Exception:  # noqa: BLE001 — per-source degradation for astrocyte processes; same untypeable storage surface, and the documented contract is 'returns [] if storage is unavailable'
             return []
         result = []
         for proc in procs or []:

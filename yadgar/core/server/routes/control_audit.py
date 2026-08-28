@@ -89,7 +89,7 @@ def _audit_logger() -> logging.Logger:
         audit_log.removeHandler(h)
         try:
             h.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 — handler teardown: a logging handler's close() is third-party code and one failing handler must not abort the close of the rest
             pass
     target_dir.mkdir(parents=True, exist_ok=True)
 

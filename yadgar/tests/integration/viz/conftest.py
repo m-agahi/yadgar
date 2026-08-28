@@ -130,7 +130,7 @@ def _daemon(tmp_path_factory):
                 )
             # `insert_memory` fans out over the embedding engine and the storage
             # driver — no importable common base.
-            except Exception:
+            except Exception:  # noqa: BLE001 — insert spans embed + storage drivers
                 pass  # seeding failure is non-fatal — test still validates no-JS-error path
 
     asgi_app = _server.mcp_server.streamable_http_app()

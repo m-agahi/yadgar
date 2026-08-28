@@ -131,7 +131,7 @@ def main() -> None:
                         {"table": table, "rid": str(rid).split(":")[-1], "content": content},
                     )
                     ok += 1
-                except Exception as exc:  # BLE001-KEEP: per-record isolation in a one-shot migration: the surrealdb SDK raises no common base, and one bad row must not abandon the remaining records
+                except Exception as exc:  # noqa: BLE001 — per-record isolation in a one-shot migration: the surrealdb SDK raises no common base, and one bad row must not abandon the remaining records
                     print(f"   WARNING: {table}:{rid} — {exc}")
             print(f"   {table}: {ok}/{len(records)} records imported")
 

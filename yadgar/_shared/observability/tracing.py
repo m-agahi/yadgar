@@ -253,7 +253,7 @@ def _build_otlp_exporter():  # type: ignore[return]
             },
         )
         return wrapped
-    except Exception as exc:  # BLE001-KEEP: optional OTLP exporter construction: it reaches the opentelemetry exporter package and the endpoint config, which raise with no common base, and tracing must degrade to no-export rather than block startup
+    except Exception as exc:  # noqa: BLE001 — optional OTLP exporter construction: it reaches the opentelemetry exporter package and the endpoint config, which raise with no common base, and tracing must degrade to no-export rather than block startup
         logger.warning(
             "otlp_exporter_init_failed",
             extra={
@@ -533,7 +533,7 @@ def _instrument_httpx() -> None:
         instr = HTTPXClientInstrumentor()
         if not instr.is_instrumented_by_opentelemetry:
             instr.instrument()
-    except Exception:  # BLE001-KEEP: optional OTel httpx auto-instrumentation: the instrumentor raises its own package-private types when the dependency is absent, already instrumented, or version-mismatched, with no common base (I3)
+    except Exception:  # noqa: BLE001 — optional OTel httpx auto-instrumentation: the instrumentor raises its own package-private types when the dependency is absent, already instrumented, or version-mismatched, with no common base (I3)
         pass  # OTel/httpx instrumentation not available — no-op (I3)
 
 
@@ -702,7 +702,7 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
                 # exceptions still propagate + record via the span path below.
                 try:
                     tracer = _otel_trace.get_tracer(fn.__module__)
-                except Exception:  # BLE001-KEEP: guards ONLY get_tracer against a degraded/swapped provider (the hanging stub installed during shutdown_tracing); the provider is caller-replaceable third-party code, and the wrapped fn's own exceptions still propagate below
+                except Exception:  # noqa: BLE001 — guards ONLY get_tracer against a degraded/swapped provider (the hanging stub installed during shutdown_tracing); the provider is caller-replaceable third-party code, and the wrapped fn's own exceptions still propagate below
                     return await fn(*args, **kwargs)
                 with tracer.start_as_current_span(span_name) as span:
                     if attributes:
@@ -728,7 +728,7 @@ def trace_span(name: str | None = None, attributes: dict[str, Any] | None = None
                 # ONLY; the wrapped fn's own exceptions still propagate + record.
                 try:
                     tracer = _otel_trace.get_tracer(fn.__module__)
-                except Exception:  # BLE001-KEEP: same get_tracer-only guard as async_wrapper above; the wrapped fn's own exceptions still propagate below
+                except Exception:  # noqa: BLE001 — same get_tracer-only guard as async_wrapper above; the wrapped fn's own exceptions still propagate below
                     return fn(*args, **kwargs)
                 with tracer.start_as_current_span(span_name) as span:
                     if attributes:

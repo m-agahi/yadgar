@@ -331,7 +331,7 @@ def hook_pre_compact_drain() -> None:
             in_flight = _capture_in_flight_host(transcript_path, directory)
             if in_flight is not None:
                 data["in_flight"] = in_flight
-        except Exception as e:  # import/parse failure → degrade, never crash
+        except Exception as e:  # noqa: BLE001 — in-flight capture is a best-effort enrichment behind a lazy import of the transcript parser; any fault degrades the drain payload rather than crashing the hook
             _log_hook_error(f"in_flight capture failed: {e!r}")
 
     # Car H: hand the drain to a daemon thread. ``/compact`` waits for our
@@ -348,7 +348,7 @@ def hook_pre_compact_drain() -> None:
             result = _http_post("/hooks/pre-compact", data, timeout=5.0)
             if result is None:
                 _log_hook_error("drain POST /hooks/pre-compact failed (backend unreachable?)")
-        except Exception as e:  # never let a daemon-thread error escape
+        except Exception as e:  # noqa: BLE001 — daemon-thread boundary: an escaping error here would be unhandled in a non-main thread, so every fault is logged to the hook-error file instead
             _log_hook_error(f"drain thread crashed: {e!r}")
 
     threading.Thread(target=_drain, daemon=True).start()

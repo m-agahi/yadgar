@@ -82,7 +82,7 @@ def _init_file_queue() -> None:
     """
     try:
         _get_file_queue()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — startup boundary: the file queue is initialised opportunistically and a fault must not prevent the process from coming up
         logger.warning("File queue init failed (non-fatal): %s", exc)
 
 

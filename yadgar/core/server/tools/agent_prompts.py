@@ -711,7 +711,7 @@ def _read_agent_prompt(slug: str, storage=None) -> dict | None:
 
     try:
         page = storage.get_wiki_page_by_slug(slug)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — storage boundary; a slug-lookup fault degrades to "no prompt" rather than failing the dispatch prelude
         logger.debug("_read_agent_prompt slug lookup failed: %s", e)
         return None
 

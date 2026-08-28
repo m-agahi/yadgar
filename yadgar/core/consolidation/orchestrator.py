@@ -186,14 +186,14 @@ def _run_core_post_cycle_tasks(storage, settings) -> None:
                 len(inv["violations"]),
                 inv["violations"],
             )
-    except Exception:
+    except Exception:  # noqa: BLE001 — post-cycle task boundary: the invariants check crosses the admin forward and is non-fatal; a fault must not abort the consolidation that already completed
         logger.debug("check_invariants failed (non-fatal)", exc_info=True)
 
     # v4.9: threshold auto-trigger vacuum — non-fatal end-of-cycle check.
     if settings.VACUUM_AUTO_ENABLED:
         try:
             _maybe_auto_vacuum(storage, settings)
-        except Exception:
+        except Exception:  # noqa: BLE001 — post-cycle task boundary: the auto-vacuum check is non-fatal and must not abort the consolidation that already completed
             logger.debug("auto-vacuum check failed (non-fatal)", exc_info=True)
 
 

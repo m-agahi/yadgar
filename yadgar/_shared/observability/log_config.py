@@ -654,7 +654,7 @@ class RotatingJSONLFileHandler(logging.handlers.RotatingFileHandler):
         if self._rotation_counter is not None:
             try:
                 self._rotation_counter.labels(logger=self._logger_name).inc()
-            except Exception:  # BLE001-KEEP: inside doRollover on a logging handler: a metrics failure here would propagate through logging.Handler.handleError and can silence the log stream itself, which is worse than a lost rotation count
+            except Exception:  # noqa: BLE001 — inside doRollover on a logging handler: a metrics failure here would propagate through logging.Handler.handleError and can silence the log stream itself, which is worse than a lost rotation count
                 pass
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -748,7 +748,7 @@ class RateLimitFilter(logging.Filter):
                         level=record.levelname,
                         reason="rate_limit",
                     ).inc()
-                except Exception:  # BLE001-KEEP: inside a logging Filter: a metrics failure here would propagate into every log call the filter guards, so the drop counter is best-effort
+                except Exception:  # noqa: BLE001 — inside a logging Filter: a metrics failure here would propagate into every log call the filter guards, so the drop counter is best-effort
                     pass
 
             # Emit summary at most once per minute
@@ -780,7 +780,7 @@ class RateLimitFilter(logging.Filter):
         for handler in root.handlers:
             try:
                 handler.emit(summary)
-            except Exception:  # BLE001-KEEP: emits directly into third-party root handlers; one broken handler must not stop the others, mirroring logging's own handleError contract
+            except Exception:  # noqa: BLE001 — emits directly into third-party root handlers; one broken handler must not stop the others, mirroring logging's own handleError contract
                 pass
 
 

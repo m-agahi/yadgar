@@ -200,7 +200,7 @@ class MemoryCurator:
                         yadgar_write_time_contradiction_total.labels(reason=c["reason"]).inc()
                 except ImportError:
                     pass
-        except Exception as exc:  # BLE001-KEEP: write-time contradiction detection: the detector reaches storage and the embedding engine, which share no common base, and the documented contract is that it never blocks the write path
+        except Exception as exc:  # noqa: BLE001 — write-time contradiction detection: the detector reaches storage and the embedding engine, which share no common base, and the documented contract is that it never blocks the write path
             logger.warning("write_time_contradiction detector failed (fail-soft): %s", exc)
 
     def _find_similar_memories(

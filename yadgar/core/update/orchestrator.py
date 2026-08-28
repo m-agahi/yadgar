@@ -261,7 +261,7 @@ def _phase_cli_upgrade(ctx: _RunCtx) -> str | None:
     try:
         ctx.hooks.cli_upgrade(ctx.to_version)
         return None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — `ctx.hooks.*` are injected, duck-typed callables; the orchestrator's contract is to render every phase fault as a state + error string rather than raise
         return str(exc)
 
 
@@ -420,7 +420,7 @@ def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult
     ctx.log(OrchestratorState.PROBING_PYPI)
     try:
         ctx.to_version = _phase_probe_pypi(ctx, target_version)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — `ctx.hooks.*` are injected, duck-typed callables; the orchestrator's contract is to render every phase fault as a state + error string rather than raise
         return ctx.result(ctx.current_state, error=f"PyPI probe failed: {exc}")
     ctx.from_version = _get_current_cli_version()
 
@@ -436,7 +436,7 @@ def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult
     ctx.log(OrchestratorState.PULLING_IMAGE, {"version": ctx.to_version})
     try:
         ctx.hooks.image_pull(ctx.to_version)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — `ctx.hooks.*` are injected, duck-typed callables; a pull fault must trigger rollback and return a state, never propagate mid-upgrade
         rlog = ctx.rollback_daemon(pulled_new=False)
         return ctx.result(
             OrchestratorState.ROLLED_BACK_OK, error=f"image pull failed: {exc}", rollback_log=rlog
@@ -456,7 +456,7 @@ def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult
     ctx.log(OrchestratorState.GRACEFUL_STOPPING)
     try:
         ctx.hooks.graceful_stop(30)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — `ctx.hooks.*` are injected, duck-typed callables; a stop fault must trigger rollback and return a state, never propagate mid-upgrade
         rlog = ctx.rollback_daemon(pulled_new=True)
         return ctx.result(
             _rollback_final_state(rlog), error=f"graceful stop failed: {exc}", rollback_log=rlog
@@ -466,7 +466,7 @@ def _run_forward(ctx: _RunCtx, target_version: str | None) -> OrchestratorResult
     ctx.log(OrchestratorState.RESTARTING_SERVICE)
     try:
         ctx.hooks.service_restart()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — `ctx.hooks.*` are injected, duck-typed callables; a restart fault must trigger rollback and return a state, never propagate mid-upgrade
         rlog = ctx.rollback_daemon(pulled_new=True)
         return ctx.result(
             _rollback_final_state(rlog), error=f"service restart failed: {exc}", rollback_log=rlog
@@ -515,7 +515,7 @@ def _handle_cli_rollback(ctx: _RunCtx, prev_cli: str, cli_error: str) -> Orchest
     try:
         ctx.hooks.cli_rollback(prev_cli)
         final = OrchestratorState.DONE_CLI_ROLLBACK_OK
-    except Exception as rb_exc:
+    except Exception as rb_exc:  # noqa: BLE001 — `ctx.hooks.*` are injected, duck-typed callables; a failed CLI rollback must be recorded as DONE_CLI_ROLLBACK_FAILED, never propagate out of the rollback path
         logger.error("CLI rollback failed: %s", rb_exc)
         final = OrchestratorState.DONE_CLI_ROLLBACK_FAILED
 
@@ -564,7 +564,7 @@ def _rollback_daemon(
     # Restart service with old image
     try:
         service_restart_fn()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — rollback path: the injected restart callable's fault must be logged into the rollback log and returned, never mask the failure being unwound
         logger.error("Rollback service restart failed: %s", exc)
         _rlog(OrchestratorState.ROLLED_BACK_FAILED.value, {"error": str(exc)})
         return rollback_log
@@ -572,7 +572,7 @@ def _rollback_daemon(
     # Health-check old image
     try:
         hc_ok = health_check_fn()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — rollback path: the injected health-check callable's fault is itself the "unhealthy" answer, and must not mask the failure being unwound
         logger.error("Rollback health-check raised: %s", exc)
         hc_ok = False
 

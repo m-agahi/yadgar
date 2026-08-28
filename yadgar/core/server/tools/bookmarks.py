@@ -69,7 +69,7 @@ def bookmark_list() -> list[dict]:
 
     try:
         rows = storage.list_bookmarks()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — MCP tool boundary: every storage fault degrades to an empty list rather than a traceback
         logger.warning("bookmark_list error: %s", exc)
         return []
 

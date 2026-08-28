@@ -20,7 +20,7 @@ def _rpc_span(name: str, attributes: dict | None = None):
         tracer = _t.get_tracer("yadgar.backend.ml_client")
         ctx = tracer.start_as_current_span(name)
         return ctx
-    except Exception:  # BLE001-KEEP: span construction: a degraded or swapped OTel provider raises arbitrary types from get_tracer (the I3 case documented in tracing.py), and the caller must fall through to nullcontext
+    except Exception:  # noqa: BLE001 — span construction: a degraded or swapped OTel provider raises arbitrary types from get_tracer (the I3 case documented in tracing.py), and the caller must fall through to nullcontext
         import contextlib  # noqa: PLC0415
 
         return contextlib.nullcontext()
@@ -50,7 +50,7 @@ def _record_model_load(model: str, duration_seconds: float) -> None:
             span.set_attribute("model", model)
             span.set_attribute("cold_load", True)
             span.set_attribute("duration_seconds", duration_seconds)
-    except Exception:  # BLE001-KEEP: same degraded-provider surface as _ml_span above; the model-load span is decoration and must never fail the load
+    except Exception:  # noqa: BLE001 — same degraded-provider surface as _ml_span above; the model-load span is decoration and must never fail the load
         pass  # OTel not available — no-op
 
 
@@ -81,7 +81,7 @@ def _emit_unload_telemetry(unloaded_ce: bool, unloaded_nli: bool, effective: flo
         with tracer.start_as_current_span("model.unload") as span:
             span.set_attribute("model", model_label)
             span.set_attribute("idle_seconds", float(effective))
-    except Exception:  # BLE001-KEEP: same degraded-provider surface; the unload span is decoration and must never fail the eviction
+    except Exception:  # noqa: BLE001 — same degraded-provider surface; the unload span is decoration and must never fail the eviction
         pass  # OTel not available — no-op
 
 

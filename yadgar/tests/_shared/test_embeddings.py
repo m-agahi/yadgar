@@ -13,7 +13,7 @@ try:
 # The probe IS "can this model load at all". `_ensure_model` reaches
 # sentence-transformers / torch / the HF hub, whose exception classes are not
 # importable in the very environment this branch exists to detect.
-except Exception:
+except Exception:  # noqa: BLE001 — model load reaches torch/transformers/HF-hub
     _model_available = False
 
 requires_model = pytest.mark.skipif(

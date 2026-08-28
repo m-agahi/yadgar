@@ -517,7 +517,7 @@ def _import_pending_sentinels(sentinel_dir_path: str) -> None:
                 perm_e,
             )
             _sentinel_retire_to_failed(marker, failed_dir)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-marker isolation: one unreadable/unwritable sentinel must not abort the scan of the rest (this function contracts "never raises")
             retries += 1
             logger.warning("sentinel import failed for %s (attempt %d): %s", marker, retries, e)
             _sentinel_handle_failure(marker, record, retries, failed_dir)
@@ -615,7 +615,7 @@ async def _probe_dependency(client, url: str) -> bool:
     try:
         r = await client.get(f"{url}/health")
         return r.status_code == 200
-    except Exception:
+    except Exception:  # noqa: BLE001 — `client` is duck-typed (httpx.AsyncClient in prod, a stub in tests), so the raisable set is not knowable here; the probe contracts "never raises" and reports unreachable as False
         return False
 
 
@@ -933,7 +933,7 @@ async def hook_pre_compact(request: Request) -> JSONResponse:
     if _st._consolidation is not None:
         try:
             _st._consolidation.force_consolidate()
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort emergency consolidation on the pre-compact path; a consolidation fault must not fail the hook that is about to lose the context
             logger.debug("Emergency consolidation failed during pre-compact")
 
     return JSONResponse(result)
@@ -1030,7 +1030,7 @@ async def hook_block_reflect(request: Request) -> JSONResponse:
         # directory so the label is not blank when only the legacy arm fired.
         text = render_blocks_section(blocks, project or directory or "")
         return JSONResponse({"text": text})
-    except Exception as _e:
+    except Exception as _e:  # noqa: BLE001 — hook endpoint is fail-open by contract: any fault returns empty text rather than breaking the user's turn
         logger.debug("block-reflect hook error: %s", _e)
         return JSONResponse({"text": ""})
 
@@ -1206,7 +1206,7 @@ async def _task_list_legacy_wiki_nudge(directory: str) -> str:
             slug,
             directory,
         )
-    except Exception as _ge:
+    except Exception as _ge:  # noqa: BLE001 — SessionStart nudge is fail-open: a storage fault must not block session start
         logger.debug("task-list page read failed: %s", _ge)
         return ""
     if not page:
@@ -1391,7 +1391,7 @@ async def _read_open_task_rows(ledger: Any, project: str) -> list[dict]:
             "nudge still renders",
             _sig,
         )
-    except Exception as _le:
+    except Exception as _le:  # noqa: BLE001 — SessionStart nudge is fail-open; the ledger read crosses a forward boundary whose raisable set is not enumerable here
         # Still fail-open (session start is never blocked), but audible: a read
         # that raised is not the same event as a ledger with no open tasks, and
         # only one of those two should be silent.
@@ -1400,7 +1400,7 @@ async def _read_open_task_rows(ledger: Any, project: str) -> list[dict]:
 
     try:
         return await asyncio.to_thread(ledger.task_list, **_kw)
-    except Exception as _re:
+    except Exception as _re:  # noqa: BLE001 — same fail-open contract as the with_edges attempt above
         logger.warning("task-list ledger retry without edges failed: %s", _re)
         return []
 
@@ -1472,7 +1472,7 @@ async def _task_list_restore_nudge(directory: str, project: str = "") -> tuple[s
 
         # ── Legacy path: wiki-page parse. Removed once Car D lands.
         return await _task_list_legacy_wiki_nudge(directory), []
-    except Exception as _te:
+    except Exception as _te:  # noqa: BLE001 — SessionStart nudge is fail-open by contract (helper documented to return "" on any error)
         logger.debug("session-context task-list nudge error: %s", _te)
         return "", []
 
@@ -1536,7 +1536,7 @@ def _code_graph_suggest_line(directory: str, blocks: list[dict]) -> str:
         # code_graph.enabled flag from its OWN DB (ADR-0163 container-blindness fix).
         line = session_suggest_line(directory, blocks, resolver=config_get)
         return f"\n{line}\n" if line else ""
-    except Exception as _cge:
+    except Exception as _cge:  # noqa: BLE001 — SessionStart soft-suggest is fail-open; code_graph is optional and must never break session start
         logger.debug("session-context code_graph suggest error: %s", _cge)
         return ""
 
@@ -1587,7 +1587,7 @@ async def _checkpoint_resume_hint(directory: str, source: str) -> str:
             + (f"  {_source_hint_prefix}" if _source_hint_prefix else "")
             + f'To resume: call `restore(directory="{directory}")`\n'
         )
-    except Exception as _ce:
+    except Exception as _ce:  # noqa: BLE001 — SessionStart hint is fail-open; a checkpoint read fault must not block session start
         logger.debug("session-context checkpoint hint error: %s", _ce)
         return ""
 
@@ -1645,7 +1645,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
     _sentinel_dir = _sentinel_dir_env if _sentinel_dir_env else str(_paths.SESSION_ENDS_DIR)
     try:
         _import_pending_sentinels(_sentinel_dir)
-    except Exception as _se:
+    except Exception as _se:  # noqa: BLE001 — defence in depth: _import_pending_sentinels contracts "never raises", and a breach of that contract must still not break session start
         logger.debug("sentinel import error in session-context: %s", _se)
 
     # v5.7.9: source-aware prefix — context line before the brief.
@@ -1703,7 +1703,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
                     # Reuses the _blocks list just fetched; the helper is fail-open and
                     # returns "" when the digest block already exists / opted out / off.
                     render = render + _code_graph_suggest_line(directory, _blocks)
-            except Exception as _be:
+            except Exception as _be:  # noqa: BLE001 — block injection is optional garnish on the session render; a fault drops the section, never the render
                 logger.debug("session-context blocks inject error: %s", _be)
 
         # v5.6.5 / v5.7.9: append checkpoint resume hint.
@@ -1730,7 +1730,7 @@ async def hook_session_context(request: Request) -> JSONResponse:
             render = _nudge + render
 
         return JSONResponse({"text": render})
-    except Exception as _e:
+    except Exception as _e:  # noqa: BLE001 — top-level hook handler: fail-open with empty text so a fault here never breaks the user's session start
         logger.debug("session-context hook error: %s", _e)
         return JSONResponse({"text": ""})
 
@@ -2078,7 +2078,7 @@ async def hook_prompt_recall(request: Request) -> JSONResponse:
                 min_heat=0.0,
                 profile="fast",
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — prompt hook is fail-open: recall crosses a forward boundary and a fault must not swallow the user's prompt
             logger.debug("prompt-recall hook error: %s", e)
             _hook_observe("prompt_recall", _t0, e)
             _observed = True
@@ -2412,7 +2412,7 @@ async def _handle_team_inbox(file_path: str, match, storage) -> JSONResponse:
                     },
                 )
                 stored += 1
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 — per-message isolation: one failed action_log enqueue must not abort the remaining inbox messages (counted in `skipped`)
                 logger.debug("team_inbox action_log insert failed: %s", _e)
                 skipped += 1
 
@@ -2503,7 +2503,7 @@ async def _handle_plan_file(file_path: str, match, storage) -> JSONResponse:
             return JSONResponse(
                 {"status": "ok", "memorized": True, "file": filename, "git_ref": git_ref}
             )
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — the memorize call crosses the queue/forward boundary; the handler renders any fault as a 500 envelope rather than a traceback
             logger.debug("PLAN memorize failed for %s: %s", file_path, _e)
             _resp = JSONResponse({"status": "error", "message": str(_e)[:100]}, status_code=500)
             _hook_observe_response("plan_file", _resp.status_code)
@@ -2559,7 +2559,7 @@ async def hook_instructions_loaded(request: Request) -> JSONResponse:
                 min_heat=0.0,
                 profile="fast",
             )
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — instructions-loaded hook is fail-open: recall crosses a forward boundary and a fault must not break the turn
             logger.debug("instructions-loaded hook recall error: %s", _e)
             _hook_observe("instructions_loaded", _t0, _e)
             _observed = True
@@ -2668,7 +2668,7 @@ async def hook_subagent_start(request: Request) -> JSONResponse:
                 min_heat=0.0,
                 profile="fast",
             )
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 — subagent-start hook is fail-open: recall crosses a forward boundary and a fault must not block the dispatch
             logger.debug("subagent-start hook recall error: %s", _e)
             _hook_observe("subagent_start", _t0, _e)
             _observed = True
@@ -3242,7 +3242,7 @@ async def _make_event_stream(request: Request):
         try:
             if _sse_g is not None:
                 _sse_g.dec()
-        except Exception:
+        except Exception:  # noqa: BLE001 — teardown inside `finally`: a gauge-decrement fault must not mask the streaming error being unwound
             pass
 
 
@@ -3273,7 +3273,7 @@ async def api_wiki_read(request: Request) -> JSONResponse:
         return JSONResponse({"error": "wiki not initialized"}, status_code=503, headers=_CORS)
     try:
         page = await asyncio.to_thread(wiki.read, slug)
-    except Exception as _exc:
+    except Exception as _exc:  # noqa: BLE001 — public API boundary: any read fault is rendered as a 500 envelope for the caller rather than a traceback
         logger.debug("api_wiki_read error for slug=%s: %s", slug, _exc)
         return JSONResponse({"error": str(_exc)}, status_code=500, headers=_CORS)
     if page is None:
@@ -3319,7 +3319,7 @@ async def _viz_exact_title_node_ids(q: str) -> list[str]:
             "ORDER BY heat DESC LIMIT 20",
             {"q": q},
         )
-    except Exception as _exc:
+    except Exception as _exc:  # noqa: BLE001 — viz search is best-effort; a raw-query fault degrades to no exact-title hits rather than failing the search
         logger.debug("viz_search exact-title error: %s", _exc)
         return []
     # Guard: only iterate a real list (mocked/None storage → skip).
@@ -3385,7 +3385,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
             mem_results = await asyncio.to_thread(
                 _HookRecallForwarder("").recall, q, max_results=5, min_heat=0.0, profile="fast"
             )
-        except Exception as _exc:
+        except Exception as _exc:  # noqa: BLE001 — viz search is best-effort; a recall fault degrades to no memory hits rather than failing the search
             logger.debug("viz_search recall error: %s", _exc)
             mem_results = []
         for r in mem_results or []:
@@ -3408,7 +3408,7 @@ async def api_viz_search(request: Request) -> JSONResponse:
                         nid = _extract_record_id(raw_id)
                         if nid is not None:
                             node_ids.append(f"wiki:{nid}")
-            except Exception as _exc:
+            except Exception as _exc:  # noqa: BLE001 — viz search is best-effort; a wiki-query fault degrades to no wiki hits rather than failing the search
                 logger.debug("viz_search wiki_query error: %s", _exc)
 
         # Deduplicate while preserving order

@@ -109,7 +109,7 @@ def _memorize_and_drain(
     # swallow a bug in the row comparison and silently return None.
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
-    except Exception:
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
         rows = []
     for row in rows:
         if row.get("content") == content and row.get("directory_context") == project:
@@ -117,7 +117,7 @@ def _memorize_and_drain(
 
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
-    except Exception:
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
         recent = []
     for row in recent:
         if row.get("content") == content and row.get("directory_context") == project:

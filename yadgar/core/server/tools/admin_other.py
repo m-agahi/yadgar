@@ -179,7 +179,7 @@ def _ms_per_table_stats(storage) -> dict:
                 per_table[tbl] = entry
             else:
                 per_table[tbl] = {"rows": 0}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — per-table isolation: one table's query fault is recorded into that table's entry and the sweep continues over the rest
             logger.warning("memory_stats: per_table query failed for %s: %s", tbl, exc)
             per_table[tbl] = {"rows": 0, "error": str(exc)}
     return per_table
@@ -263,7 +263,7 @@ def memory_stats() -> dict:
             total = slot_stats.get("total_slots", 1)
             occupied = slot_stats.get("occupied_slots", 0)
             stats["engram_slot_utilization"] = round(occupied / max(total, 1), 4)
-        except Exception:
+        except Exception:  # noqa: BLE001 — the engram subsystem is optional and owns its slot-statistics shape; a fault degrades to 0.0 rather than failing memory_stats
             stats["engram_slot_utilization"] = 0.0
 
     if _st._rules_engine is not None:
@@ -291,7 +291,7 @@ def memory_stats() -> dict:
         db_size_info = storage.get_db_size()
         db_size_info["per_table"] = _ms_per_table_stats(storage)
         stats["db_size"] = db_size_info
-    except Exception:
+    except Exception:  # noqa: BLE001 — stats are best-effort: the storage size probe and the per-table sweep both cross the DB boundary and must not fail memory_stats
         pass  # non-fatal: stats are best-effort
 
     # P11 — metrics summary block (I8: backpressure must be observable via memory_stats)
@@ -307,7 +307,7 @@ def memory_stats() -> dict:
             "recall_p95_ms": _ms_histogram_p95(yadgar_recall_duration_ms),
             "circuit_breaker_states": _ms_circuit_breaker_states(),
         }
-    except Exception:
+    except Exception:  # noqa: BLE001 — stats are best-effort: prometheus_client may be absent entirely, and any fault must still leave the stub keys below so callers can read them (I3 back-compat)
         # If prometheus_client missing or any error: still return a stub so
         # callers can check the key without crashing (I3 backward compat)
         stats["metrics"] = {

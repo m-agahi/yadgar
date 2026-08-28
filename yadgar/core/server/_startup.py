@@ -114,7 +114,7 @@ def main(
         from yadgar import __version__
 
         logger.info("CLAUDE.md synced with Yadgar v%s", __version__)
-    except Exception:
+    except Exception:  # noqa: BLE001 — startup boundary: an optional CLAUDE.md auto-sync must never prevent the server from coming up
         logger.debug("Auto-sync of CLAUDE.md failed (non-fatal)")
 
     # Auto-install hooks for the current project if not already present.
@@ -131,7 +131,7 @@ def main(
 
             install_hooks(os.getcwd())
             logger.info("Hippocampal Replay hooks installed for %s", os.getcwd())
-        except Exception:
+        except Exception:  # noqa: BLE001 — startup boundary: an optional hook auto-install must never prevent the server from coming up
             logger.debug("Auto-install of hooks failed (non-fatal)")
 
     # v5.48.0: opt-in auto-check for updates on daemon start (default OFF)

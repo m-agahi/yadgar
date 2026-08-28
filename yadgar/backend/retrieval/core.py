@@ -104,7 +104,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
             if inferences:
                 logger.debug("COMET query expansion: %s -> %s", query[:60], inferences[:3])
             return inferences
-        except Exception as e:  # BLE001-KEEP: optional COMET query expansion: it loads a seq2seq model (torch/transformers) whose failures share no common base, and recall must run unexpanded rather than fail
+        except Exception as e:  # noqa: BLE001 — optional COMET query expansion: it loads a seq2seq model (torch/transformers) whose failures share no common base, and recall must run unexpanded rather than fail
             logger.debug("COMET query expansion failed: %s", e)
             return []
 
@@ -590,7 +590,7 @@ class Retriever(_ScoringMixin, _FusionMixin, _RerankingMixin, _GraphHelpersMixin
                 _span.set_attribute("query_len", len(query))
                 _span.set_attribute("max_results", max_results)
                 _span.set_attribute("profile", profile or "")
-        except Exception:  # BLE001-KEEP: sets dynamic attributes on the active recall span; a degraded or swapped OTel provider raises arbitrary types here (the I3 case documented in tracing.py)
+        except Exception:  # noqa: BLE001 — sets dynamic attributes on the active recall span; a degraded or swapped OTel provider raises arbitrary types here (the I3 case documented in tracing.py)
             pass
 
         # Determine active retrieval profile.

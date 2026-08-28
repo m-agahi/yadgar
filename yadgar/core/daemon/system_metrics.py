@@ -154,7 +154,7 @@ def _sample_db_size(storage: object, db_path: str) -> float:
                 size_data = storage.get_db_size()  # type: ignore[union-attr]
                 size_bytes = size_data.get("db_size_bytes", 0)
                 return round(size_bytes / 1024 / 1024, 1)
-            except Exception:
+            except Exception:  # noqa: BLE001 — `storage` is typed `object` here (an in-process engine in one mode, a forwarding proxy in the other), so the raisable set of `get_db_size` is not knowable; a fault falls through to the path-walk below
                 pass
     try:
         db_dir = Path(db_path).expanduser()
@@ -262,5 +262,5 @@ def run_metrics_sampler(pid: int, db_path: str, interval: float = 5.0) -> None:
         time.sleep(interval)
         try:
             sample_system_metrics(pid, db_path)
-        except Exception:
+        except Exception:  # noqa: BLE001 — daemon sampler loop: one bad sample must never kill the sampler thread
             pass

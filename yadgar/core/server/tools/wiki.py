@@ -424,7 +424,7 @@ def _wiki_add_wait_path(payload: dict, new_slug: str, title: str) -> dict:
         from yadgar._shared.config import get_settings as _get_settings
 
         timeout = getattr(_get_settings(), "WIKI_WRITE_WAIT_TIMEOUT_SECONDS", 15.0)
-    except Exception:
+    except Exception:  # noqa: BLE001 — settings construction can raise a pydantic validation error whose class is not imported at this layer; the wait timeout has a safe literal default
         timeout = 15.0
 
     outcome = fq.wait_for_job(job_id, timeout=timeout)
@@ -911,12 +911,7 @@ def wiki_query(
     )
 
     # Phase 2a: unified recall is now the ONLY path; emit deprecation unconditionally.
-    try:
-        logger.info(
-            "wiki_query is deprecated. Use recall(query, directory=..., type='wiki') instead."
-        )
-    except Exception:
-        pass
+    logger.info("wiki_query is deprecated. Use recall(query, directory=..., type='wiki') instead.")
 
     # Car 2: cache the (embedding-computing) query by its inputs + wiki epoch.
     # A hit skips _st._wiki.query (which embeds the query text). A wiki write
@@ -1170,7 +1165,7 @@ def wiki_delete(slug: str, directory: str | None = None, *, project: str | None 
         _push_event({"event": "wiki_deleted", "slug": slug})
         try:
             _get_file_queue().delete_wiki(slug)
-        except Exception as _fq_exc:
+        except Exception as _fq_exc:  # noqa: BLE001 — the file-queue mirror cleanup is a non-fatal side effect of the delete; a fault must not fail the delete that already succeeded
             logger.debug("File queue wiki mirror cleanup failed (non-fatal): %s", _fq_exc)
         # Car P: the ``wiki_bookmark`` cascade (ledger #341 / #365) lives at the
         # storage layer, in ``StorageEngine.delete_wiki_page`` — NOT here. Car-N

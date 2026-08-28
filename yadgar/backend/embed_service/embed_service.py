@@ -202,7 +202,7 @@ async def _run_cache_snapshot_task() -> None:
                     "snap_dir": snap_dir,
                 },
             )
-        except Exception as exc:  # BLE001-KEEP: periodic snapshot task: save_snapshot spans serialisation and the filesystem, which raise pickling errors and OSError with no common base, and the task loops forever so it must not die on one bad write
+        except Exception as exc:  # noqa: BLE001 — periodic snapshot task: save_snapshot spans serialisation and the filesystem, which raise pickling errors and OSError with no common base, and the task loops forever so it must not die on one bad write
             logger.warning("cache_snapshot_task error: %s", exc)
 
 
@@ -246,7 +246,7 @@ async def _run_model_warmup() -> None:
                     "duration_s": round(duration, 3),
                 },
             )
-        except Exception as exc:  # BLE001-KEEP: background model warmup: it loads a sentence-transformers/torch model whose failures share no common base, and a failed warmup must leave the service serving cold rather than kill the lifespan task
+        except Exception as exc:  # noqa: BLE001 — background model warmup: it loads a sentence-transformers/torch model whose failures share no common base, and a failed warmup must leave the service serving cold rather than kill the lifespan task
             duration = time.monotonic() - t0
             logger.warning(
                 "model_warmup",
@@ -439,7 +439,7 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(_get_engine)
         _model_loaded.labels(model="embedding").set(1)
         logger.info("Embedding model loaded")
-    except Exception as exc:  # BLE001-KEEP: eager model load in lifespan: the loader reaches huggingface_hub, torch and the local cache with no common base; the service must come up degraded (health reports model_loaded=0) instead of crashlooping
+    except Exception as exc:  # noqa: BLE001 — eager model load in lifespan: the loader reaches huggingface_hub, torch and the local cache with no common base; the service must come up degraded (health reports model_loaded=0) instead of crashlooping
         _model_loaded.labels(model="embedding").set(0)
         logger.error("Failed to load embedding model: %s", exc)
 
@@ -457,7 +457,7 @@ async def lifespan(app: FastAPI):
                 "embed_entries": _embed_cache.size_entries,
             },
         )
-    except Exception as _exc:  # BLE001-KEEP: cache restore from an on-disk snapshot: a snapshot written by an older build deserialises into arbitrary errors, and an unreadable cache must start empty rather than block boot
+    except Exception as _exc:  # noqa: BLE001 — cache restore from an on-disk snapshot: a snapshot written by an older build deserialises into arbitrary errors, and an unreadable cache must start empty rather than block boot
         logger.warning("cache restore failed: %s", _exc)
 
     # backend 5.30.1 (P0): start the queue drainer — the R3 Car 1 write-half.
@@ -516,7 +516,7 @@ async def lifespan(app: FastAPI):
     try:
         _ce_cache.save_snapshot(_snap_dir, "ce")
         _embed_cache.save_snapshot(_snap_dir, "embed")
-    except Exception as _exc:  # BLE001-KEEP: final snapshot during shutdown: same serialisation+filesystem surface as the periodic save, and a teardown failure must not replace the real shutdown path
+    except Exception as _exc:  # noqa: BLE001 — final snapshot during shutdown: same serialisation+filesystem surface as the periodic save, and a teardown failure must not replace the real shutdown path
         logger.warning("cache final snapshot failed: %s", _exc)
 
     # v5.3.0: write clean-shutdown marker so next start knows we exited cleanly.
@@ -540,7 +540,7 @@ try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor as _FAI  # noqa: PLC0415
 
     _FAI.instrument_app(app)
-except Exception:  # BLE001-KEEP: optional OTel FastAPI auto-instrumentation at import time: instrument_app raises the instrumentor's own package-private types when the dependency is absent or already applied, with no common base, and the service must import without it
+except Exception:  # noqa: BLE001 — optional OTel FastAPI auto-instrumentation at import time: instrument_app raises the instrumentor's own package-private types when the dependency is absent or already applied, with no common base, and the service must import without it
     pass  # OTel not available — no-op
 
 
@@ -742,7 +742,7 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
             _tracer = _ot.get_tracer("yadgar.backend.embed_service")
             _ctx = _tracer.start_as_current_span(f"backend.rerank.{req.mode}")
             return _ctx, _model_name
-        except Exception:  # BLE001-KEEP: span construction on the rerank request path: a degraded or swapped OTel provider raises arbitrary types from get_tracer (the I3 case documented in tracing.py), and rerank must serve untraced rather than fail
+        except Exception:  # noqa: BLE001 — span construction on the rerank request path: a degraded or swapped OTel provider raises arbitrary types from get_tracer (the I3 case documented in tracing.py), and rerank must serve untraced rather than fail
             import contextlib  # noqa: PLC0415
 
             return contextlib.nullcontext(), None
@@ -755,7 +755,7 @@ async def rerank(req: RerankRequest, _: None = Depends(_require_admin_token)) ->
             _span.set_attribute("rerank.mode", _mode)
             _span.set_attribute("rerank.n_passages", _n)
             _span.set_attribute("model.name", _model_name)
-        except Exception:  # BLE001-KEEP: same degraded-provider surface as the span construction above; attribute decoration must never fail the rerank it annotates
+        except Exception:  # noqa: BLE001 — same degraded-provider surface as the span construction above; attribute decoration must never fail the rerank it annotates
             pass
 
     _span_ctx, _model_name = _make_inference_span()
@@ -797,7 +797,7 @@ async def health(response: Response):
 
         _e = _get_sql_storage()
         ledger_ok = _e is not None and (await _e.verify()) is not False
-    except Exception:  # BLE001-KEEP: engine #2 reachability probe: _get_sql_storage and verify() reach the MariaDB driver and the connection pool, which raise driver-private types with no common base, and an unreachable ledger must report ledger_ok=False rather than fail /health
+    except Exception:  # noqa: BLE001 — engine #2 reachability probe: _get_sql_storage and verify() reach the MariaDB driver and the connection pool, which raise driver-private types with no common base, and an unreachable ledger must report ledger_ok=False rather than fail /health
         ledger_ok = False
 
     payload = {

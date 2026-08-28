@@ -94,7 +94,7 @@ class _CoverageMixin:
             fts_results = self._storage.search_memories_fts(query, min_heat=0.0, limit=50)
             if fts_results:
                 matching_memories.extend(fts_results)
-        except Exception:  # BLE001-KEEP: the FTS arm of a two-arm gather: SurrealDB reports a missing full-text index as a RuntimeError over HTTP but as an arbitrary SDK type in embedded mode, and the vector arm below must still run
+        except Exception:  # noqa: BLE001 — the FTS arm of a two-arm gather: SurrealDB reports a missing full-text index as a RuntimeError over HTTP but as an arbitrary SDK type in embedded mode, and the vector arm below must still run
             pass
 
         query_embedding = self._embeddings.encode(query)

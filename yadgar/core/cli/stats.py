@@ -447,11 +447,11 @@ def _query_knowledge_graph(db, sd):
     try:
         sd.entity_count = _count(db.query("SELECT count() FROM entity GROUP ALL"))
         sd.rel_count = _count(db.query("SELECT count() FROM relationship GROUP ALL"))
-    except Exception:
+    except Exception:  # noqa: BLE001 — `db` is a duck-typed SurrealDB handle and these tables are optional (absent on older DBs); the driver's error taxonomy is not imported at this layer, and every fault must degrade to a zero count rather than fail `yadgar stats`
         sd.entity_count = sd.rel_count = 0
     try:
         sd.causal_edges = _count(db.query("SELECT count() FROM causal_dag_edge GROUP ALL"))
-    except Exception:
+    except Exception:  # noqa: BLE001 — `db` is a duck-typed SurrealDB handle and this table is optional (absent on older DBs); every fault must degrade to a zero count rather than fail `yadgar stats`
         sd.causal_edges = 0
 
 
@@ -462,7 +462,7 @@ def _query_action_log(db, sd):
         sd.action_unprocessed = _count(
             db.query("SELECT count() FROM action_log WHERE processed = false GROUP ALL")
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — `db` is a duck-typed SurrealDB handle and this table is optional (absent on older DBs); every fault must degrade to a zero count rather than fail `yadgar stats`
         sd.action_total = sd.action_unprocessed = 0
 
 
@@ -470,11 +470,11 @@ def _query_subsystems(db, sd):
     """Populate sd with subsystem stats (clusters, narratives, triggers)."""
     try:
         sd.cluster_count = _count(db.query("SELECT count() FROM memory_cluster GROUP ALL"))
-    except Exception:
+    except Exception:  # noqa: BLE001 — `db` is a duck-typed SurrealDB handle and this table is optional (absent on older DBs); every fault must degrade to a zero count rather than fail `yadgar stats`
         sd.cluster_count = 0
     try:
         sd.narrative_count = _count(db.query("SELECT count() FROM narrative_entry GROUP ALL"))
-    except Exception:
+    except Exception:  # noqa: BLE001 — `db` is a duck-typed SurrealDB handle and this table is optional (absent on older DBs); every fault must degrade to a zero count rather than fail `yadgar stats`
         sd.narrative_count = 0
     try:
         sd.triggers_active = _count(
@@ -484,7 +484,7 @@ def _query_subsystems(db, sd):
             "SELECT math::sum(triggered_count) AS total_fired FROM prospective_memory GROUP ALL"
         )
         sd.triggers_fired = _one(trig_fired_res, "total_fired", 0) or 0
-    except Exception:
+    except Exception:  # noqa: BLE001 — `db` is a duck-typed SurrealDB handle and this table is optional (absent on older DBs); every fault must degrade to a zero count rather than fail `yadgar stats`
         sd.triggers_active = sd.triggers_fired = 0
 
 
@@ -866,7 +866,7 @@ def _run_db_path(args):
         _query_top_tags(db, project, sd)
         _query_data_quality(db, sd)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — CLI top-level error reporting: every fault is rendered as an operator-facing message (including the locked-datastore hint) rather than a traceback
         if _looks_like_locked_datastore(e):
             print(
                 "Failed to query database directly: the database file appears to be "

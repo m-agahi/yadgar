@@ -126,7 +126,7 @@ def wipe_benchmark_tables(storage: StorageEngine) -> None:
         # `_q` has two backends with disjoint error surfaces (httpx raises
         # HTTPError/ValueError/RuntimeError; the embedded path raises
         # surrealdb-SDK classes not importable here). Reported, not swallowed.
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — `_q` error surface is backend-dependent
             logger.warning("wipe_benchmark_tables: DELETE %s failed: %s", table, exc)
 
 
@@ -679,7 +679,7 @@ def evaluate_retrieval(
     # `recall` fans out over embeddings, storage and the HTTP backend; the
     # comment above records FTS5 syntax errors as one observed cause, but the
     # set is open. Logged with the question id, not swallowed.
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — recall spans the whole retrieval stack
         logger.warning("Retrieval failed for question %s: %s", question["question_id"], e)
         results = []
 
@@ -1127,7 +1127,7 @@ def run_benchmark(
                     # Same open surface as the retrieval-phase call above.
                     # NOTE: unlike that one this handler is SILENT — a failed
                     # recall here degrades the generated answer with no record.
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — recall spans the whole retrieval stack
                         retrieved = []
 
                     t_gen = time.monotonic()
@@ -1166,7 +1166,7 @@ def run_benchmark(
                     with open(hyp_path, "a") as _hf:
                         _hf.write(json.dumps(query_result) + "\n")
                         _hf.flush()
-            except Exception as _qerr:
+            except Exception as _qerr:  # noqa: BLE001 — harness boundary over the whole per-question body
                 # Don't let one bad question kill the whole run — record it as error
                 # so per-type aggregates remain comparable across runs.
                 print(f"\n  ERROR on {qid}: {type(_qerr).__name__}: {_qerr}", flush=True)

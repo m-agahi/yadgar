@@ -40,7 +40,7 @@ def _drainer_span():
         from opentelemetry import trace as _ot  # noqa: PLC0415
 
         return _ot.get_tracer("yadgar.file_queue").start_as_current_span("drainer.cycle")
-    except Exception:  # BLE001-KEEP: root-span construction for the drain loop: a degraded or swapped OTel provider raises arbitrary types from get_tracer (the I3 case documented in tracing.py), and the drainer must fall through to nullcontext rather than stop draining
+    except Exception:  # noqa: BLE001 — root-span construction for the drain loop: a degraded or swapped OTel provider raises arbitrary types from get_tracer (the I3 case documented in tracing.py), and the drainer must fall through to nullcontext rather than stop draining
         return contextlib.nullcontext()
 
 
@@ -178,7 +178,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             try:
                 with _drainer_span():
                     self._drain_once()
-            except Exception as exc:  # BLE001-KEEP: the drainer's daemon loop: _drain_once spans JSON parsing, storage writes and every op handler, so no type covers it, and the loop must survive to the next pass or the queue stops draining for the process lifetime. The exception is recorded, counted and logged, not swallowed
+            except Exception as exc:  # noqa: BLE001 — the drainer's daemon loop: _drain_once spans JSON parsing, storage writes and every op handler, so no type covers it, and the loop must survive to the next pass or the queue stops draining for the process lifetime. The exception is recorded, counted and logged, not swallowed
                 from yadgar._shared.observability.exception_telemetry import (
                     record_exception,  # noqa: PLC0415
                 )
@@ -468,7 +468,7 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             self._apply_with_stage_metrics(data, path)
             self._attempts.pop(fname, None)
             return 1
-        except Exception as exc:  # BLE001-KEEP: this IS the transient/permanent classifier: the caught object is handed to _classify_error to pick a retry budget, and an op handler can raise anything from a storage RuntimeError to a refusal type, so narrowing would silently drop whole failure classes out of the retry ladder
+        except Exception as exc:  # noqa: BLE001 — this IS the transient/permanent classifier: the caught object is handed to _classify_error to pick a retry budget, and an op handler can raise anything from a storage RuntimeError to a refusal type, so narrowing would silently drop whole failure classes out of the retry ladder
             err_str = str(exc)
             # Task 229: a refusal is a DECISION, not a fault — it can never
             # succeed, so it must not consume the retry budget. Recognised by

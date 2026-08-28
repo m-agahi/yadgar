@@ -117,14 +117,14 @@ def _memorize_and_find(
     # swallow a bug in the row comparison and silently return None.
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
-    except Exception:
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
         rows = []
     for row in rows:
         if row.get("content") == content and row.get("directory_context") == project:
             return row
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
-    except Exception:
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
         recent = []
     for row in recent:
         if row.get("content") == content and row.get("directory_context") == project:
@@ -965,7 +965,7 @@ def _require_model_cached(model_name: str) -> None:
         AutoConfig.from_pretrained(model_name, local_files_only=True)
     # A cache miss surfaces from the HF hub / transformers stack, whose error
     # classes are not importable when the model is absent.
-    except Exception:
+    except Exception:  # noqa: BLE001 — HF-hub cache probe error surface
         pytest.skip(
             f"{model_name} not in local HF cache — enrichment e2e runs only in the "
             "model-bundled CI image (yadgar-ci:5.72.0)"

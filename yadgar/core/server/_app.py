@@ -34,7 +34,7 @@ try:
         "YADGAR_CORE_LOG_LEVEL", os.environ.get("CORE_LOG_LEVEL", "WARNING")
     )
     _configure_logging(log_format=_log_format, level=_log_level, process="core")
-except Exception:
+except Exception:  # noqa: BLE001 — module import-time boundary: a logging-config fault must fall back to the default root handlers, never abort the import of the server module
     pass  # Non-fatal: fall back to default root handlers
 
 # ── Distributed tracing — v5.6.3 ─────────────────────────────────────────────
@@ -119,7 +119,7 @@ def _instrument_starlette_app(app) -> None:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: PLC0415
 
         FastAPIInstrumentor.instrument_app(app)
-    except Exception:
+    except Exception:  # noqa: BLE001 — OTel instrumentation is optional: the package may be absent and instrument_app also raises when the app is already instrumented; both are no-ops here
         pass  # OTel not available or app already instrumented — no-op
 
 

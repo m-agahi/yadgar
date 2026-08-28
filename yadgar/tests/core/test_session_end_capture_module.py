@@ -96,7 +96,7 @@ try:
 # hook SCRIPT: its module body can fail with anything at all (SyntaxError on a
 # bad edit, OSError, a missing dependency). The failure string is what the
 # module-level skipif below reports.
-except Exception as _e:
+except Exception as _e:  # noqa: BLE001 — exec_module runs an arbitrary script body
     _MODULE_LOADED = False
     _load_error = str(_e)
 

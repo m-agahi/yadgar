@@ -42,7 +42,7 @@ def _log_audit_action(storage, directory: str, action: str, payload: dict) -> No
             session_id="audit",
             timestamp=storage._now_iso(),
         )
-    except Exception:  # BLE001-KEEP: audit-trail write: insert_action_log reaches storage, which raises with no common base, and a lost audit row must not abort the audit action it records
+    except Exception:  # noqa: BLE001 — audit-trail write: insert_action_log reaches storage, which raises with no common base, and a lost audit row must not abort the audit action it records
         logger.debug("_log_audit_action failed (non-fatal)", exc_info=True)
 
 
@@ -65,7 +65,7 @@ def _apply_forget_expired(storage, resolved: str, action_entry: dict) -> dict | 
             {"memory_id": mid, "expired_at": action_entry.get("expired_at", "")},
         )
         return {"action": "forget_expired", "id": mid, "status": "deleted"}
-    except Exception:  # BLE001-KEEP: per-action isolation in the anchor-audit sweep: delete_memory plus the audit write reach storage with no common base, and one failed forget must not abandon the remaining actions
+    except Exception:  # noqa: BLE001 — per-action isolation in the anchor-audit sweep: delete_memory plus the audit write reach storage with no common base, and one failed forget must not abandon the remaining actions
         logger.debug("forget_expired failed for id=%s", mid, exc_info=True)
         return None
 
@@ -101,7 +101,7 @@ def _apply_merge(storage, resolved: str, action_entry: dict) -> dict | None:
             "forgotten_id": forget_id,
             "status": "merged",
         }
-    except Exception:  # BLE001-KEEP: per-action isolation for the merge action; same untypeable storage surface as _apply_forget_expired above
+    except Exception:  # noqa: BLE001 — per-action isolation for the merge action; same untypeable storage surface as _apply_forget_expired above
         logger.debug("merge failed for forget_id=%s", forget_id, exc_info=True)
         return None
 
@@ -212,6 +212,6 @@ def write_audit_sentinel(payload: dict) -> dict:
             },
         )
         return {"written": True}
-    except Exception:  # BLE001-KEEP: sentinel write via storage._q with no common base; the caller reads {written: False} as a soft outcome, so a failed sentinel must not fail the sweep
+    except Exception:  # noqa: BLE001 — sentinel write via storage._q with no common base; the caller reads {written: False} as a soft outcome, so a failed sentinel must not fail the sweep
         logger.debug("write_audit_sentinel: failed for dir=%s", directory, exc_info=True)
         return {"written": False}

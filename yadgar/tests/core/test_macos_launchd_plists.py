@@ -207,7 +207,7 @@ class TestPlistlibParseability:
         # The assertion is "plistlib parses this at all". Narrowing would let an
         # unexpected parser error escape as a collection error instead of this
         # named, template-identifying failure.
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — the assertion is "parses at all"
             pytest.fail(f"{template}: plistlib parse error: {exc}")
         assert isinstance(data, dict), f"{template}: plist root is not a dict"
         assert "Label" in data, f"{template}: plist missing 'Label' key"

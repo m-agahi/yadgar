@@ -104,7 +104,7 @@ def _probe_backend_health(url: str, timeout_s: float) -> bool:
 
         resp = httpx.get(url, timeout=timeout_s)
         return resp.status_code == 200
-    except Exception:
+    except Exception:  # noqa: BLE001 — httpx is imported lazily inside the try to keep this module import-cheap, so its error classes cannot be named in the clause without risking a NameError when the import is what failed
         return False
 
 

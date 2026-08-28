@@ -120,6 +120,6 @@ def record_prelude_marker(payload: dict) -> dict:
             directory, project_id=payload.get("project_id") or ""
         )
         return {"recorded": True}
-    except Exception:  # BLE001-KEEP: prelude-marker upsert through storage with no common base; the caller reads {recorded: False} as a soft outcome
+    except Exception:  # noqa: BLE001 — prelude-marker upsert through storage with no common base; the caller reads {recorded: False} as a soft outcome
         logger.debug("record_prelude_marker: upsert failed for %s", directory, exc_info=True)
         return {"recorded": False}

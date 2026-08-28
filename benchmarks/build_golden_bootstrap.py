@@ -159,7 +159,7 @@ def build_bootstrap(
     # `_q` has two backends with disjoint error surfaces (httpx raises
     # HTTPError/ValueError/RuntimeError; the embedded path raises surrealdb-SDK
     # classes not importable here). Printed with the cause, then sys.exit(1).
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — `_q` error surface is backend-dependent
         print(f"ERROR: could not query memories: {exc}", file=sys.stderr)
         print("Is the DB running? Use YADGAR_DB_URL or --db-path.", file=sys.stderr)
         sys.exit(1)

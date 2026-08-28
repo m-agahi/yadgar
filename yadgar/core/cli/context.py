@@ -45,7 +45,7 @@ def cmd_context(args):
             )
             or []
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — CLI/hook boundary: stdout must stay the clean payload the hook parses, so every fault prints one stderr line and returns rather than raising
         # Car 5 item 2 (second sub-defect): stdout MUST stay the clean
         # machine-readable payload the hook parses — never refuse to print
         # context or raise just because this failed (e.g. an unresolvable

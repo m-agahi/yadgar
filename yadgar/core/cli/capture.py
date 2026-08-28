@@ -38,7 +38,7 @@ def cmd_capture(args):
                 "timestamp": datetime.now(UTC).isoformat(),
             },
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — CLI top-level error reporting: every fault prints a one-line reason and exits 1 rather than a traceback
         print(f"Failed to capture action: {e}", file=sys.stderr)
         sys.exit(1)
 

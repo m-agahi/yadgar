@@ -607,7 +607,7 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
                 {"id": num_id, "dc": dc},
             )
             backfilled += 1
-        except Exception as _e:  # BLE001-KEEP: per-row isolation inside a migration: storage._q raises RuntimeError (SurrealDB), the httpx transport family and arbitrary embedded-SDK types with no common base, and the handler's whole job is the 'global' fallback write below
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration: storage._q raises RuntimeError (SurrealDB), the httpx transport family and arbitrary embedded-SDK types with no common base, and the handler's whole job is the 'global' fallback write below
             _log.warning(
                 "migration_016: backfill failed for wiki_page id=%s (%s) — defaulting to 'global'",
                 raw_id,
@@ -619,7 +619,7 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
                     {"id": num_id},
                 )
                 backfilled += 1
-            except Exception as _e2:  # BLE001-KEEP: last-resort fallback write; same storage surface as above, and a migration must log-and-continue rather than abort half-applied
+            except Exception as _e2:  # noqa: BLE001 — last-resort fallback write; same storage surface as above, and a migration must log-and-continue rather than abort half-applied
                 _log.error(
                     "migration_016: fallback backfill also failed for id=%s: %s",
                     raw_id,
@@ -657,7 +657,7 @@ def _migration_016_directory_context(storage) -> None:  # noqa: C901
                 {"id": num_mem_id},
             )
             mem_backfilled += 1
-        except Exception as _e:  # BLE001-KEEP: per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
             _log.warning(
                 "migration_016: memory backfill failed for id=%s: %s",
                 raw_mem_id,
@@ -739,7 +739,7 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
             )
             wiki_backfilled += 1
             wiki_buckets[dc] = wiki_buckets.get(dc, 0) + 1
-        except Exception as _e:  # BLE001-KEEP: per-row isolation inside a migration: same storage surface, and the handler's whole job is the 'global' fallback write below
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration: same storage surface, and the handler's whole job is the 'global' fallback write below
             _log.warning(
                 "migration_018: backfill failed for wiki_page id=%s (%s) — defaulting to 'global'",
                 raw_id,
@@ -752,7 +752,7 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
                 )
                 wiki_backfilled += 1
                 wiki_buckets["global"] = wiki_buckets.get("global", 0) + 1
-            except Exception as _e2:  # BLE001-KEEP: last-resort fallback write; same storage surface as above, and a migration must log-and-continue rather than abort half-applied
+            except Exception as _e2:  # noqa: BLE001 — last-resort fallback write; same storage surface as above, and a migration must log-and-continue rather than abort half-applied
                 _log.error(
                     "migration_018: fallback backfill also failed for wiki_page id=%s: %s",
                     raw_id,
@@ -792,7 +792,7 @@ def _migration_018_directory_context_backfill_repair(storage) -> None:  # noqa: 
                 {"id": num_mem_id},
             )
             mem_backfilled += 1
-        except Exception as _e:  # BLE001-KEEP: per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
             _log.warning(
                 "migration_018: memory backfill failed for id=%s: %s",
                 raw_mem_id,
@@ -950,7 +950,7 @@ def _migration_023_memory_directory_context_backfill(storage) -> None:
                 {"id": num_id},
             )
             mem_backfilled += 1
-        except Exception as _e:  # BLE001-KEEP: per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
+        except Exception as _e:  # noqa: BLE001 — per-row isolation inside a migration; same storage exception surface, and one unwritable row must not abort a half-applied migration
             _log.warning(
                 "migration_023: memory backfill failed for id=%s: %s",
                 raw_id,

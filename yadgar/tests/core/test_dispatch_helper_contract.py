@@ -188,7 +188,7 @@ class TestContractReseedOnDelete:
         # driver, whose error surface differs between the httpx and embedded
         # backends — which is precisely the "not available in this fixture"
         # condition the skip names.
-        except Exception:
+        except Exception:  # noqa: BLE001 — `_q` error surface is backend-dependent
             pytest.skip("Storage delete not available in this fixture — skip delete test")
 
         _flush_prompt_cache()

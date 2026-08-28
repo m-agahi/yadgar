@@ -280,7 +280,7 @@ class _RerankingMixin:
                 linked = self._engram.get_temporally_linked(mem["id"])
                 if linked:
                     mem["temporal_links"] = linked
-            except Exception:  # BLE001-KEEP: per-memory enrichment: the engram lookup reaches storage with no common base, and one memory without temporal links must not drop the whole result set
+            except Exception:  # noqa: BLE001 — per-memory enrichment: the engram lookup reaches storage with no common base, and one memory without temporal links must not drop the whole result set
                 pass
         return result_memories
 
@@ -291,7 +291,7 @@ class _RerankingMixin:
             return result_memories
         try:
             result_memories = self._metacognition.manage_context(result_memories)
-        except Exception:  # BLE001-KEEP: optional rerank stage: metacognition drives the embedding engine and storage, which share no common base, and the documented degrade is 'return the unoptimized list'
+        except Exception:  # noqa: BLE001 — optional rerank stage: metacognition drives the embedding engine and storage, which share no common base, and the documented degrade is 'return the unoptimized list'
             logger.debug("Metacognition manage_context failed, returning unoptimized")
         return result_memories
 

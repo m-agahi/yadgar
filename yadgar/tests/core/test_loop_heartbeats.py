@@ -193,7 +193,7 @@ def test_metrics_sampler_updates_heartbeat():
         ga.sample_system_metrics(pid=os.getpid(), db_path="/tmp/fake_yadgar_test.db")
     # Samples /proc, psutil and the (deliberately absent) db_path; the comment
     # below is the contract — only the heartbeat assertion after this matters.
-    except Exception:
+    except Exception:  # noqa: BLE001 — samples /proc + psutil + a missing db_path
         # Non-heartbeat failures are acceptable here
         pass
 

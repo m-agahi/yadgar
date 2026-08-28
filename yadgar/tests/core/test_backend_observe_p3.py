@@ -77,7 +77,7 @@ def _client(es, provider):
     # Re-instrumenting an app that a previous test already instrumented raises
     # opentelemetry.instrumentation.dependencies errors whose classes differ by
     # instrumentation version and are not imported here.
-    except Exception:
+    except Exception:  # noqa: BLE001 — OTel re-instrumentation error surface
         pass
     return TestClient(es.app, raise_server_exceptions=False)
 

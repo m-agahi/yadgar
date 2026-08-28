@@ -403,7 +403,7 @@ class _ClientMixin:
                     self._restore_from_backup()
                 else:
                     _log.error("No backup available to restore from.")
-        except Exception as e:  # BLE001-KEEP: startup health probe: it runs a query whose failures share no common base (RuntimeError from SurrealDB, httpx transport errors, arbitrary embedded-SDK types) and a probe that cannot run must not stop the engine from opening
+        except Exception as e:  # noqa: BLE001 — startup health probe: it runs a query whose failures share no common base (RuntimeError from SurrealDB, httpx transport errors, arbitrary embedded-SDK types) and a probe that cannot run must not stop the engine from opening
             _log.warning("DB health check failed: %s", e)
 
     @observe(tier="stage")
@@ -411,7 +411,7 @@ class _ClientMixin:
         """Restore DB from the rolling backup after detecting corruption."""
         try:
             self._embedded_db.close()
-        except Exception:  # BLE001-KEEP: close-before-restore: the DB being corrupt is the reason we are here, so its close() is expected to fail and must not block the restore below
+        except Exception:  # noqa: BLE001 — close-before-restore: the DB being corrupt is the reason we are here, so its close() is expected to fail and must not block the restore below
             _log.warning("Failed to close embedded DB before backup restore", exc_info=True)
 
         from surrealdb import Surreal
@@ -427,7 +427,7 @@ class _ClientMixin:
             self._embedded_db.use("yadgar", "main")
             self._init_schema()
             _log.warning("DB restored from backup successfully.")
-        except Exception as e:  # BLE001-KEEP: last-resort corruption recovery: the body spans shutil, the SurrealKV SDK constructor and schema DDL, which share no common base; a failed restore is logged and the caller continues degraded rather than crashing on import
+        except Exception as e:  # noqa: BLE001 — last-resort corruption recovery: the body spans shutil, the SurrealKV SDK constructor and schema DDL, which share no common base; a failed restore is logged and the caller continues degraded rather than crashing on import
             _log.error("DB restore failed: %s", e)
 
     # ------------------------------------------------------------------ helpers
@@ -686,7 +686,7 @@ class _ClientMixin:
         surql, params = _inline_int_record_ids(surql, params)
         try:
             return self._embedded_db.query(surql, params or {})
-        except Exception as exc:  # BLE001-KEEP: FINDING (car I): the retry is UNGATED. The docstring says it targets SurrealDB's failed-transaction message, but every exception replays the statement — writes included. The server transport gates the same replay on _RETRYABLE_CONFLICT_RE + _replay_is_safe (see _write_conflict.py); the embedded transport has neither. Narrowing needs that gate, which is a behaviour change out of this car's scope
+        except Exception as exc:  # noqa: BLE001 — FINDING (car I): the retry is UNGATED. The docstring says it targets SurrealDB's failed-transaction message, but every exception replays the statement — writes included. The server transport gates the same replay on _RETRYABLE_CONFLICT_RE + _replay_is_safe (see _write_conflict.py); the embedded transport has neither. Narrowing needs that gate, which is a behaviour change out of this car's scope
             _log.debug("Embedded DB error (%s), retrying…", exc)
             return self._embedded_db.query(surql, params or {})
 

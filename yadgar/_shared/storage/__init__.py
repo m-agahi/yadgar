@@ -374,7 +374,7 @@ class StorageEngine(
         # Unregister atexit to avoid double-close
         try:
             atexit.unregister(self.close)
-        except Exception:  # BLE001-KEEP: close() is also the atexit handler; during interpreter shutdown the atexit machinery itself can be half-torn-down, and a raise here would replace whatever really went wrong
+        except Exception:  # noqa: BLE001 — close() is also the atexit handler; during interpreter shutdown the atexit machinery itself can be half-torn-down, and a raise here would replace whatever really went wrong
             pass
         # Signal connection gone regardless of mode.
         try:
@@ -389,19 +389,19 @@ class StorageEngine(
             if http is not None:
                 try:
                     http.close()
-                except Exception:  # BLE001-KEEP: teardown: httpx client close reaches sockets and the transport's own cleanup, and the remaining close() steps below must still run
+                except Exception:  # noqa: BLE001 — teardown: httpx client close reaches sockets and the transport's own cleanup, and the remaining close() steps below must still run
                     pass
             ro_http = getattr(self, "_http_ro", None)
             if ro_http is not None:
                 try:
                     ro_http.close()
-                except Exception:  # BLE001-KEEP: teardown: same as the OWNER client above, for the optional read-only client
+                except Exception:  # noqa: BLE001 — teardown: same as the OWNER client above, for the optional read-only client
                     pass
             return
         # Embedded mode: close DB and release file lock
         try:
             self._embedded_db.close()
-        except Exception:  # BLE001-KEEP: teardown: the embedded SurrealKV SDK raises no common base, and the file-lock release below must still run
+        except Exception:  # noqa: BLE001 — teardown: the embedded SurrealKV SDK raises no common base, and the file-lock release below must still run
             pass
         # Release the file lock
         if hasattr(self, "_lock_file") and self._lock_file and not self._lock_file.closed:

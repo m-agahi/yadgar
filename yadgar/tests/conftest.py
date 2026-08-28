@@ -546,7 +546,7 @@ def _teardown_surreal_handle(handle: dict, *, wait_timeout: float = 5.0) -> None
         # data-dir removal below still runs, which
         # ``test_teardown_removes_data_dir_even_when_proc_reap_raises`` asserts
         # directly by making ``proc.terminate`` raise RuntimeError.
-        except Exception:
+        except Exception:  # noqa: BLE001 — reap of a caller-supplied proc object
             pass
     data_dir = handle.get("data_dir")
     if data_dir:
@@ -1145,7 +1145,7 @@ def _wipe_registered_module_engines() -> None:
         # raises HTTPError/ValueError/RuntimeError, the embedded path raises
         # surrealdb-SDK classes that are not importable here.  A closed engine
         # also fails inside the driver, not at this boundary.
-        except Exception:
+        except Exception:  # noqa: BLE001 — `_q` error surface is backend-dependent
             pass
 
 
@@ -1298,7 +1298,7 @@ def _wipe_via_live_storage(storage, db_url: str) -> None:
         storage._q(_batched_delete_sql(_WIPE_TABLES))
     # See `_wipe_registered_module_engines`: `_q`'s error surface depends on
     # which backend the engine is running (httpx vs the embedded SDK).
-    except Exception:
+    except Exception:  # noqa: BLE001 — `_q` error surface is backend-dependent
         pass
     # Always wipe "main" — CLI subprocesses write there bypassing isolation patch.
     try:
@@ -1482,7 +1482,7 @@ def memorize_sync(
     # envelope", which is exactly the `KeyError: 'id'` failure described above.
     try:
         rows = storage.search_memories_fts(content[:100], min_heat=0.0, limit=20)
-    except Exception:
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
         rows = []
     for row in rows:
         if row.get("content") == content and _row_in_scope(row, _scope):
@@ -1492,7 +1492,7 @@ def memorize_sync(
     # a recent hot-memories scan with exact content comparison.
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
-    except Exception:
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
         recent = []
     for row in recent:
         if row.get("content") == content and _row_in_scope(row, _scope):
@@ -1504,7 +1504,7 @@ def memorize_sync(
     # that test deduplication still get a dict with 'id'.
     try:
         recent = storage.get_memories_by_heat(min_heat=0.0, limit=100)
-    except Exception:
+    except Exception:  # noqa: BLE001 — storage error surface is backend-dependent
         recent = []
     for row in recent:
         stored = row.get("content", "")

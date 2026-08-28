@@ -53,7 +53,7 @@ def cmd_export_duckdb(args) -> None:
     except FileExistsError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — CLI top-level error reporting: every fault prints a one-line reason and exits 1 rather than a traceback
         print(f"Export failed: {exc}", file=sys.stderr)
         sys.exit(1)
 

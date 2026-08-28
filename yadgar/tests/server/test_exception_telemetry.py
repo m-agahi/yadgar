@@ -375,7 +375,7 @@ def test_consolidation_orchestrator_link_similar_failure():
         consolidator._consolidation_cycle()
     # The test consolidator's phase raises on purpose; the assertion is on the
     # exception-telemetry counter, so the cycle's own outcome is irrelevant.
-    except Exception:
+    except Exception:  # noqa: BLE001 — a test phase raises on purpose
         pass
 
     after = _counter_value(
