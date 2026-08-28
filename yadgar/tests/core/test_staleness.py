@@ -128,67 +128,6 @@ class TestValidateMemory:
         assert result["reason"] == "memory not found"
 
 
-class TestScanDirectory:
-    def test_scan_directory(self, storage, detector, tmp_path):
-        scan_dir = tmp_path / "project"
-        scan_dir.mkdir()
-        a = scan_dir / "a.py"
-        b = scan_dir / "b.py"
-        a.write_text("content_a")
-        b.write_text("content_b")
-
-        hash_a = StalenessDetector._compute_file_hash(str(a))
-        hash_b = StalenessDetector._compute_file_hash(str(b))
-        storage.upsert_file_hash(str(a), hash_a)
-        storage.upsert_file_hash(str(b), hash_b)
-
-        storage.insert_memory(
-            _make_memory(
-                content="about a",
-                directory=str(scan_dir),
-                file_hash=hash_a,
-            )
-        )
-
-        a.write_text("modified_a")
-
-        result = detector.scan_directory(str(scan_dir))
-        assert result["files_scanned"] == 2
-        assert result["files_changed"] == 1
-        assert result["memories_flagged"] >= 1
-
-    def test_scan_skips_ignored_dirs(self, storage, detector, tmp_path):
-        scan_dir = tmp_path / "project"
-        scan_dir.mkdir()
-
-        git_dir = scan_dir / ".git"
-        git_dir.mkdir()
-        (git_dir / "config").write_text("git config")
-
-        pycache = scan_dir / "__pycache__"
-        pycache.mkdir()
-        (pycache / "mod.cpython-311.pyc").write_text("bytecode")
-
-        normal = scan_dir / "main.py"
-        normal.write_text("print('hi')")
-
-        result = detector.scan_directory(str(scan_dir))
-        assert result["files_scanned"] == 1
-
-    def test_scan_skips_binary_files(self, storage, detector, tmp_path):
-        scan_dir = tmp_path / "project"
-        scan_dir.mkdir()
-
-        text_file = scan_dir / "readme.txt"
-        text_file.write_text("hello")
-
-        binary_file = scan_dir / "image.dat"
-        binary_file.write_bytes(b"\x00\x01\x02\x03")
-
-        result = detector.scan_directory(str(scan_dir))
-        assert result["files_scanned"] == 1
-
-
 class TestStaleMemoryHeat:
     def test_stale_memory_heat_halved(self, storage, detector, tmp_path):
         f = tmp_path / "module.py"
@@ -212,30 +151,6 @@ class TestStaleMemoryHeat:
 
         memory = storage.get_memory(mem_id)
         assert memory["heat"] == pytest.approx(0.4)
-        assert memory["is_stale"] is True
-
-    def test_scan_halves_heat(self, storage, detector, tmp_path):
-        f = tmp_path / "app.py"
-        f.write_text("v1")
-
-        file_hash = StalenessDetector._compute_file_hash(str(f))
-        storage.upsert_file_hash(str(f), file_hash)
-
-        mem_id = storage.insert_memory(
-            _make_memory(
-                content="app logic",
-                directory=str(tmp_path),
-                file_hash=file_hash,
-                heat=1.0,
-            )
-        )
-
-        f.write_text("v2")
-
-        detector.scan_directory(str(tmp_path))
-
-        memory = storage.get_memory(mem_id)
-        assert memory["heat"] == pytest.approx(0.5)
         assert memory["is_stale"] is True
 
 

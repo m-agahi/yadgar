@@ -150,7 +150,7 @@ def _viz_loop(host: str, port: int) -> None:
 
 
 @observe(tier="stage")
-def _start_daemon_threads(watch_directory: str | None, _settings) -> None:
+def _start_daemon_threads(_settings) -> None:
     """Start background daemon threads (metrics, reranker-idle, viz).
 
     Called only when start_daemons=True. Extracted from init_engines to
@@ -158,8 +158,8 @@ def _start_daemon_threads(watch_directory: str | None, _settings) -> None:
     """
     # v5.7.0 PR-0: consolidation daemon removed; cron takes over in PR-1.
     # _st._consolidation.start() intentionally removed.
-    if watch_directory:
-        _st._staleness.start(watch_directory)
+    # Car K: the staleness watchdog start went with the watch_directory param —
+    # its only production caller passed None, so it never fired.
 
     # Background system-metrics sampler for /api/system and SSE events
     _pid = os.getpid()

@@ -527,56 +527,6 @@ class TestBufferEpisodeIntegration:
         assert "Third line" in episodes[0]["raw_content"]
 
 
-class TestStalenessWatcherIntegration:
-    @pytest.fixture(autouse=True)
-    def _staleness_backend(self, storage, monkeypatch, admin_backend_bypass):
-        """T2 Car E1: scan_directory forwards its batched flag compute to the
-        backend staleness_scan op — wire the in-process bypass + storage."""
-        import yadgar._shared.runtime.state as _st
-
-        monkeypatch.setattr(_st, "_storage", storage)
-
-    def test_watcher_start_stop(self, storage, settings, tmp_path):
-        """Staleness detector should start and stop cleanly."""
-        detector = StalenessDetector(storage, settings)
-        detector.start(str(tmp_path))
-        assert detector.is_running is True
-
-        detector.stop()
-        assert detector.is_running is False
-
-    def test_scan_detects_changes(self, storage, settings, tmp_path):
-        """Scan should detect changed files and flag related memories."""
-        f = tmp_path / "module.py"
-        f.write_text("original content")
-
-        file_hash = StalenessDetector._compute_file_hash(str(f))
-        storage.upsert_file_hash(str(f), file_hash)
-
-        mem_id = storage.insert_memory(
-            {
-                "project_id": _TEST_PROJECT_ID,
-                "content": "module documentation",
-                "directory_context": str(tmp_path),
-                "heat": 1.0,
-                "is_stale": False,
-                "file_hash": file_hash,
-            }
-        )
-
-        f.write_text("modified content")
-
-        detector = StalenessDetector(storage, settings)
-        result = detector.scan_directory(str(tmp_path))
-
-        assert result["files_changed"] >= 1
-        assert result["memories_flagged"] >= 1
-
-        memory = storage.get_memory(mem_id)
-        assert memory["is_stale"] is True
-        assert memory["heat"] == pytest.approx(0.5)
-
-
 # ── NEW: Comprehensive v2 integration tests ──────────────────────────
 
 

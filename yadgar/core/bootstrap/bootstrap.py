@@ -65,7 +65,6 @@ def core_init_engines(
     db_path: str | None = None,
     embedding_model: str | None = None,
     start_daemons: bool = False,
-    watch_directory: str | None = None,
     local_engines: bool = False,
     engine_set: str = "full",
 ):
@@ -104,7 +103,6 @@ def core_init_engines(
         db_path=db_path,
         embedding_model=embedding_model,
         start_daemons=start_daemons,
-        watch_directory=watch_directory,
         local_engines=local_engines,
         engine_set=engine_set,
     )
@@ -143,7 +141,7 @@ def core_init_engines(
     if start_daemons:
         from yadgar.core.daemon.daemons import _start_daemon_threads
 
-        _start_daemon_threads(watch_directory, get_settings())
+        _start_daemon_threads(get_settings())
 
     # v5.49.4: emit READY=1 last — full engine set + daemons live, server ready.
     _emit_sd_ready()

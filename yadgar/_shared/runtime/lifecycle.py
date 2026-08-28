@@ -448,7 +448,6 @@ def init_engines(
     db_path: str | None = None,
     embedding_model: str | None = None,
     start_daemons: bool = False,
-    watch_directory: str | None = None,
     local_engines: bool = False,
     engine_set: Literal["slim", "full"] = "full",
     sql_storage: bool = False,
@@ -502,8 +501,10 @@ def init_engines(
 
     # R2a Car D1: daemon-thread startup moved to core.bootstrap.core_init_engines
     # (it runs after the core-only engines incl. _st._staleness are built). The
-    # start_daemons/watch_directory params remain for signature stability — the
-    # backend slim bootstrap calls this directly and never sets start_daemons.
+    # start_daemons param remains for signature stability — the backend slim
+    # bootstrap calls this directly and never sets start_daemons. Car K deleted
+    # the watch_directory twin: it reached only StalenessDetector.start(), whose
+    # sole production caller passed None.
 
     # Eagerly warm up the embedding model so the first recall isn't slow.
     _st._embeddings._ensure_model()
@@ -581,8 +582,8 @@ def shutdown(on_stopping=None, snapshot_caches=None):
         _st._queue_drainer.flush_barrier(timeout=10.0)
         _st._queue_drainer.stop()
     # v5.7.0 PR-0: consolidation daemon removed; no stop() needed.
-    if _st._staleness is not None:
-        _st._staleness.stop()
+    # Car K: StalenessDetector.stop() removed with the watchdog arm — the
+    # observer it tore down was never started (see core/staleness/staleness.py).
     # T3 Car 2: drain deferred recall session side-effects (SR transition storage
     # writes, buffer captures, replay ticks) BEFORE _buffer.flush() AND before
     # storage.close() — the deferred worker both appends to _st._buffer (so it must

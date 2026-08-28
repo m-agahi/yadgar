@@ -13,57 +13,16 @@ from yadgar._shared.contracts.models import (
     ADR,
     AstrocyteProcess,
     CausalDAGEdge,
-    Checkpoint,
     ConsolidationLog,
     Entity,
-    Episode,
     FileHash,
-    Memory,
     MemoryArchive,
     MemoryCluster,
     MemoryRule,
     MemoryStats,
     MemoryTransition,
-    NarrativeEntry,
-    ProspectiveMemory,
     Relationship,
 )
-
-# ---------------------------------------------------------------------------
-# Episode
-# ---------------------------------------------------------------------------
-
-
-class TestEpisode:
-    def test_happy_path_required_fields(self):
-        ep = Episode(session_id="s1", directory="/home/user", raw_content="hello")
-        assert ep.session_id == "s1"
-        assert ep.directory == "/home/user"
-        assert ep.raw_content == "hello"
-        assert ep.id is None
-        assert ep.overlap_start is None
-        assert ep.overlap_end is None
-        assert isinstance(ep.timestamp, datetime)
-
-    def test_optional_overlap_fields(self):
-        ep = Episode(
-            session_id="s2",
-            directory="/tmp",
-            raw_content="x",
-            overlap_start=5,
-            overlap_end=10,
-        )
-        assert ep.overlap_start == 5
-        assert ep.overlap_end == 10
-
-    def test_timestamp_default_is_utc(self):
-        ep = Episode(session_id="s3", directory="/tmp", raw_content="y")
-        assert ep.timestamp.tzinfo is not None
-
-    def test_id_can_be_set(self):
-        ep = Episode(id=42, session_id="s4", directory="/a", raw_content="z")
-        assert ep.id == 42
-
 
 # ---------------------------------------------------------------------------
 # Entity
@@ -136,80 +95,6 @@ class TestRelationship:
         )
         assert r.is_causal is True
         assert r.confidence == 0.8
-
-
-# ---------------------------------------------------------------------------
-# Memory
-# ---------------------------------------------------------------------------
-
-
-class TestMemory:
-    def test_happy_path_required_fields(self):
-        m = Memory(content="remember this", directory_context="/project")
-        assert m.content == "remember this"
-        assert m.directory_context == "/project"
-        assert m.heat == 1.0
-        assert m.is_stale is False
-        assert m.surprise_score == 0.0
-        assert m.importance == 0.5
-        assert m.access_count == 0
-
-    def test_happy_path_defaults(self):
-        m = Memory(content="remember this", directory_context="/project")
-        assert m.useful_count == 0
-        assert m.store_type == "episodic"
-        assert m.compression_level == 0
-        assert m.plasticity == 1.0
-        assert m.stability == 0.0
-        assert m.excitability == 1.0
-        assert m.is_protected is False
-        assert m.vector_clock == "{}"
-
-    def test_embedding_is_optional(self):
-        m = Memory(content="x", directory_context="/tmp")
-        assert m.embedding is None
-
-    def test_tags_default_empty(self):
-        m = Memory(content="y", directory_context="/tmp")
-        assert m.tags == []
-
-    def test_semantic_store_type(self):
-        m = Memory(content="z", directory_context="/tmp", store_type="semantic")
-        assert m.store_type == "semantic"
-
-    def test_v3_frontier_fields(self):
-        m = Memory(
-            content="frontier",
-            directory_context="/project",
-            plasticity=0.5,
-            stability=0.9,
-            excitability=1.2,
-            sr_x=0.3,
-            sr_y=0.7,
-            reconsolidation_count=3,
-            provenance_agent="subagent-alpha",
-            is_protected=True,
-        )
-        assert m.plasticity == 0.5
-        assert m.stability == 0.9
-        assert m.excitability == 1.2
-        assert m.sr_x == 0.3
-        assert m.sr_y == 0.7
-        assert m.reconsolidation_count == 3
-        assert m.provenance_agent == "subagent-alpha"
-        assert m.is_protected is True
-
-    def test_compressed_memory(self):
-        m = Memory(
-            content="gist",
-            directory_context="/p",
-            compressed=True,
-            compression_level=1,
-            original_content="original full text",
-        )
-        assert m.compressed is True
-        assert m.compression_level == 1
-        assert m.original_content == "original full text"
 
 
 # ---------------------------------------------------------------------------
@@ -301,72 +186,6 @@ class TestMemoryCluster:
         mc = MemoryCluster(name="root", level=2, parent_cluster_id=10, member_count=50)
         assert mc.level == 2
         assert mc.parent_cluster_id == 10
-
-
-# ---------------------------------------------------------------------------
-# ProspectiveMemory (v2)
-# ---------------------------------------------------------------------------
-
-
-class TestProspectiveMemory:
-    def test_directory_match(self):
-        pm = ProspectiveMemory(
-            content="remind me when in /project",
-            trigger_condition="/project",
-            trigger_type="directory_match",
-        )
-        assert pm.trigger_type == "directory_match"
-        assert pm.is_active is True
-        assert pm.triggered_count == 0
-        assert pm.triggered_at is None
-
-    def test_invalid_trigger_type_raises(self):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            ProspectiveMemory(
-                content="x",
-                trigger_condition="y",
-                trigger_type="invalid_type",
-            )
-
-    def test_all_trigger_types(self):
-        for ttype in ["directory_match", "keyword_match", "entity_match", "time_based"]:
-            pm = ProspectiveMemory(content="c", trigger_condition="t", trigger_type=ttype)
-            assert pm.trigger_type == ttype
-
-
-# ---------------------------------------------------------------------------
-# NarrativeEntry (v2)
-# ---------------------------------------------------------------------------
-
-
-class TestNarrativeEntry:
-    def test_happy_path(self):
-        now = datetime.now(UTC)
-        ne = NarrativeEntry(
-            directory_context="/project",
-            summary="did stuff",
-            period_start=now,
-            period_end=now,
-        )
-        assert ne.summary == "did stuff"
-        assert ne.key_decisions == []
-        assert ne.key_events == []
-        assert ne.heat == 1.0
-
-    def test_with_decisions_and_events(self):
-        now = datetime.now(UTC)
-        ne = NarrativeEntry(
-            directory_context="/p",
-            summary="s",
-            period_start=now,
-            period_end=now,
-            key_decisions=["decided A"],
-            key_events=["event B"],
-        )
-        assert ne.key_decisions == ["decided A"]
-        assert ne.key_events == ["event B"]
 
 
 # ---------------------------------------------------------------------------
@@ -488,45 +307,6 @@ class TestCausalDAGEdge:
         )
         assert edge.algorithm == "ges"
         assert edge.is_validated is True
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint (v4)
-# ---------------------------------------------------------------------------
-
-
-class TestCheckpoint:
-    def test_defaults(self):
-        cp = Checkpoint(directory_context="/work")
-        assert cp.session_id == "default"
-        assert cp.current_task == ""
-        assert cp.files_being_edited == []
-        assert cp.key_decisions == []
-        assert cp.open_questions == []
-        assert cp.next_steps == []
-        assert cp.active_errors == []
-        assert cp.custom_context == ""
-        assert cp.epoch == 0
-        assert cp.is_active is True
-
-    def test_full_checkpoint(self):
-        cp = Checkpoint(
-            session_id="sess-abc",
-            directory_context="/project",
-            current_task="implement feature X",
-            files_being_edited=["main.py", "tests/test_main.py"],
-            key_decisions=["use pydantic v2"],
-            open_questions=["how to handle auth?"],
-            next_steps=["write tests", "update docs"],
-            active_errors=["TypeError on line 42"],
-            custom_context="some context",
-            epoch=3,
-        )
-        assert cp.session_id == "sess-abc"
-        assert cp.current_task == "implement feature X"
-        assert len(cp.files_being_edited) == 2
-        assert cp.epoch == 3
-        assert cp.is_active is True
 
 
 # ---------------------------------------------------------------------------

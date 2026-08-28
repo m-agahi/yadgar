@@ -250,7 +250,6 @@ yadgar/core/install/codebase_memory_mcp.py:S310:1
 yadgar/core/install/install_subagents_lib.py:PLC0415:1
 yadgar/core/lifecycle/__init__.py:PLC0415:1
 yadgar/core/lifecycle/lifecycle.py:PLC0415:7
-yadgar/core/migrations/rekey_corpus.py:PLC0415:3
 yadgar/core/ops/__init__.py:PLC0415:1
 yadgar/core/runtime_config_client.py:PLC0415:1
 yadgar/core/sanitize/__init__.py:PLC0415:1
