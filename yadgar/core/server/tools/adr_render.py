@@ -41,6 +41,81 @@ _REQUIRED_FIELDS: tuple[str, ...] = (
 )
 
 
+# ── Decision-form gate (Car B) ─────────────────────────────────────────────────
+#
+# An ADR's Decision states the RULE, not the work that produced it.  Context may
+# cite the incident; the Decision may not name a car, a train, or a ledger row as
+# its SUBJECT.  Measured on the 272-ADR corpus (2026-08-28): the drift is FORM,
+# not substance — every ADR since 2026-08-19 carries real alternatives, but some
+# read as worklogs because the Decision's subject is the car that wrote them.
+#
+# PRECISION IS THE DESIGN CONSTRAINT.  A false positive blocks a legitimate ADR
+# write, which is worse than missing one, so these patterns match SUBJECT
+# POSITION rather than mere mention.  The two corpus fixtures that kill the naive
+# forms (see yadgar/tests/core/test_adr_decision_form_gate.py):
+#   * ADR-0444 mentions ``origin/train/<name>`` and states a general rule → a
+#     substring match on "train/" is WRONG.
+#   * ADR-0460 uses generic car-as-subject ("A deletion car must still move
+#     ratchets DOWN") → grammatical-subject matching on the bare noun is WRONG.
+# Hence: a SPECIFIC designator in LEADING position, plus one ledger phrase that
+# is specific enough to match anywhere.
+
+# "Car-F ...", "Car B2 ...", "Car 5 ..." as the decision's opening subject.
+# CASE-SENSITIVE ON PURPOSE: the uppercase designator is what separates a car
+# label from ordinary prose.  Adding re.IGNORECASE silently widens this to match
+# any sentence opening with the word "car".
+_LEADING_CAR_SUBJECT = re.compile(r"^[\s\"'`(]*Car[-\s](?:[A-Z]\d*[a-z]?|\d+)\b")
+
+# A train REF as the decision's opening subject ("train/bug-bag-2 ships ...",
+# "Train `train/x` lands ...").  The literal ``train/`` is required — a decision
+# that merely talks about trains is not caught, by design.
+_LEADING_TRAIN_SUBJECT = re.compile(
+    r"^[\s\"'`(]*(?:The\s+)?(?:[Tt]rain\s+)?[`'\"]?(?:origin/)?train/[\w./-]+"
+)
+
+# A ledger row closed as the decision's own consequence ("Closes #94 in the
+# ledger", "closes ledger row #94").  Specific enough to match anywhere; plain
+# ledger prose ("a completed ledger row stays readable") does not reach it.
+_LEDGER_ROW_CLOSE = re.compile(
+    r"\bclos(?:e|es|ed|ing)\s+"
+    r"(?:#\d+\s+in\s+the\s+ledger|(?:the\s+)?ledger\s+(?:row|task|entry|item)\s*#?\d+)",
+    re.IGNORECASE,
+)
+
+_DECISION_FORM_PATTERNS: tuple[re.Pattern[str], ...] = (
+    _LEADING_CAR_SUBJECT,
+    _LEADING_TRAIN_SUBJECT,
+    _LEDGER_ROW_CLOSE,
+)
+
+
+@observe(exempt="pure regex predicate on one string; no I/O, no error branch worth spanning")
+def _car_shaped_decision_error(decision: str) -> dict | None:
+    """Return an error dict when ``decision`` reads as a worklog, else ``None``.
+
+    Blank input returns ``None`` — an absent decision is a missing-required-field
+    error, and the caller's field loop must own that diagnosis.
+    """
+    text = (decision or "").strip()
+    if not text:
+        return None
+    for pattern in _DECISION_FORM_PATTERNS:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        return {
+            "ok": False,
+            "error": (
+                f"decision names a car, a train or a ledger row as its subject "
+                f"({match.group(0).strip()!r}), so it records the work rather than "
+                f"the decision. An ADR's decision states the RULE the work "
+                f"established; restate it as that rule and move the car/train/"
+                f"incident narrative into 'context'."
+            ),
+        }
+    return None
+
+
 # ── Body builder ───────────────────────────────────────────────────────────────
 
 
