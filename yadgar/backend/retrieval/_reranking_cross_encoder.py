@@ -130,7 +130,7 @@ class _CrossEncoderMixin:
             # Car 1 (#41): route through the ce cache so overlapping (query, text)
             # pairs already scored by crossfuse are reused (get-or-compute).
             all_scores = self.score_ce_cached(query, expanded_texts)
-        except Exception as e:
+        except Exception as e:  # BLE001-KEEP: ML client boundary: score_ce_cached reaches a local torch CrossEncoder or the remote embed service over httpx, which share no common base, and an unavailable reranker must return the pre-rerank order
             logger.warning("cross_encoder_rerank: ML client failed: %s", e)
             return memories[:top_k]
 
@@ -159,7 +159,7 @@ class _CrossEncoderMixin:
             result = self._ml.score_pair(query, document)
             # N4: circuit breaker open returns None — treat as 0.0 (graceful degrade)
             return result if result is not None else 0.0
-        except Exception:
+        except Exception:  # BLE001-KEEP: same ML client boundary as cross_encoder_rerank; the documented degrade is 0.0, matching the circuit-breaker-open None case handled on the line above
             return 0.0
 
     @observe(tier="stage", metric="retrieval.score_documents")
@@ -179,7 +179,7 @@ class _CrossEncoderMixin:
         try:
             # Car 1 (#41): get-or-compute via the ce cache (reuses crossfuse hits).
             scores = self.score_ce_cached(query, documents)
-        except Exception:
+        except Exception:  # BLE001-KEEP: same ML client boundary; the documented degrade is a 0.0 per document, matching score_single_pair's semantics
             return [0.0] * len(documents)
         # N4: circuit breaker open → whole-list None; back-fill 0.0 per document.
         if scores is None:

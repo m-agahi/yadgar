@@ -92,7 +92,7 @@ class _CircuitBreaker:
 
                 self._metrics = _m
             self._metrics.yadgar_circuit_breaker_state.labels(endpoint=self._endpoint).set(value)
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
 
     def _set_reachable(self, value: int) -> None:
@@ -103,7 +103,7 @@ class _CircuitBreaker:
 
                 self._metrics = _m
             self._metrics.yadgar_backend_reachable.labels(endpoint=self._endpoint).set(value)
-        except Exception:
+        except (ImportError, AttributeError):  # fmt: skip
             pass
 
     # ------------------------------------------------------------------ #

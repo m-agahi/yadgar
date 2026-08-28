@@ -43,7 +43,7 @@ def _record_recall_sr_transition(merged: list[dict]) -> None:
         try:
             _st._cognitive_map.record_transition(prev_id, top_id, session_key)
             _st._cognitive_map.incremental_update(prev_id, top_id)
-        except Exception:
+        except Exception:  # BLE001-KEEP: SR transition bookkeeping on the recall path: the cognitive map reaches storage, whose failures share no common base, and instrumentation must never fail the recall it observes
             logger.debug("SR transition recording failed")
     _bounded_set(_st._last_recalled_ids, session_key, top_id)
 

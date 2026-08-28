@@ -118,7 +118,7 @@ def _fetch_similar(candidate: dict, k: int) -> list[dict]:
                 continue
             results.append({"id": rid, "content": str(row.get("content") or "")[:200]})
         return results
-    except Exception as exc:
+    except Exception as exc:  # BLE001-KEEP: fail-soft candidate fetch: the query goes through storage, which raises RuntimeError over HTTP and arbitrary SDK types embedded with no common base, and no candidates means the resolver degrades to ADD
         _log.debug("_fetch_similar error (fail-soft): %s", exc)
         return []
 
@@ -209,7 +209,7 @@ def resolve_conflict(candidate: dict) -> dict[str, Any]:
         _log.warning("conflict_resolver: Ollama timeout (%s) — degrading to ADD", exc)
         _result = {"op": "ADD", "target_id": None, "reason": "ollama_timeout"}
         return _result
-    except Exception as exc:
+    except Exception as exc:  # BLE001-KEEP: trailing arm after the typed httpx.TimeoutException handler above: the Ollama call spans httpx, JSON decode and response-shape checks, and every non-timeout failure must degrade to ADD rather than lose the write
         from yadgar._shared.observability.exception_telemetry import (
             record_exception,  # noqa: PLC0415
         )
@@ -231,5 +231,5 @@ def resolve_conflict(candidate: dict) -> dict[str, Any]:
             ).observe(_elapsed_ms)
             if _result is not None:
                 yadgar_llm_decision.labels(outcome=_result["op"].lower()).inc()
-        except Exception:
+        except ImportError:
             pass

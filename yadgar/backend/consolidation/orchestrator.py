@@ -379,7 +379,7 @@ class _OrchestratorMixin:
                 yadgar_consolidation_duration_seconds.labels(phase="full_cycle").observe(
                     time.monotonic() - _cycle_wall_t0
                 )
-            except Exception:
+            except ImportError:
                 pass
 
     @observe(tier="stage", metric="consolidation.run_post_cycle_tasks")

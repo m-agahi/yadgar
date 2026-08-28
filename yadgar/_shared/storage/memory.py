@@ -155,7 +155,7 @@ def _derive_enrichment_resync(
                 new_content, new_values["enriched_content"]
             )
         return new_values, new_embedding
-    except Exception as e:
+    except Exception as e:  # BLE001-KEEP: the try body drives the optional enrichment pipeline and the embedding encoder (both third-party ML code with no common base); the handler's whole purpose is the null-out fallback that keeps stale enrichment off a rewritten memory
         import logging
 
         logging.getLogger(__name__).warning(
@@ -313,7 +313,7 @@ class _MemoryMixin:
                     )
 
                     yadgar_writegate_outcome.labels(outcome="rejected_secret_at_storage").inc()
-                except Exception:
+                except ImportError:
                     pass
                 _log.error(
                     "storage_secret_gate_blocked",
@@ -390,7 +390,7 @@ class _MemoryMixin:
                 "UPDATE type::record('memory', $id) SET embedding = $emb",
                 {"id": mid, "emb": new_floats},
             )
-        except Exception as e:
+        except Exception as e:  # BLE001-KEEP: spans the enrichment pipeline, the embedding encoder and a storage UPDATE, which share no common base; enrichment is best-effort and must not fail the write it decorates
             import logging
 
             logging.getLogger(__name__).warning("Enrichment failed: %s", e)
@@ -683,14 +683,14 @@ class _MemoryMixin:
         # Clear vector fields (no separate table)
         try:
             self.delete_vector(memory_id)  # resolved via _VectorMixin in MRO
-        except Exception:
+        except Exception:  # BLE001-KEEP: mid-delete cleanup: the vector delete reaches storage (no common base) and the row DELETE below must still run, or the memory survives its own deletion
             _log.warning("delete_vector failed for memory %s", memory_id, exc_info=True)
         try:
             self._q(
                 "UPDATE type::record('memory', $id) SET implicit_embedding = NONE",
                 {"id": memory_id},
             )
-        except Exception:
+        except Exception:  # BLE001-KEEP: mid-delete cleanup: same storage surface, and the row DELETE below must still run
             _log.warning("clear implicit_embedding failed for memory %s", memory_id, exc_info=True)
         self._q(
             "DELETE type::record('memory', $id)",
@@ -1334,7 +1334,7 @@ class _MemoryMixin:
                 {"q": entity_name},
             )
             return [self._extract_id(r.get("id")) for r in rows]
-        except Exception:
+        except Exception:  # BLE001-KEEP: this IS the FTS-unavailable fallback: SurrealDB reports a missing full-text index as a RuntimeError over HTTP but as an arbitrary SDK type in embedded mode, so there is no type to name; the handler retries with string::contains
             rows = self._q(
                 "SELECT id FROM memory WHERE string::contains(content, $name) AND heat > 0",
                 {"name": entity_name},
@@ -1373,7 +1373,7 @@ class _MemoryMixin:
                 name: [self._extract_id(r.get("id")) for r in rows]
                 for name, rows in zip(unique_names, per_stmt, strict=True)
             }
-        except Exception:
+        except Exception:  # BLE001-KEEP: degrades a batched _q_multi to the per-name path, which repeats the FTS fallback above; same untypeable transport split
             # Degrade to the exact per-name path (preserves the FTS→contains fallback).
             result = {name: self.find_memory_ids_by_entity_name(name) for name in unique_names}
         # Ensure every original name (including duplicates) maps to its list.

@@ -705,7 +705,7 @@ def _collect_process_metrics() -> None:
         if platform.system() == "Linux":
             rss = rss * 1024
         yadgar_process_rss_bytes.set(rss)
-    except Exception:
+    except (ImportError, OSError, ValueError):  # fmt: skip
         pass
 
     try:
@@ -713,7 +713,7 @@ def _collect_process_metrics() -> None:
 
         fds = len(os.listdir("/proc/self/fd"))
         yadgar_process_open_fds.set(fds)
-    except Exception:
+    except OSError:
         pass
 
 
@@ -1094,7 +1094,7 @@ def _collect_queue_depths() -> None:
                 yadgar_queue_depth.labels(queue=queue_name).set(depth)
                 if queue_name == "dlq":
                     yadgar_dlq_size.set(depth)
-    except Exception:
+    except (OSError, RuntimeError):  # fmt: skip
         pass  # non-fatal
 
 

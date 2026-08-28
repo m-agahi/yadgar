@@ -129,7 +129,7 @@ class AstrocytePool:
                 )
 
                 yadgar_astrocyte_assign_duration_ms.observe((time.perf_counter() - _t0) * 1000)
-            except Exception:
+            except ImportError:
                 pass
 
     @observe(tier="stage", metric="astrocyte.assign_memory_inner")

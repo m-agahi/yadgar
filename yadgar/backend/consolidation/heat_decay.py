@@ -260,7 +260,7 @@ class _HeatDecayMixin:
                         max(existing, proc_mult) if existing is not None else proc_mult
                     )
             return domain_mult
-        except Exception:
+        except Exception:  # BLE001-KEEP: the astrocyte-pool read that supplies per-domain decay multipliers: storage raises with no common base, and an unavailable pool must leave every multiplier at 1.0 rather than stop the decay pass
             return {}  # pool unavailable -> all mults default 1.0
 
     @observe(tier="stage", metric="consolidation.decay_memories")

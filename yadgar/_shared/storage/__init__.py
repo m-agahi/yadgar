@@ -302,7 +302,7 @@ class StorageEngine(
 
                 yadgar_surrealdb_pool_active.set(1)
                 yadgar_surrealdb_connection_pool_wait_ms.observe(0.0)
-            except Exception:
+            except ImportError:
                 pass
             atexit.register(self.close)
             return
@@ -339,7 +339,7 @@ class StorageEngine(
                     shutil.rmtree(self._backup_path)
                 shutil.copytree(resolved, self._backup_path)
                 _log.debug("DB backup created at %s", self._backup_path)
-            except Exception as e:
+            except (OSError, shutil.Error) as e:
                 _log.warning("DB backup failed (non-fatal): %s", e)
 
         self._embedded_db = Surreal(f"surrealkv://{resolved}")
@@ -361,7 +361,7 @@ class StorageEngine(
 
             yadgar_surrealdb_pool_active.set(1)
             yadgar_surrealdb_connection_pool_wait_ms.observe(0.0)
-        except Exception:
+        except ImportError:
             pass
 
         # Register atexit handler for clean shutdown even if close() isn't called
@@ -374,14 +374,14 @@ class StorageEngine(
         # Unregister atexit to avoid double-close
         try:
             atexit.unregister(self.close)
-        except Exception:
+        except Exception:  # BLE001-KEEP: close() is also the atexit handler; during interpreter shutdown the atexit machinery itself can be half-torn-down, and a raise here would replace whatever really went wrong
             pass
         # Signal connection gone regardless of mode.
         try:
             from yadgar._shared.observability.metrics import yadgar_surrealdb_pool_active
 
             yadgar_surrealdb_pool_active.set(0)
-        except Exception:
+        except ImportError:
             pass
         if getattr(self, "_db_url", None):
             # Server mode: close the shared httpx client(s) — OWNER + optional RO.
@@ -389,30 +389,30 @@ class StorageEngine(
             if http is not None:
                 try:
                     http.close()
-                except Exception:
+                except Exception:  # BLE001-KEEP: teardown: httpx client close reaches sockets and the transport's own cleanup, and the remaining close() steps below must still run
                     pass
             ro_http = getattr(self, "_http_ro", None)
             if ro_http is not None:
                 try:
                     ro_http.close()
-                except Exception:
+                except Exception:  # BLE001-KEEP: teardown: same as the OWNER client above, for the optional read-only client
                     pass
             return
         # Embedded mode: close DB and release file lock
         try:
             self._embedded_db.close()
-        except Exception:
+        except Exception:  # BLE001-KEEP: teardown: the embedded SurrealKV SDK raises no common base, and the file-lock release below must still run
             pass
         # Release the file lock
         if hasattr(self, "_lock_file") and self._lock_file and not self._lock_file.closed:
             try:
                 fcntl.flock(self._lock_file, fcntl.LOCK_UN)
                 self._lock_file.close()
-            except Exception:
+            except OSError:
                 pass
             try:
                 self._lock_path.unlink(missing_ok=True)
-            except Exception:
+            except OSError:
                 pass
 
     def __enter__(self):

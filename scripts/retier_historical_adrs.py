@@ -190,7 +190,7 @@ async def retier(
         subsystem = row.get("subsystem")
         try:
             await storage.update_adr_tier_subsystem(adr_id, str(target_tier), subsystem)
-        except Exception as exc:  # CLI boundary: report, never traceback
+        except Exception as exc:  # BLE001-KEEP: per-ADR isolation at the CLI boundary: the engine-#2 UPDATE raises DB-driver types with no common base, and one failed row must not abandon the rest
             tally["failed"] += 1
             logger.error("failed to retier id=%d: %s", adr_id, exc)
             continue
@@ -251,7 +251,7 @@ async def _amain(args: argparse.Namespace) -> int:
     )
     try:
         config = _build_config(option_file, args.socket)
-    except Exception as exc:  # CLI boundary: report, never traceback
+    except Exception as exc:  # BLE001-KEEP: CLI top-level: option-file parsing raises OSError, config and TOML-parse errors with no common base; the contract is exit-2-with-a-message, never a traceback
         logger.error("cannot read option file %s: %s", option_file, exc)
         return 2
 
@@ -265,7 +265,7 @@ async def _amain(args: argparse.Namespace) -> int:
 
     try:
         storage = MariaStorageEngine(config)
-    except Exception as exc:  # CLI boundary: report, never traceback
+    except Exception as exc:  # BLE001-KEEP: CLI top-level: MariaStorageEngine() reaches the driver, the socket and the pool, which raise with no common base; the contract is exit-2-with-a-message
         logger.error("cannot open engine #2: %s", exc)
         return 2
 
@@ -277,13 +277,13 @@ async def _amain(args: argparse.Namespace) -> int:
             include_null_tier=args.include_null_tier,
             verbose=args.verbose,
         )
-    except Exception as exc:  # CLI boundary: report, never traceback
+    except Exception as exc:  # BLE001-KEEP: CLI top-level around the whole pass: the contract is exit-2-with-a-message, never a traceback
         logger.error("retier pass failed: %s", exc)
         return 2
     finally:
         try:
             await storage.dispose()
-        except Exception:  # dispose() must not mask the real exit status
+        except Exception:  # BLE001-KEEP: dispose() in finally: a teardown failure must not replace the real exit status of the pass above
             pass
 
     logger.info(

@@ -66,7 +66,7 @@ def _file_hash(filepath: str) -> str | None:
     """
     try:
         p = Path(filepath).expanduser().resolve()
-    except Exception:
+    except (OSError, RuntimeError, ValueError):  # fmt: skip
         return None
     if not p.is_file():
         return None
@@ -344,7 +344,7 @@ def normalize_write_context(context: str) -> str:
             return context
         logger.info("write-context normalized: %r -> %r", context, root)
         return root
-    except Exception:
+    except Exception:  # BLE001-KEEP: write-context normalisation: _worktree_canonical_root shells out to git and touches the filesystem, which raise with no common base, and the documented degrade is to store the context verbatim rather than lose the write
         logger.warning(
             "normalize_write_context failed for %r — storing verbatim", context, exc_info=True
         )
@@ -375,7 +375,7 @@ def _bump_epoch_for_context(context: str | None) -> None:
 
         resolved = _resolve_project_root(context) if context else None
         bump_epoch(resolved)
-    except Exception:  # pragma: no cover - must never break writes
+    except Exception:  # pragma: no cover  # BLE001-KEEP: spans a lazy import, git-root resolution and the on-disk epoch store, which share no common base, and epoch instrumentation must never fail the write it follows
         pass
 
 

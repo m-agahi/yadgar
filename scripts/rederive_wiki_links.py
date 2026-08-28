@@ -172,7 +172,7 @@ def rederive(
             )
             storage.replace_wiki_crossrefs(slug, derived)
             tally["repaired"] += 1
-        except Exception as exc:
+        except Exception as exc:  # BLE001-KEEP: per-page isolation: storage._q raises RuntimeError (SurrealDB), the httpx transport family and arbitrary embedded-SDK types with no common base, and one unrepairable page must not abort the sweep
             tally["failed"] += 1
             logger.error("failed to repair %s: %s", slug, exc)
 
@@ -214,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     db_path = os.environ.get("YADGAR_DB_PATH", "~/.yadgar/surreal_db")
     try:
         storage = StorageEngine(db_path)
-    except Exception as exc:
+    except Exception as exc:  # BLE001-KEEP: CLI top-level: StorageEngine() reaches config, filesystem and DB connect, which raise with no common base; the contract here is exit-2-with-a-message, never a traceback
         logger.error("cannot open storage: %s", exc)
         return 2
 
@@ -232,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         try:
             storage.close()
-        except Exception:
+        except Exception:  # BLE001-KEEP: close() in finally: a teardown failure must not replace the real exit status of the sweep above
             pass
 
     logger.info(
