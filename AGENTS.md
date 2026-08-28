@@ -64,7 +64,16 @@ cd yadgar
 make setup                   # canonical for repo work; runs everything in one shot
 ```
 
-`make setup` chains: `pre-setup → detect-runtime → detect-os → install-runtime → install-hooks → install-agents → config-sync → install-rules → seed-anchors → pull-images → bootstrap-secrets → enable-units`. Re-runnable after upgrades.
+`make setup` chains, in the order `Makefile:252-295` actually runs them: `pre-setup` (preflight + runtime detect) → `pull-images` → `bootstrap-secrets` → OS detect + unit generation → `_enable-units-auto` → `install-hooks` → `install-agents` → `config-sync` → `install-rules` → `seed-anchors` → `code-graph-install`. Re-runnable after upgrades. (Earlier revisions of this line listed `enable-units` last and named an `install-runtime` step `setup` does not invoke.)
+
+> **`make setup` currently ABORTS at `install-hooks`.** That target is
+> `python3 -m yadgar install-hooks` (`Makefile:153-154`), and the CLI subcommand
+> was hard-removed in Car 7 of the opencode port train — the stub prints a
+> migration message and exits 1. `setup` invokes it as `@$(MAKE) install-hooks`
+> with no `-` prefix, so make halts there and the four targets after it never run.
+> Until the Makefile is repointed at `yadgar install --client claude-code --hooks
+> --scope global` (what `scripts/install/yadgar-setup.sh:625` already does), use
+> `yadgar-setup` or run the remaining targets by hand. Verified 2026-08-28.
 
 Useful Makefile targets: `make help`, `make check`, `make clean`, `make uninstall`, `make pull-images`, `make restore`.
 
@@ -103,7 +112,7 @@ Full reference: [`docs/reference/configuration.md`](docs/reference/configuration
 ```bash
 pytest                                # full suite minus integration; 4 workers, 300s timeout
 pytest -m integration                 # slow opt-in tier (SurrealDB, embed service)
-pytest yadgar/tests/test_recall.py -k branch_filter   # focused
+pytest yadgar/tests/core/test_recall_pipeline_unit.py  # focused (tests mirror the three-layer split)
 pytest --lf                           # rerun last failures
 ```
 
@@ -146,11 +155,13 @@ PYTHONUNBUFFERED=1 OTEL_SDK_DISABLED=true uv run --extra test --extra ml \
 
 ## Code style
 
-- **Lint + format:** `ruff` (target `py314`, line length 100). Rules: `E, W, F, I, UP, B, C901, PLR0913`; ignores `E501, B008, UP007`. Max complexity 15, max args 8.
+- **Lint + format:** `ruff` (target `py314`, line length 100). Rules: `E, W, F, I, UP, B, BLE, C901, PLR0913`; ignores `E501, B008, UP007`. Max complexity 15, max args 8.
+- **BLE001 (blind `except Exception`) is LIVE** (ADR-0465, 2026-08-28). It was in `select` via the `BLE` prefix from 2026-08-23 but immediately re-suppressed by an exact `BLE001` entry in `ignore`, so it never fired; all 965 sites have since been triaged. Narrow to the real exception types, or keep the catch broad **with a stated site-specific reason on the `# noqa: BLE001`**. A blanket `# noqa: BLE001` pass is explicitly not an acceptable way to satisfy this rule.
+- **Back-compat is NOT a retention reason** (ADR-0464, accepted 2026-08-28). One user, one deployment, no external API consumer — "an older/other caller might rely on it" is a null argument here, not a weak one, and "it would be a large change" is not a reason either. Exactly two justifications survive for keeping something: (a) removing it breaks a live code path you can NAME, or (b) it is host-side identity minting. This is also an admission test for new `scripts/directory_residue_allowlist.txt` entries. It does NOT license deleting code that is unused today but which a shipped feature will call, and it does not reach corpus data (a column still needs its backfill first).
 - Auto-fix: `ruff check --fix . && ruff format .`. Pre-commit runs this automatically.
 - Per-file grandfathered exceptions for `C901` / `PLR0913` are listed in `pyproject.toml [tool.ruff.lint.per-file-ignores]` — do not add new ones; refactor instead.
 - Type hints required on new public functions. `dict[str, Any]` over `Dict[str, Any]` (project targets 3.14+, no `from __future__ import annotations` needed).
-- No shell wrappers around Python invocations. CLI work lives in `yadgar/cli/`; MCP tool handlers in `yadgar/server/tools/`.
+- No shell wrappers around Python invocations. CLI work lives in `yadgar/core/cli/`; MCP tool handlers in `yadgar/core/server/tools/`. (`yadgar/cli/` and `yadgar/server/` are pre-three-layer-split paths and no longer exist.)
 - Logging: `logging.getLogger(__name__)`. Structured fields via `extra={...}`. JSON formatter active when `YADGAR_LOG_FORMAT=json`.
 
 ## Architecture map
@@ -162,7 +173,7 @@ Three-layer split (ADR-0056/0060/0062/0063; import-linter enforced). Each layer 
 | Path | Purpose |
 |---|---|
 | `yadgar/__main__.py` | CLI entry point + Click command tree |
-| `yadgar/core/cli/` | Subcommand implementations (daemon, vacuum, seed, config, rules, viz, setup, install-hooks) |
+| `yadgar/core/cli/` | Subcommand implementations (daemon, vacuum, seed, config, rules, viz, setup, install, snapshot, migrate, verify-hooks). `install_hooks.py` is a hard-removed stub that exits 1 — use `yadgar install --client <name> --hooks` |
 | `yadgar/core/server/` | FastAPI app, MCP tool handlers, auth middleware, transport |
 | `yadgar/core/hooks/` | Claude Code hook runner scripts (SessionStart, SubagentStop, PreCompact) |
 | `yadgar/core/daemon/` | systemd-style daemon start/stop/status, MCP transport switching |
@@ -198,12 +209,12 @@ Three-layer split (ADR-0056/0060/0062/0063; import-linter enforced). Each layer 
 
 | Path | Purpose |
 |---|---|
-| `yadgar/static/` | Viz UI + bookmarks UI (Three.js galaxy renderer) |
+| `yadgar/core/static/` | Viz UI + bookmarks UI (Three.js galaxy renderer) |
 | `yadgar/tests/` | pytest suite (mirrors three-layer structure: `tests/core/`, `tests/_shared/`, `tests/backend/`) |
 | `scripts/` | Pre-commit invariant checks + version sync |
 | `docs/` | Architecture, retrieval, configuration, hooks, benchmark, roadmap |
 
-~79 MCP tools across memory, wiki, bookmarks, project, ops, ADR, agent-prompts. Full table in `README.md § Tools`.
+87 MCP tools across memory, wiki, bookmarks, project, ops, ADR, agent-prompts (89 `@_tool` decorators under `yadgar/core/server/tools/`, minus the 2 test-only stubs in `_test_tools.py`; counted 2026-08-28). Categorized selection in `README.md § MCP tools`; the running server's tool catalog is the authority.
 
 ### Where does new code go?
 
@@ -269,7 +280,13 @@ curl -s http://127.0.0.1:8765/metrics | head
 - **Version bumps:** edit `pyproject.toml:version` for core, `server.json:backend_version` for backend. `check-versions` will fail the commit if the cross-file mirrors drift.
 - Run before push: `ruff check . && ruff format --check . && pytest && pre-commit run --all-files`.
 - PRs are opened against `github.com/m-agahi/yadgar` with the GitHub CLI (`gh pr create --repo m-agahi/yadgar`).
-- Pre-commit will fail loudly on: large file (>2 MB), gitleaks hit, complexity over 15, missing metric writer, missing trace span, secret-gate drift, config three-way-sync drift, allowlist drift.
+- Pre-commit will fail loudly on: large file (>2 MB), gitleaks hit, complexity over 15, missing metric writer, missing trace span, secret-gate drift, config three-way-sync drift, allowlist drift. Full list of `id:`s in `.pre-commit-config.yaml` — 50+ hooks, so read it rather than this sentence.
+- **Gates added or sharpened on the 2026-08-28 train — do not assume the older behaviour:**
+  - `check-ci-viz-version` (`scripts/check_ci_viz_version.py`) — the CI-viz version strings must track the shipped version.
+  - `check-directory-residue` moved its two *residue-count* measurements (residue hits, sibling entries) out of hardcoded floors into **descending ratchets** in `scripts/directory_residue_ratchet.json` — a cleanup that lowers the count used to fail the build for succeeding. Re-record with `python scripts/check_directory_residue.py --update-ratchet` in the SAME commit as the deletion. The two *coverage* floors (ADR-0080 anti-vacuity) stay floors: coverage may never fall.
+  - `check-test-weakening` now unions a third diff segment, `git diff` (index → worktree), onto `merge_base..HEAD` and `git diff --cached` — an **unstaged** weakening is caught too.
+  - `check-skip-markers` now scans `importorskip`, not just `skip`/`skipif`.
+  - `check-ledger-chokepoint` now sees `_q` and a shelled-out `mariadb` client, so those are no longer routes around it.
 
 ## Subagent contract
 
@@ -280,7 +297,7 @@ If your agent dispatches subagents that may write memories, paste the contract f
 ## Further reading
 
 - [`README.md`](README.md) — human overview, features, benchmark, production scale, roadmap
-- [`docs/reference/architecture.md`](docs/reference/architecture.md) — component map, branch-aware retrieval, security, observability
+- [`docs/reference/architecture.md`](docs/reference/architecture.md) — component map, directory/project scoping, security, observability
 - [`docs/contracts/CAPABILITY_REGISTRY.md`](docs/contracts/CAPABILITY_REGISTRY.md) — source of truth: every feature/algorithm/behaviour (wired or not) + status (I32-enforced)
 - [`docs/reference/configuration.md`](docs/reference/configuration.md) — every env var and config key
 - [`docs/reference/retrieval.md`](docs/reference/retrieval.md) — 8-stage pipeline spec
@@ -288,4 +305,4 @@ If your agent dispatches subagents that may write memories, paste the contract f
 - [`docs/reference/hooks.md`](docs/reference/hooks.md) — Claude Code hook contracts
 - [`docs/reference/release.md`](docs/reference/release.md) — version bump → tag → nix
 - [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) — `SubagentStop` protocol
-- [`MIGRATION_NOTES.md`](MIGRATION_NOTES.md) — operator steps for breaking changes
+- `MIGRATION_NOTES.md` — operator steps for breaking changes. Written at the repo root on demand and **gitignored** (`.gitignore:12`), so it is a local hand-off channel, not a tracked doc: it will not exist in a fresh clone.

@@ -86,9 +86,16 @@ Before the main thread integrates any subagent output — file edits, contract f
 **One-time setup:**
 
 1. Copy the block above (between the triple-backtick fences) into `~/.claude/CLAUDE.md`.
-2. Run `yadgar install-hooks --scope global` to register the `SubagentStop` hook —
-   this enables automatic extraction of `## Yadgar findings` from subagent reports.
-3. Verify with `yadgar install-hooks --dry-run --scope global`.
+2. Run `yadgar install --client claude-code --hooks --scope global` to register the
+   `SubagentStop` hook — this enables automatic extraction of `## Yadgar findings`
+   from subagent reports. (`--hooks` installs the hooks surface ALONE; the MCP
+   config and rules file are left untouched.)
+3. Verify with `yadgar install --client claude-code --hooks --scope global --print`,
+   which emits the JSON without writing any file.
+
+> The `yadgar install-hooks` command these steps used to name was hard-removed in
+> Car 7 of the opencode port train (v5.166.0). It is a stub that prints a migration
+> message and exits 1; `--dry-run` became `--print`.
 
 The contract is opt-in. Yadgar works without it — subagents just won't auto-write
 findings. With it, every subagent that follows the `## Yadgar findings` format gets

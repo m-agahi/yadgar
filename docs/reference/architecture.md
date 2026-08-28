@@ -142,7 +142,7 @@ Full end-to-end nightly lifecycle (in-process; no MCP reconnect required):
 | `security/` | Secret-gate patterns; `allowlist.py` (tag + pattern bypass, audit log) |
 | `sanitize/` | ANSI / C0/C1 / bidi-override scrubbing for auto-capture payloads |
 | `rate_limit/` | Per-source token-bucket rate limiter (1000-key OrderedDict) |
-| `file_queue/` | Async write queue client + DLQ (similarity gate, branch/directory enforcement, DLQ taxonomy) |
+| `file_queue/` | Async write queue client + DLQ (similarity gate, project/directory enforcement, DLQ taxonomy) |
 | `contracts/` | Protocol/DI interfaces separating layers |
 | `embeddings/` | Sentence-transformer wrapper, LRU embedding cache (local; backend has the remote path) |
 | `enrichment/` | Index-time text enrichment (subpackage: `conceptnet.py`, `doc2query.py`; COMET dormant ADR-0004) |
@@ -188,11 +188,11 @@ SurrealDB tables:
 
 | Table | Contents |
 |---|---|
-| `memory` | Core memory records: content, embedding, heat, confidence, tags, `directory_context: string NOT NULL`, `branch: option<string>` |
+| `memory` | Core memory records: content, embedding, heat, confidence, tags, `directory_context: string NOT NULL`, `project_id` (the scope key, ADR-0233) |
 | `episodes` | Raw tool-action log chunks before consolidation |
 | `entities` | Extracted code/file/concept entities with heat |
 | `relationships` | Edges between entities (co_occurrence, causal, etc.) |
-| `wiki_page` | Wiki pages (markdown), `directory_context: string NOT NULL`, `branch: option<string>`. Includes task-list pages (`page_type="task_list"`) and ADR pages (`page_type="adr"`) |
+| `wiki_page` | Wiki pages (markdown), `directory_context: string NOT NULL`, `project_id` (the scope key, ADR-0233). Includes task-list pages (`page_type="task_list"`) and ADR pages (`page_type="adr"`) |
 | `wiki_page_version` | Immutable version snapshots: full content + change_summary per version (v5.41.0) |
 | `wiki_bookmark` | Ordered bookmark entries; powers `bookmark_*` MCP tools |
 | `memory_block` | Named scope-bounded text containers (v5.33.0, migration 012). `project` + `global` scopes |
@@ -262,7 +262,7 @@ The viz server (`yadgar viz`, default `http://localhost:42069`) renders an inter
 
 ## ADR System
 
-Architecture Decision Records are stored as canonical wiki pages (`yadgar-adr-NNNN`) with a thin index page (`yadgar-adr-index`). `recall()` is the read path — pages are recall-visible (tagged `["adr"]`) and never decay (canonical, branch=NULL).
+Architecture Decision Records are stored as canonical wiki pages (`yadgar-adr-NNNN`) with a thin index page (`yadgar-adr-index`). `recall()` is the read path — pages are recall-visible (tagged `["adr"]`) and never decay (canonical).
 
 **MCP tools:** `adr_add` (⚡) appends 11-field schema ADR + updates index; `adr_get` (⚡) fetches one ADR by ID; `adr_list` (⚡) reads the index with optional status filter. Stop-hook captures decisions at session end.
 
@@ -270,9 +270,9 @@ Architecture Decision Records are stored as canonical wiki pages (`yadgar-adr-NN
 
 ## Harness Task-List Mirror
 
-`wiki_write_task_list(project, content, directory)` persists the Claude Code harness task list to the wiki store as a canonical page (`{project}-task-list`, `page_type="task_list"`, branch=NULL). The stop-hook checkpoint step (step 4) calls this; the SessionStart restore-nudge re-injects open tasks.
+`wiki_write_task_list(project, content, directory)` persists the Claude Code harness task list to the wiki store as a canonical page (`{project}-task-list`, `page_type="task_list"`). The stop-hook checkpoint step (step 4) calls this; the SessionStart restore-nudge re-injects open tasks.
 
-Why a dedicated tool: a raw `wiki_add` in a git directory hard-requires branch (missing → reject). This tool routes through the server-side `_wiki_write_canonical` path, bypassing the git-branch requirement while remaining structurally bounded to the task-list slug (ADR-0127/0133/0137).
+Why a dedicated tool: the sanction is **structural**, not an argument a model supplies. `page_type` is model-supplied and therefore forgeable, so it was never the gate; this tool routes through the server-side-only `_wiki_write_canonical` seam (`_internal` token) and is bounded to the `{project}-task-list` slug, so it cannot be used to write an arbitrary page (ADR-0127/0133/0137). The original motivation — a raw `wiki_add` in a git directory hard-rejecting for want of a branch — is gone with branch scoping (ADR-0215); the structural sanction is what remains.
 
 ## Agent-Prompt Library
 
@@ -354,4 +354,4 @@ MCP tools: `dlq_inspect(filter)` · `dlq_requeue(id)` ⚡ · `dlq_dismiss(id)` �
 
 ## Directory Contract (v5.42.5)
 
-Three semantic categories: project-canonical (`directory=path, branch=NULL`) · project-branch-scoped · global (`directory="global", branch=NULL`). Enforcement at MCP boundary + drainer (defense-in-depth). See Branch + Directory Contract section above for full detail.
+Two semantic categories since ADR-0215 removed the branch axis: project-scoped (owned by a `project_id`) and global-reach (carried by the `GLOBAL_REACH_TAG`, never by a `project_id` — ADR-0227 forbids `"global"` as an identity). Enforcement at MCP boundary + drainer (defense-in-depth). See the Directory Contract section above for full detail.

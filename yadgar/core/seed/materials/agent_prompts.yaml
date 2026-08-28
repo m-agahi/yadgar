@@ -232,7 +232,7 @@ prompts:
     DISPATCH: model=opus (fallback=sonnet) — RCA needs reasoning over divergent evidence; sonnet only for shallow single-seam bugs — canonical: model-tier-dispatch
 
     ## Yadgar subagent contract
-    Before substantive work: recall("<bug topic>") — surface anchors/prior findings. Observed state ALWAYS wins over recalled. Do NOT memorize directly; emit findings in report. END your final message with `## Yadgar findings` (one standalone durable fact per bullet, or "none").
+    Before substantive work: recall("<bug topic>", directory=<abs path>, project="<owner/repo>") — surface anchors/prior findings. project= is REQUIRED (ADR-0227: an identity is never derived). Observed state ALWAYS wins over recalled. Do NOT memorize directly; emit findings in report. END your final message with `## Yadgar findings` (one standalone durable fact per bullet, or "none").
 
     ## Standing hard rules (context resets — honor anyway)
     - NO terraform/tofu/tfp any mechanism. NO tf-local-plan container exec. Never directly query SurrealDB (MCP/HTTP only). Never run install_hooks against real HOME.
@@ -292,14 +292,14 @@ prompts:
 
     ## Modes
     - `writeback=false` (DEFAULT): report-only. Return the verdict table + must-fix list + bottom line in your final message. Do NOT edit the plan file.
-    - `writeback=true`: audit a DRAFT plan IN PLACE. Append a `## AUDIT (<date>)` section to the plan file: the verification table + corrections + a Status line (`AUDITED — ready` / `AUDITED — needs rework`) + explicit user-decision items. Preserve the original plan content (do NOT rewrite it). NO code changes. Contract: recall the plan topic first; observed state ALWAYS wins over plan text; do NOT memorize(). Report (≤6 bullets): Status verdict; STALE/WRONG count; biggest blocker; sequencing/dependency notes; user-decision items. Then `## Yadgar findings`.
+    - `writeback=true`: audit a DRAFT plan IN PLACE. Append a `## AUDIT (<date>)` section to the plan file: the verification table + corrections + a Status line (`AUDITED — ready` / `AUDITED — needs rework`) + explicit user-decision items. Preserve the original plan content (do NOT rewrite it). NO code changes. Contract: `recall("<plan topic>", directory=<abs path>, project="<owner/repo>")` first (project= is REQUIRED — ADR-0227); observed state ALWAYS wins over plan text; do NOT memorize(). Report (≤6 bullets): Status verdict; STALE/WRONG count; biggest blocker; sequencing/dependency notes; user-decision items. Then `## Yadgar findings`.
 - pattern: scope-and-plan
   purpose: 'Investigate current code/state then WRITE a design plan doc (no implementation). Modes: commit=false|true, advisor=N, measure_first=false|true, domain=generic|perf-lever.'
   content: |-
     DISPATCH: model=opus (needs code exploration THEN design synthesis; fable only if a curated single-fresh-read brief already exists — this shape usually does not) — canonical: model-tier-dispatch
 
     ## Yadgar subagent contract
-    recall("<topic + subsystems>") first. Observed code/state ALWAYS wins over recalled/coordinator claims — verify against real code, cite file:line. Do NOT memorize directly; emit findings in report. END with `## Yadgar findings`.
+    recall("<topic + subsystems>", directory=<abs path>, project="<owner/repo>") first — project= is REQUIRED (ADR-0227). Observed code/state ALWAYS wins over recalled/coordinator claims — verify against real code, cite file:line. Do NOT memorize directly; emit findings in report. END with `## Yadgar findings`.
 
     ## Standing hard rules (context resets)
     - NO terraform. Never query SurrealDB directly (MCP/HTTP only). Do NOT run install_hooks against real HOME.
@@ -339,7 +339,7 @@ prompts:
     DISPATCH: model=opus for multi-seam/parser/logic cars; sonnet for mechanical single-file cars — canonical: model-tier-dispatch
 
     ## Yadgar contract
-    recall("<car topic + subsystems>") first. Observed code ALWAYS wins over plan/recall — verify every cited path/line before editing. Do NOT memorize directly; report findings. END with `## Yadgar findings`.
+    recall("<car topic + subsystems>", directory=<abs path>, project="<owner/repo>") first — project= is REQUIRED (ADR-0227). Observed code ALWAYS wins over plan/recall — verify every cited path/line before editing. Do NOT memorize directly; report findings. END with `## Yadgar findings`.
     Also check for a `code_graph` memory block for this repo (`block_get(name="code_graph", directory=<repo>)`) if present — a per-dir digest of layers/hotspots/endpoints, useful before cold-grepping the target subsystem.
 
     ## WORK LOCATION

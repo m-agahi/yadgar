@@ -2,7 +2,7 @@
 name: general-purpose
 description: General-purpose agent for complex multi-step tasks requiring both exploration and action
 model: inherit
-tools: Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch, mcp__yadgar__recall, mcp__yadgar__wiki_query, mcp__yadgar__wiki_read, mcp__yadgar__wiki_list, mcp__yadgar__project_brief, mcp__yadgar__memorize, mcp__yadgar__remember, mcp__yadgar__anchor
+tools: Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch, mcp__yadgar__recall, mcp__yadgar__wiki_query, mcp__yadgar__wiki_read, mcp__yadgar__wiki_list, mcp__yadgar__project_brief, mcp__yadgar__memorize, mcp__yadgar__anchor
 mcpServers:
   - yadgar
 ---

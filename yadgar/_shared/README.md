@@ -10,7 +10,7 @@ law). See `AGENTS.md` here for the placement rules and forward seams.
 | Package | What it is |
 |---|---|
 | `storage/` | SurrealDB storage engine — the only code that talks to the DB directly |
-| `retrieval/` | recall scoring/fusion/rerank pipeline (sinks to backend after Car E2) |
+| `retrieval/` | recall PROFILES only — the scoring/fusion/rerank pipeline itself already sank to `backend/retrieval/`; do not grow this package |
 | `config/` | Settings + knob registry + YAML config I/O |
 | `observability/` | `@observe`, tracing, metrics, log_config, exception telemetry |
 | `security/` | I26 secret gate, allowlist, enforcement counters |
@@ -22,6 +22,12 @@ law). See `AGENTS.md` here for the placement rules and forward seams.
 | `paths/` | XDG path constants (lazy env resolution) |
 | `restoration/` | checkpoint contract (impl lives in `backend/restoration/`) |
 | `enrichment/`, `metacognition/`, `schemas/`, `write_exec/` | write-path enrichment, gap detection, JSON schemas, write execution |
+| `server_helpers/` | shared MCP-tool helpers (`_file_hash`, `_compute_valid_until`, …) |
+| `knowledge_graph/` | entity extraction, relationship edges |
+| `rules_engine/` | write-block / write-allow rule evaluation |
+| `astrocyte_pool/` | domain-specialist consensus retrieval pool (landscape mode) |
+| `thermodynamics/` | heat / decay math |
+| `sensory_buffer/`, `rate_limit/`, `blocks_render/` | pre-write buffering, rate limiting, memory-block rendering |
 | singles (`astrocyte_pool/`, `thermodynamics/`, `knowledge_graph/`, `rules_engine/`, `sensory_buffer/`, `rate_limit/`, `blocks_render/`, `server_helpers/`) | one-module packages per the no-lone-files law |
 
 The flat `.py` files at this root are back-compat PEP-562 shims from the T2
