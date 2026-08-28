@@ -3,14 +3,24 @@
 
 Pre-commit hook (pass_filenames: true, files: ^yadgar/tests/.*\\.py$).
 For each STAGED test file, statically finds skip/skipif MARKER decorators,
-``pytestmark`` skip assignments, and module-level ``pytest.skip(...,
-allow_module_level=True)`` calls whose lines were ADDED in the staged diff.
-Any such NEW marker whose reason does not match a sanctioned entry in
-yadgar/tests/skip_inventory.json fails the commit.
+``pytestmark`` skip assignments, module-level ``pytest.skip(...,
+allow_module_level=True)`` calls, and ``pytest.importorskip(...)`` calls whose
+lines were ADDED in the staged diff. Any such NEW marker whose reason does not
+match a sanctioned entry in yadgar/tests/skip_inventory.json fails the commit.
+
+``pytest.importorskip`` joined the scan in ledger task 411. Without it this
+gate's "Passed" was not evidence a new importorskip had been vetted — and
+importorskip is how most of this repo's optional-extra skips are written, so
+the inventory's ``sanctioned_when_module_absent`` entries were already keyed
+on reasons this scan could not see. It carries no positional reason: the
+reason is the ``reason=`` keyword or nothing (``args[0]`` is the module name).
 
 Deliberately NOT scanned (CI -rs gate territory, per ADR-0087 consequences):
 dynamic ``pytest.skip()`` calls inside test/helper bodies — the static scan
-must not false-positive on runtime conditions.
+must not false-positive on runtime conditions. ``importorskip`` inside a body
+IS scanned, and the line is where the two differ: it branches on a module
+being importable, which is a property of the environment the inventory
+already reasons about, not on a runtime condition the scan cannot see.
 
 Exit 0 → no new unsanctioned markers.
 Exit 1 → offender list printed (file:line + reason).
@@ -37,7 +47,7 @@ from check_skip_inventory import _is_sanctioned, _load_inventory  # noqa: E402
 class Marker:
     lineno: int
     end_lineno: int
-    kind: str  # "skip" | "skipif" | "module-level-skip"
+    kind: str  # "skip" | "skipif" | "module-level-skip" | "importorskip"
     reason: str | None
 
 
@@ -112,6 +122,39 @@ def _module_level_skip(node: ast.Call) -> Marker | None:
     return Marker(node.lineno, node.end_lineno or node.lineno, "module-level-skip", reason)
 
 
+def _importorskip(node: ast.Call) -> Marker | None:
+    """Match ``pytest.importorskip(...)`` anywhere in the tree.
+
+    Task 411: this shape was not scanned at all, so "check-skip-markers: OK"
+    was not evidence a newly added importorskip had been vetted — and
+    importorskip is how most of this repo's optional-extra skips are actually
+    written (``pytest.importorskip("sqlalchemy", reason="sqlalchemy not
+    installed (sql extra)")``), which is why the inventory already carries
+    ``sanctioned_when_module_absent`` entries keyed on exactly those reasons.
+
+    Scanned even inside a function body, unlike a dynamic ``pytest.skip()``.
+    The distinction is not where the call sits, it is what it branches on:
+    importorskip skips on a MODULE being importable — a property of the
+    environment the inventory already reasons about — while a bare
+    ``pytest.skip()`` skips on a runtime condition the static scan cannot see,
+    which is why it stays CI ``-rs`` gate territory.
+
+    The reason is the ``reason=`` KEYWORD only. ``args[0]`` is the module
+    name, so the positional fallback ``_marker_from_expr`` uses for
+    ``pytest.mark.skip("...")`` must not be reused here — it would report
+    ``"surrealdb"`` as an unsanctioned reason rather than the truth, which is
+    that no reason was written down.
+    """
+    func = node.func
+    if not (isinstance(func, ast.Attribute) and func.attr == "importorskip"):
+        return None
+    reason = None
+    for kw in node.keywords:
+        if kw.arg == "reason":
+            reason = _literal_text(kw.value)
+    return Marker(node.lineno, node.end_lineno or node.lineno, "importorskip", reason)
+
+
 def find_skip_markers(source: str) -> list[Marker]:
     """Return all skip/skipif markers + module-level skips in *source*.
 
@@ -141,7 +184,7 @@ def find_skip_markers(source: str) -> list[Marker]:
                     if m:
                         markers.append(m)
         elif isinstance(node, ast.Call):
-            m = _module_level_skip(node)
+            m = _module_level_skip(node) or _importorskip(node)
             if m:
                 markers.append(m)
     markers.sort(key=lambda m: m.lineno)

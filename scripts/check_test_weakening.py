@@ -75,7 +75,25 @@ The fix ports ``check_backend_bump``'s ADR-0080 contract:
 
   baseline = ``git merge-base origin/master HEAD``
   diff     = ``git diff <baseline> HEAD``  ∪  ``git diff --cached``
+                                           ∪  ``git diff``   (task 410)
   ✅ counts = <baseline> vs (index if the contract is staged, else HEAD)
+
+THE UNSTAGED SEGMENT (task 410, 2026-08-28)
+--------------------------------------------
+The union above ended at ``--cached`` for a year.  Both remaining segments read
+COMMITTED or INDEXED state, so a working-tree edit was invisible and a run
+before ``git add`` printed ``test-weakening guard OK.`` over a diff it had
+never seen — the same reports-success-while-seeing-nothing shape as the two
+defects above it, at the one moment an author is most likely to consult the
+guard.  ``git diff`` (index → worktree) is now the third segment.
+
+The three segments telescope (``merge_base..HEAD`` + ``HEAD..index`` +
+``index..worktree``), so nothing is counted twice.  This does NOT convert the
+guard into "is this commit a weakening" — it never was: the branch segment
+already fails today's commit over a weakening committed last week.  Reading
+the working tree extends the existing contract by one segment.  It goes LAST
+in the concatenation so that a ``new file mode`` header staged in the index is
+read before any worktree body line for the same file.
 
 One pure ``check_diff()`` is fed from the same inputs in both modes, so local and
 CI return the same verdict for the same repo state.  When ``origin/master`` is
@@ -339,13 +357,37 @@ def resolve_merge_base(base_ref: str, run_git: GitRunner) -> str:
 
 
 def collect_inputs(base_ref: str, run_git: GitRunner) -> tuple[str, int | None, int | None]:
-    """Gather ``check_diff`` inputs from the branch, not just the index.
+    """Gather ``check_diff`` inputs from the whole tree, not just the index.
 
     Baseline is ``merge-base(base_ref, HEAD)`` so the verdict is about the whole
     branch — which is the question CI asks — rather than about one commit.  The
-    diff is the branch diff UNIONED with the staged diff, so pre-commit also sees
-    the about-to-exist commit.  In CI the staged half is empty and the union
-    collapses to the branch diff; same function, same verdict.
+    diff is the union of THREE telescoping segments:
+
+        merge_base..HEAD    the branch diff       ``git diff <base> HEAD``
+        HEAD..index         the about-to-commit   ``git diff --cached``
+        index..worktree     the unsaved edit      ``git diff``
+
+    They abut rather than overlap, so nothing is double-counted and the sum is
+    exactly ``merge_base..worktree``.  In CI the last two are empty and the
+    union collapses to the branch diff; same function, same verdict.
+
+    THE THIRD SEGMENT (task 410).  It used to be absent, which made a
+    standalone run dishonest: ``python scripts/check_test_weakening.py`` before
+    ``git add`` printed ``test-weakening guard OK.`` over a working tree it had
+    never looked at.  Both of the other segments read committed or indexed
+    state, so an edit that existed only on disk could not be seen — the same
+    shape as the ``--cached``-only blindness described in the module docstring,
+    one step further out.  Note this guard was never scoped to "is THIS COMMIT
+    a weakening": the branch segment already fails today's commit for a
+    weakening committed last week.  Reading the working tree extends that
+    contract by one segment; it does not introduce a new kind of friction.
+
+    Order matters and the worktree segment goes LAST.  ``_per_file_metrics``
+    streams the diff and applies a ``new file mode`` header to the body lines
+    that follow it for that file, so a file created in the index and edited
+    further on disk must have its header read before those later body lines —
+    otherwise the "a new file silences nothing" exemption stops applying to
+    them.
 
     Fallback: when the merge-base is unreachable, baseline becomes HEAD.  The
     branch diff is then empty by construction and the check degrades to the
@@ -358,7 +400,8 @@ def collect_inputs(base_ref: str, run_git: GitRunner) -> tuple[str, int | None, 
 
     branch_diff = run_git(["diff", merge_base, "HEAD"])
     staged_diff = run_git(["diff", "--cached"])
-    diff_text = branch_diff + staged_diff
+    unstaged_diff = run_git(["diff"])
+    diff_text = branch_diff + staged_diff + unstaged_diff
 
     base_green = _green_count_from_text(run_git(["show", f"{merge_base}:{_CONTRACT_REL}"]))
     # "After" = the about-to-exist state: the index when the contract is staged,

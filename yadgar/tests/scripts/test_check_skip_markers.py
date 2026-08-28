@@ -139,6 +139,108 @@ class TestFindSkipMarkers:
         assert find_skip_markers("def broken(:\n") == []
 
 
+class TestImportOrSkipMarkers:
+    """Task 411 — ``pytest.importorskip`` silences a module exactly like a marker.
+
+    The scan covered marker decorators, ``pytestmark``, and module-level
+    ``pytest.skip(allow_module_level=True)``. It did NOT cover
+    ``pytest.importorskip``, which is how 40-odd of this repo's skips are
+    actually expressed (``yadgar/tests/_shared/test_mariadb_engine.py:23``
+    and friends) — so "check-skip-markers: OK" was not evidence a newly added
+    importorskip had been vetted against the inventory.
+    """
+
+    def test_module_level_importorskip_with_reason(self):
+        src = (
+            "import pytest\n"
+            'pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed (sql extra)")\n'
+        )
+        markers = find_skip_markers(src)
+        assert len(markers) == 1
+        assert markers[0].kind == "importorskip"
+        assert markers[0].reason == "sqlalchemy not installed (sql extra)"
+        assert markers[0].lineno == 2
+
+    def test_importorskip_inside_a_test_body_is_scanned(self):
+        """Unlike a dynamic ``pytest.skip()``, this one is statically decidable.
+
+        ``pytest.importorskip("duckdb")`` skips on a MODULE being absent — a
+        property of the environment the inventory already reasons about via
+        ``sanctioned_when_module_absent`` — not on a runtime condition the
+        static scan would have to guess at.
+        """
+        src = (
+            "import pytest\n"
+            "def test_x():\n"
+            '    pytest.importorskip("duckdb", reason="duckdb not installed")\n'
+        )
+        markers = find_skip_markers(src)
+        assert len(markers) == 1
+        assert markers[0].kind == "importorskip"
+        assert markers[0].reason == "duckdb not installed"
+
+    def test_importorskip_module_name_is_not_read_as_a_reason(self):
+        """``args[0]`` is the MODULE, not a reason — the positional fallback must not apply.
+
+        ``pytest.mark.skip("some reason")`` takes its reason positionally, so
+        ``_marker_from_expr`` falls back to ``args[0]``. Reusing that fallback
+        here would make ``"surrealdb"`` the reason and fail the commit with
+        "matches no entry in skip_inventory.json" instead of the correct
+        "has no literal reason= string".
+        """
+        src = 'import pytest\npytest.importorskip("surrealdb")\n'
+        markers = find_skip_markers(src)
+        assert len(markers) == 1
+        assert markers[0].reason is None
+
+    def test_new_unsanctioned_importorskip_fails(self):
+        src = (
+            "import pytest\n"
+            'pytest.importorskip("leftpad", reason="leftpad not installed anywhere")\n'
+        )
+        violations = find_new_unsanctioned(src, {2}, ["duckdb not installed"])
+        assert len(violations) == 1
+        assert "leftpad not installed anywhere" in violations[0].message
+
+    def test_new_sanctioned_importorskip_passes(self):
+        src = 'import pytest\npytest.importorskip("duckdb", reason="duckdb not installed")\n'
+        assert find_new_unsanctioned(src, {2}, ["duckdb not installed"]) == []
+
+    def test_new_bare_importorskip_fails_for_missing_reason(self):
+        src = 'import pytest\npytest.importorskip("surrealdb")\n'
+        violations = find_new_unsanctioned(src, {2}, ["duckdb not installed"])
+        assert len(violations) == 1
+        assert "no literal reason" in violations[0].message
+
+    def test_preexisting_importorskip_not_flagged(self):
+        """Only ADDED lines are gated — the 40-odd shipped calls stay untouched."""
+        src = 'import pytest\npytest.importorskip("surrealdb")\n'
+        assert find_new_unsanctioned(src, set(), ["duckdb not installed"]) == []
+
+    def test_unrelated_import_call_not_matched(self):
+        src = 'import importlib\nimportlib.import_module("duckdb")\n'
+        assert find_skip_markers(src) == []
+
+    def test_shipped_inventory_sanctions_a_real_importorskip_reason(self):
+        """Judged against the SHIPPED inventory, not a stub pattern list.
+
+        Every other test here passes a hand-made ``patterns`` list, which
+        proves the matching logic and nothing about whether the reasons this
+        repo's importorskips actually carry are reachable. The reason below is
+        copied verbatim from ``yadgar/tests/_shared/test_mariadb_engine.py:23``.
+        """
+        from check_skip_inventory import _load_inventory
+
+        patterns = _load_inventory()
+        src = (
+            "import pytest\n"
+            'pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed (sql extra)")\n'
+        )
+        assert find_new_unsanctioned(src, {2}, patterns) == []
+        bogus = 'import pytest\npytest.importorskip("leftpad", reason="leftpad is missing")\n'
+        assert len(find_new_unsanctioned(bogus, {2}, patterns)) == 1
+
+
 # ---------------------------------------------------------------------------
 # added_lines_from_diff — unified-diff hunk parsing
 # ---------------------------------------------------------------------------
