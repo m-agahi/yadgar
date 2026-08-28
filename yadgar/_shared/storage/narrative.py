@@ -312,29 +312,3 @@ class _NarrativeMixin:
             params,
         )
         return self._rows_to_dicts(rows)
-
-    @observe(tier="stage")
-    def get_beliefs_for_subject(
-        self,
-        subject: str,
-        directory_context: str | None = None,
-        include_invalidated: bool = False,
-    ) -> list[dict]:
-        """Return derived_belief rows for a subject.
-
-        include_invalidated (v5.29.0): when False (default), returns only
-        currently-valid rows (valid_until IS NONE).
-        """
-        validity_clause = "" if include_invalidated else " AND valid_until IS NONE"
-        if directory_context is not None:
-            rows = self._q(
-                f"SELECT * FROM derived_belief WHERE subject = $subj "
-                f"AND directory_context = $dc{validity_clause}",
-                {"subj": subject, "dc": directory_context},
-            )
-        else:
-            rows = self._q(
-                f"SELECT * FROM derived_belief WHERE subject = $subj{validity_clause}",
-                {"subj": subject},
-            )
-        return self._rows_to_dicts(rows)

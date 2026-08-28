@@ -475,11 +475,6 @@
     "inh_depth": 0,
     "methods": 0
   },
-  "yadgar/_shared/contracts/models.py::Checkpoint@328": {
-    "attrs": 0,
-    "inh_depth": 0,
-    "methods": 0
-  },
   "yadgar/_shared/contracts/models.py::ConsolidationLog@96": {
     "attrs": 0,
     "inh_depth": 0,
@@ -490,17 +485,7 @@
     "inh_depth": 0,
     "methods": 0
   },
-  "yadgar/_shared/contracts/models.py::Episode@9": {
-    "attrs": 0,
-    "inh_depth": 0,
-    "methods": 0
-  },
   "yadgar/_shared/contracts/models.py::FileHash@106": {
-    "attrs": 0,
-    "inh_depth": 0,
-    "methods": 0
-  },
-  "yadgar/_shared/contracts/models.py::Memory@50": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 0
@@ -526,16 +511,6 @@
     "methods": 0
   },
   "yadgar/_shared/contracts/models.py::MemoryTransition@201": {
-    "attrs": 0,
-    "inh_depth": 0,
-    "methods": 0
-  },
-  "yadgar/_shared/contracts/models.py::NarrativeEntry@150": {
-    "attrs": 0,
-    "inh_depth": 0,
-    "methods": 0
-  },
-  "yadgar/_shared/contracts/models.py::ProspectiveMemory@138": {
     "attrs": 0,
     "inh_depth": 0,
     "methods": 0
@@ -4977,12 +4952,6 @@
     "nesting": 0,
     "params": 1
   },
-  "yadgar/_shared/storage/narrative.py::get_beliefs_for_subject@264": {
-    "cyclo": 3,
-    "loc": 24,
-    "nesting": 1,
-    "params": 4
-  },
   "yadgar/_shared/storage/narrative.py::get_narratives_for_directory@110": {
     "cyclo": 1,
     "loc": 7,
@@ -5392,12 +5361,6 @@
     "loc": 17,
     "nesting": 2,
     "params": 3
-  },
-  "yadgar/_shared/storage/user.py::get_profiles_for_entity@235": {
-    "cyclo": 3,
-    "loc": 24,
-    "nesting": 1,
-    "params": 4
   },
   "yadgar/_shared/storage/user.py::insert_profile@98": {
     "cyclo": 8,
@@ -16925,11 +16888,6 @@
     "inh_depth": 0,
     "methods": 8
   },
-  "yadgar/core/staleness/staleness.py::_FileChangeHandler@43": {
-    "attrs": 1,
-    "inh_depth": 0,
-    "methods": 6
-  },
   "yadgar/core/staleness/staleness.py::__file__": {
     "loc": 185
   },
@@ -16956,66 +16914,6 @@
     "loc": 9,
     "nesting": 0,
     "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::_handle_event@59": {
-    "cyclo": 3,
-    "loc": 5,
-    "nesting": 1,
-    "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::_handle_file_change@113": {
-    "cyclo": 2,
-    "loc": 7,
-    "nesting": 2,
-    "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::_is_binary@179": {
-    "cyclo": 3,
-    "loc": 7,
-    "nesting": 2,
-    "params": 1
-  },
-  "yadgar/core/staleness/staleness.py::_should_ignore@49": {
-    "cyclo": 5,
-    "loc": 8,
-    "nesting": 2,
-    "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::on_created@68": {
-    "cyclo": 1,
-    "loc": 2,
-    "nesting": 0,
-    "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::on_deleted@72": {
-    "cyclo": 3,
-    "loc": 4,
-    "nesting": 1,
-    "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::on_modified@65": {
-    "cyclo": 1,
-    "loc": 2,
-    "nesting": 0,
-    "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::scan_directory@143": {
-    "cyclo": 8,
-    "loc": 24,
-    "nesting": 3,
-    "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::start@89": {
-    "cyclo": 4,
-    "loc": 13,
-    "nesting": 1,
-    "params": 2
-  },
-  "yadgar/core/staleness/staleness.py::stop@104": {
-    "cyclo": 3,
-    "loc": 7,
-    "nesting": 1,
-    "params": 1
   },
   "yadgar/core/staleness/staleness.py::validate_memory@122": {
     "cyclo": 5,

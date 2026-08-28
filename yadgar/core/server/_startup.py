@@ -81,9 +81,6 @@ def main(
             "Source /etc/yadgar/secrets.env or run `yadgar setup`."
         )
 
-    # Don't auto-watch cwd — in daemon/systemd mode cwd is $HOME, which would
-    # recursively watch everything including the DB files, causing a watchdog storm.
-    # Staleness watching is triggered per-project via MCP tools instead.
     # Task 0027c: core_init_engines opens with a bounded wait for the backend
     # /health. On exhaustion it raises BackendNotReadyError — do NOT swallow it
     # (a core that reports active with no storage is worse than one that exits),
@@ -94,7 +91,6 @@ def main(
         init_engines(
             db_path=db_path,
             start_daemons=True,
-            watch_directory=None,
         )
     except BackendNotReadyError as exc:
         logger.error("core startup aborted: %s", exc)

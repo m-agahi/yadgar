@@ -14,5 +14,40 @@
     "allowed_delta": -13,
     "allowed_strict_delta": -11,
     "rationale": "FILE DELETED, not weakened. car/T-dead-code-purge removed yadgar/backend/admin_exec/project_registry.py entirely: _ensure_project_exists_async and _ensure_project_exists_sync had ZERO production call sites (Car 5 proved it, and identity_stamp.py documented it), and what remained was a _live_engine used only by that pair plus a re-export of two error classes _shared/storage/sql/errors.py already owns. The live registry guard is MariaStorageEngine.assert_project_registered (_shared/storage/sql/registry.py), which is covered by test_c6_project_registry_writer.py and the new refresh=False preview tests. Deleting a test whose subject no longer exists is not a coverage loss; this entry records that judgement rather than hiding it. Ledger task 384."
+  },
+  "yadgar/tests/_shared/test_models_module.py": {
+    "allowed_delta": -66,
+    "allowed_strict_delta": -65,
+    "rationale": "PINS-THE-DELETED-SUBJECT, not a relaxation. Car K (ADR-0464) deleted five pydantic classes from yadgar/_shared/contracts/models.py — Episode, Memory, ProspectiveMemory, NarrativeEntry, Checkpoint — after verifying they have ZERO production importers (the module's only non-test production import is core/server/tools/adr_render.py:14, which imports ADR alone). This file's TestEpisode / TestMemory / TestProspectiveMemory / TestNarrativeEntry / TestCheckpoint classes instantiated those classes and asserted their field defaults; every assertion removed here names a class that no longer exists. The classes covering the SURVIVING models (Entity, Relationship, ConsolidationLog, FileHash, MemoryStats, MemoryCluster, AstrocyteProcess, MemoryRule, MemoryArchive, MemoryTransition, CausalDAGEdge, ADR) are untouched."
+  },
+  "yadgar/tests/_shared/test_frontier_schema.py": {
+    "allowed_delta": -26,
+    "allowed_strict_delta": -26,
+    "rationale": "PINS-THE-DELETED-SUBJECT. Same Car K (ADR-0464) deletion: TestMemoryModelFields asserted default values on the pydantic `Memory` class, which is gone. The file's CRUD tests build plain dicts via _make_memory() and reach the real storage engine — they never touched the pydantic class and are untouched here."
+  },
+  "yadgar/tests/_shared/test_bitemporal_extension.py": {
+    "allowed_delta": -2,
+    "allowed_strict_delta": -2,
+    "rationale": "PINS-THE-DELETED-SUBJECT, and one test REPOINTED rather than dropped. Car K (ADR-0464) deleted storage/user.py::get_profiles_for_entity and storage/narrative.py::get_beliefs_for_subject (zero production callers; user_profile and derived_belief both hold 0 rows). The two removed assertions were the 'still works' smoke calls on those two dead readers inside test_existing_insert_profile_callers_pass_unchanged / test_insert_belief_via_record_works; the live readers those tests also exercise (search_profiles_fts, search_beliefs_fts) keep their assertions. Separately, test_get_beliefs_for_subject_default_excludes_invalidated was NOT deleted — it was repointed onto search_beliefs_fts (the surviving reader with the same include_invalidated semantics), so bi-temporal invalidation coverage for beliefs is preserved and now mirrors its profile twin exactly."
+  },
+  "yadgar/tests/core/test_staleness.py": {
+    "allowed_delta": -7,
+    "allowed_strict_delta": -6,
+    "rationale": "PINS-THE-DELETED-SUBJECT. Car K (ADR-0464) deleted the StalenessDetector watchdog arm — start/stop/_FileChangeHandler/scan_directory/_is_binary — after verifying the only production caller of the chain, core/server/_startup.py, passed watch_directory=None, so the observer was never scheduled and scan_directory had zero non-test callers. TestScanDirectory and TestStaleMemoryHeat::test_scan_halves_heat exercised scan_directory only. validate_memory, _compute_file_hash, file-deletion and heat-halving coverage all survive."
+  },
+  "yadgar/tests/core/test_staleness_handler_merged.py": {
+    "allowed_delta": -2,
+    "allowed_strict_delta": -2,
+    "rationale": "FILE DELETED, not weakened. Car K (ADR-0464) removed _FileChangeHandler with the rest of the unreachable watchdog arm; this module tested nothing else (every test constructs _FileChangeHandler and asserts on_created/on_modified delegation)."
+  },
+  "yadgar/tests/scripts/test_car_d_rekey_migration.py": {
+    "allowed_delta": -76,
+    "allowed_strict_delta": -61,
+    "rationale": "FILE DELETED, not weakened. Car K (ADR-0464) removed yadgar/core/migrations/ (the whole package — rekey_corpus was its only module) and the `yadgar migrate rekey` CLI arm: the corpus re-key is a spent one-shot migration and both tables it re-keys (memory, wiki_page) are now 0 rows unstamped. This module tested rekey_corpus exclusively. The one test in the tree that used `migrate rekey` as a VEHICLE for live behaviour — test_main_module.py's exit-code-propagation test — was repointed onto `snapshot restore` rather than deleted."
+  },
+  "yadgar/tests/server/test_integration.py": {
+    "allowed_delta": -6,
+    "allowed_strict_delta": -4,
+    "rationale": "PINS-THE-DELETED-SUBJECT. Car K (ADR-0464): TestStalenessWatcherIntegration asserted detector.start()/stop()/is_running and scan_directory — the watchdog arm this car deleted as unreachable. Nothing else in the file changed."
   }
 }

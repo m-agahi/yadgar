@@ -6,16 +6,6 @@ from pydantic import BaseModel, Field
 from yadgar._shared.observability.observe import observe
 
 
-class Episode(BaseModel):
-    id: int | None = None
-    session_id: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    directory: str
-    raw_content: str
-    overlap_start: int | None = None
-    overlap_end: int | None = None
-
-
 class Entity(BaseModel):
     id: int | None = None
     name: str
@@ -45,52 +35,6 @@ class Relationship(BaseModel):
     record_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_causal: bool = False
     confidence: float = 1.0
-
-
-class Memory(BaseModel):
-    id: int | None = None
-    content: str
-    embedding: bytes | None = None
-    tags: list[str] = Field(default_factory=list)
-    source_episode_id: int | None = None
-    directory_context: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    last_accessed: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    heat: float = 1.0
-    # Watermark for the last heat-decay pass; decay spans now - max(last_accessed,
-    # last_decay_at) so repeated cycles don't compound over-decay. None = never decayed.
-    last_decay_at: datetime | None = None
-    is_stale: bool = False
-    file_hash: str | None = None
-    # v2 fields
-    surprise_score: float = 0.0
-    importance: float = 0.5
-    emotional_valence: float = 0.0
-    confidence: float = 1.0
-    access_count: int = 0
-    useful_count: int = 0
-    embedding_model: str | None = None
-    contextual_prefix: str | None = None
-    cluster_id: int | None = None
-    is_prospective: bool = False
-    trigger_condition: str | None = None
-    narrative_weight: float = 0.0
-    compressed: bool = False
-    # v3 frontier fields
-    plasticity: float = 1.0  # Spikes on access, decays with ~6h half-life (reconsolidation)
-    stability: float = 0.0  # Increases with successful retrievals (reconsolidation)
-    excitability: float = 1.0  # Competitive allocation score (engram)
-    last_excitability_update: datetime | None = None  # For excitability decay calc
-    store_type: str = "episodic"  # "episodic" or "semantic" (CLS dual-store)
-    compression_level: int = 0  # 0=full, 1=gist, 2=tag (rate-distortion)
-    original_content: str | None = None  # Full content preserved before compression
-    sr_x: float = 0.0  # Successor representation x coordinate (cognitive map)
-    sr_y: float = 0.0  # Successor representation y coordinate (cognitive map)
-    reconsolidation_count: int = 0  # Number of times reconsolidated
-    last_reconsolidated: datetime | None = None  # Timestamp of last reconsolidation
-    provenance_agent: str = "default"  # Which agent created this memory (CRDT)
-    vector_clock: str = "{}"  # JSON vector clock for CRDT conflict resolution
-    is_protected: bool = False  # Protected from modification and compression
 
 
 class ConsolidationLog(BaseModel):
@@ -132,30 +76,6 @@ class MemoryCluster(BaseModel):
     member_count: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_updated: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    heat: float = 1.0
-
-
-class ProspectiveMemory(BaseModel):
-    id: int | None = None
-    content: str
-    trigger_condition: str
-    trigger_type: Literal["directory_match", "keyword_match", "entity_match", "time_based"]
-    target_directory: str | None = None
-    is_active: bool = True
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    triggered_at: datetime | None = None
-    triggered_count: int = 0
-
-
-class NarrativeEntry(BaseModel):
-    id: int | None = None
-    directory_context: str
-    summary: str
-    period_start: datetime
-    period_end: datetime
-    key_decisions: list[str] = Field(default_factory=list)
-    key_events: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     heat: float = 1.0
 
 
@@ -320,22 +240,3 @@ class AgentPrompt(BaseModel):
     pattern: str  # slug stem: agent-prompt-<pattern>
     purpose: str  # one-line description; feeds the TOC
     content: str  # the dispatch-prompt body
-
-
-# -- v4 models --
-
-
-class Checkpoint(BaseModel):
-    id: int | None = None
-    session_id: str = "default"
-    directory_context: str
-    current_task: str = ""
-    files_being_edited: list[str] = Field(default_factory=list)
-    key_decisions: list[str] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list)
-    next_steps: list[str] = Field(default_factory=list)
-    active_errors: list[str] = Field(default_factory=list)
-    custom_context: str = ""
-    epoch: int = 0  # compaction epoch counter
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    is_active: bool = True  # only latest checkpoint is active

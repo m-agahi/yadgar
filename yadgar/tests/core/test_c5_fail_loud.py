@@ -320,23 +320,15 @@ _GLOBAL_LITERAL_ALLOWLIST = {
 #: Files whose "local/" literals are a deterministic carry-by-design
 #: classification or mapping, not a request-path identity minting. ADR-0227
 #: bans fallback minting in ``resolve_effective_project``; Car A's ``parse_map``
-#: and Car D's ``rekey_corpus`` use ``local/`` as a NAMING CONVENTION (the
-#: third tier of ``derive_project_id``, deterministic over the operator-supplied
-#: corpus) and as a ``kind``-field CLASSIFIER, not as a project_id minted in
-#: the auth path. Each entry is a deliberate, reviewed exemption.
+#: uses ``local/`` as a NAMING CONVENTION (the third tier of
+#: ``derive_project_id``, deterministic over the operator-supplied corpus) and
+#: as a ``kind``-field CLASSIFIER, not as a project_id minted in the auth path.
+#: Each entry is a deliberate, reviewed exemption.
 _LOCAL_MINTING_ALLOWLIST = {
     # Car A (2026-08-14 train): ``parse_map`` classifies the operator-supplied
     # project_id column 2 as ``git`` or ``local`` by prefix check. The ``local/``
     # literal is a CLASSIFIER, not a minting site.
     "yadgar/core/cli/project.py",
-    # Car D (2026-08-14 train): ``rekey_corpus`` derives ``local/<basename>``
-    # from the corpus content for paths with no git remote and no
-    # ``.yadgar/project-id`` override. The migration is an OPERATOR-REVIEWED
-    # dry-run that writes the map TSV; the resulting ``local/`` keys are
-    # never consumed by ``resolve_effective_project``. This is the third tier
-    # of ``derive_project_id`` (the determinism anchor), not a fallback
-    # minted in the auth path. The fail-loud test would over-fire here.
-    "yadgar/core/migrations/rekey_corpus.py",
 }
 
 

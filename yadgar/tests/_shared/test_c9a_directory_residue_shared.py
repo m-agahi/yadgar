@@ -205,7 +205,6 @@ _ALLOWLIST: dict[str, str] = {
     # judgement site (b) and renamed its parameter to ``worktree_path`` — the
     # carve-out is now expressed in the name, so the entry is stale and
     # Direction 2 rejects it.
-    "runtime/lifecycle.py::init_engines": _CARVE_3,
     "server_helpers/server_helpers.py::_resolve_project_root": _CARVE_3,
     "server_helpers/server_helpers.py::_worktree_root_from_path_heuristics": _CARVE_3,
     "server_helpers/server_helpers.py::_worktree_canonical_root": _CARVE_3,
@@ -220,9 +219,7 @@ _ALLOWLIST: dict[str, str] = {
     "runtime/cache_epoch.py::_current_epoch": _CARVE_3,
     # ── carve-out 2 — the directory_context column ───────────────────────────
     "storage/_project_id_writer.py::_resolve_project_id_for_write": _CARVE_2,
-    "storage/narrative.py::get_beliefs_for_subject": _CARVE_2,
     "storage/user.py::insert_profile": _CARVE_2,
-    "storage/user.py::get_profiles_for_entity": _CARVE_2,
     "storage/wiki.py::get_wiki_page_by_slug_directory": _CARVE_2,
     "wiki/store.py::_gate_dir_eligible": _CARVE_2,
     "wiki/store.py::read_by_directory": _CARVE_2,

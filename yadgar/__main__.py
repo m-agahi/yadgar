@@ -21,7 +21,7 @@ Active modules:
   * MemoryCurator          (merge/link/create, contradiction detection)
   * ConsolidationScheduler (background consolidation + sleep cycle)
   * ProspectiveMemory      (future-oriented triggers)
-  * StalenessDetector      (file-change watchdog)
+  * StalenessDetector      (file-hash staleness validation)
 
 Core tools: memorize, recall, forget, project_brief, checkpoint, restore,
             anchor, wiki_query, wiki_add, memory_stats
@@ -118,7 +118,6 @@ def cli():
         install_hooks,
         install_mcp,
         install_subagents,
-        migrate,
         pending_findings,
         project,
         restore,
@@ -157,7 +156,6 @@ def cli():
     install_subagents.register(subparsers)
     update.register(subparsers)
     project.register(subparsers)
-    migrate.register(subparsers)
     verify_hooks.register(subparsers)
 
     args = parser.parse_args()
@@ -214,10 +212,10 @@ def cli():
 
         try:
             # The handler's return value IS its exit code — discarding it
-            # made every subcommand exit 0. `yadgar migrate rekey --apply`
-            # printed "FAILED (registry_seed_failed)" on stderr and still
-            # exited 0 on the sandbox VM 2026-08-15, which is exactly the
-            # shape a CI step or operator script reads as success.
+            # made every subcommand exit 0. A handler that printed a FAILED
+            # line on stderr still exited 0 on the sandbox VM 2026-08-15,
+            # which is exactly the shape a CI step or operator script reads
+            # as success.
             # Handlers that return None (most of them) keep exiting 0, and
             # `yadgar hook` is unaffected — it calls sys.exit() itself.
             _rc = args.func(args)

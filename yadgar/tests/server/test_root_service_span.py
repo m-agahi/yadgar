@@ -180,10 +180,10 @@ def test_restoration_anchor_memory_sentinel():
 # ---------------------------------------------------------------------------
 
 
-def test_staleness_scan_directory_sentinel():
+def test_staleness_validate_memory_sentinel():
     from yadgar.core.staleness import StalenessDetector
 
-    assert _has_span(StalenessDetector.scan_directory)
+    assert _has_span(StalenessDetector.validate_memory)
 
 
 # ---------------------------------------------------------------------------

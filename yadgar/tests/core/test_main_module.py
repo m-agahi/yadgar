@@ -497,14 +497,14 @@ class TestSubcommandExitCodePropagates:
 
     ``cli()`` called ``args.func(args)`` and discarded the result, so a
     subcommand that returned non-zero still exited 0. Observed on the
-    sandbox VM 2026-08-15: ``yadgar migrate rekey --apply`` printed
-    ``migrate rekey: FAILED (registry_seed_failed)`` on stderr and exited
-    0 — a CI step or operator script reads that as success.
+    sandbox VM 2026-08-15: a handler printed its own ``FAILED`` line on
+    stderr and exited 0 — a CI step or operator script reads that as
+    success.
 
     Driven end-to-end through the real parser (``cli()`` builds it
-    inline, so there is no seam to patch) using the one subcommand whose
-    non-zero path needs no backend: ``--apply`` against a missing map
-    file returns 2 without attempting a single write.
+    inline, so there is no seam to patch) using a subcommand whose
+    non-zero path needs no backend: ``snapshot restore`` against a
+    missing snapshot returns 2 without attempting a single write.
     """
 
     def test_nonzero_handler_return_becomes_nonzero_exit(self, tmp_path, monkeypatch) -> None:
@@ -512,10 +512,10 @@ class TestSubcommandExitCodePropagates:
 
         import yadgar.__main__ as main_mod
 
-        missing = tmp_path / "no-such-map.tsv"
+        missing = tmp_path / "no-such-snapshot.surql"
         monkeypatch.setattr(
             "sys.argv",
-            ["yadgar", "migrate", "rekey", "--map", str(missing), "--apply"],
+            ["yadgar", "snapshot", "restore", "--snapshot", str(missing)],
         )
         with _pytest.raises(SystemExit) as caught:
             main_mod.cli()
