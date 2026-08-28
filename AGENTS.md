@@ -64,7 +64,16 @@ cd yadgar
 make setup                   # canonical for repo work; runs everything in one shot
 ```
 
-`make setup` chains: `pre-setup → detect-runtime → detect-os → install-runtime → install-hooks → install-agents → config-sync → install-rules → seed-anchors → pull-images → bootstrap-secrets → enable-units`. Re-runnable after upgrades.
+`make setup` chains, in the order `Makefile:252-295` actually runs them: `pre-setup` (preflight + runtime detect) → `pull-images` → `bootstrap-secrets` → OS detect + unit generation → `_enable-units-auto` → `install-hooks` → `install-agents` → `config-sync` → `install-rules` → `seed-anchors` → `code-graph-install`. Re-runnable after upgrades. (Earlier revisions of this line listed `enable-units` last and named an `install-runtime` step `setup` does not invoke.)
+
+> **`make setup` currently ABORTS at `install-hooks`.** That target is
+> `python3 -m yadgar install-hooks` (`Makefile:153-154`), and the CLI subcommand
+> was hard-removed in Car 7 of the opencode port train — the stub prints a
+> migration message and exits 1. `setup` invokes it as `@$(MAKE) install-hooks`
+> with no `-` prefix, so make halts there and the four targets after it never run.
+> Until the Makefile is repointed at `yadgar install --client claude-code --hooks
+> --scope global` (what `scripts/install/yadgar-setup.sh:625` already does), use
+> `yadgar-setup` or run the remaining targets by hand. Verified 2026-08-28.
 
 Useful Makefile targets: `make help`, `make check`, `make clean`, `make uninstall`, `make pull-images`, `make restore`.
 

@@ -36,8 +36,17 @@ ML models) and owns:
 
 ## Don't
 
-- Don't add a new flat `.py` at this layer root (ADR-0084 no-lone-files; the
-  flat files still here are back-compat PEP-562 shims from the T2 moves).
+- Don't add a new flat `.py` at this layer root (ADR-0084 no-lone-files). The
+  three that remain are **not** the back-compat PEP-562 shims this line used to
+  call them — none defines a module `__getattr__`, and each is here on purpose
+  (verified 2026-08-28, so do not sweep them under ADR-0464):
+  `forward.py` is a deliberate LEAF module — moving it back under
+  `core/server/` re-imports `_app` and a live OTLP exporter into the hook CLIs
+  (measured 8.2s vs 1.2s per invocation), and `tests/scripts/test_cli_import_isolation.py`
+  pins it here; `identity.py` is the C5-gutted policy-free reader whose own
+  docstring forbids re-adding `derive_project_id` (ADR-0227);
+  `runtime_config_client.py` is the stdlib-only host-side config client
+  (ADR-0163) that hook scripts import outside the container.
 - Don't add DB write calls — see above; reads via `_shared.storage` are
   tolerated until the post-T2 storage sink.
 - Don't move host-ops INTO backend "because it touches the DB" — quiesced

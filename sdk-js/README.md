@@ -63,6 +63,19 @@ const c = new YadgarClient({
 
 All tools exposed by the yadgar MCP server are available as typed methods on `YadgarClient`.
 
+> **Six generated bindings are DEAD** — they `callTool` a name the server no
+> longer registers, so they fail at runtime rather than at compile time.
+> Measured 2026-08-28 by diffing the 52 `callTool({name: …})` literals in
+> `src/generated/tools.ts` against the `@_tool` functions in
+> `yadgar/core/server/tools/`: `remember` (never existed server-side; use
+> `memorize`); `wiki_refresh_stale` and `wiki_coverage`, both deleted in #83
+> Car C (ADR-0157 — container-blind MCP tools are an anti-pattern, host-source
+> operations are CLI-only); and the three draft-workflow tools `wiki_drafts` /
+> `wiki_approve` / `wiki_discard`, removed with the `wiki_draft` table in
+> migration 026 (v5.157.0) — `wiki_add` always committed directly and no
+> production path ever produced a draft. The generator is the place to fix
+> this, not this table.
+
 | Method | Description |
 |--------|-------------|
 | `memorize(args)` | Store a new memory with embedding |
