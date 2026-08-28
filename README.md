@@ -254,7 +254,7 @@ yadgar daemon configure-mcp
 yadgar update --check   # probes PyPI; prints upgrade command; exit 0
 ```
 
-For `pipx` the suggested command is `pipx upgrade yadgar`; then re-run `yadgar setup` (idempotent) to refresh hooks and units. An opt-in update orchestrator (`yadgar update --install`, default off via `update_install_enabled: false`) coordinates snapshot → image pull → graceful drain → restart → health-check → CLI upgrade, with automatic rollback (`yadgar update --rollback`). See `MIGRATION_NOTES.md`.
+For `pipx` the suggested command is `pipx upgrade yadgar`; then re-run `yadgar setup` (idempotent) to refresh hooks and units. An opt-in update orchestrator (`yadgar update --install`, default off via `update_install_enabled: false`) coordinates snapshot → image pull → graceful drain → restart → health-check → CLI upgrade, with automatic rollback (`yadgar update --rollback`). Operator steps for a breaking change are written to a local, gitignored `MIGRATION_NOTES.md` at the repo root — it is a hand-off channel, so it is absent from a fresh clone.
 
 ---
 
@@ -530,7 +530,7 @@ Full history: [CHANGELOG.md](docs/CHANGELOG.md).
 - [Configuration](docs/reference/configuration.md) — configuration reference (env vars, precedence, key knobs)
 - [Install](docs/reference/install.md) — per-platform setup + the `yadgar setup --doctor` probe
 - [JS/TS SDK](docs/reference/sdk-js.md) — typed client for the MCP tool surface
-- [Release runbook](docs/reference/release.md) · [Migration notes](MIGRATION_NOTES.md) · [Subagent contract](docs/reference/claude-subagent-contract.md)
+- [Release runbook](docs/reference/release.md) · Migration notes (local, gitignored `MIGRATION_NOTES.md`) · [Subagent contract](docs/reference/claude-subagent-contract.md)
 
 ---
 

@@ -66,7 +66,7 @@ All tools exposed by the yadgar MCP server are available as typed methods on `Ya
 | Method | Description |
 |--------|-------------|
 | `memorize(args)` | Store a new memory with embedding |
-| `remember(args)` | Alias for memorize (deprecated on server) |
+| `remember(args)` | **Dead** — calls MCP tool `"remember"`, which the server does not register (verified 2026-08-28: no `remember` `@_tool` anywhere in `yadgar/core/server/tools/`). Use `memorize(args)`. |
 | `recall(args)` | Semantic + keyword search filtered by heat |
 | `forget(args)` | Mark a memory for deletion |
 | `validateMemory(args)` | Check memory validity against current file state |
@@ -191,7 +191,7 @@ SDK version is independent of yadgar core Python version.
 - **v0.2**: SSE streaming transport, `client.recall.iter()` async generator, retry helper, Vercel AI SDK adapter.
 - **v0.3**: Framework adapters (LangChain.js, Mastra), public npm publish.
 
-See [docs/PLAN_V5_35_0_JS_SDK.md](../docs/PLAN_V5_35_0_JS_SDK.md) for full roadmap.
+See [docs/plans/archive/PLAN_V5_35_0_JS_SDK.md](../docs/plans/archive/PLAN_V5_35_0_JS_SDK.md) for the original roadmap (archived — the plan is complete).
 
 ## Contributing
 

@@ -296,4 +296,4 @@ If your agent dispatches subagents that may write memories, paste the contract f
 - [`docs/reference/hooks.md`](docs/reference/hooks.md) — Claude Code hook contracts
 - [`docs/reference/release.md`](docs/reference/release.md) — version bump → tag → nix
 - [`docs/reference/claude-subagent-contract.md`](docs/reference/claude-subagent-contract.md) — `SubagentStop` protocol
-- [`MIGRATION_NOTES.md`](MIGRATION_NOTES.md) — operator steps for breaking changes
+- `MIGRATION_NOTES.md` — operator steps for breaking changes. Written at the repo root on demand and **gitignored** (`.gitignore:12`), so it is a local hand-off channel, not a tracked doc: it will not exist in a fresh clone.
