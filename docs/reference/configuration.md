@@ -810,15 +810,24 @@ Replace the `_active_work` memory for a directory atomically (delete-then-insert
 
 ---
 
-## §26 wiki_refresh_stale (v5.0)
+## §26 wiki_refresh_stale (v5.0) — TOOL REMOVED
 
+> **The `wiki_refresh_stale` MCP tool no longer exists.** It was removed in
+> #83 Car C: per ADR-0157, host-source operations needing filesystem access
+> (the `.local-review/wiki/*.md` hash scan) are CLI-only, not MCP. Verified
+> 2026-08-28 — there is no `wiki_refresh_stale` `@_tool` in
+> `yadgar/core/server/tools/`. What survives is the *signal*:
+> `_scan_stale_wiki_slugs` (TTL-cached, 300 s default) surfaces
+> `stale_wiki_count` in `project_brief(mode="signals")`. See
+> `CAPABILITY_REGISTRY.md` CAP-WIKI-016.
+>
+> Everything below documents the removed tool. It is retained as the record of
+> the stale-detection contract (frontmatter shape, hash rule) that
+> `_scan_stale_wiki_slugs` still implements — **not** as a callable API. Do not
+> write code against the signature below.
+>
 > `wiki_cleanup_merged_branches` was deleted with branch scoping (ADR-0215).
 > Its subsection is removed below.
->
-> **Note (not this train's scope):** `wiki_refresh_stale`'s `force_branch`
-> parameter and its master-only enforcement are git-workflow concepts, not
-> branch *scoping*. They are pre-existing drift from **ADR-0157** and are left
-> as-is deliberately.
 
 ### MCP tools
 
