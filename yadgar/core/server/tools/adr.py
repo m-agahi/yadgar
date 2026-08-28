@@ -1033,6 +1033,7 @@ __all__ = [
     "_assemble_index_rows",
     "_build_adr_body",
     "_canonical_adr_payload",
+    "_car_shaped_decision_error",
     "_flip_superseded_target",
     "_fmt_supersedes",
     "_fmt_superseded_by",
