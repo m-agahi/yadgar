@@ -166,6 +166,7 @@ Usage:
   python scripts/check_directory_residue.py --list     # every residue site
   python scripts/check_directory_residue.py --json     # machine-readable
   python scripts/check_directory_residue.py --repo-root /path --allowlist F
+  python scripts/check_directory_residue.py --update-ratchet  # re-record counts
 
 Exit codes:
   0  no residue outside the allowlist, and no stale allowlist entry
@@ -292,12 +293,20 @@ _SIBLINGS: tuple[tuple[str, str, str], ...] = (
     ),
 )
 
-#: Anti-vacuity floors (ADR-0080). Measured on the C15 ref against
-#: ``9270c7fa``; all three are LOWER bounds. An empty walk, an unparseable
-#: sibling, or a matcher that silently returns nothing would otherwise make
-#: every assertion here trivially green — the failure mode this train produced
-#: four times. If a later PR genuinely finishes the sweep, LOWER these
-#: deliberately rather than letting the guard rot.
+#: Anti-vacuity COVERAGE floors (ADR-0080). Both are LOWER bounds on how much
+#: of the tree this run actually reached. An empty walk or a renamed ``_tool``
+#: decorator would otherwise make every assertion here trivially green — the
+#: failure mode this train produced four times. Coverage may never fall, so a
+#: floor is the correct shape for these two and they stay floors.
+#:
+#: The other two measurements — residue hits and sibling entries — are NOT
+#: coverage. They measure how much residue still EXISTS, which a successful
+#: cleanup is supposed to reduce. They were floors, and a floor made the gate
+#: go red for succeeding: a deletion that dropped the count under the constant
+#: failed the build, and the script's own remedy was a comment telling a human
+#: to lower the number by hand. Those two now live in
+#: ``scripts/directory_residue_ratchet.json`` as descending ratchets (see
+#: ``load_ratchet``) so the deletion and the record move in one commit.
 #: Minimum characters of stated reason per allowlist entry. 40, matching the
 #: repo's governed-allowlist family (``.test-weakening-allowlist.json``,
 #: ``.health-endpoint-allowlist.json``, ``.urllib-httperror-close-allowlist.json``)
@@ -307,9 +316,111 @@ _SIBLINGS: tuple[tuple[str, str, str], ...] = (
 MIN_REASON_CHARS = 40
 
 MIN_FILES_SCANNED = 400  # measured 506
-MIN_RESIDUE_HITS = 300  # measured 408 across 80 files
-MIN_SIBLING_ENTRIES = 60  # measured 80 (C9a _ALLOWLIST 48 + C9a _SWEPT 9 + C9b ALLOWLIST 23)
 MIN_TOOLS_CHECKED = 70  # measured 87 @_tool-decorated functions (Car I 2026-08-14)
+
+
+# ---------------------------------------------------------------------------
+# The descending ratchets — residue hits and sibling entries
+# ---------------------------------------------------------------------------
+#: Keys recorded in the sidecar. Anything else in the file is documentation
+#: (``_header``) and is ignored on read, matching the baseline family's shape.
+RATCHET_KEYS: tuple[str, ...] = ("residue_hits", "sibling_entries")
+
+
+def ratchet_path(repo_root: Path) -> Path:
+    """The recorded-state sidecar, beside the allowlist it records against."""
+    return repo_root / "scripts" / "directory_residue_ratchet.json"
+
+
+def load_ratchet(path: Path) -> tuple[dict[str, int], list[str]]:
+    """Read the sidecar. Returns ``(counts, errors)``.
+
+    A missing or malformed sidecar is an ERROR, never a silent skip: the
+    ratchet is the whole guard for these two measurements, and a guard that
+    disappears when its data file is deleted is not a guard.
+    """
+    if not path.is_file():
+        return {}, [
+            f"RATCHET FILE MISSING: {path} does not exist. It records the "
+            "measured residue state; without it the residue arm has no "
+            "recorded value to compare against. Re-create it with "
+            "`python scripts/check_directory_residue.py --update-ratchet`."
+        ]
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # fmt: skip
+        return {}, [f"RATCHET FILE UNREADABLE: {path} — {exc}"]
+    if not isinstance(raw, dict):
+        return {}, [f"RATCHET FILE MALFORMED: {path} is not a JSON object."]
+    counts: dict[str, int] = {}
+    errors: list[str] = []
+    for key in RATCHET_KEYS:
+        value = raw.get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            errors.append(
+                f"RATCHET FILE MALFORMED: {path} has no integer `{key}` "
+                f"(found {value!r}). Re-record with `--update-ratchet`."
+            )
+            continue
+        counts[key] = value
+    return counts, errors
+
+
+def write_ratchet(path: Path, counts: dict[str, int]) -> None:
+    """Re-record the sidecar, preserving its ``_header`` documentation."""
+    existing: dict[str, object] = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):  # fmt: skip
+            loaded = None
+        if isinstance(loaded, dict):
+            existing = loaded
+    out: dict[str, object] = {}
+    if "_header" in existing:
+        out["_header"] = existing["_header"]
+    for key in RATCHET_KEYS:
+        out[key] = counts[key]
+    path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
+
+
+def _ratchet_error(key: str, measured: int, recorded: int) -> str | None:
+    """Compare one measurement against its recorded value.
+
+    Equal → ``None``. Rising and falling are BOTH failures, and the two
+    messages say different things because the two causes need different
+    fixes.
+    """
+    if measured == recorded:
+        return None
+    if measured > recorded:
+        return (
+            f"RATCHET: {key} {measured} > recorded {recorded} — `directory` residue "
+            "GREW. That is the regression this sweep exists to catch: re-key the new "
+            "sites onto `project_id` (plan 0047 §2 Amendment 3). Raising the recorded "
+            "number is legitimate only when the growth is itself load-bearing and you "
+            "state why in the commit (ADR-0460) — never to absorb your own drift."
+        )
+    return (
+        f"RATCHET: {key} {measured} < recorded {recorded} — either the matcher broke "
+        "or the cleanup worked. If the matcher broke, fix the matcher. If the cleanup "
+        "worked, commit the new baseline in the same change: "
+        "`python scripts/check_directory_residue.py --update-ratchet`. The deletion "
+        "and the record must land together or the sweep's progress stops being "
+        "auditable."
+    )
+
+
+def _ratchet_check(recorded: dict[str, int], key: str, measured: int) -> list[str]:
+    """One measurement against its recorded value, as an error list.
+
+    Returns ``[]`` on equal (and on a key the sidecar never recorded — the
+    ``load_ratchet`` malformed/missing errors already fired for that).
+    """
+    if key not in recorded:
+        return []
+    err = _ratchet_error(key, measured, recorded[key])
+    return [err] if err else []
 
 
 # ---------------------------------------------------------------------------
@@ -798,16 +909,26 @@ def check(
     scan_roots: tuple[str, ...] = SCAN_ROOTS,
     check_floors: bool = True,
     check_sibling_lints: bool = True,
+    ratchet_file: Path | None = None,
 ) -> list[str]:
-    """Return a list of violation strings (empty = clean)."""
+    """Return a list of violation strings (empty = clean).
+
+    ``check_floors`` gates BOTH the coverage floors and the residue/sibling
+    ratchets: a synthetic two-file tree satisfies neither, so the tmp_path
+    tests turn the whole measurement arm off together.
+    """
     if repo_root is None:
         repo_root = _REPO_ROOT
     if allowlist_file is None:
         allowlist_file = allowlist_path(repo_root)
+    if ratchet_file is None:
+        ratchet_file = ratchet_path(repo_root)
     if not allowlist_file.is_file():
         return [f"allowlist not found at {allowlist_file}"]
+    recorded, ratchet_errors = load_ratchet(ratchet_file) if check_floors else ({}, [])
 
     entries, errors = parse_allowlist(allowlist_file.read_text(encoding="utf-8"))
+    errors += ratchet_errors
     errors += find_unparseable(repo_root, scan_roots)
     residue, scanned = find_residue(repo_root, scan_roots)
 
@@ -830,13 +951,10 @@ def check(
                 f"(floor {MIN_FILES_SCANNED}). The walk did not reach the tree, so "
                 "every check below would be trivially green."
             )
+        # The residue count is a DESCENDING RATCHET, not a floor — see the
+        # constants block. Rising and falling both fail, for different reasons.
         total = sum(len(v) for v in residue.values())
-        if total < MIN_RESIDUE_HITS:
-            errors.append(
-                f"VACUOUS: only {total} residue sites found (floor {MIN_RESIDUE_HITS}). "
-                "Either the matcher broke or the sweep genuinely finished; if it "
-                "finished, LOWER `MIN_RESIDUE_HITS` deliberately."
-            )
+        errors += _ratchet_check(recorded, "residue_hits", total)
 
     # ── Direction 1 — residue outside the allowlist ─────────────────────────
     # Car I (2026-08-14): buckets are now ``<path>::<function>`` so a single
@@ -882,12 +1000,8 @@ def check(
     if check_sibling_lints:
         sib_errors, sib_parsed = check_siblings(repo_root)
         errors += sib_errors
-        if check_floors and sib_parsed < MIN_SIBLING_ENTRIES:
-            errors.append(
-                f"VACUOUS: only {sib_parsed} sibling allowlist entries parsed "
-                f"(floor {MIN_SIBLING_ENTRIES}). The sibling arm would be silently "
-                "green — a renamed binding, not a finished sweep."
-            )
+        if check_floors:
+            errors += _ratchet_check(recorded, "sibling_entries", sib_parsed)
     return errors
 
 
@@ -908,15 +1022,73 @@ def _path_of_bucket(bucket: str) -> str:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+def _update_ratchet(repo_root: Path, ratchet: Path) -> int:
+    """Re-record the sidecar from the current tree; refuse on a blind run.
+
+    The COVERAGE floors gate this path, mirroring ``check_type_ratchet.py``:
+    a number recorded from a walk that never reached the tree, or from a run
+    whose ``_tool`` decorator was renamed out from under it, is the same
+    blindness the sidecar exists to prevent. Those floors cannot be
+    re-baselined away — they are floors precisely because coverage may only
+    rise.
+    """
+    residue, scanned = find_residue(repo_root, SCAN_ROOTS)
+    _, tools_checked = find_absence_of_project(repo_root)
+    blockers: list[str] = []
+    if scanned < MIN_FILES_SCANNED:
+        blockers.append(
+            f"only {scanned} files walked (floor {MIN_FILES_SCANNED}) — the walk "
+            "did not reach the tree"
+        )
+    if tools_checked < MIN_TOOLS_CHECKED:
+        blockers.append(
+            f"only {tools_checked} @_tool functions inspected (floor "
+            f"{MIN_TOOLS_CHECKED}) — a renamed `_tool` decorator, not a clean surface"
+        )
+    if blockers:
+        print("REFUSING to re-record the ratchet:", file=sys.stderr)
+        for b in blockers:
+            print(f"  - {b}", file=sys.stderr)
+        print(
+            "  A ratchet recorded from a run that never happened is the same "
+            "blindness it exists to prevent.",
+            file=sys.stderr,
+        )
+        return 1
+    _, sib_parsed = check_siblings(repo_root)
+    counts = {
+        "residue_hits": sum(len(v) for v in residue.values()),
+        "sibling_entries": sib_parsed,
+    }
+    write_ratchet(ratchet, counts)
+    print(
+        f"Recorded {ratchet.name}: residue_hits={counts['residue_hits']}, "
+        f"sibling_entries={counts['sibling_entries']}. Commit it WITH the change "
+        "that moved the numbers."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="ADR-0225 — `directory` residue sweep")
     parser.add_argument("--list", action="store_true", help="Print every residue site")
     parser.add_argument("--json", action="store_true", help="Print residue sites as JSON")
     parser.add_argument("--repo-root", default=None, help="Override repo root")
     parser.add_argument("--allowlist", default=None, help="Override the allowlist file")
+    parser.add_argument("--ratchet", default=None, help="Override the ratchet sidecar")
+    parser.add_argument(
+        "--update-ratchet",
+        action="store_true",
+        help="Re-record the residue/sibling ratchet from the current tree. Refuses "
+        "when a coverage floor is breached.",
+    )
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root).resolve() if args.repo_root else _REPO_ROOT
     allow = Path(args.allowlist) if args.allowlist else allowlist_path(repo_root)
+    ratchet = Path(args.ratchet) if args.ratchet else ratchet_path(repo_root)
+
+    if args.update_ratchet:
+        return _update_ratchet(repo_root, ratchet)
 
     if args.json or args.list:
         residue, scanned = find_residue(repo_root)
@@ -954,7 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"    {ln:5d}  {kind:6s}  {detail}")
         return 0
 
-    errors = check(repo_root, allow)
+    errors = check(repo_root, allow, ratchet_file=ratchet)
     if errors:
         print("ADR-0225 `directory` residue sweep FAILED:", file=sys.stderr)
         for e in errors:
