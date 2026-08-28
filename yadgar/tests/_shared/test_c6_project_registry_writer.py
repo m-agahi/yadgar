@@ -213,9 +213,9 @@ def test_registry_seed_op_is_not_registry_guarded():
     be registered. Pinned as a source assertion because the deadlock only
     shows up on a genuinely empty deployment, which no test fixture is.
     """
-    from yadgar.backend.admin_exec import ledger
+    from yadgar.backend.admin_exec import ledger_project
 
-    src = inspect.getsource(ledger.create_project_row)
+    src = inspect.getsource(ledger_project.create_project_row)
     assert "assert_project_registered" not in src
 
 

@@ -131,7 +131,7 @@ def _ledger_row_mocks():
         return {"timestamp": None}
 
     import yadgar.backend.admin_exec as _exec_module
-    import yadgar.backend.admin_exec.ledger as _ledger_module
+    import yadgar.backend.admin_exec.ledger_agent as _ledger_module
 
     _originals = {
         "save_agent_pattern_row": _ledger_module.save_agent_pattern_row,

@@ -58,15 +58,36 @@ def _fake_sql_storage(*, create_raises: BaseException | None = None) -> MagicMoc
     return storage
 
 
+# Every module holding ledger admin-op bodies. Ledger task 402 split
+# ``ledger.py`` (998 of the I13 HARD file_loc cap of 1000) into three by table
+# family; the sweep below used to parse ONE ``__file__``, so after that split it
+# would have audited 14 of the 38 handlers and reported the same green. A sweep
+# that does not follow the code it audits reports a cleanliness it stopped
+# checking — the exact failure class the sweep itself exists to catch, one layer
+# up. A new ledger op module MUST be added here.
+_LEDGER_OP_MODULES: tuple[str, ...] = (
+    "yadgar.backend.admin_exec.ledger",
+    "yadgar.backend.admin_exec.ledger_agent",
+    "yadgar.backend.admin_exec.ledger_project",
+)
+
+
 @pytest.fixture
 def _patched_storage(monkeypatch: pytest.MonkeyPatch):
-    """Return a helper that monkeypatches ``_get_sql_storage`` to a chosen fake."""
+    """Return a helper that monkeypatches ``_get_sql_storage`` to a chosen fake.
+
+    Patches the seam in EVERY module of ``_LEDGER_OP_MODULES``, not just
+    ``ledger``. Each ledger module owns its own lazy ``_get_sql_storage``
+    (``sqlalchemy`` is an optional extra, so it cannot be a module-scope
+    import), and this one fixture drives ops that now live in different
+    modules — ``create_task_row`` / ``create_adr_row`` in ``ledger``,
+    ``create_project_row`` in ``ledger_project`` since the ledger-task-402
+    split. Patching one module would leave the others reaching real storage.
+    """
 
     def _patch(storage: MagicMock) -> None:
-        monkeypatch.setattr(
-            "yadgar.backend.admin_exec.ledger._get_sql_storage",
-            lambda: storage,
-        )
+        for mod in _LEDGER_OP_MODULES:
+            monkeypatch.setattr(f"{mod}._get_sql_storage", lambda: storage)
 
     return _patch
 
@@ -269,39 +290,83 @@ _REFUSAL_SWEEP_EXEMPT: dict[str, str] = {
 }
 
 
-def _ledger_handlers_missing_refusal_guard() -> list[tuple[str, int]]:
-    """``(function_name, lineno)`` for each unguarded ``except Exception``.
+def _swept_ledger_modules() -> list:
+    """Import and return every module named in ``_LEDGER_OP_MODULES``."""
+    import importlib
+
+    return [importlib.import_module(name) for name in _LEDGER_OP_MODULES]
+
+
+def _ledger_handlers_missing_refusal_guard() -> list[tuple[str, str, int]]:
+    """``(module, function_name, lineno)`` for each unguarded ``except Exception``.
 
     Structural, not behavioural: a behavioural test can only cover the ops
     someone remembered to write a case for, which is the exact failure mode
     this is here to catch.
+
+    Walks EVERY module in ``_LEDGER_OP_MODULES``, not one ``__file__`` — see
+    that tuple for why. The module name rides along in each tuple so a failure
+    names the file to open.
     """
     import ast
     from pathlib import Path
 
-    import yadgar.backend.admin_exec.ledger as ledger_mod
-
-    tree = ast.parse(Path(ledger_mod.__file__).read_text(encoding="utf-8"))
-    missing: list[tuple[str, int]] = []
-    for fn in ast.walk(tree):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if fn.name in _REFUSAL_SWEEP_EXEMPT:
-            continue
-        for node in ast.walk(fn):
-            if not isinstance(node, ast.Try):
+    missing: list[tuple[str, str, int]] = []
+    for mod in _swept_ledger_modules():
+        tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            names = [h.type.id if isinstance(h.type, ast.Name) else None for h in node.handlers]
-            if "Exception" not in names:
+            if fn.name in _REFUSAL_SWEEP_EXEMPT:
                 continue
-            broad_at = names.index("Exception")
-            if "AdminRefusal" not in names[:broad_at]:
-                missing.append((fn.name, node.handlers[broad_at].lineno))
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Try):
+                    continue
+                names = [h.type.id if isinstance(h.type, ast.Name) else None for h in node.handlers]
+                if "Exception" not in names:
+                    continue
+                broad_at = names.index("Exception")
+                if "AdminRefusal" not in names[:broad_at]:
+                    missing.append((mod.__name__, fn.name, node.handlers[broad_at].lineno))
     return missing
 
 
+def test_refusal_sweep_covers_every_registered_ledger_op() -> None:
+    """Every ``_ADMIN_OPS`` body defined in a ledger module is swept.
+
+    The sweep's coverage is only as wide as ``_LEDGER_OP_MODULES``, and that
+    tuple is hand-maintained. This pins it against the dispatch table: any op
+    whose implementation lives in an ``admin_exec`` module named ``ledger*``
+    must sit in a module the sweep walks, so adding a fourth split without
+    extending the tuple fails here rather than silently halving the audit.
+
+    KNOWN CEILING — the ``ledger``-prefix NAMING CONVENTION is load-bearing
+    here. A future ledger op module named something else (``task_ops.py``)
+    would hold registered ops, be absent from ``_LEDGER_OP_MODULES``, and
+    pass this check unnoticed. Widening the filter to every ``admin_exec``
+    module would over-reach in the other direction: most of them are not op
+    bodies with this refusal contract at all. Keep the convention, or replace
+    this filter with an explicit per-op module map when it breaks.
+    """
+    from yadgar.backend.admin_exec import _ADMIN_OPS
+
+    unswept = sorted(
+        {
+            impl.__module__
+            for impl in _ADMIN_OPS.values()
+            if impl.__module__.startswith("yadgar.backend.admin_exec.ledger")
+            and impl.__module__ not in _LEDGER_OP_MODULES
+        }
+    )
+    assert unswept == [], (
+        f"these ledger op modules hold registered admin ops but are absent "
+        f"from _LEDGER_OP_MODULES, so the refusal sweep does not audit them: "
+        f"{unswept}"
+    )
+
+
 def test_every_ledger_handler_reraises_admin_refusal() -> None:
-    """No ``except Exception`` in ledger.py may sit above a missing refusal arm.
+    """No ``except Exception`` in a ledger module may sit above a missing arm.
 
     A refusal swallowed into ``{"ok": False}`` at HTTP 200 is
     indistinguishable from a transport fault at the caller — that is the whole
@@ -311,7 +376,7 @@ def test_every_ledger_handler_reraises_admin_refusal() -> None:
     """
     missing = _ledger_handlers_missing_refusal_guard()
     assert missing == [], (
-        "these ledger.py handlers swallow AdminRefusal into an {'ok': False} "
+        "these ledger handlers swallow AdminRefusal into an {'ok': False} "
         f"envelope instead of letting the /admin route render a 409: {missing}. "
         "Add `except AdminRefusal: raise` above the broad handler, or — if the "
         "swallow genuinely builds no error envelope — name it in "
@@ -320,14 +385,20 @@ def test_every_ledger_handler_reraises_admin_refusal() -> None:
 
 
 def test_refusal_sweep_exemptions_still_name_real_functions() -> None:
-    """An exemption for a function that no longer exists is a silent hole."""
-    import yadgar.backend.admin_exec.ledger as ledger_mod
+    """An exemption for a function that no longer exists is a silent hole.
 
+    Checked against EVERY swept module, not just ``ledger``: the exemption dict
+    is keyed on a bare function name with no module qualifier, so an exemption
+    stays legitimate as long as some swept module still defines it — and stays
+    a hole the moment none of them does.
+    """
+    modules = _swept_ledger_modules()
     for name in _REFUSAL_SWEEP_EXEMPT:
-        assert hasattr(ledger_mod, name), (
-            f"_REFUSAL_SWEEP_EXEMPT names {name!r}, which ledger.py no longer "
-            "defines — drop the stale entry rather than leaving it to exempt "
-            "a future function that happens to reuse the name"
+        assert any(hasattr(mod, name) for mod in modules), (
+            f"_REFUSAL_SWEEP_EXEMPT names {name!r}, which no swept ledger "
+            f"module ({', '.join(_LEDGER_OP_MODULES)}) defines any more — drop "
+            "the stale entry rather than leaving it to exempt a future "
+            "function that happens to reuse the name"
         )
 
 

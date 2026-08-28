@@ -1,7 +1,8 @@
 """``yadgar project ...`` subcommand — project-registry operator surface.
 
 Car A (2026-08-14 identity train, plan §2). Closes the gap where
-``backend.admin_exec.ledger.create_project_row`` exists and is registered
+``backend.admin_exec.ledger_project.create_project_row`` exists and is
+registered
 (``backend/admin_exec/__init__.py:152``) but had no CLI / MCP path. The
 seeding function is the FIRST operator step on a new deployment — every
 ``task`` / ``adr`` / ``agent_prompt`` ledger row FKs to the ``project``

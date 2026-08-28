@@ -257,7 +257,7 @@ class TestLedgerAsyncOps:
         rows = [{"name": "dispatch-fix-bug"}]
         sql_storage = _make_fake_sql_storage(agent_prompt_rows=rows)
         monkeypatch.setattr(
-            "yadgar.backend.admin_exec.ledger._get_sql_storage",
+            "yadgar.backend.admin_exec.ledger_agent._get_sql_storage",
             lambda: sql_storage,
         )
         result = await admin_exec.run_admin_op_async("list_agent_prompt_rows", {})
