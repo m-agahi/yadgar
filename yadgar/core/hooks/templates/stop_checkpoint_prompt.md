@@ -96,6 +96,10 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
        )
      adr_add assigns the ADR-NNNN id and formats the entry.
      ALL fields mandatory — write "none" if truly empty (keeps it machine-parseable).
+     FORM: `decision` states the RULE — what holds from now on. A car, a train
+     or a ledger row belongs in `context` as the incident that prompted it; it
+     may be REFERENCED inside the rule but is never its SUBJECT. Title states
+     the rule while `decision` restates the work → rewrite `decision`.
      A decision still unresolved this session → status: open, revisit_trigger = pending question.
      Same when YOU have settled it but the user has not ruled on it: `accepted`
      means chosen AND ratified, so a decision whose own text says proposed /
