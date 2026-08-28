@@ -46,6 +46,11 @@ _RETRYABLE_CONFLICT_RE = re.compile(
     r"transaction (?:write )?conflict|can be retried", re.IGNORECASE
 )
 
+#: A `SET` whose right-hand side reads the column it writes — `val = val + 1`,
+#: `val = (val ?? 0) + 1`, `val += 1`. Such a statement is NOT idempotent even
+#: though it is an UPDATE/UPSERT, because a replay applies the delta twice.
+_SELF_REFERENTIAL_SET_RE = re.compile(r"\+=|\?\?|\bSET\b[^;]*\b(\w+)\b\s*=[^;]*\b\1\b")
+
 
 @observe(tier="hot")
 def _first_err_entry(results: object) -> tuple[int, dict | None]:
@@ -102,6 +107,31 @@ def _statement_count(surql: str) -> int:
 
 
 @observe(tier="hot")
+def _is_idempotent_under_replay(surql: str) -> bool:
+    """True when re-running *surql* is harmless even if the first attempt landed.
+
+    Only reached for a SINGLE non-atomic statement — a ``BEGIN … COMMIT`` body
+    rolls back whole and is handled before this.
+
+    ``UPDATE`` / ``UPSERT`` / ``DELETE`` set absolute values or remove rows, so
+    applying them twice reaches the same state. ``CREATE`` and ``INSERT`` do
+    not: the second application fails on the row the first one wrote, which is
+    how this was found. A self-referencing ``UPSERT`` (``val = (val ?? 0) + 1``)
+    is also excluded — it reads its own prior value, so a replay increments
+    twice.
+
+    Unrecognised shapes return False. A missed retry is a caller-visible error;
+    a wrong replay is silent corruption.
+    """
+    head = surql.lstrip().upper()
+    if not head.startswith(("UPDATE", "UPSERT", "DELETE")):
+        return False
+    # Self-referencing arithmetic: `SET val = val + 1`, `(val ?? 0) + 1`, `+=`.
+    body = surql.upper()
+    return not _SELF_REFERENTIAL_SET_RE.search(body)
+
+
+@observe(tier="hot")
 def _replay_is_safe(surql: str, results: object, err_index: int, n_lets: int) -> bool:
     """True when re-POSTing the request after this error cannot double-apply anything.
 
@@ -139,18 +169,32 @@ def _replay_is_safe(surql: str, results: object, err_index: int, n_lets: int) ->
     multi-statement atomicity is the point (``wiki.py``'s page+version writes,
     ``queue.py``'s file-hash writes).
 
-    NOTE on the counter hazard: ``UPSERT counter:memory SET val = (val ?? 0) + 1``
-    is a single non-``LET`` statement and is therefore replayable under this
-    rule. That is correct ONLY because a conflicted transaction rolls back —
-    which is what OCC guarantees and what the "can be retried" wording asserts.
-    Were a conflict ever reported for a PARTIALLY applied statement, this rule
-    would double-increment the id counter.
+    OBSERVED 2026-08-28 — the rollback assumption does NOT always hold. A
+    single-statement ``CREATE`` reported a retryable conflict, the replay
+    fired (one replay in the whole run, logged), and the second attempt failed
+    with ``Database record `wiki_page:1` already exists``. So the first attempt
+    COMMITTED while reporting a conflict. That is exactly the "conflict
+    reported for a partially applied statement" case this note used to call
+    hypothetical, and under the old rule it would have double-applied
+    silently rather than erroring.
+
+    Hence ``_is_idempotent_under_replay``: a statement is only replayed when
+    re-applying it is harmless even if the first attempt landed. ``UPDATE`` /
+    ``UPSERT`` / ``DELETE`` are; ``CREATE`` and ``INSERT`` are not, and
+    ``UPSERT counter:x SET val = (val ?? 0) + 1`` is not either — it reads
+    its own prior value, so a replay double-increments the id counter. That
+    is the desync that blocks every subsequent write.
+
+    Losing a retry costs one caller-visible error. Double-applying corrupts
+    data silently, so the trade is not close.
     """
     if not _any_entry_is_retryable(results):
         return False
     if surql.lstrip().upper().startswith("BEGIN"):
         return True
     if _statement_count(surql) > 1:
+        return False
+    if not _is_idempotent_under_replay(surql):
         return False
     return err_index == n_lets
 
