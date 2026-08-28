@@ -225,5 +225,34 @@ def test_emit_rejection_metric_swallows_metric_import_error(monkeypatch):
         "yadgar._shared.observability.metrics.yadgar_wiki_add_rejected_total",
         _boom,
     )
+    # Must not raise. NOTE: this arm injects a plain function, so the failure
+    # is actually AttributeError from `.labels` — "registry uninitialised",
+    # not "missing import". The name is kept for continuity; the ImportError
+    # arm it claims to cover is the separate test below, which was absent
+    # until 2026-08-28 and is why narrowing the handler to ImportError alone
+    # went undetected.
+    dlq_mod._DLQMixin._emit_rejection_metric("gate_unavailable")
+
+
+def test_emit_rejection_metric_swallows_a_real_import_error(monkeypatch):
+    """The other documented failure: the metrics module cannot be imported.
+
+    The test above never exercised this — it injects an object whose
+    `.labels` is missing, which is AttributeError. A handler catching only
+    AttributeError would pass it while still crashing on a real missing
+    import, so both arms are needed to pin the handler's stated contract.
+    """
+    import builtins
+
+    from yadgar.backend.queue_drainer import dlq as dlq_mod
+
+    _real_import = builtins.__import__
+
+    def _no_metrics(name, *a, **kw):
+        if name == "yadgar._shared.observability.metrics":
+            raise ImportError("no metrics module")
+        return _real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _no_metrics)
     # Must not raise.
     dlq_mod._DLQMixin._emit_rejection_metric("gate_unavailable")

@@ -452,7 +452,13 @@ class _DLQMixin:
             )
 
             yadgar_wiki_add_rejected_total.labels(reason=reason).inc()
-        except ImportError:
+        # The docstring above names TWO failures and they are different types:
+        # "missing import" is ImportError, "registry uninitialised" is an
+        # AttributeError from `.labels` on whatever stands in for the counter
+        # when the registry never built a real one. Narrowing to ImportError
+        # alone (2026-08-28, BLE001 triage) silently dropped the second, which
+        # is the one the test actually exercises.
+        except (ImportError, AttributeError):  # fmt: skip
             pass
 
     @observe(tier="stage", metric="drainer.dlq.similarity_gate_for_drainer")

@@ -271,7 +271,11 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
             )
 
             yadgar_drain_cycle_duration_ms.observe(_cycle_ms)
-        except ImportError:
+        # A metric emit must never break the drain. ImportError: metrics
+        # module absent. TypeError/ValueError: the observed value is not a
+        # number (a mocked clock, or a timing computed from payload data).
+        # The 2026-08-28 BLE001 triage narrowed these to ImportError alone.
+        except (ImportError, TypeError, ValueError):  # fmt: skip
             pass
 
         # Periodic archive + DLQ cleanup (roughly once per hour)
@@ -433,12 +437,22 @@ class QueueDrainer(_DLQMixin, _ApplyMixin, threading.Thread):
         return "policy_rejected", None
 
     def _observe_drainer_lag(self, data: dict, now: float) -> None:
-        """Observe P11 drainer lag metric (enqueue_ts -> drain start). Swallows all errors."""
+        """Observe P11 drainer lag (enqueue_ts -> drain start); never raises.
+
+        `data` is parsed queue JSON, so `data["ts"]` is whatever the producer
+        wrote — a string, None, or absent. The subtraction and the prometheus
+        `observe()` therefore raise TypeError/ValueError on a malformed
+        payload, and losing a lag sample must never stop the drain.
+        """
         try:
             from yadgar._shared.observability.metrics import yadgar_drainer_lag_ms  # noqa: PLC0415
 
             yadgar_drainer_lag_ms.observe((now - data.get("ts", now)) * 1000)
-        except ImportError:
+        # ImportError: metrics module absent. TypeError/ValueError: `ts` is
+        # not a number. The 2026-08-28 BLE001 triage narrowed this to
+        # ImportError alone, which dropped the payload case the docstring had
+        # promised to swallow since P11.
+        except (ImportError, TypeError, ValueError):  # fmt: skip
             pass
 
     def _observe_secret_blocked_metric(self, err_str: str) -> None:

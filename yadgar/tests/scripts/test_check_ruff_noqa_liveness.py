@@ -531,17 +531,34 @@ class TestShippedConfigLivenessPin:
     shrinking by 154 rows.
     """
 
-    def test_ble001_is_ignore_overridden_today(self) -> None:
+    def test_ble001_is_live_and_must_stay_live(self) -> None:
+        """BLE001 is LIVE. Re-adding the ignore silently kills 705 noqas.
+
+        This assertion is the INVERSE of what it asserted until 2026-08-28.
+        It used to pin `BLE001 in ignore` — the state ADR-0465 deleted, in
+        which the family was selected, the exact code was ignore-overridden
+        (exact beats prefix), and every `# noqa: BLE001` in the tree was
+        decorative. 965 sites were then triaged: narrowed where the real
+        exception types were nameable, kept broad only with a stated
+        site-specific reason.
+
+        Putting `"BLE001"` back into `ignore` would make all 705 surviving
+        markers inert again in one line, silently, and this is the assertion
+        that stops it.
+        """
         from yadgar.tests._paths import REPO_ROOT
 
         lint = nql.load_lint_config(REPO_ROOT / "pyproject.toml")
         assert lint is not None
         select, ignore = lint
         assert "BLE" in select, "precondition: the BLE family is selected"
-        assert "BLE001" in ignore, "precondition: BLE001 is ignore-overridden"
-        assert nql.is_live("BLE001", select, ignore) is False, (
-            "BLE001 is selected by family and then ignored, so ruff does not "
-            "run it and every `# noqa: BLE001` in the tree is decorative"
+        assert "BLE001" not in ignore, (
+            "BLE001 is back in `[tool.ruff.lint] ignore`. That single line "
+            "makes every `# noqa: BLE001` in the tree decorative again — see "
+            "ADR-0465, which un-ignored it and triaged all 965 sites."
+        )
+        assert nql.is_live("BLE001", select, ignore) is True, (
+            "BLE001 must be live: selected by the BLE family and not ignore-overridden"
         )
 
     def test_a_plainly_selected_rule_is_live(self) -> None:
