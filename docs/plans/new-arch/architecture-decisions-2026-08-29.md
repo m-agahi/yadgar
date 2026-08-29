@@ -438,7 +438,8 @@ Roughly **55 services / 60 repos** under D6. Recorded so the number is not a sur
 `yadgar-llm` — providers as crates inside, or six sibling repos (see O2)
 
 **Surface and ops**
-`yadgar-viz` · `yadgar-cli` · `yadgar-hooks` · `yadgar-deploy`
+`yadgar-viz` · `yadgar-cli` · `yadgar-hooks` · `yadgar-deploy` · `yadgar-seeds`
+(seeds carries no service — content, prompts and the evaluation set only)
 
 ### D24 — At least one fully permissive engine stays a first-class target
 
@@ -792,6 +793,52 @@ store to be retrievable. They therefore require:
 
 Seeded content **does** participate in retrieval — surfacing "how do I do this" on demand
 is its purpose. It is simply neither deletable nor decayable.
+
+
+### D36 — Seeds live in their own repository, together with the evaluation set
+
+`yadgar-seeds` holds the `ask` system prompt, the system-level agent prompts, the seeded
+wiki pages and memories, and the evaluation set that gates changes to any of them.
+
+```
+yadgar-seeds/
+  prompts/
+    ask/system.md          # the immutable ask prompt (D33)
+    agents/<pattern>.md    # system-level agent prompts (D34)
+  content/
+    wiki/<slug>.md
+    memories/<id>.md       # front-matter: id, tags, anchor, visibility
+  eval/
+    questions.yaml         # question, expected claims, expected citations
+```
+
+**Why:** seeds and service code have different change cadences, different reviewers and
+different delivery paths. Held in a service repository, a prompt edit drags a compile,
+a lint, a test run and an image build behind it, none of which can affect the outcome —
+and prompts reach the service as configuration while memories and wiki pages go through
+the seeder, so neither ever needed a new image. A content edit is also a content review,
+not a code review.
+
+**The evaluation set lives here too**, so a prompt change and the fixtures proving it are
+one pull request, reviewed together, and the gate of D30 and D33 stays local to the
+repository whose changes it governs.
+
+**Accepted cost:** scoring the evaluation set requires a running `ask`, so this
+repository's CI pulls the current service image and runs an ephemeral instance against
+it. That is a genuine cross-repository dependency and the one place where separating the
+repository does not simplify CI. It is the piece to get right, not a reason to keep seeds
+in the service.
+
+**Two consequences to enforce mechanically:**
+
+- **A declared minimum service version, checked at load.** A seed referring to a
+  capability the deployed service lacks otherwise fails at runtime rather than at merge.
+- **Front-matter is mandatory and lint-enforced.** D35 requires identity derived
+  deterministically from the source file; a memory file lacking it either duplicates on
+  every deployment or cannot be updated in place.
+
+**Prompts and content stay in one repository** despite their different delivery paths.
+They share a cadence and a reviewer, and splitting them further is premature.
 
 
 ---
