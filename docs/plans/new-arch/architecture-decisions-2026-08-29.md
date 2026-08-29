@@ -408,65 +408,62 @@ keeping, and failure modes worth not repeating.
 
 ## Repo inventory (ratified)
 
-All under `github.com/m-agahi/`, every repo carrying the `yadgar-` prefix. Names are
-**functional**, not metaphorical: a contributor who has never read the theory can tell
-what a module does from its name.
+All under **`github.com/yadgarhq/`**. Repo names are **unprefixed** — the organisation is
+the namespace, so `yadgarhq/yadgar-memory` would stutter. Names are **functional**, not
+metaphorical: a contributor who has never read the theory can tell what a module does
+from its name.
+
+Cargo crate names keep the `yadgar-` prefix (`yadgar-memory`), because crates.io is a
+flat namespace and GitHub's is not.
 
 Roughly **58 services / 65 repos**. Recorded so the number is not a surprise.
 
 **Contracts** — libraries, not services
-`yadgar-proto` · `yadgar-store`
+`proto` · `store`
 
 **Edge and control** — all with a `-db` twin
-`yadgar-gateway` · `yadgar-iam` · `yadgar-config` · `yadgar-queue` · `yadgar-audit`
+`gateway` · `iam` · `config` · `queue` · `audit`
 
 **Ranked knowledge** — register retrieval providers; all with a `-db` twin
-`yadgar-memory` · `yadgar-wiki` · `yadgar-graph`
+`memory` · `wiki` · `graph`
 
 **Addressed knowledge** — no retrieval provider; all with a `-db` twin
-`yadgar-adr` · `yadgar-task` · `yadgar-agent-prompt` · `yadgar-block` · `yadgar-bookmark`
+`adr` · `task` · `agent-prompt` · `block` · `bookmark`
 
 **Write pipeline** — async behind the queue
-`yadgar-write` · `yadgar-writegate` · `yadgar-curator` · `yadgar-heat` ·
-`yadgar-conflict` · `yadgar-promote`(+db) · `yadgar-domain`(+db) · `yadgar-slot`(+db) ·
-`yadgar-trigger`(+db) · `yadgar-rules`(+db)
+`write` · `writegate` · `curator` · `heat` · `conflict` · `promote`(+db) · `domain`(+db) ·
+`slot`(+db) · `trigger`(+db) · `rules`(+db)
 
 **Read pipeline** — latency-critical
-`yadgar-ask` · `yadgar-recall` · `yadgar-embed` · `yadgar-rank`
+`ask` · `recall` · `embed` · `rank`
 
 **Background** — all with a `-db` twin
-`yadgar-consolidate` · `yadgar-vacuum` · `yadgar-causal` · `yadgar-narrative` ·
-`yadgar-checkpoint` · `yadgar-codegraph`
+`consolidate` · `vacuum` · `causal` · `narrative` · `checkpoint` · `codegraph`
 
 **LLM**
-`yadgar-llm` — providers as crates inside, or six sibling repos (see O2)
+`llm` — providers as crates inside, or six sibling repos (see O2)
 
 **Surface and ops**
-`yadgar-viz` · `yadgar-cli` · `yadgar-hooks` · `yadgar-deploy` · `yadgar-seeds` ·
-`yadgar-custom-seeds`
-(only `yadgar-viz` carries a service; `yadgar-seeds` holds system-level content and
-`yadgar-custom-seeds` is an empty template organisations clone — see D37)
+`viz` · `cli` · `hooks` · `deploy` · `seeds` · `custom-seeds`
+(only `viz` carries a service; `seeds` holds system-level content and `custom-seeds` is
+an empty template organisations clone — see D37)
 
 ### Naming notes
 
-- **`yadgar-proto`, not `yadgar-protocol`.** D16 makes the `.proto` files the shared
-  artifact; there is no protocol crate to name.
+- **`proto`, not `protocol`.** D16 makes the `.proto` files the shared artifact; there is
+  no protocol crate to name.
 - **The neuroscience metaphors are retired as repo names**: `astrocyte` → `domain`,
   `engram` → `slot`, `thermo` → `heat`, `prospective` → `trigger`, `cls` → `promote`,
   `dream` → `consolidate`. Names a newcomer can read beat names that carry a theme, and
   an acronym like `cls` was worst of all — it teaches nothing and cannot be guessed.
   This amends D14, which had named the consolidation family `dream`.
-- **`yadgar-heat` has no `-db` twin.** It mutates rows the memory module owns rather than
-  owning a table, so under D8 it is a compare-and-set caller, not a store.
-- **`yadgar-agent-prompt` holds only the mutable layers** of D34's ladder — the user,
-  team and org definitions. System-level prompts stay in configuration from
-  `yadgar-seeds` and are the fallback at the bottom of the ladder, never entering a
-  database, so D35's immutability-by-construction holds for them. This works because
-  agent prompts are addressed by name rather than retrieved by similarity; seeded
-  memories and wiki pages cannot use the same mechanism because they must be in a store
-  to be searchable.
-- **The name is `yadgar-agent-prompt`, not `yadgar-prompt`**, so it is never confused
-  with the `ask` system prompt, which is not a repository at all.
+- **`heat` has no `-db` twin.** It mutates rows the memory module owns rather than owning
+  a table, so under D8 it is a compare-and-set caller, not a store.
+- **`agent-prompt` holds only the mutable layers** of D34's ladder. System, org and team
+  definitions arrive from seed repositories; only user-level prompts are written at
+  runtime.
+- **The name is `agent-prompt`, not `prompt`**, so it is never confused with the `ask`
+  system prompt, which is not a repository at all.
 
 ### D24 — At least one fully permissive engine stays a first-class target
 
@@ -937,6 +934,42 @@ organisation that tried. A mechanical guard in the template, not a documented co
 **The template ships CI, not content.** Schema validation, front-matter linting (D35
 derives identity from it), the forbidden-path check above, and the layout. What an
 organisation puts in it is theirs, and upstream never sees it.
+
+
+### D38 — The repositories live in a GitHub organisation, owned from the existing account
+
+All repositories live under the `yadgarhq` organisation. It is owned and administered
+from the existing personal account; no second account is created. Repository names drop
+the `yadgar-` prefix, since the organisation already supplies the namespace.
+
+**Why an organisation and not a second account:** GitHub permits one free personal
+account per person, so a second one puts both at risk. An organisation is the sanctioned
+construct for exactly this, is free — the Free organisation plan carries unlimited public
+and private repositories, and branch protection and rulesets are free on public
+repositories, which these are — and it avoids a second identity entirely. No new SSH key,
+no new token, no additional rewrite rule in the git configuration, all of which a separate
+account would require and each of which is a recurring source of pushing as the wrong
+identity.
+
+**The operational reason it matters at this scale:** organisation-level rulesets and
+reusable workflows are defined once and apply to every repository. Branch protection and
+shared CI configured 65 times, by hand, is precisely the per-repository tax that makes a
+multi-repository layout unpleasant, and it is avoidable.
+
+**The name is `yadgarhq` because `yadgar` was taken**, as were both standard
+transliterations of the word — `yadgaar` by an abandoned empty account and `yaadgar` by
+an active user. The `<name>hq` form is a common convention for the organisation that owns
+a project, claims nothing the project is not, and needs no hyphen. **The product is still
+called yadgar**; only the handle differs.
+
+**Cargo crate names keep the `yadgar-` prefix** — `yadgar-memory`, `yadgar-proto` —
+because crates.io is a flat namespace where the prefix is doing real work, unlike GitHub's
+where it would only stutter.
+
+**Practical note:** a fine-grained personal access token does not inherit access to a new
+organisation and must be authorised for it explicitly. A classic token with `repo` scope
+works as soon as the account is a member. The failure looks like a missing repository
+rather than a permissions error, so it is worth knowing before the first push.
 
 
 ---
