@@ -823,11 +823,25 @@ not a code review.
 one pull request, reviewed together, and the gate of D30 and D33 stays local to the
 repository whose changes it governs.
 
-**Accepted cost:** scoring the evaluation set requires a running `ask`, so this
-repository's CI pulls the current service image and runs an ephemeral instance against
-it. That is a genuine cross-repository dependency and the one place where separating the
-repository does not simplify CI. It is the piece to get right, not a reason to keep seeds
-in the service.
+**Delivery needs nothing; only scoring does.** Getting a prompt to a running service is
+git to configuration to reload — no build, no image, no dependency on any other
+repository. Knowing whether a changed prompt answers *better* is the separate problem: it
+requires actually generating answers, which needs a running `ask`.
+
+**That gate is a promotion stage, not a CI step.** Merging syncs the seeds to a
+non-production environment; the evaluation set is scored against it; promotion to
+production is conditional on the score. The seeds repository's own CI does lint and
+schema validation only, and the evaluation job is an ordinary client of a deployed
+service. This uses the progressive-delivery mechanism the GitOps controller already
+provides rather than adding a second one.
+
+**Trade-off:** the default branch can briefly hold an unproven prompt. It cannot reach
+production, and reverting is a commit plus a sync, so the exposure is small.
+
+**Rejected: having CI inject a candidate prompt into a running service per request.** It
+would require a prompt-override path on the request, which is precisely the hole D33
+closes. Restricting it to an evaluation credential would probably hold, but it is a hole
+where none needs to exist.
 
 **Two consequences to enforce mechanically:**
 
