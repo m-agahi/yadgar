@@ -726,6 +726,14 @@ install. The library remains correct for what it holds today — dispatch prompt
 instance uses to brief a subagent, which are per-project, change often, and affect only
 their caller. The distinguishing property is blast radius, not mechanism.
 
+**`ask` uses the system prompt and nothing else.** There is no user, team, or
+org-level override of it, and no merge of layers — one immutable, git-controlled prompt
+governs every answer the installation produces. The guarantees of D28 and D32 — that
+every claim is cited, that the model refuses to invent, that disagreement is reported —
+are therefore properties of the system rather than defaults that some scope could
+replace. D34's resolution ladder governs the agent-prompt library; it does not reach
+this prompt.
+
 **The prompt version hash is logged with every answer**, so a change in behaviour is
 attributable to a specific revision and evaluation results stay tied to what produced
 them. It also makes reloading safe rather than merely convenient: during a rollout two
@@ -733,35 +741,32 @@ replicas may briefly run different prompts, but since the generation cache keys 
 prompt hash (D17), those are two distinct entries — a brief mixed period, never a
 corrupted one.
 
-### D34 — Prompts resolve most-specific-first: user, then team, then org, then system
+### D34 — Agent prompts resolve most-specific-first: user, then team, then org, then system
 
-A prompt may exist at four levels. The most specific one that exists wins, and the same
-name may exist at several levels. System-level prompts are seeded at install and are
-immutable; the other three are editable by whoever owns that level.
+An installation ships a seeded set of system-level agent prompts — the dispatch prompts
+an instance uses to brief a subagent. A user, a team, or the org may define their own,
+including under a name that already exists at another level. The most specific
+definition that exists wins: user, then team, then org, then system. System-level
+prompts are immutable; the other three levels are editable by whoever owns them.
 
 **This is D12's scope axis read in the opposite direction.** Visibility widens
 `PRIVATE → TEAM → ORG`; resolution narrows `USER → TEAM → ORG → SYSTEM`. Stating it
 explicitly because an implementation that applies one ordering where the other belongs
 looks plausible and is wrong.
 
-**A prompt has two sections, and only one of them is overridable:**
+**Resolution replaces, it does not merge.** The winning definition is used whole. Merging
+layers of prose produces prompts nobody wrote and nobody can predict, and makes a
+misbehaving prompt impossible to attribute to a source.
 
-| Section | Overridable |
-|---|---|
-| Contract — cite every claim, refuse to invent, report disagreement, honour the deadline | never |
-| Behaviour — tone, verbosity, framing, formatting | at any of the three editable levels |
+**Why the ladder is safe here and would not be on `ask`:** an agent prompt affects the
+subagent its author dispatches. The cost of a bad one is borne by whoever wrote it, which
+is why no gate is required at the user and team levels. An org-level definition reaches
+every caller in the installation, so it carries an audit entry. The `ask` system prompt
+governs every answer the installation gives and has no override path at all (D33) — the
+distinguishing property throughout is blast radius.
 
-The ladder resolves the behaviour section. The service appends the contract section
-regardless of what any level overrode. **Why:** if an override could replace the whole
-prompt, a single user-level edit silently removes the citation and no-invention
-guarantees of D28 and the disagreement reporting of D32. Properties the system
-guarantees cannot be one override away from optional.
-
-**Org-level changes are gated; user and team are not.** A user or team prompt affects
-only its own scope, so the blast radius is contained and the cost of a bad edit is borne
-by whoever made it. An org-level prompt changes every answer in the installation, so it
-requires an evaluation run and an audit entry before taking effect, even though it is
-not immutable.
+**Seeded system-level prompts are immutable**, so a resolution always terminates: there
+is a definition at the bottom of the ladder that exists and cannot be removed.
 
 ### D35 — System-level seeded content is git-controlled, immutable, and exempt from decay
 
