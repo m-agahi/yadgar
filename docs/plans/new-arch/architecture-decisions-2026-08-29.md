@@ -412,7 +412,7 @@ All under `github.com/m-agahi/`, every repo carrying the `yadgar-` prefix. Names
 **functional**, not metaphorical: a contributor who has never read the theory can tell
 what a module does from its name.
 
-Roughly **58 services / 64 repos**. Recorded so the number is not a surprise.
+Roughly **58 services / 65 repos**. Recorded so the number is not a surprise.
 
 **Contracts** — libraries, not services
 `yadgar-proto` · `yadgar-store`
@@ -442,8 +442,10 @@ Roughly **58 services / 64 repos**. Recorded so the number is not a surprise.
 `yadgar-llm` — providers as crates inside, or six sibling repos (see O2)
 
 **Surface and ops**
-`yadgar-viz` · `yadgar-cli` · `yadgar-hooks` · `yadgar-deploy` · `yadgar-seeds`
-(the last four carry no service)
+`yadgar-viz` · `yadgar-cli` · `yadgar-hooks` · `yadgar-deploy` · `yadgar-seeds` ·
+`yadgar-custom-seeds`
+(only `yadgar-viz` carries a service; `yadgar-seeds` holds system-level content and
+`yadgar-custom-seeds` is an empty template organisations clone — see D37)
 
 ### Naming notes
 
@@ -727,45 +729,37 @@ deadline of D28 or be skipped for that request — degraded, never blocking.
 one of the cleanest, because it identifies both records involved.
 
 
-### D33 — Prompts are files in git, delivered by GitOps, gated on the evaluation set
+### D33 — The `ask` system prompt is upstream's, delivered as configuration, and has no override
 
-The prompts an LLM service uses are not compiled into it and are not stored in the
-database. They are files in a repository, delivered to the running service as
-configuration by the GitOps controller, and reloaded without rebuilding or redeploying
-the binary. Changing one is a commit, a review, and a sync.
+The `ask` system prompt is the one prompt that lives outside every database. It is
+authored upstream, ships as a file, reaches the running service as configuration, and is
+reloaded without rebuilding the binary. It is the *only* prompt `ask` uses: there is no
+user, team, or org layer above it and no merging of layers.
 
-**Why:** the two requirements — modifiable without a build, yet properly versioned —
-conflict unless something bridges them, and GitOps is that bridge and is already a
-committed part of this architecture. It gives real versioning: a diff, a review, a
-revert.
+**Why it has no override:** the guarantees of D28 and D32 — every claim cited, invention
+refused, disagreement reported — must be properties of the system rather than defaults
+some scope can replace. One immutable prompt governs every answer an installation
+produces.
 
-**The decisive property is that a prompt change gets CI.** D30's evaluation set runs on
-the pull request, so a prompt that regresses the score cannot merge. Stored in a
-database instead, there is no pull request to gate, and D30 degrades into a convention
-people are expected to remember.
+**Why it is not in a database:** it has no owning module and no ladder above it, so
+configuration delivery costs nothing and buys immutability by construction. There is no
+write path to abuse, which is stronger than a flag something eventually bypasses.
 
-**Rejected: storing them in the agent-prompt library.** It versions in the database
-rather than in git, so there is no diff, no review and no revert; any caller could change
-every user's answers instantly with no gate; and it would make the answering service
-depend on the prompt store being reachable, with nothing to bootstrap from on a fresh
-install. The library remains correct for what it holds today — dispatch prompts an
-instance uses to brief a subagent, which are per-project, change often, and affect only
-their caller. The distinguishing property is blast radius, not mechanism.
+**How it changes:** an organisation that wants it different opens a pull request against
+upstream and it is reviewed there. Failing that, the project is open source and they may
+fork and run their own — an acceptable outcome, and a deliberate one: a change to this
+prompt changes how every installation answers, so it is reviewed where it is authored.
 
-**`ask` uses the system prompt and nothing else.** There is no user, team, or
-org-level override of it, and no merge of layers — one immutable, git-controlled prompt
-governs every answer the installation produces. The guarantees of D28 and D32 — that
-every claim is cited, that the model refuses to invent, that disagreement is reported —
-are therefore properties of the system rather than defaults that some scope could
-replace. D34's resolution ladder governs the agent-prompt library; it does not reach
-this prompt.
-
-**The prompt version hash is logged with every answer**, so a change in behaviour is
-attributable to a specific revision and evaluation results stay tied to what produced
-them. It also makes reloading safe rather than merely convenient: during a rollout two
-replicas may briefly run different prompts, but since the generation cache keys on the
-prompt hash (D17), those are two distinct entries — a brief mixed period, never a
+**The evaluation set gates it** (D30, D36). The prompt version hash is logged with every
+answer, so a change in behaviour is attributable to a specific revision and evaluation
+results stay tied to what produced them. It also makes reloading safe: during a rollout
+two replicas may briefly run different prompts, but since the generation cache keys on
+the prompt hash (D17), those are two distinct entries — a brief mixed period, never a
 corrupted one.
+
+**Everything else lives in a database.** Agent prompts, wiki pages and memories are owned
+by their modules and stored there (D35). Configuration delivery is for this one prompt,
+not a general mechanism.
 
 ### D34 — Agent prompts resolve most-specific-first: user, then team, then org, then system
 
@@ -784,41 +778,70 @@ looks plausible and is wrong.
 layers of prose produces prompts nobody wrote and nobody can predict, and makes a
 misbehaving prompt impossible to attribute to a source.
 
-**Why the ladder is safe here and would not be on `ask`:** an agent prompt affects the
-subagent its author dispatches. The cost of a bad one is borne by whoever wrote it, which
-is why no gate is required at the user and team levels. An org-level definition reaches
-every caller in the installation, so it carries an audit entry. The `ask` system prompt
-governs every answer the installation gives and has no override path at all (D33) — the
+**Each level has exactly one write path, and they do not overlap:**
+
+| Level | Written by | Runtime API |
+|---|---|---|
+| system | upstream's seed repository, at install and upgrade | read-only |
+| org | the organisation's own seed repository, by GitOps | read-only |
+| team | the organisation's own seed repository, by GitOps | read-only |
+| user | the runtime API | writable |
+
+Org and team prompts are immutable from the running system's point of view: their source
+of truth is a repository, and the only thing that writes them is a sync. Nothing may
+write the same record from two places — that is the single-writer problem D4 exists to
+prevent, and its failure here would be silent, with a runtime edit clobbered by the next
+sync.
+
+**Consequence:** an organisation with no seed repository of its own simply has no org or
+team prompts, and resolution falls through to system. That is a complete and usable
+state, not a degraded one.
+
+**Why the levels differ:** a user prompt affects only the subagent its author dispatches,
+so the cost of a bad one is borne by whoever wrote it and no gate is warranted. An org or
+team definition reaches other people, so it goes through a reviewed repository with CI —
+the gate is the pull request, inherited from the template of D37. The `ask` system prompt
+governs every answer the installation gives and has no override at all (D33). The
 distinguishing property throughout is blast radius.
 
 **Seeded system-level prompts are immutable**, so a resolution always terminates: there
 is a definition at the bottom of the ladder that exists and cannot be removed.
 
-### D35 — System-level seeded content is git-controlled, immutable, and exempt from decay
+### D35 — Seed repositories bootstrap the databases; the databases are then the live copy
 
-An installation ships with system-level content: prompts, help pages, how-tos,
-explanations of the system itself, and anchored memories about them. It is defined in
-git and seeded at setup.
+An installation ships with system-level content: agent prompts, help pages, how-tos,
+explanations of the system itself, and anchored memories about them. It is defined in a
+seed repository and loaded into the owning module's database at install.
 
-**Prompts are immutable by construction.** They live in git and reach the service as
-configuration, never entering the database, so there is no write path to abuse — which
-is stronger than a flag that something will eventually bypass.
+**A seed repository is a bootstrap and upgrade source, not a permanent authority.** A
+fresh installation has empty databases, so something outside them must populate it —
+that is the whole of what the repository is for. Durability is not among its jobs: the
+databases are backed up, and keeping a second copy under version control for
+recoverability would add a synchronisation problem while solving one that is already
+solved.
 
-**Seeded memories and wiki pages cannot use that trick**, because they must be in the
-store to be retrievable. They therefore require:
+**Re-seeding on upgrade overwrites system level.** That is how improvements reach
+existing installations, and it is safe precisely because the ladder of D34 exists: nobody
+else's work lives at system level, so nothing local is destroyed. Skip-if-exists would
+leave an installation seeded once holding that day's help pages forever.
 
-- **Deterministic identity derived from the source file**, so re-seeding an updated
-  version updates the existing record in place. Without this, every deployment duplicates
-  the help corpus.
-- **An immutability flag with a seeder-only write path** — one component may set it, and
-  no ordinary write may modify a record carrying it.
+**The rule this produces:** *system level belongs to upstream; everything above it
+belongs to the installation.*
+
+Seeded content therefore requires:
+
+- **Deterministic identity derived from the source file**, so re-seeding updates the
+  existing record in place. Without it, every upgrade duplicates the help corpus.
+- **A seeder-only write path.** One component may write records at system, org and team
+  level; ordinary writes may not touch them. Only the `ask` prompt gets immutability by
+  construction (D33) — everything else is in a database and needs the write path
+  enforced.
 - **Exemption from decay, vacuum and heat-based eviction.** A how-to that is rarely read
-  must not age out. Otherwise the onboarding material of a system nobody has yet
-  onboarded to is exactly what gets deleted first.
+  must not age out, or the onboarding material of a system nobody has yet onboarded to is
+  the first thing deleted.
 
 Seeded content **does** participate in retrieval — surfacing "how do I do this" on demand
-is its purpose. It is simply neither deletable nor decayable.
-
+is its purpose. It is simply not writable at runtime and not decayable.
 
 ### D36 — Seeds live in their own repository, together with the evaluation set
 
@@ -837,12 +860,12 @@ yadgar-seeds/
     questions.yaml         # question, expected claims, expected citations
 ```
 
-**Why:** seeds and service code have different change cadences, different reviewers and
-different delivery paths. Held in a service repository, a prompt edit drags a compile,
-a lint, a test run and an image build behind it, none of which can affect the outcome —
-and prompts reach the service as configuration while memories and wiki pages go through
-the seeder, so neither ever needed a new image. A content edit is also a content review,
-not a code review.
+**Why:** seeds and service code have different change cadences and different reviewers,
+and neither path needs a new image — the `ask` prompt reaches the service as
+configuration, and everything else is loaded into the owning module's database by the
+seeder (D35). Held in a service repository, a content edit would drag a compile, a lint,
+a test run and an image build behind it, none of which can affect the outcome. A content
+edit is also a content review, not a code review.
 
 **The evaluation set lives here too**, so a prompt change and the fixtures proving it are
 one pull request, reviewed together, and the gate of D30 and D33 stays local to the
@@ -878,6 +901,42 @@ where none needs to exist.
 
 **Prompts and content stay in one repository** despite their different delivery paths.
 They share a cadence and a reviewer, and splitting them further is premature.
+
+
+### D37 — Organisations define their own org and team seeds from an empty template
+
+`yadgar-custom-seeds` is an empty repository published upstream containing only CI,
+pre-commit configuration and the directory layout. An organisation clones it, fills it
+with their own org and team level prompts and content, and their GitOps pipeline seeds it
+into their installation.
+
+```
+<their repo>/                      # cloned from yadgar-custom-seeds
+  prompts/agents/<pattern>.md      # org and team level (D34)
+  content/wiki/<slug>.md
+  content/memories/<id>.md
+  # prompts/ask/ — rejected by CI
+```
+
+**Why a clone of an empty template rather than a fork of `yadgar-seeds`:** a fork
+permanently severs the organisation from upstream improvements. Every corrected how-to
+and every improved system prompt stops reaching them, and the divergence only grows. A
+clone of an empty template contains none of upstream's content, so there is nothing to
+diverge: system level keeps improving underneath while their own definitions sit above it
+in the ladder. They get their customisation *and* upstream's work.
+
+**This is the mechanism behind D34's write paths.** Org and team prompts are immutable at
+runtime because their source of truth is this repository. It also supplies the gate those
+levels need: the pull request and the CI shipped in the template, rather than a rule
+somebody is expected to remember.
+
+**CI rejects `prompts/ask/`.** D33 gives the `ask` system prompt no override, and a
+custom seed repository able to define one would end that guarantee at the first
+organisation that tried. A mechanical guard in the template, not a documented convention.
+
+**The template ships CI, not content.** Schema validation, front-matter linting (D35
+derives identity from it), the forbidden-path check above, and the layout. What an
+organisation puts in it is theirs, and upstream never sees it.
 
 
 ---
