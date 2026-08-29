@@ -551,6 +551,58 @@ snapshot remains, but it is now a per-installation operational matter rather tha
 distributed one.
 
 
+### D28 — `ask` is the default retrieval tool, and it returns identifiers, not passages
+
+`ask` takes a question, lets an internal LLM drive retrieval iteratively under a
+hop cap, and returns an answer plus citation identifiers. `recall` remains as the
+primitive `ask` calls, the fallback when the LLM is unavailable, and the escape hatch
+for callers that want raw hits.
+
+**The response carries no memory or wiki bodies** — an answer, and for each citation a
+URN, a short label saying what the record is, and a relevance score. Nothing else.
+
+**Why:** a `recall` call makes the caller pay context for every passage returned,
+whether or not it bears on the question, and most do not. Cutting that cost is the
+entire purpose of the tool; returning passages alongside the answer would defeat it.
+Iteration with a cap is what makes chained questions answerable — a second query
+informed by what the first returned — while bounding a question the corpus cannot
+answer, which would otherwise loop against the one latency-critical path in the system.
+
+**Never fails on a shortfall.** LLM unavailable or out of budget returns the top
+citations with a template answer and `synthesized: false`. A caller must always be able
+to distinguish a synthesised answer from a fallback.
+
+**Accepted cost:** returning identifiers means a caller cannot verify the answer without
+a second call, and synthesis introduces a hallucination surface raw retrieval does not
+have. Mandatory per-claim citations, a label that makes an irrelevant citation visible
+without fetching it, and the continued availability of `recall` bound the risk without
+removing it. This is a deliberate trade of verifiability for context cost, to be
+revisited if answers prove unreliable in practice.
+
+See `ask-tool-design.md` for the message shapes, the hop loop, and the latency budget.
+
+### D29 — The LLM is stateless between calls; only a request holds context
+
+An `ask` request carries its own hop context for its lifetime and discards it on
+return. Nothing is retained between calls. Where a follow-up needs earlier context, the
+**caller supplies it** in the request.
+
+**Why**, three independent reasons:
+
+1. This system *is* the memory. An LLM keeping its own conversation history creates a
+   second, competing store that is not persisted, not audited, and not subject to the
+   visibility rules of D12.
+2. Session state destroys the content-addressed cache of D17. Caching a generation on
+   the hash of its prompt only works when the prompt is fully determined by the question
+   and the retrieved context.
+3. Session affinity would pin a user to one pod, which is exactly what D23's client-side
+   per-request balancing exists to avoid.
+
+**Consequence:** conversational continuity is the caller's responsibility and travels
+explicitly in the request, where it is visible and auditable, rather than accumulating
+as hidden state inside a service.
+
+
 ---
 
 ## Dependency licences (verified 2026-08-29 against each project's own LICENSE file)
