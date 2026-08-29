@@ -1,0 +1,100 @@
+// The retrieval fanout contract — the one cross-module interface that makes the
+// "no shared substrate" decision work (D3).
+//
+// Each searchable module implements RetrievalProvider over its own store. The
+// recall orchestrator fans out, collects candidate pools, and reranks the union.
+// Fusion happens at the RANKER, not in a shared store, which is why the stores
+// need not co-locate.
+//
+// A module that should not appear in search simply does not implement this
+// service. That is the whole of recall-visibility policy (D10).
+syntax = "proto3";
+
+package yadgar.recall.v1;
+
+import "yadgar/common/v1/common.proto";
+
+// What a provider was asked for. The query embedding is computed ONCE by the
+// orchestrator and passed to every provider, so N providers do not each pay for
+// an embedding of the same text.
+message SearchRequest {
+  yadgar.common.v1.Scope scope = 1;
+  string query_text = 2;
+  repeated float query_embedding = 3;
+  int32 limit = 4;
+  repeated string exclude_urns = 5;
+  repeated string require_tags = 6;
+}
+
+// How a provider arrived at its score. Scores from different providers are NOT
+// comparable to each other; this field exists for diagnosis and for weighting,
+// never for cross-provider ordering. Comparability comes from the cross-encoder
+// reranking the union, which scores query-document pairs uniformly regardless of
+// which provider supplied the document.
+enum ScoreKind {
+  SCORE_KIND_UNSPECIFIED = 0;
+  SCORE_KIND_COSINE      = 1;
+  SCORE_KIND_BM25        = 2;
+  SCORE_KIND_HYBRID      = 3;
+  SCORE_KIND_GRAPH       = 4;  // PPR / spreading activation
+}
+
+message Candidate {
+  // URN. The orchestrator never dereferences this itself — hydration is a batch
+  // call back to the owning module.
+  string urn = 1;
+
+  // Text the reranker scores against the query. Providers must supply it;
+  // requiring the orchestrator to fetch it would make reranking an N+1.
+  string snippet = 2;
+
+  double provider_score = 3;
+  ScoreKind score_kind = 4;
+
+  // Which provider produced this, for tracing and per-source weighting.
+  string provider = 5;
+
+  map<string, string> attributes = 6;
+}
+
+message SearchResponse {
+  repeated Candidate candidates = 1;
+  // Set when the provider truncated, hit a deadline, or ran degraded. The
+  // orchestrator returns partial results rather than failing the whole fanout
+  // when one provider is unhealthy.
+  bool partial = 2;
+}
+
+// Implemented by searchable modules only: memory, wiki, graph.
+service RetrievalProviderService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+}
+
+// ── Orchestrator-facing API ──────────────────────────────────────────────────
+
+message RecallRequest {
+  yadgar.common.v1.Scope scope = 1;
+  string query = 2;
+  int32 limit = 3;
+  // Providers to consult. Empty means every registered provider.
+  repeated string providers = 4;
+}
+
+message Hit {
+  string urn = 1;
+  string snippet = 2;
+  // Cross-encoder score over the union. This IS comparable across providers.
+  double score = 3;
+  string provider = 4;
+}
+
+message RecallResponse {
+  repeated Hit hits = 1;
+  // Providers that returned partial results or failed. Present so a caller can
+  // tell "nothing matched" from "the wiki provider was down".
+  repeated string degraded_providers = 2;
+}
+
+service RecallService {
+  rpc Recall(RecallRequest) returns (RecallResponse);
+}

@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package yadgar.wiki.v1;
+
+import "yadgar/common/v1/common.proto";
+import "google/protobuf/field_mask.proto";
+
+message WikiPage {
+  yadgar.common.v1.Meta meta = 1;
+
+  string slug = 16;
+  string title = 17;
+  string content = 18;
+  string category = 19;
+  repeated string tags = 20;
+
+  // Outbound [[slug]] references, stored as URNs. A module owns only its own
+  // outbound edges; reverse lookup is a fanout (O4).
+  repeated string links = 21;
+}
+
+message CreateWikiPageRequest {
+  yadgar.common.v1.Idempotency idempotency = 1;
+  yadgar.common.v1.Scope scope = 2;
+  WikiPage page = 3;
+}
+message CreateWikiPageResponse { WikiPage page = 1; }
+
+message UpdateWikiPageRequest {
+  yadgar.common.v1.Idempotency idempotency = 1;
+  yadgar.common.v1.Scope scope = 2;
+  string id = 3;
+  uint64 expect_version = 4;
+  WikiPage page = 5;
+  google.protobuf.FieldMask update_mask = 6;
+}
+message UpdateWikiPageResponse { WikiPage page = 1; }
+
+message GetWikiPageRequest {
+  yadgar.common.v1.Scope scope = 1;
+  // Exactly one of the two.
+  oneof key {
+    string id = 2;
+    string slug = 3;
+  }
+}
+message GetWikiPageResponse { WikiPage page = 1; }
+
+message BatchGetWikiPagesRequest {
+  yadgar.common.v1.Scope scope = 1;
+  repeated string ids = 2;
+}
+message BatchGetWikiPagesResponse { repeated WikiPage pages = 1; }
+
+message DeleteWikiPageRequest {
+  yadgar.common.v1.Idempotency idempotency = 1;
+  yadgar.common.v1.Scope scope = 2;
+  string id = 3;
+  uint64 expect_version = 4;
+}
+message DeleteWikiPageResponse {}
+
+service WikiDbService {
+  rpc CreateWikiPage(CreateWikiPageRequest) returns (CreateWikiPageResponse);
+  rpc UpdateWikiPage(UpdateWikiPageRequest) returns (UpdateWikiPageResponse);
+  rpc GetWikiPage(GetWikiPageRequest) returns (GetWikiPageResponse);
+  rpc BatchGetWikiPages(BatchGetWikiPagesRequest) returns (BatchGetWikiPagesResponse);
+  rpc DeleteWikiPage(DeleteWikiPageRequest) returns (DeleteWikiPageResponse);
+}

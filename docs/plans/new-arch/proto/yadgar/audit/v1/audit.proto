@@ -1,0 +1,83 @@
+// Audit is append-only and therefore exempt from the CAS envelope: no version,
+// no deleted_at, no updates (D25). A deletion is recorded by appending a
+// tombstone event, never by rewriting a row.
+syntax = "proto3";
+
+package yadgar.audit.v1;
+
+import "yadgar/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_CREATE      = 1;
+  ACTION_UPDATE      = 2;
+  ACTION_DELETE      = 3;
+  ACTION_SHARE       = 4;  // visibility widened
+  ACTION_UNSHARE     = 5;  // visibility narrowed
+  ACTION_READ        = 6;  // read stream only
+}
+
+// Written to an outbox table in the SAME transaction as the change it
+// describes, then relayed to the broker. A crash between commit and publish
+// leaves the event in the outbox, so no write event is ever lost. Delivery is
+// at-least-once; consumers must be idempotent.
+message WriteEvent {
+  string id = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+
+  string actor_user_id = 3;
+  optional string actor_agent = 4;
+
+  Action action = 5;
+  string target_urn = 6;
+  string project_id = 7;
+  optional string team_id = 8;
+
+  // Visibility transition, set on SHARE / UNSHARE.
+  optional yadgar.common.v1.Visibility from_visibility = 9;
+  optional yadgar.common.v1.Visibility to_visibility = 10;
+
+  // Field names only. Audit references identifiers, never content.
+  repeated string changed_fields = 11;
+
+  uint64 result_version = 12;
+}
+
+// Published directly to the broker, fire-and-forget, never blocking the
+// response. A read has no write transaction to attach an outbox row to, so the
+// exactly-with-the-change guarantee is structurally unavailable here: read
+// auditing is best-effort and may be sampled. A gap in this stream is NOT
+// evidence that a read did not happen.
+message ReadEvent {
+  string id = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+  string actor_user_id = 3;
+  optional string actor_agent = 4;
+  repeated string target_urns = 5;
+  string project_id = 6;
+  // The rpc that served the read, e.g. "yadgar.recall.v1.RecallService/Recall".
+  string via = 7;
+}
+
+message QueryAuditRequest {
+  yadgar.common.v1.Scope scope = 1;
+  optional string target_urn = 2;
+  optional string actor_user_id = 3;
+  optional google.protobuf.Timestamp since = 4;
+  optional google.protobuf.Timestamp until = 5;
+  int32 page_size = 6;
+  string page_token = 7;
+}
+message QueryAuditResponse {
+  repeated WriteEvent write_events = 1;
+  repeated ReadEvent read_events = 2;
+  string next_page_token = 3;
+}
+
+// Writes are retained permanently by default with configurable retention;
+// reads are rotated on a window. The two are stored separately so a
+// high-volume rotating dataset and a permanent one do not share reclamation.
+service AuditDbService {
+  rpc QueryAudit(QueryAuditRequest) returns (QueryAuditResponse);
+}
