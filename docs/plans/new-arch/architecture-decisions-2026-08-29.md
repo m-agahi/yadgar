@@ -208,9 +208,11 @@ separate decision, made on scaling and deploy-cadence grounds.
 boundary. A separate Deployment adds a network hop and a k8s object, and buys only
 independent scaling.
 
-### D14 — "Dream" is the name for the consolidation / sleep-compute family
+### D14 — Consolidation and sleep-compute are one module family
 
-One module family, named `dream` in the new architecture.
+They are the same thing under two names and become a single module. Named `dream` when
+this was first settled; renamed `yadgar-consolidate` when repo names were ratified with
+functional rather than metaphorical names.
 
 ### D15 — APIs are versioned, and a version retires only when it is provably unused
 
@@ -404,42 +406,65 @@ keeping, and failure modes worth not repeating.
 
 ---
 
-## Repo inventory (DRAFT — names not ratified)
+## Repo inventory (ratified)
 
-Roughly **55 services / 60 repos** under D6. Recorded so the number is not a surprise.
+All under `github.com/m-agahi/`, every repo carrying the `yadgar-` prefix. Names are
+**functional**, not metaphorical: a contributor who has never read the theory can tell
+what a module does from its name.
 
-**Contracts (libraries, not services)**
-`yadgar-protocol` · `yadgar-store`
+Roughly **58 services / 64 repos**. Recorded so the number is not a surprise.
 
-**Edge and control**
-`yadgar-gateway` · `yadgar-iam`(+db) · `yadgar-config`(+db) · `yadgar-queue`(+db) ·
-`yadgar-audit`(+db)
+**Contracts** — libraries, not services
+`yadgar-proto` · `yadgar-store`
 
-**Ranked knowledge** — register retrieval providers
-`yadgar-memory`(+db) · `yadgar-wiki`(+db) · `yadgar-graph`(+db)
+**Edge and control** — all with a `-db` twin
+`yadgar-gateway` · `yadgar-iam` · `yadgar-config` · `yadgar-queue` · `yadgar-audit`
 
-**Addressed knowledge** — no retrieval provider
-`yadgar-adr`(+db) · `yadgar-task`(+db) · `yadgar-prompt`(+db) · `yadgar-block`(+db) ·
-`yadgar-bookmark`(+db)
+**Ranked knowledge** — register retrieval providers; all with a `-db` twin
+`yadgar-memory` · `yadgar-wiki` · `yadgar-graph`
+
+**Addressed knowledge** — no retrieval provider; all with a `-db` twin
+`yadgar-adr` · `yadgar-task` · `yadgar-agent-prompt` · `yadgar-block` · `yadgar-bookmark`
 
 **Write pipeline** — async behind the queue
-`yadgar-write` · `yadgar-writegate` · `yadgar-curator` · `yadgar-thermo` ·
-`yadgar-cls`(+db) · `yadgar-astrocyte`(+db) · `yadgar-engram`(+db) ·
-`yadgar-prospective`(+db) · `yadgar-rules`(+db) · `yadgar-conflict`
+`yadgar-write` · `yadgar-writegate` · `yadgar-curator` · `yadgar-heat` ·
+`yadgar-conflict` · `yadgar-promote`(+db) · `yadgar-domain`(+db) · `yadgar-slot`(+db) ·
+`yadgar-trigger`(+db) · `yadgar-rules`(+db)
 
 **Read pipeline** — latency-critical
-`yadgar-recall` · `yadgar-embed` · `yadgar-rank`
+`yadgar-ask` · `yadgar-recall` · `yadgar-embed` · `yadgar-rank`
 
-**Background**
-`yadgar-dream`(+db) · `yadgar-vacuum`(+db) · `yadgar-causal`(+db) ·
-`yadgar-narrative`(+db) · `yadgar-checkpoint`(+db) · `yadgar-codegraph`(+db)
+**Background** — all with a `-db` twin
+`yadgar-consolidate` · `yadgar-vacuum` · `yadgar-causal` · `yadgar-narrative` ·
+`yadgar-checkpoint` · `yadgar-codegraph`
 
 **LLM**
 `yadgar-llm` — providers as crates inside, or six sibling repos (see O2)
 
 **Surface and ops**
 `yadgar-viz` · `yadgar-cli` · `yadgar-hooks` · `yadgar-deploy` · `yadgar-seeds`
-(seeds carries no service — content, prompts and the evaluation set only)
+(the last four carry no service)
+
+### Naming notes
+
+- **`yadgar-proto`, not `yadgar-protocol`.** D16 makes the `.proto` files the shared
+  artifact; there is no protocol crate to name.
+- **The neuroscience metaphors are retired as repo names**: `astrocyte` → `domain`,
+  `engram` → `slot`, `thermo` → `heat`, `prospective` → `trigger`, `cls` → `promote`,
+  `dream` → `consolidate`. Names a newcomer can read beat names that carry a theme, and
+  an acronym like `cls` was worst of all — it teaches nothing and cannot be guessed.
+  This amends D14, which had named the consolidation family `dream`.
+- **`yadgar-heat` has no `-db` twin.** It mutates rows the memory module owns rather than
+  owning a table, so under D8 it is a compare-and-set caller, not a store.
+- **`yadgar-agent-prompt` holds only the mutable layers** of D34's ladder — the user,
+  team and org definitions. System-level prompts stay in configuration from
+  `yadgar-seeds` and are the fallback at the bottom of the ladder, never entering a
+  database, so D35's immutability-by-construction holds for them. This works because
+  agent prompts are addressed by name rather than retrieved by similarity; seeded
+  memories and wiki pages cannot use the same mechanism because they must be in a store
+  to be searchable.
+- **The name is `yadgar-agent-prompt`, not `yadgar-prompt`**, so it is never confused
+  with the `ask` system prompt, which is not a repository at all.
 
 ### D24 — At least one fully permissive engine stays a first-class target
 
@@ -882,7 +907,7 @@ note. See D24 for the constraint that keeps it from becoming a hard requirement.
 
 ## Open — not yet decided
 
-- **O1 — Repo names not ratified.** The table above is a draft.
+- ~~O1 — Repo names~~ — **RESOLVED**: ratified in the inventory above.
 - **O2 — Two levers on the service count**, both preserving repo-per-module and the
   twin rule: (a) crate-fold the tiny write-path modules (astrocyte ~414 LOC, engram,
   prospective ~229 LOC) into `yadgar-write`, keeping their own repos and `-db` twins,
