@@ -558,14 +558,27 @@ hop cap, and returns an answer plus citation identifiers. `recall` remains as th
 primitive `ask` calls, the fallback when the LLM is unavailable, and the escape hatch
 for callers that want raw hits.
 
-**The response carries no memory or wiki bodies** — an answer, and for each citation a
-URN, a short label saying what the record is, and a relevance score. Nothing else.
+`ask` and `recall` answer different needs. `recall` takes keywords and returns ranked
+passages to read. `ask` takes a question and returns a **fully detailed answer whose
+claims are individually sourced**, which the caller can act on — or use to go correct
+the sources. The answer is not abbreviated; brevity is not the goal.
+
+**The response carries no memory or wiki bodies** — the answer, and for each citation a
+URN, a short label saying what the record is, and a relevance score.
+
+**Claims are cited individually, with inline markers.** The answer text carries markers
+that resolve to citations, so a specific statement maps to the specific record it came
+from. This is what makes the two things identifiers are for actually possible: updating
+a record that turns out to be wrong, and checking a particular claim against its source.
+A bare list of contributing identifiers serves neither. It also yields a free signal —
+**a claim with no marker is ungrounded**, produced by the model rather than found in the
+corpus, and visibly so.
 
 **Why:** a `recall` call makes the caller pay context for every passage returned,
-whether or not it bears on the question, and most do not. Cutting that cost is the
-entire purpose of the tool; returning passages alongside the answer would defeat it.
-Iteration with a cap is what makes chained questions answerable — a second query
-informed by what the first returned — while bounding a question the corpus cannot
+whether or not it bears on the question, and most do not. Reduced context cost is a
+consequence of answering the question instead of shipping the pile, not the purpose of
+the tool. Iteration with a cap is what makes chained questions answerable — a second
+query informed by what the first returned — while bounding a question the corpus cannot
 answer, which would otherwise loop against the one latency-critical path in the system.
 
 **Never fails on a shortfall.** LLM unavailable or out of budget returns the top
@@ -583,9 +596,10 @@ See `ask-tool-design.md` for the message shapes, the hop loop, and the latency b
 
 ### D29 — The LLM is stateless between calls; only a request holds context
 
-An `ask` request carries its own hop context for its lifetime and discards it on
-return. Nothing is retained between calls. Where a follow-up needs earlier context, the
-**caller supplies it** in the request.
+No LLM state lives in a service process. Conversational continuity is carried by an
+**opaque conversation token**: the service returns a short handle, the prior context
+lives in the shared cache under that key with a TTL, and the caller passes the handle
+back on the next `ask`.
 
 **Why**, three independent reasons:
 
@@ -598,9 +612,93 @@ return. Nothing is retained between calls. Where a follow-up needs earlier conte
 3. Session affinity would pin a user to one pod, which is exactly what D23's client-side
    per-request balancing exists to avoid.
 
-**Consequence:** conversational continuity is the caller's responsibility and travels
-explicitly in the request, where it is visible and auditable, rather than accumulating
-as hidden state inside a service.
+Reasons 2 and 3 are why the state lives in the shared cache rather than in a process:
+any replica can serve the next turn, so no affinity is needed, and the generation cache
+still keys deterministically on the token plus the question.
+
+Reason 1 is the one this concedes. There *is* conversation state — but it is ephemeral
+scratch under a TTL, never entering the corpus, never recalled, and never competing with
+stored memories.
+
+**Rejected: the caller resends prior turns on each request.** Stateless, but every
+follow-up re-pays the full context cost, which is the specific thing `ask` exists to
+avoid. Correct for a one-shot tool, wrong for a dialogue-shaped one.
+
+**Consequence:** an expired or evicted token must degrade to being treated as a new
+conversation **and say so in the response**. Silently answering without context the
+caller believes is present is the one failure mode this must not have. Conversation
+state is owned by a user and visibility-scoped like everything else.
+
+
+### D30 — `ask` behaviour is configuration, and changes to it are gated on measurement
+
+Prompts, hop cap, deadline budget, model selection, and retrieval mix are values read
+from configuration, not constants compiled into the service. Changing any of them is a
+config change, not a redeploy.
+
+A change is only accepted on evidence. A fixed evaluation set — questions with known
+good answers and known correct citations — is run against a candidate configuration and
+scored, and the score is what justifies keeping the change.
+
+**Why:** a synthesis layer's quality is not self-evident, and a prompt that reads better
+frequently answers worse. Without a measurement harness, tuning is guesswork that
+accumulates; with one, a regression is caught by the same mechanism that proved the
+improvement. Making the knobs configuration rather than code is what makes iterating
+cheap enough to actually do.
+
+**Useful property:** because the generation cache is keyed on a hash that includes the
+prompt (D17), changing a prompt changes the key. Old generations cannot leak into a new
+configuration's results, and no invalidation step is needed.
+
+**Consequence:** `ask` must log question, hops taken, citations returned, whether the
+answer was synthesised, and timing. That log is both the operational signal and the
+corpus the evaluation set grows from.
+
+### D31 — Curation learns from the questions asked, never from the answers generated
+
+Questions and citation behaviour feed knowledge curation. Generated answers do not enter
+the corpus.
+
+Signals that are used:
+
+- a question that could not be answered, or that exhausted its hops, is a **documented
+  gap** — the highest-value input curation can receive, because it is evidence of
+  something actually needed rather than something merely stored;
+- records cited often are load-bearing and should be treated as such;
+- records that match retrieval repeatedly but are never cited are noise candidates.
+
+**Why generated answers are excluded:** feeding synthesis output back in as retrievable
+content makes the system learn from itself, and errors compound with nothing to correct
+them. This is not hypothetical — the current system already carries a guard excluding
+`llm_synthesized` content from synthesis input for exactly this reason. The lesson is
+carried forward rather than relearned.
+
+**Consequence:** an answer worth keeping must be written deliberately by a person or an
+agent as an ordinary memory or wiki page, passing the same gates as any other write,
+and never persisted as a side effect of having been generated.
+
+
+### D32 — When cited sources disagree, `ask` reports the disagreement rather than resolving it
+
+Where the records supporting an answer conflict, the answer says so, cites both sides,
+and does not silently choose between them.
+
+**Why:** picking a winner is the dangerous behaviour. A confident answer synthesised
+from contradictory sources hides exactly the thing the caller most needs to know, and
+hides it behind fluent prose. Reporting the conflict costs a sentence and converts a
+silent wrong answer into an actionable one.
+
+It is also the highest-value moment for the identifiers of D28. "These two records
+disagree, here is each one" is directly actionable: the caller resolves the conflict at
+the source, and the corpus improves. A resolved-silently answer leaves both records
+wrong.
+
+**Consequence:** contradiction detection moves onto the synchronous `ask` path, where it
+has a latency cost that the existing background detector does not. It must fit the
+deadline of D28 or be skipped for that request — degraded, never blocking.
+
+**Feeds curation (D31):** a detected disagreement is a gap signal in its own right, and
+one of the cleanest, because it identifies both records involved.
 
 
 ---

@@ -12,10 +12,19 @@ degradation state machine are carried forward here with the tenancy framing remo
   for callers wanting raw hits.
 - An internal LLM receives the question, **drives retrieval itself**, and answers.
 - **Iterative, with a hop cap** — the LLM may re-query after seeing results.
+- The answer is **fully detailed**. Brevity is not the goal — `recall` ships a
+  pile of passages, `ask` answers the question. Lower context cost is a
+  consequence of that, not the purpose.
 - **The response carries no memory or wiki bodies.** Answer plus citation
-  identifiers only. Cutting the caller's token cost is the entire point of the
-  tool; returning passages would defeat it.
-- The LLM is **stateless between calls** and stateful only within one request.
+  identifiers.
+- **Claims are cited individually**, with inline markers, so a statement maps to
+  the record it came from. A claim with no marker is visibly ungrounded.
+- **Where sources disagree, the answer says so** and cites both. It never picks a
+  winner silently.
+- **No LLM state lives in a process.** Continuity travels as an opaque
+  conversation token backed by the shared cache.
+- **Behaviour is configuration**, and changes to it are gated on a scored
+  evaluation set.
 - It never fails: LLM down or out of budget degrades to a template answer with
   `synthesized: false`.
 
@@ -40,18 +49,29 @@ message AskRequest {
   // Hop cap. 1 = plan once, retrieve once, answer.
   uint32 max_hops = 4;
 
-  // Caller-supplied prior context, when a follow-up needs it (D29). Explicit
-  // and auditable, because the service keeps none of its own.
-  repeated string prior_turns = 5;
+  // Opaque handle from a previous AskResponse (D29). The prior context lives in
+  // the shared cache under this key with a TTL; no service process holds it.
+  // Expired or evicted is not an error — the request is treated as a new
+  // conversation and the response says so.
+  optional string conversation_token = 5;
 }
 
 message Citation {
-  string urn = 1;
+  // Marker used inline in the answer text, e.g. 1 renders as [1].
+  uint32 marker = 1;
+  string urn = 2;
   // What the record IS, not what it says — a slug, an ADR number, a title.
   // Capped short. Never a snippet.
-  string label = 2;
-  double relevance = 3;
-  uint32 hop = 4;      // which hop surfaced it
+  string label = 3;
+  double relevance = 4;
+  uint32 hop = 5;      // which hop surfaced it
+}
+
+// Two or more cited records that support conflicting claims (D32). Reported,
+// never resolved silently.
+message Disagreement {
+  repeated uint32 markers = 1;   // the citations that conflict
+  string description = 2;        // what they disagree about
 }
 
 message AskResponse {
@@ -62,15 +82,75 @@ message AskResponse {
   // answer. Callers must be able to tell the two apart.
   bool synthesized = 3;
 
-  uint32 hops_used = 4;
-  bool deadline_hit = 5;
-  AskTiming timing = 6;
+  repeated Disagreement disagreements = 4;
+
+  // Pass back on the next ask to continue this conversation.
+  string conversation_token = 5;
+  // True when the supplied token had expired and this was treated as a fresh
+  // conversation. Never let the caller believe context was carried when it was not.
+  bool conversation_restarted = 6;
+
+  uint32 hops_used = 7;
+  bool deadline_hit = 8;
+  AskTiming timing = 9;
 }
 ```
 
 There is deliberately no `raw_results` field. A caller that wants a record's
 content fetches it by URN from the owning module's batch-get rpc, paying for
 exactly what it asked for.
+
+The answer text carries the markers inline:
+
+> Stop the drainer first `[1]`, then run the scramble with `--dry-run` `[2]`. Note
+> that `[2]` and `[3]` disagree on whether the backend must also be stopped.
+
+This is what makes the identifiers useful rather than decorative. A wrong step
+maps to one record, which can then be corrected at the source.
+
+## Tuning
+
+Prompts, hop cap, deadline, model choice and retrieval mix are **configuration**,
+not constants — changing them is a config change, not a redeploy (D30).
+
+No change is accepted on how it reads. A fixed evaluation set of questions with
+known good answers and known correct citations is scored against a candidate
+configuration, and that score is the justification. A prompt that reads better
+frequently answers worse.
+
+Two properties make this cheap:
+
+- changing a prompt changes the generation cache key (D17), so old results cannot
+  leak into a new configuration's scores and nothing needs invalidating;
+- every `ask` logs its question, hops, citations, synthesis flag and timing — the
+  operational signal and the source the evaluation set grows from.
+
+## What it feeds back
+
+Questions feed curation. Generated answers do not (D31). A question that could not
+be answered, or that exhausted its hops, is a documented gap — evidence of
+something actually needed rather than something merely stored. Citation frequency
+marks load-bearing records; repeatedly retrieved but never cited marks noise. A
+disagreement identifies both records involved and is the cleanest gap signal of
+all.
+
+An answer worth keeping is written deliberately as an ordinary memory or wiki
+page, through the same gates as any other write — never persisted as a side
+effect of having been generated.
+
+## Per-user concerns
+
+- **Conversation state** is owned by a user and visibility-scoped like everything
+  else.
+- **Budget.** A per-user ceiling on generation spend, enforced at the gateway, so
+  one caller's iterative questions cannot starve others on the shared path.
+- **Cache keys must NOT include a user id.** The generation cache is
+  content-addressed on the prompt, and the prompt contains the retrieved context,
+  which is already visibility-filtered. Two users with different reach produce
+  different prompts and so different keys; two users who produce an identical
+  prompt saw identical passages and are both entitled to the result. Adding a user
+  id would destroy sharing on org-visible content while providing no safety that
+  content-addressing does not already give.
 
 ## The hop loop
 
