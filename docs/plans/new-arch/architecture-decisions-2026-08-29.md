@@ -701,6 +701,94 @@ deadline of D28 or be skipped for that request — degraded, never blocking.
 one of the cleanest, because it identifies both records involved.
 
 
+### D33 — Prompts are files in git, delivered by GitOps, gated on the evaluation set
+
+The prompts an LLM service uses are not compiled into it and are not stored in the
+database. They are files in a repository, delivered to the running service as
+configuration by the GitOps controller, and reloaded without rebuilding or redeploying
+the binary. Changing one is a commit, a review, and a sync.
+
+**Why:** the two requirements — modifiable without a build, yet properly versioned —
+conflict unless something bridges them, and GitOps is that bridge and is already a
+committed part of this architecture. It gives real versioning: a diff, a review, a
+revert.
+
+**The decisive property is that a prompt change gets CI.** D30's evaluation set runs on
+the pull request, so a prompt that regresses the score cannot merge. Stored in a
+database instead, there is no pull request to gate, and D30 degrades into a convention
+people are expected to remember.
+
+**Rejected: storing them in the agent-prompt library.** It versions in the database
+rather than in git, so there is no diff, no review and no revert; any caller could change
+every user's answers instantly with no gate; and it would make the answering service
+depend on the prompt store being reachable, with nothing to bootstrap from on a fresh
+install. The library remains correct for what it holds today — dispatch prompts an
+instance uses to brief a subagent, which are per-project, change often, and affect only
+their caller. The distinguishing property is blast radius, not mechanism.
+
+**The prompt version hash is logged with every answer**, so a change in behaviour is
+attributable to a specific revision and evaluation results stay tied to what produced
+them. It also makes reloading safe rather than merely convenient: during a rollout two
+replicas may briefly run different prompts, but since the generation cache keys on the
+prompt hash (D17), those are two distinct entries — a brief mixed period, never a
+corrupted one.
+
+### D34 — Prompts resolve most-specific-first: user, then team, then org, then system
+
+A prompt may exist at four levels. The most specific one that exists wins, and the same
+name may exist at several levels. System-level prompts are seeded at install and are
+immutable; the other three are editable by whoever owns that level.
+
+**This is D12's scope axis read in the opposite direction.** Visibility widens
+`PRIVATE → TEAM → ORG`; resolution narrows `USER → TEAM → ORG → SYSTEM`. Stating it
+explicitly because an implementation that applies one ordering where the other belongs
+looks plausible and is wrong.
+
+**A prompt has two sections, and only one of them is overridable:**
+
+| Section | Overridable |
+|---|---|
+| Contract — cite every claim, refuse to invent, report disagreement, honour the deadline | never |
+| Behaviour — tone, verbosity, framing, formatting | at any of the three editable levels |
+
+The ladder resolves the behaviour section. The service appends the contract section
+regardless of what any level overrode. **Why:** if an override could replace the whole
+prompt, a single user-level edit silently removes the citation and no-invention
+guarantees of D28 and the disagreement reporting of D32. Properties the system
+guarantees cannot be one override away from optional.
+
+**Org-level changes are gated; user and team are not.** A user or team prompt affects
+only its own scope, so the blast radius is contained and the cost of a bad edit is borne
+by whoever made it. An org-level prompt changes every answer in the installation, so it
+requires an evaluation run and an audit entry before taking effect, even though it is
+not immutable.
+
+### D35 — System-level seeded content is git-controlled, immutable, and exempt from decay
+
+An installation ships with system-level content: prompts, help pages, how-tos,
+explanations of the system itself, and anchored memories about them. It is defined in
+git and seeded at setup.
+
+**Prompts are immutable by construction.** They live in git and reach the service as
+configuration, never entering the database, so there is no write path to abuse — which
+is stronger than a flag that something will eventually bypass.
+
+**Seeded memories and wiki pages cannot use that trick**, because they must be in the
+store to be retrievable. They therefore require:
+
+- **Deterministic identity derived from the source file**, so re-seeding an updated
+  version updates the existing record in place. Without this, every deployment duplicates
+  the help corpus.
+- **An immutability flag with a seeder-only write path** — one component may set it, and
+  no ordinary write may modify a record carrying it.
+- **Exemption from decay, vacuum and heat-based eviction.** A how-to that is rarely read
+  must not age out. Otherwise the onboarding material of a system nobody has yet
+  onboarded to is exactly what gets deleted first.
+
+Seeded content **does** participate in retrieval — surfacing "how do I do this" on demand
+is its purpose. It is simply neither deletable nor decayable.
+
+
 ---
 
 ## Dependency licences (verified 2026-08-29 against each project's own LICENSE file)
