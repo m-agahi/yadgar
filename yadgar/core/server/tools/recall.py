@@ -422,9 +422,20 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
 
     Car M (0047 §7, §16.6): the ``project=`` override lets a caller address
     another project's memory namespace without leaving the current working
-    tree. Precedence: ``project`` (override) > ``session_project`` (Car E
-    SessionStart context) > ``directory``-derived (Car A0
-    ``derive_project_id``) > ``"global"`` fallback. When BOTH ``project`` and
+    tree. Precedence, as ``resolve_effective_project`` actually implements it:
+    ``project`` (override) > the per-request ContextVar bound from
+    ``Mcp-Session-Id`` > ``session_project`` > the hook-authored
+    ``directory -> project_id`` map > **raise** ``UnresolvedProjectError``.
+
+    C5 deleted the two tiers this paragraph used to name — a ``directory``
+    derivation through ``derive_project_id``, and a final ``"global"``
+    fallback — and the wording lagged behind the code. That lag had teeth: it
+    told callers a bare ``directory=`` would resolve, so agents pinned into a
+    repo their SessionStart hook had never registered kept calling
+    ``recall(query=..., directory=...)`` and kept failing. **A ``directory``
+    the hook has not registered does not name a project; pass ``project=``.**
+
+    When BOTH ``project`` and
     ``directory`` are supplied, ``project`` wins and ``directory`` is logged-
     and-ignored. The resolved project_id is forwarded to the backend
     (``payload["project_id"]``) so post-Car-L scoping lands cleanly; pre-L
@@ -439,11 +450,13 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
 
     Args:
         query: Search text. Combined semantic (embedding) + keyword scoring.
-        directory: REQUIRED when ``project`` is None. Host-side project
-            directory (e.g. "/home/user/myapp"). Results are scoped to this
-            directory plus global wiki pages. Do NOT omit AND pass empty —
-            daemon runs in a container and cannot detect the real path via
-            os.getcwd(). Raises ValueError if absent/empty.
+        directory: Host-side project directory (e.g. "/home/user/myapp"). It
+            resolves the project ONLY when the SessionStart hook registered
+            this exact path — an unregistered directory raises
+            ``UnresolvedProjectError``, because a path is a filesystem hint and
+            not an identity (ADR-0227), and the daemon runs in a container that
+            cannot see the tree it names. Working anywhere the hook did not
+            run — a sibling repo, a worktree — means passing ``project=``.
             Ignored with a logged INFO when ``project`` is supplied
             (project wins — §9 [VERIFY]).
         project: OPTIONAL cross-project override (Car M). When supplied,
@@ -503,8 +516,10 @@ def recall(  # noqa: C901,PLR0913 - cohesive: MCP tool — single entry point fo
         `{"_dropped": {rows, reason, budget}}` object is appended.
 
     Raises:
-        ValueError: if directory is empty, profile/type/mode is unrecognised, or
-            max_chars is <= 0.
+        UnresolvedProjectError: if no tier named a project — no ``project=``, no
+            session binding, and a ``directory`` the SessionStart hook never
+            registered. The message carries the remedy.
+        ValueError: if profile/type/mode is unrecognised, or max_chars is <= 0.
         RuntimeError: if the backend is unreachable (YADGAR_EMBED_URL unset or HTTP error).
     """
     import time as _time  # noqa: PLC0415

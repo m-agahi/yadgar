@@ -26,6 +26,6 @@
     "`sibling_entries`  \u2014 allowlist entries parsed out of the sibling lints",
     "                     (C9a _ALLOWLIST + C9a _SWEPT + C9b ALLOWLIST)."
   ],
-  "residue_hits": 417,
+  "residue_hits": 418,
   "sibling_entries": 81
 }

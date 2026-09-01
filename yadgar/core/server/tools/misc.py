@@ -135,7 +135,36 @@ def checkpoint(  # noqa: PLR0913 — pre-existing 8-param fn
     # The checkpoint TABLE still has no project_id column -- that is C11's
     # work. The PAYLOAD carrying one is what the drainer's gate requires.
     # (Found independently by two C13 sweeps, tests/core and tests/scripts.)
-    _project_id = accept_project_param(project, directory)
+    #
+    # PROMOTED off ``accept_project_param`` -- the same promotion C10g made for
+    # ``restore`` below and C5b made for ``bootstrap_project``. That helper
+    # returns ``None`` the instant ``project is None`` and consults nothing
+    # else, so it could not see the hook-authored ``directory -> project_id``
+    # map that ``resolve_effective_project`` reads at tier 3b. A session whose
+    # SessionStart hook HAD registered its directory therefore still enqueued an
+    # unstamped job and still lost it in the DLQ, with the identity sitting on
+    # disk the whole time. Tier 3b is a LOOKUP, not a derivation, so nothing is
+    # minted from the path and ADR-0227 is untouched.
+    #
+    # Unresolvable now REFUSES the call instead of queueing a job that cannot
+    # pass the gate. The old shape stamped ``None``, returned ``{"queued":
+    # True}`` and let the drainer DLQ it minutes later -- a write the caller had
+    # been told succeeded. Requeueing does not recover one either:
+    # ``dlq_requeue`` replays the same unstamped payload into the same gate, so
+    # the caller has to re-issue the call regardless. Better to say so while the
+    # state it wanted to snapshot is still in the caller's context. Envelope,
+    # not raise, matching ``restore`` and ``anchor``.
+    try:
+        _project_id = resolve_effective_project(
+            project=project,
+            directory=directory,
+            session_project=None,
+            tool="checkpoint",
+        )
+    except UnresolvedProjectError as exc:
+        return {"queued": False, **exc.payload}
+    except InvalidProjectOverrideError as exc:
+        return {"queued": False, "error": "invalid_project", "reason": f"checkpoint: {exc}"}
     # secret-gate: skip — gate_or_reject() is called inside _gate_checkpoint_text()
     _surrogate_err = _validate_checkpoint_surrogates(
         current_task,

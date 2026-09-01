@@ -23,7 +23,14 @@ the OUTPUT IT RETURNS. Do not reconstruct state from an earlier turn.
    `origin/<default>` checkout (never your dirty working tree), renders the
    digest, and prints ONE JSON object to stdout:
 
-        yadgar code-graph refresh {directory}
+        yadgar code-graph refresh --json {directory}
+
+   `--json` is REQUIRED and is what step 3 depends on. Without it the CLI prints
+   the rendered digest as plain text on stdout and a prose instruction on
+   stderr, with no `block_name` and no `directory` field anywhere — leaving a
+   caller to guess the block name, which is the monorepo footgun step 3 warns
+   about. (Same convention as `index` and `query`, which also gate JSON on the
+   flag.)
 
    Output is one of:
      - `{"block_name":"code_graph","skipped":true,"reason":"..."}`
