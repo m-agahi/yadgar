@@ -9,9 +9,14 @@ import logging
 import os
 
 from mcp.server import MCPServer
+
+# The SDK's "anticipated failure" wrapper. Present in both mcp 2.0.0 and 2.1.x —
+# see the raise site in `_instrumented_async` for why the version spread matters.
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
 from yadgar._shared.config import get_settings, resolve_knob
+from yadgar._shared.errors import YadgarError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.observability.tracing import setup_tracing, trace_span
 
@@ -744,6 +749,26 @@ def _build_tool_wrappers(func, traced_func, estimate_tokens):  # noqa: C901 - co
                 "message": f"tool {func.__name__} exceeded the offload timeout",
             }
             return result
+        except YadgarError as exc:
+            # A yadgar structured error is an ANTICIPATED, caller-fixable
+            # failure, and `ToolError` is the SDK's bucket for exactly that.
+            # Without this line mcp 2.1 sorts it into the crash bucket instead,
+            # where the model receives the bare string `Error executing tool
+            # <name>` and the original text is withheld — deleting the one thing
+            # these errors exist to carry (see `_shared/errors.py`: the reader is
+            # an agent, and every raise names the tool and the fix). Observed
+            # live 2026-08-31: 13 `recall` calls plus `recent_memories` and
+            # `agent_dispatch_prelude` returned that bare string while the daemon
+            # had raised `UnresolvedProjectError` with the remedy in it.
+            #
+            # mcp 2.0.0 forwarded the text and had no such defect; `mcp>=2.0.0`
+            # is unbounded and the Dockerfile installs with `pip install /app`
+            # rather than from `uv.lock`, so the image ran 2.1.1 while the locked
+            # test env stayed on 2.0.0. Raising `ToolError` is correct under both
+            # sorts. Rationale and both regression halves:
+            # `tests/server/test_tool_error_surfacing.py`.
+            _status = "error"
+            raise ToolError(str(exc)) from exc
         except Exception:
             _status = "error"
             raise

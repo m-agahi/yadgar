@@ -37,6 +37,96 @@ _ARCH_FIXTURE = {
 }
 
 
+def _template_refresh_argv() -> list[str]:
+    """The command line the stop-hook template actually tells an agent to run.
+
+    Read out of ``code_graph_refresh_prompt.md`` rather than restated here — a
+    restatement is a second copy that can agree with the CLI while the shipped
+    template does not.
+    """
+    import shlex
+    from pathlib import Path
+
+    import yadgar.core.hooks as _hooks
+
+    template = (
+        Path(_hooks.__file__).parent / "templates" / "code_graph_refresh_prompt.md"
+    ).read_text()
+    for raw in template.splitlines():
+        line = raw.strip()
+        if line.startswith("yadgar code-graph refresh"):
+            # Drop the leading `yadgar`: the parser under test is the subcommand
+            # registrar, not the top-level entry point.
+            return shlex.split(line)[1:]
+    raise AssertionError("the template no longer contains a `yadgar code-graph refresh` line")
+
+
+class TestTemplateAgreesWithTheCli:
+    """The stop-hook template and the CLI must describe the same command.
+
+    THE DEFECT: the template said the command "prints ONE JSON object to
+    stdout" and told the agent to branch on the payload's own ``block_name``
+    (hardcoding ``code_graph`` makes every leaf of a monorepo overwrite the same
+    block). But ``_cmd_refresh`` gates that JSON on ``--json``, which the
+    template's command line omitted — so the agent got the rendered digest on
+    stdout, a prose instruction on stderr, and no ``block_name`` anywhere.
+
+    Every other test in this module builds ``SimpleNamespace(..., json=True)``
+    and never touches argparse, which is exactly why the divergence survived:
+    the tests exercised the flagged form while the shipped template did not use
+    it. This class closes that seam by parsing the template's own argv.
+    """
+
+    def test_the_templates_command_parses_with_json_enabled(self):
+        import argparse
+
+        from yadgar.core.cli import code_graph
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command")
+        code_graph.register(sub)
+
+        args = parser.parse_args(_template_refresh_argv())
+
+        assert args.cg_command == "refresh"
+        assert args.json is True, (
+            "the template's command line does not request JSON, so step 1 of the "
+            "protocol cannot get the block_name it tells the agent to use"
+        )
+
+    def test_the_templates_command_puts_one_json_object_on_stdout(self, tmp_path, capsys):
+        """Parse the template's argv, dispatch it, and read stdout as the agent would."""
+        import argparse
+
+        from yadgar.core.cli import code_graph
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command")
+        code_graph.register(sub)
+        argv = [a.replace("{directory}", str(tmp_path)) for a in _template_refresh_argv()]
+        args = parser.parse_args(argv)
+
+        with (
+            patch(
+                "yadgar.core.code_graph.default_branch.refresh_index",
+                return_value={
+                    "indexed": True,
+                    "canonical_root": str(tmp_path),
+                    "subdir": "",
+                    "project": "proj",
+                },
+            ),
+            patch("yadgar.core.code_graph.runner.get_architecture", return_value=_ARCH_FIXTURE),
+            patch("yadgar.core.code_graph.runner.fetch_endpoints", return_value=[]),
+        ):
+            code_graph.cmd_code_graph(args)
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["block_name"] == "code_graph"
+        assert payload["skipped"] is False
+        assert payload["directory"] == str(tmp_path)
+
+
 class TestRegistration:
     def test_register_adds_code_graph(self):
         import argparse

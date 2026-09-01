@@ -527,22 +527,67 @@ class TestCheckpointStampsProjectIdAtEnqueue:
         (payload,) = self._pending_payloads(tmp_path)
         assert payload["project_id"] == "acme/widget"
 
-    def test_an_unnamed_project_is_carried_as_none_not_invented(self, tmp_path, monkeypatch):
-        """ADR-0227: the absence is recorded honestly, never substituted.
+    def test_a_registered_directory_resolves_without_an_explicit_project(
+        self, tmp_path, monkeypatch
+    ):
+        """The hook-registered ``directory -> project_id`` map must answer here.
 
-        ``accept_project_param`` returns ``None`` when the caller names no
-        project (its documented C7 gap — this tool's scope key is still
-        ``directory`` until C7 re-keys it). The payload must carry that ``None``
-        rather than a manufactured key: the drainer's gate then DLQs the job,
-        which is the declared, requeueable failure path for a queued write.
+        ``checkpoint`` resolved through ``accept_project_param``, which returns
+        ``None`` the instant ``project is None`` and consults nothing else. So a
+        session whose SessionStart hook HAD registered its directory still
+        enqueued an unstamped job, and the drainer DLQ'd it as
+        ``missing_project_id`` — the identity was on disk the whole time and the
+        tool never asked for it.
+
+        ``recall`` already resolves through the full chain (override →
+        ContextVar → session_project → directory map → raise); ``restore``
+        (C10g) and ``bootstrap_project`` (C5b) were promoted onto it for the
+        same reason. This is that promotion for the highest-volume recovery
+        path in the system.
+
+        This is a LOOKUP, not a derivation: nothing is minted from the path, so
+        ADR-0227 is untouched. An unregistered directory still resolves to
+        nothing — see the test below.
+        """
+        monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
+        from yadgar._shared.runtime.session_map import register_session_project
+        from yadgar.core.server.tools.misc import checkpoint
+
+        assert register_session_project("/home/test/proj", "acme/widget") is True
+
+        result = checkpoint(directory="/home/test/proj", current_task="t")
+        assert result.get("queued") is True
+
+        (payload,) = self._pending_payloads(tmp_path)
+        assert payload["project_id"] == "acme/widget"
+
+    def test_an_unresolvable_call_is_refused_instead_of_queued_to_die(self, tmp_path, monkeypatch):
+        """ADR-0227: the absence is reported to the caller, not written down.
+
+        The old contract stamped ``None``, returned ``{"queued": True}`` and let
+        the drainer DLQ the job minutes later. Observed live on 2026-08-31: an
+        agent working in an unregistered sibling repo checkpointed, was told the
+        write was queued, and the job died as ``missing_project_id`` — twelve
+        such entries in the DLQ event log, and ``dlq_requeue`` alone cannot
+        recover one, because requeueing replays the same unstamped payload into
+        the same gate.
+
+        Returning the structured envelope instead is the shape ``restore`` and
+        ``anchor`` already use: the caller learns at call time, in the same turn,
+        that it must pass ``project=`` — while the state it wanted to snapshot is
+        still in its own context.
         """
         monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
         from yadgar.core.server.tools.misc import checkpoint
 
-        checkpoint(directory="/home/test/proj", current_task="t")
+        result = checkpoint(directory="/home/test/proj", current_task="t")
 
-        (payload,) = self._pending_payloads(tmp_path)
-        assert payload["project_id"] is None
+        assert result.get("queued") is False
+        assert result.get("error") == "unresolved_project"
+        assert 'project="owner/repo"' in result.get("fix", "")
+        assert self._pending_payloads(tmp_path) == [], (
+            "a job that cannot pass the drainer gate was still enqueued"
+        )
 
     def test_the_drainer_gate_accepts_a_stamped_checkpoint(self, tmp_path, monkeypatch):
         """The two halves meet: what checkpoint stamps is what the gate wants.
@@ -567,14 +612,18 @@ class TestCheckpointStampsProjectIdAtEnqueue:
         assert drainer._validate_project_id(payload, "checkpoint") is None
 
     def test_an_unstamped_checkpoint_is_rejected_by_the_gate(self, tmp_path, monkeypatch):
-        """The negative half — otherwise the gate could be inert and both pass."""
+        """The negative half — otherwise the gate could be inert and both pass.
+
+        The unstamped payload is built here rather than produced by
+        ``checkpoint``: the tool no longer enqueues one (it refuses the call
+        instead — see above), and this test is about the DRAINER's gate, which
+        must still reject any such payload that reaches it from anywhere.
+        """
         monkeypatch.setenv("YADGAR_DATA_DIR", str(tmp_path))
         import yadgar._shared.runtime.state as _st
         from yadgar.backend.queue_drainer import FileQueue, QueueDrainer
-        from yadgar.core.server.tools.misc import checkpoint
 
-        checkpoint(directory="/home/test/proj", current_task="t")
-        (payload,) = self._pending_payloads(tmp_path)
+        payload = {"directory": "/home/test/proj", "current_task": "t", "project_id": None}
 
         drainer = QueueDrainer(
             queue=FileQueue(tmp_path),
