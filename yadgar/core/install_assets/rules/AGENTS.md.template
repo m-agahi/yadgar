@@ -60,6 +60,11 @@ Every scoped tool below takes `project="<owner/repo>"`; pass it on every call.
 - `wiki_query(query, project, tags)` — search wiki pages.
 - `agent_dispatch_prelude(pattern, task_topic)` — prelude for subagent dispatch.
 - `sync_instructions(claude_md_path)` — update rules file with latest content.
+- `task_list(project_id, status)` — list tasks; default shape is `id` + `title`
+  + `status` only, roughly a third the size of the full row.
+- `task_get(project_id, id)` — read one task in full, its body included.
+- `task_write(project_id, title, status, id)` — create (`id` omitted) or
+  update (`id` given) a task row.
 
 ### Memory discipline
 
@@ -68,3 +73,30 @@ Every scoped tool below takes `project="<owner/repo>"`; pass it on every call.
   wiki. Use both when unsure which store holds the answer.
 - Use `restore(project=...)` after `/clear` or `/compact` — NOT `recall`.
 - Don't memorize: ephemeral debug findings, single-use trivia, secrets.
+
+### Task discipline
+
+A 2026-09-01 five-PR session that never opened the task ledger later judged
+it "useful at exactly two moments — restore, and end-of-session completeness
+— inert in between." Discoveries died in chat, three tasks sat `in_progress`
+across four review rounds, and the same list re-rendered into context
+unprompted many times over. These rules keep the ledger live in between, not
+just at the edges:
+
+- **List light**: at session start and after compaction, read `task_list` at
+  its default shape (`id` + `title` + `status`), never `verbose=True`. The
+  list says what exists, not what it means.
+- **Read the body before acting**: before starting a task, `task_get` it and
+  read its body — the reasoning, constraints and any plan live there, not in
+  the title. One `task_get` call is cheap; opening the whole list is not.
+- **Write the body as you go**: a decision made, a constraint found, or an
+  approach rejected goes into the task's body, not only into the reply. Test:
+  could someone resuming in three months act on the body alone?
+- **File what you defer**: a discovery not being worked on now becomes a task
+  before the session ends, with enough body to be actionable cold. Saying it
+  in a report does not file it.
+- **Bodies may hold plans**: a task body can carry a multi-step plan, so an
+  unattended run resumes mid-plan after compaction.
+- **Status tracks reality**: a task left `in_progress` while work has moved
+  on is stale — split it or update the body. A status spanning hours of
+  unrelated work carries no information.
