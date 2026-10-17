@@ -775,6 +775,57 @@ class TestConfigFailsClosed:
         assert _NOTICE not in capsys.readouterr().err
 
 
+class TestEntryPointExitCode:
+    """_entry(): no exception escapes, since Claude Code treats exit 1 as allow."""
+
+    def _entry(self, mod, stdin_json: str, main_side_effect) -> tuple[int, list[str]]:
+        captured: list[str] = []
+        with (
+            patch.object(mod.sys, "stdin", io.StringIO(stdin_json)),
+            patch("builtins.print", side_effect=lambda s: captured.append(s)),
+            patch.object(mod, "main", side_effect=main_side_effect),
+        ):
+            rc = mod._entry()
+        return rc, captured
+
+    def test_fault_before_decision_retries_untraced_and_denies_danger(self):
+        mod = _load_hook()
+        rc, out = self._entry(mod, _payload("terraform apply"), RuntimeError("tracing"))
+        assert rc == 0
+        assert len(out) == 1
+        assert json.loads(out[0])["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_fault_before_decision_does_not_block_benign_call(self):
+        # A tracing fault alone must not block every call.
+        mod = _load_hook()
+        rc, out = self._entry(mod, _payload("echo hello"), RuntimeError("tracing"))
+        assert rc == 0
+        assert len(out) == 1
+        assert json.loads(out[0])["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    def test_fault_after_decision_keeps_decision(self):
+        mod = _load_hook()
+
+        def emit_then_raise():
+            mod._emit(mod._deny("x"))
+            raise RuntimeError("shutdown")
+
+        rc, out = self._entry(mod, _payload("echo hello"), emit_then_raise)
+        assert rc == 0
+        assert len(out) == 1
+        assert json.loads(out[0])["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_both_attempts_fail_exits_2(self):
+        mod = _load_hook()
+        with (
+            patch.object(mod.sys, "stdin", io.StringIO(_payload("echo hello"))),
+            patch("builtins.print", side_effect=OSError("stdout gone")),
+            patch.object(mod, "main", side_effect=RuntimeError("tracing")),
+        ):
+            rc = mod._entry()
+        assert rc == 2
+
+
 class TestGitUnavailableFailsClosed:
     """G3: git that cannot RUN denies the push; git that ran and said no stays allow."""
 
