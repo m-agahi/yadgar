@@ -14,6 +14,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import resource
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -237,10 +241,12 @@ class TestMatrixAllowDeny:
         mod = _load_hook()
         assert self._decide(mod, "docker exec my-app bash") == "allow"
 
-    def test_21_malformed_stdin_allow(self):
+    def test_21_malformed_stdin_fails_closed_deny(self):
+        # Ledger 1567: the router is a security guard, so an input it cannot
+        # parse is denied, not waved through. Claude Code always sends JSON.
         mod = _load_hook()
         out = _run_main(mod, "{broken")
-        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     # Wrapper-peel deny fixtures (26-32)
 
@@ -286,12 +292,14 @@ class TestMatrixAllowDeny:
         mod = _load_hook()
         assert self._decide(mod, "$(terraform apply)") == "allow"
 
-    def test_22_guard_raises_fail_open_allow(self):
+    def test_22_guard_raises_fails_closed_deny(self):
         mod = _load_hook()
-        # Force a guard to raise; router must fail-open.
+        # Ledger 1567: a raising guard denies. It used to print allow, so one
+        # router bug switched every guard off.
         with patch.object(mod, "guard_terraform_family", side_effect=RuntimeError("boom")):
-            out = _run_main(mod, _payload("terraform apply"))
-        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+            out = _run_main(mod, _payload("echo hello"))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "boom" in out["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 # ---------------------------------------------------------------------------
@@ -523,3 +531,262 @@ class TestG5HookConfigTamper:
         cmd = 'echo "note: see yadgar-hook-exceptions.json and sed -i usage" > /tmp/notes.txt'
         out = _run_main(mod, _payload(cmd))
         assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+# ---------------------------------------------------------------------------
+# Ledger 1567 — the exceptions config and every error path fail CLOSED
+# ---------------------------------------------------------------------------
+#
+# Two defects in load_config made the whole guard fail open:
+#   1. read_text() on a FIFO (or a symlink to /dev/zero) blocks until Claude
+#      Code's hook timeout, and a timed-out hook does not block the tool call.
+#   2. set(config["disabled_guards"]) raised TypeError on an unhashable item,
+#      and main()'s top-level except then printed allow.
+# A config the router cannot trust must leave EVERY guard on and say so on
+# stderr. The FIFO and /dev/zero cases run the hook as a subprocess with a
+# timeout and an address-space cap, so a regression hangs or fails one child
+# process and never the test runner.
+
+_SUBPROC_TIMEOUT = 20
+_ADDRESS_SPACE_CAP = 2 * 1024**3
+_NOTICE = "[yadgar-pretooluse-router]"
+
+
+def _cap_address_space() -> None:
+    resource.setrlimit(resource.RLIMIT_AS, (_ADDRESS_SPACE_CAP, _ADDRESS_SPACE_CAP))
+
+
+def _run_hook_subprocess(home: Path, stdin_json: str) -> subprocess.CompletedProcess:
+    env = {
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "OTEL_SDK_DISABLED": "true",
+        "PYTHONPATH": os.pathsep.join(p for p in sys.path if p),
+    }
+    return subprocess.run(
+        [sys.executable, str(_HOOK)],
+        input=stdin_json,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=_SUBPROC_TIMEOUT,
+        preexec_fn=_cap_address_space,
+        check=False,
+    )
+
+
+def _decision(proc: subprocess.CompletedProcess) -> str:
+    """The decision Claude Code acts on: exit 2 blocks, else stdout JSON decides."""
+    if proc.returncode == 2:
+        return "deny"
+    assert proc.returncode == 0, f"exit {proc.returncode}: {proc.stderr}"
+    last = proc.stdout.strip().splitlines()[-1]
+    return json.loads(last)["hookSpecificOutput"]["permissionDecision"]
+
+
+def _claude_dir(home: Path) -> Path:
+    d = home / ".claude"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _write_cfg(path: Path, obj: object) -> Path:
+    path.write_text(json.dumps(obj))
+    return path
+
+
+def _run_with_cfg(mod, cfg_path: Path, command: str) -> dict:
+    with patch.object(mod, "_config_path", return_value=cfg_path):
+        return _run_main(mod, _payload(command))
+
+
+class TestConfigFailsClosedSubprocess:
+    """Special files at the config path: the hook must neither hang nor open up."""
+
+    def test_fifo_does_not_hang_and_keeps_guards_on(self, tmp_path):
+        os.mkfifo(_claude_dir(tmp_path) / "yadgar-hook-exceptions.json")
+        proc = _run_hook_subprocess(tmp_path, _payload("terraform apply"))
+        assert _decision(proc) == "deny"
+        assert _NOTICE in proc.stderr
+
+    def test_fifo_benign_command_still_allowed(self, tmp_path):
+        os.mkfifo(_claude_dir(tmp_path) / "yadgar-hook-exceptions.json")
+        proc = _run_hook_subprocess(tmp_path, _payload("echo hello"))
+        assert _decision(proc) == "allow"
+        assert _NOTICE in proc.stderr
+
+    def test_dev_zero_symlink_does_not_hang_and_keeps_guards_on(self, tmp_path):
+        (_claude_dir(tmp_path) / "yadgar-hook-exceptions.json").symlink_to("/dev/zero")
+        proc = _run_hook_subprocess(tmp_path, _payload("terraform apply"))
+        assert _decision(proc) == "deny"
+        assert _NOTICE in proc.stderr
+
+    def test_symlink_to_disabling_file_is_not_honoured(self, tmp_path):
+        # A symlink lets an agent edit the real target, which G5 does not
+        # watch. The installer writes a regular file, so a symlink is refused.
+        target = _write_cfg(tmp_path / "elsewhere.json", {"disabled_guards": ["terraform_family"]})
+        (_claude_dir(tmp_path) / "yadgar-hook-exceptions.json").symlink_to(target)
+        proc = _run_hook_subprocess(tmp_path, _payload("terraform apply"))
+        assert _decision(proc) == "deny"
+        assert _NOTICE in proc.stderr
+
+    def test_valid_file_still_disables_guard_subprocess(self, tmp_path):
+        _write_cfg(
+            _claude_dir(tmp_path) / "yadgar-hook-exceptions.json",
+            {"version": 1, "push_default_allowlist": [], "disabled_guards": ["terraform_family"]},
+        )
+        proc = _run_hook_subprocess(tmp_path, _payload("terraform apply"))
+        assert _decision(proc) == "allow"
+        assert _NOTICE not in proc.stderr
+
+    def test_missing_file_is_silent_defaults(self, tmp_path):
+        _claude_dir(tmp_path)
+        proc = _run_hook_subprocess(tmp_path, _payload("terraform apply"))
+        assert _decision(proc) == "deny"
+        assert _NOTICE not in proc.stderr
+
+    def test_router_exception_fails_closed_subprocess(self, tmp_path):
+        # A JSON array is valid JSON but not an object: data.get() raises
+        # inside the router. That fault must deny, end to end.
+        _claude_dir(tmp_path)
+        proc = _run_hook_subprocess(tmp_path, "[]")
+        assert _decision(proc) == "deny"
+        assert _NOTICE in proc.stderr
+
+
+class TestConfigFailsClosed:
+    """Malformed content at the config path: every guard stays on, with a notice."""
+
+    def _assert_rejected(self, mod, cfg_path: Path, capsys) -> None:
+        cfg = mod.load_config(cfg_path)
+        assert cfg["disabled_guards"] == []
+        assert cfg["push_default_allowlist"] == ["nix", "ledger", "ostad"]
+        assert _NOTICE in capsys.readouterr().err
+
+    def test_oversize_file_rejected(self, tmp_path, capsys):
+        mod = _load_hook()
+        p = tmp_path / "big.json"
+        p.write_text(json.dumps({"disabled_guards": ["terraform_family"], "pad": "x" * 70000}))
+        self._assert_rejected(mod, p, capsys)
+
+    def test_oversize_file_keeps_guard_on_end_to_end(self, tmp_path):
+        mod = _load_hook()
+        p = tmp_path / "big.json"
+        p.write_text(json.dumps({"disabled_guards": ["terraform_family"], "pad": "x" * 70000}))
+        out = _run_with_cfg(mod, p, "terraform apply")
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_nested_list_in_disabled_guards_rejected(self, tmp_path, capsys):
+        mod = _load_hook()
+        p = _write_cfg(tmp_path / "c.json", {"disabled_guards": [["x"]]})
+        self._assert_rejected(mod, p, capsys)
+
+    def test_nested_list_keeps_guard_on_end_to_end(self, tmp_path):
+        # Before the fix: set([["x"]]) raised TypeError and main() printed allow.
+        mod = _load_hook()
+        p = _write_cfg(tmp_path / "c.json", {"disabled_guards": [["x"]]})
+        out = _run_with_cfg(mod, p, "terraform apply")
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_nested_list_keeps_edit_guard_on(self, tmp_path):
+        mod = _load_hook()
+        p = _write_cfg(tmp_path / "yadgar-hook-exceptions.json", {"disabled_guards": [["x"]]})
+        with patch.object(mod, "_config_path", return_value=p):
+            out = _run_main(mod, _edit_payload(str(p)))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_non_list_disabled_guards_rejected(self, tmp_path, capsys):
+        mod = _load_hook()
+        p = _write_cfg(tmp_path / "c.json", {"disabled_guards": "terraform_family"})
+        self._assert_rejected(mod, p, capsys)
+
+    def test_non_string_item_rejected(self, tmp_path, capsys):
+        mod = _load_hook()
+        p = _write_cfg(tmp_path / "c.json", {"disabled_guards": ["terraform_family", 7]})
+        self._assert_rejected(mod, p, capsys)
+
+    def test_bad_allowlist_rejects_whole_file(self, tmp_path, capsys):
+        # One bad field voids the file: its valid disabled_guards is NOT honoured.
+        mod = _load_hook()
+        p = _write_cfg(
+            tmp_path / "c.json",
+            {"push_default_allowlist": {"a": 1}, "disabled_guards": ["terraform_family"]},
+        )
+        self._assert_rejected(mod, p, capsys)
+
+    def test_non_object_top_level_rejected(self, tmp_path, capsys):
+        mod = _load_hook()
+        p = _write_cfg(tmp_path / "c.json", ["terraform_family"])
+        self._assert_rejected(mod, p, capsys)
+
+    def test_corrupt_json_rejected_with_notice(self, tmp_path, capsys):
+        mod = _load_hook()
+        p = tmp_path / "c.json"
+        p.write_text("{not json")
+        self._assert_rejected(mod, p, capsys)
+
+    def test_deeply_nested_json_rejected(self, tmp_path, capsys):
+        # json.loads raises RecursionError, not ValueError, on deep nesting.
+        mod = _load_hook()
+        p = tmp_path / "c.json"
+        p.write_text("[" * 30000 + "]" * 30000)
+        self._assert_rejected(mod, p, capsys)
+
+    def test_directory_at_path_rejected(self, tmp_path, capsys):
+        mod = _load_hook()
+        p = tmp_path / "c.json"
+        p.mkdir()
+        self._assert_rejected(mod, p, capsys)
+
+    def test_valid_file_disables_listed_guard(self, tmp_path, capsys):
+        mod = _load_hook()
+        p = _write_cfg(
+            tmp_path / "c.json",
+            {
+                "version": 1,
+                "push_default_allowlist": ["nix"],
+                "disabled_guards": ["terraform_family"],
+            },
+        )
+        out = _run_with_cfg(mod, p, "terraform apply")
+        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert _NOTICE not in capsys.readouterr().err
+
+    def test_valid_file_leaves_other_guards_on(self, tmp_path):
+        mod = _load_hook()
+        p = _write_cfg(tmp_path / "c.json", {"disabled_guards": ["terraform_family"]})
+        out = _run_with_cfg(mod, p, "git commit --no-verify -m x")
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_installed_default_shape_accepted(self, tmp_path, capsys):
+        # The exact shape the installer seeds must load without a notice.
+        mod = _load_hook()
+        p = _write_cfg(
+            tmp_path / "c.json",
+            {
+                "version": 1,
+                "push_default_allowlist": ["nix", "ledger", "ostad"],
+                "disabled_guards": [],
+            },
+        )
+        cfg = mod.load_config(p)
+        assert cfg["push_default_allowlist"] == ["nix", "ledger", "ostad"]
+        assert cfg["disabled_guards"] == []
+        assert _NOTICE not in capsys.readouterr().err
+
+
+class TestGitUnavailableFailsClosed:
+    """G3: git that cannot RUN denies the push; git that ran and said no stays allow."""
+
+    def test_git_timeout_on_push_denies(self):
+        mod = _load_hook()
+        boom = subprocess.TimeoutExpired(cmd="git", timeout=5)
+        with patch.object(mod.subprocess, "run", side_effect=boom):
+            out = _run_main(mod, _payload("git push origin master"))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_git_missing_on_push_denies(self):
+        mod = _load_hook()
+        with patch.object(mod.subprocess, "run", side_effect=FileNotFoundError("git")):
+            out = _run_main(mod, _payload("git push origin master"))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
