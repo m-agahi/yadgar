@@ -21,8 +21,8 @@ def test_conftest_uses_server_json_backend_version(monkeypatch):
     """_backend_image() must return the version from server.json, not a stale literal.
 
     The env override is cleared explicitly: the CI job that runs this file also
-    exports ``YADGAR_TEST_BACKEND_IMAGE`` (it resolves a pullable tag because
-    server.json's PENDING version is unpublished until release). Without the
+    exports ``YADGAR_TEST_BACKEND_IMAGE`` (it pulls or builds the image itself
+    because server.json's PENDING version is unpublished until release). Without the
     delenv this test asserts the derivation path while the override is active,
     and fails for a reason that has nothing to do with the pin it guards.
     """
