@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yadgar"
-version = "5.194.2"
+version = "5.194.3"
 description = "Persistent memory engine for Claude Code — heat decay, sleep consolidation, and surprise-gated storage"
 readme = "README.md"
 license = "Apache-2.0"
@@ -219,9 +219,14 @@ ml = [
 # (`make test-ci`, scripts/ci-local-legs.sh) install the same three extras so
 # they mirror what the image runs; plain `make test` deliberately does not,
 # because asyncmy is compiled.
+# `[asyncio]` is load-bearing: engine #2 runs on `sqlalchemy.ext.asyncio`,
+# which needs greenlet. SQLAlchemy 2.0.x pulled greenlet in implicitly on
+# x86_64/aarch64; 2.1.x ships it only through this extra. Dockerfile.backend
+# resolves unpinned with pip, so dropping the extra crashloops the backend
+# (5.87.3) — guarded by yadgar/tests/scripts/test_backend_image_declares_greenlet.py.
 sql = [
     "asyncmy>=0.2.11",
-    "sqlalchemy>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.13",
 ]
 test = [
