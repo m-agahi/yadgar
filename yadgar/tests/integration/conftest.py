@@ -31,10 +31,11 @@ def _backend_image() -> str:
     first time and its skip-is-not-a-pass gate caught exactly that on the very
     first run: ``openfantasy/yadgar-backend:5.76.4: not found``.
 
-    The CI job therefore resolves a PULLABLE tag itself (pending if published,
-    else master's released one) and passes it here. It fails loudly rather than
-    skipping when neither can be pulled — a skip in that job is treated as a
-    failure, so this override must never become a silent fallback.
+    The CI job therefore resolves the image itself and passes it here: the
+    pending tag when it is published, else a local build of the PR's own
+    ``Dockerfile.backend``. It fails loudly rather than skipping when neither
+    works — a skip in that job is treated as a failure, so this override must
+    never become a silent fallback.
     """
     override = os.environ.get("YADGAR_TEST_BACKEND_IMAGE", "").strip()
     if override:

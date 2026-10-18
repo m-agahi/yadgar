@@ -418,82 +418,68 @@ jobs:
           path: pytest-engine2.txt
           retention-days: 1
 
-      - name: Resolve a PULLABLE backend image for the vacuum e2e suite
-        # Mirror of the .github/workflows/ci-pr.yml step — see its comment for
-        # the full reasoning. Short version: server.json holds the PENDING
-        # backend_version, images are published at RELEASE, so on a
-        # version-bumping PR the derived tag does not exist and the fixture
-        # SKIPS — which the gate below treats as a failure. Resolve a tag that
-        # can actually be pulled, warn loudly when falling back, and fail hard
-        # rather than skip when neither pulls.
+      - name: Resolve or BUILD the backend image for the vacuum e2e suite
+        # server.json carries the PENDING backend_version; backend images are
+        # published at RELEASE, i.e. AFTER merge (ci-release.yml on master). So
+        # on every PR that bumps backend_version the derived tag does not exist
+        # yet. Car A3 hit exactly that on its first run:
+        #   docker.io/openfantasy/yadgar-backend:5.76.4: not found
+        #
+        # So: pull the PENDING image when it is published (master and
+        # post-release runs), otherwise BUILD it here from this PR's own
+        # Dockerfile.backend and test that. Either way the job tests the backend
+        # this PR ships.
+        #
+        # WHY BUILD, NOT FALL BACK. This step used to fall back to master's
+        # published backend_version (ADR-0335) and warn that the PR's backend
+        # changes were not validated. That fallback deadlocked PR #78: backend
+        # 5.87.3 crashlooped (no greenlet), the fix bumped to 5.87.4, the
+        # fallback chose master's broken 5.87.3, the suite failed, and
+        # `test-gate` (required) blocked the merge that would publish 5.87.4. A
+        # fallback to the PREVIOUS image cannot pass on any PR whose job is to
+        # fix that image. Building costs build minutes on this runner; the
+        # BuildKit layer cache lives in the long-lived dind daemon, and
+        # Dockerfile.backend keeps the source copy as its last layer (ADR-0434),
+        # so a source-only change rebuilds only the cheap top layers.
+        #
+        # The local tag has no registry prefix and carries the commit sha, so
+        # it can never collide with a published tag. Nothing here logs in to a
+        # registry or pushes; the "Remove the locally built backend image" step
+        # below deletes the tag after the suite.
+        env:
+          LOCAL_TAG: yadgar-backend-ci:pr-${{ github.sha }}
         run: |
           set -euo pipefail
-          git fetch --depth=1 origin master
           PENDING=$(python3 -c "import json;print(json.load(open('server.json'))['backend_version'])")
-          BASE=$(git show origin/master:server.json \
-                   | python3 -c "import json,sys;print(json.load(sys.stdin)['backend_version'])")
           REPO=docker.io/openfantasy/yadgar-backend
-          # Tier 3 exists because tier 2's premise turned out to be false. The
-          # original logic assumed master's DECLARED backend_version is always a
-          # PUBLISHED image. It is not: images are pushed by hand (ledger task
-          # 232), so master can declare 5.84.0 while Docker Hub's newest tag is
-          # 5.83.0 — which made this step hard-fail on EVERY pr, forever, for a
-          # reason no pr could fix. Measured 2026-08-27 (ledger task 396).
-          # So: ask the registry what actually exists rather than trusting a
-          # version string. Failing only when NOTHING is pullable keeps the gate
-          # honest — that is a real repo-level problem — while a merely-stale
-          # published image degrades to a loud warning, which is what this step
-          # already admits it is.
-          newest_published() {
-            python3 - "$REPO" <<'PY'
-          import json, re, sys, urllib.request
-          repo = sys.argv[1].split("docker.io/", 1)[-1]
-          url = f"https://hub.docker.com/v2/repositories/{repo}/tags?page_size=100"
-          try:
-              with urllib.request.urlopen(url, timeout=20) as r:
-                  tags = [t["name"] for t in json.load(r).get("results", [])]
-          except Exception:
-              sys.exit(0)
-          sem = [t for t in tags if re.fullmatch(r"\d+\.\d+\.\d+", t)]
-          if sem:
-              print(max(sem, key=lambda t: tuple(int(p) for p in t.split("."))))
-          PY
-          }
-          IMG=""
           if docker manifest inspect "$REPO:$PENDING" >/dev/null 2>&1; then
             IMG="$REPO:$PENDING"
-            echo "vacuum e2e: backend $PENDING is published — testing the pending image"
-          elif docker manifest inspect "$REPO:$BASE" >/dev/null 2>&1; then
-            IMG="$REPO:$BASE"
-            echo "::warning::vacuum e2e: backend $PENDING is not published yet; falling back to master's $BASE"
-            echo "::warning::vacuum e2e: backend changes in THIS PR are NOT validated by this job"
+            echo "vacuum e2e: backend $PENDING is published — testing the published image"
+            docker pull "$IMG" || {
+              echo "$IMG resolved via the registry but could not be pulled" >&2
+              exit 1
+            }
           else
-            NEWEST="$(newest_published || true)"
-            if [ -n "$NEWEST" ] && docker manifest inspect "$REPO:$NEWEST" >/dev/null 2>&1; then
-              IMG="$REPO:$NEWEST"
-              echo "::warning::vacuum e2e: NEITHER $PENDING (pending) NOR $BASE (master's declared) is published"
-              echo "::warning::vacuum e2e: master declares a backend_version that was never pushed — see ledger task 396"
-              echo "::warning::vacuum e2e: falling back to the newest PUBLISHED tag $NEWEST; backend changes are NOT validated"
-            fi
+            IMG="$LOCAL_TAG"
+            echo "vacuum e2e: backend $PENDING is not published yet — building it from this PR's Dockerfile.backend as $IMG"
+            # BuildKit is required: Dockerfile.backend uses RUN --mount=type=cache.
+            # The docker driver loads the result into the daemon's image store,
+            # which is the store launcher.backend_image_present() inspects.
+            DOCKER_BUILDKIT=1 docker buildx build --load --progress=plain \
+              -f Dockerfile.backend -t "$IMG" .
+            echo "YADGAR_CI_BUILT_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
           fi
-          if [ -z "$IMG" ]; then
-            echo "no pullable backend image at all: tried $PENDING (pending), $BASE (master), and the newest published tag." >&2
-            echo "That is a repo-level publishing failure, not a PR problem — see ledger task 396." >&2
-            exit 1
-          fi
-          docker pull "$IMG" || {
-            echo "$IMG resolved via the registry but could not be pulled" >&2
+          docker image inspect "$IMG" >/dev/null || {
+            echo "$IMG is not in the daemon's image store after pull/build" >&2
             exit 1
           }
           echo "YADGAR_TEST_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
           # ...and the SAME tag for the phase-3 side build. `launcher.backend_image()`
-          # resolves DOCKERHUB_BACKEND_IMAGE from server.json's backend_version — the
-          # PENDING one, which on any PR that bumps it is not published, so it is not
-          # in the local store either. `backend_image_present()` then answers no and
-          # the vacuum SKIPs its side build before doing anything, which the tests
-          # read as a failed vacuum. The resolution above already picked the tag that
-          # can actually be run; the side build has to use that same one, or this job
-          # tests the fixture's image and the vacuum's image separately.
+          # resolves DOCKERHUB_BACKEND_IMAGE from server.json's backend_version, which
+          # on any PR that bumps it is not published and not in the local store.
+          # `backend_image_present()` then answers no and the vacuum SKIPs its side
+          # build, which the tests read as a failed vacuum. The side build has to use
+          # the image resolved above, or this job tests two different images.
           echo "YADGAR_BACKEND_IMAGE=$IMG" >> "$GITHUB_ENV"
 
       - name: Cross the dind namespace split for the vacuum e2e suite (task 228)
@@ -624,6 +610,14 @@ jobs:
           name: pytest-vacuum-e2e
           path: pytest-vacuum-e2e.txt
           retention-days: 1
+
+      - name: Remove the locally built backend image
+        # The dind daemon outlives the job, and every PR run that builds tags a
+        # new multi-GB image. Delete the tag; the BuildKit layer cache stays, so
+        # the next build still reuses unchanged layers. A no-op when the image
+        # was pulled rather than built.
+        if: ${{ always() && env.YADGAR_CI_BUILT_BACKEND_IMAGE != '' }}
+        run: docker image rm -f "$YADGAR_CI_BUILT_BACKEND_IMAGE"
 
   check-skip-inventory:
     runs-on: ${{ vars.CI_RUNS_ON || 'ubuntu-latest' }}
