@@ -17,8 +17,18 @@ db-lockdown-check.py (hookSpecificOutput.hookEventName REQUIRED). Deny carries
 BOTH permissionDecisionReason (docs-canonical, agent-facing) and top-level
 systemMessage (proven-working, human-facing) — extra keys are ignored.
 
-Fail-OPEN: any router error → allow + stderr log. A router bug must never brick
-every Bash call; only a positively-matched dangerous pattern denies.
+Fail-CLOSED (ledger 1567): this is a security guard, so any router error
+denies the call and logs to stderr. It used to fail open, and one fault (a
+malformed exceptions file) then switched every guard off. A config file the
+router cannot trust leaves every guard on. Two error paths that cannot decide
+safely stay allow on purpose: a missing config file (normal on a fresh
+install), and a git that ran but reported no origin/HEAD (G3 cannot name the
+default branch). A git that could not run at all denies the push.
+
+Exit code: Claude Code treats any exit other than 0 or 2, and a hook timeout,
+as a non-blocking error, so the tool runs. The entry point therefore never
+lets an exception escape: a fault before a decision prints a deny, and a
+fault after one (tracing shutdown) leaves the printed decision in force.
 
 Honest scope: a mechanical speed-bump against accidental / forgotten-prose
 violations (leading git globals like `git -C`, transparent wrapper prefixes,
@@ -31,6 +41,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -38,7 +49,7 @@ from pathlib import Path
 try:
     from yadgar._shared.observability.observe import observe
     from yadgar._shared.observability.tracing import shutdown_tracing
-except ImportError:
+except Exception:  # noqa: BLE001 — tracing is optional here: ANY import fault (not only ImportError) must degrade to no-op tracing, never crash the guard before it decides
 
     def observe(*_a, **_k):
         return lambda fn: fn
@@ -65,19 +76,95 @@ def _config_path() -> Path:
     return Path(os.path.expanduser("~/.claude/yadgar-hook-exceptions.json"))
 
 
-def load_config(path: Path | None = None) -> dict:
-    """Load exceptions config; absent/corrupt → built-in defaults (fail-open)."""
-    p = path or _config_path()
-    cfg = dict(_DEFAULT_CONFIG)
+_MAX_CONFIG_BYTES = 64 * 1024
+_CONFIG_LIST_KEYS = ("push_default_allowlist", "disabled_guards")
+# O_NONBLOCK: opening a FIFO must not wait for a writer. O_NOFOLLOW: the
+# installer writes a regular file, and a symlink would let an agent edit the
+# real target, which G5 does not watch. O_NOCTTY: a terminal device at the
+# path must not become the controlling tty.
+_CONFIG_OPEN_FLAGS = (
+    os.O_RDONLY
+    | os.O_NONBLOCK
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NOCTTY", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+)
+
+
+class ConfigRejectedError(Exception):
+    """The exceptions file exists but cannot be trusted; every guard stays on."""
+
+
+def _log(msg: str) -> None:
+    sys.stderr.write(f"[yadgar-pretooluse-router] {msg}\n")
+
+
+def _read_config_bytes(p: Path) -> bytes | None:
+    """Read at most _MAX_CONFIG_BYTES from a REGULAR file; None when absent."""
     try:
-        raw = json.loads(p.read_text())
-        if isinstance(raw, dict):
-            if isinstance(raw.get("push_default_allowlist"), list):
-                cfg["push_default_allowlist"] = raw["push_default_allowlist"]
-            if isinstance(raw.get("disabled_guards"), list):
-                cfg["disabled_guards"] = raw["disabled_guards"]
-    except Exception:  # noqa: BLE001 — any read/parse failure → fail-open to defaults
-        pass
+        fd = os.open(p, _CONFIG_OPEN_FLAGS)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:  # ELOOP (a symlink under O_NOFOLLOW), EACCES, EISDIR, ...
+        raise ConfigRejectedError(f"cannot open it ({exc.strerror or exc})") from exc
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ConfigRejectedError("it is not a regular file")
+        if st.st_size > _MAX_CONFIG_BYTES:
+            raise ConfigRejectedError(f"it is larger than {_MAX_CONFIG_BYTES} bytes")
+        chunks: list[bytes] = []
+        total = 0
+        while total <= _MAX_CONFIG_BYTES:
+            chunk = os.read(fd, _MAX_CONFIG_BYTES + 1 - total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        if total > _MAX_CONFIG_BYTES:
+            raise ConfigRejectedError(f"it is larger than {_MAX_CONFIG_BYTES} bytes")
+        return b"".join(chunks)
+    except OSError as exc:
+        raise ConfigRejectedError(f"cannot read it ({exc.strerror or exc})") from exc
+    finally:
+        os.close(fd)
+
+
+def _parse_config(data: bytes) -> dict:
+    """Validate the two fields the router uses; any defect rejects the whole file."""
+    try:
+        raw = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError) as exc:  # UnicodeDecodeError ⊂ ValueError
+        raise ConfigRejectedError(f"it is not valid JSON ({type(exc).__name__})") from exc
+    if not isinstance(raw, dict):
+        raise ConfigRejectedError("its top level is not a JSON object")
+    parsed: dict = {}
+    for key in _CONFIG_LIST_KEYS:
+        if key not in raw:
+            continue
+        value = raw[key]
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ConfigRejectedError(f'"{key}" is not a list of strings')
+        parsed[key] = list(value)
+    return parsed
+
+
+def load_config(path: Path | None = None) -> dict:
+    """Load the exceptions config. Absent → defaults; untrusted → defaults + notice.
+
+    Fail-closed (ledger 1567): a file that is not a regular file, is larger
+    than 64 KiB, is not valid JSON, or holds a field of the wrong shape is
+    ignored as a WHOLE — no field of it is honoured — so every guard stays on.
+    """
+    p = path or _config_path()
+    cfg = {key: list(val) if isinstance(val, list) else val for key, val in _DEFAULT_CONFIG.items()}
+    try:
+        data = _read_config_bytes(p)
+        if data is None:
+            return cfg
+        cfg.update(_parse_config(data))
+    except ConfigRejectedError as exc:
+        _log(f"ignoring {p}: {exc}; every guard stays on")
     return cfg
 
 
@@ -461,7 +548,9 @@ def guard_git_push_default(argv: list[str], ctx: dict) -> object:
         return ALLOW
     default = _resolve_default_branch(cwd)
     if not default:
-        return ALLOW  # fail-open when default unresolvable
+        # git ran and reported no origin/HEAD (fresh clone, CI): there is no
+        # default branch to protect. A git that could not run raised instead.
+        return ALLOW
 
     positionals = [t for t in resolved[1:] if not t.startswith("-")]
     return DENY if _push_targets_default(positionals, default, cwd) else ALLOW
@@ -492,8 +581,8 @@ def _is_protected_config_path(path_str: str | None) -> bool:
         return False
     try:
         target = os.path.abspath(os.path.expanduser(path_str))
-    except Exception:  # noqa: BLE001 — malformed path → not a match
-        return False
+    except Exception:  # noqa: BLE001 — a path that names the config file but cannot be resolved counts as a match: G5 fails closed (ledger 1567)
+        return True
     return target == os.path.abspath(str(_config_path()))
 
 
@@ -572,7 +661,7 @@ def guard_hook_config_tamper(cmd: str) -> object:
 
 # id → guard function NAME (resolved from module globals at call time so that
 # test-time patch.object(mod, "guard_*") is honored and a raising guard
-# fail-opens via main()'s except).
+# fails closed via main()'s except).
 _GUARD_IDS = {
     "git_commit_flags": "guard_git_commit_flags",
     "terraform_family": "guard_terraform_family",
@@ -616,8 +705,17 @@ _DENY_REASONS = {
 # --------------------------------------------------------------------------- #
 
 
+class GitUnavailableError(Exception):
+    """git could not run at all; G3 cannot decide, so the push is denied."""
+
+
 def _git(args: list[str], cwd: str | None) -> str | None:
-    """Run `git <args>` in cwd; return stdout str or None on any failure."""
+    """Run `git <args>` in cwd; stdout, or None when git ran and exited non-zero.
+
+    A git that could not RUN (missing binary, bad cwd, timeout) raises
+    GitUnavailableError, which main() turns into a deny (ledger 1567). It used
+    to return None, which G3 read as "no default branch" and allowed the push.
+    """
     try:
         r = subprocess.run(
             ["git", *args],
@@ -626,11 +724,11 @@ def _git(args: list[str], cwd: str | None) -> str | None:
             text=True,
             timeout=_GIT_SUBPROC_TIMEOUT,
         )
-        if r.returncode != 0:
-            return None
-        return r.stdout
-    except Exception:  # noqa: BLE001 — subprocess/OS failure → None (G3 fail-open)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitUnavailableError(f"git {' '.join(args)} could not run: {exc}") from exc
+    if r.returncode != 0:
         return None
+    return r.stdout
 
 
 # --------------------------------------------------------------------------- #
@@ -655,63 +753,111 @@ def _decide_edit_family(data: dict) -> dict:
     return _allow()
 
 
+def _decide_bash(data: dict) -> dict:
+    """G1-G5 for a Bash tool call."""
+    tool_input = data.get("tool_input", {})
+    cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+    if not cmd:
+        return _allow()
+
+    config = load_config()
+    disabled = set(config.get("disabled_guards", []))
+    ctx = {"cwd": data.get("cwd"), "config": config}
+
+    # G4 (db-lockdown): verbatim substring on the raw command.
+    if "db_lockdown" not in disabled and guard_db_lockdown(cmd) is DENY:
+        return _deny(_DENY_REASONS["db_lockdown"])
+
+    # G5 (Bash side): raw-shell writes targeting the hook-exceptions config.
+    if "hook_config_tamper" not in disabled and guard_hook_config_tamper(cmd) is DENY:
+        return _deny(_DENY_REASONS["hook_config_tamper"])
+
+    # G1-G3: run each segment of the compound command through the pipeline.
+    for seg in segment(tokenize(cmd)):
+        for gid, gname in _GUARD_IDS.items():
+            if gid in disabled:
+                continue
+            guard = globals()[gname]
+            if guard(seg, ctx) is DENY:
+                return _deny(_DENY_REASONS[gid])
+    return _allow()
+
+
+def _decide(data: dict) -> dict:
+    tool_name = data.get("tool_name")
+    if tool_name in ("Edit", "Write", "NotebookEdit"):
+        return _decide_edit_family(data)
+    if tool_name != "Bash":
+        return _allow()
+    return _decide_bash(data)
+
+
+def _error_deny(what: str) -> dict:
+    reason = (
+        f"Blocked: the yadgar PreToolUse guard failed ({what}) and fails closed. "
+        "This is a guard fault, not a verdict on the command. Report it to the "
+        "user; do not work around the guard."
+    )
+    return _deny(reason)
+
+
+# True once a decision has reached stdout. The entry point reads it so that a
+# fault AFTER the decision (tracing shutdown) never replaces that decision.
+_DECISION_EMITTED = False
+
+
+def _emit(decision: dict) -> None:
+    global _DECISION_EMITTED
+    print(json.dumps(decision))
+    _DECISION_EMITTED = True
+
+
+def _decide_from_stdin() -> dict:
+    """Read the hook payload and decide. Any fault → deny (ledger 1567)."""
+    try:
+        data = json.load(sys.stdin)
+    except ValueError as exc:  # JSONDecodeError ⊂ ValueError
+        _log(f"malformed hook input, failing closed: {exc}")
+        return _error_deny("malformed hook input")
+    try:
+        return _decide(data)
+    except Exception as exc:  # noqa: BLE001 — fail-CLOSED top level of a security guard: any fault in any guard denies the call, with a stderr note; it used to allow, which switched every guard off (ledger 1567)
+        _log(f"error, failing closed: {type(exc).__name__}: {exc}")
+        return _error_deny(f"{type(exc).__name__}: {exc}")
+
+
 @observe(tier="boundary")
 def main() -> None:
     try:
-        try:
-            data = json.load(sys.stdin)
-        except ValueError:  # JSONDecodeError ⊂ ValueError — malformed stdin → allow
-            print(json.dumps(_allow()))
-            return
-
-        tool_name = data.get("tool_name")
-
-        if tool_name in ("Edit", "Write", "NotebookEdit"):
-            print(json.dumps(_decide_edit_family(data)))
-            return
-
-        if tool_name != "Bash":
-            print(json.dumps(_allow()))
-            return
-
-        tool_input = data.get("tool_input", {})
-        cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
-        if not cmd:
-            print(json.dumps(_allow()))
-            return
-
-        config = load_config()
-        disabled = set(config.get("disabled_guards", []))
-        ctx = {"cwd": data.get("cwd"), "config": config}
-
-        # G4 (db-lockdown): verbatim substring on the raw command.
-        if "db_lockdown" not in disabled and guard_db_lockdown(cmd) is DENY:
-            print(json.dumps(_deny(_DENY_REASONS["db_lockdown"])))
-            return
-
-        # G5 (Bash side): raw-shell writes targeting the hook-exceptions config.
-        if "hook_config_tamper" not in disabled and guard_hook_config_tamper(cmd) is DENY:
-            print(json.dumps(_deny(_DENY_REASONS["hook_config_tamper"])))
-            return
-
-        # G1-G3: run each segment of the compound command through the pipeline.
-        segments = segment(tokenize(cmd))
-        for seg in segments:
-            for gid, gname in _GUARD_IDS.items():
-                if gid in disabled:
-                    continue
-                guard = globals()[gname]
-                if guard(seg, ctx) is DENY:
-                    print(json.dumps(_deny(_DENY_REASONS[gid])))
-                    return
-
-        print(json.dumps(_allow()))
-    except Exception as exc:  # noqa: BLE001 — fail-OPEN top level: a router bug must never brick Bash, so every fault prints an allow decision and a stderr note
-        sys.stderr.write(f"[yadgar-pretooluse-router] error, failing open: {exc}\n")
-        print(json.dumps(_allow()))
+        _emit(_decide_from_stdin())
     finally:
-        shutdown_tracing()
+        try:
+            shutdown_tracing()
+        except Exception as exc:  # noqa: BLE001 — tracing shutdown runs after the decision is printed; its fault must not turn into a non-zero exit, which Claude Code treats as allow
+            _log(f"tracing shutdown failed, decision stands: {exc}")
+
+
+def _entry() -> int:
+    """Process entry point: never let an exception escape (exit 1 = allow)."""
+    try:
+        main()
+    except Exception as exc:  # noqa: BLE001 — last resort: an escaping exception would exit 1, which Claude Code treats as a non-blocking error and runs the tool; deny instead
+        if _DECISION_EMITTED:
+            _log(f"error after the decision was printed, decision stands: {exc}")
+            return 0
+        # Most likely the tracing wrapper failed before main() read stdin.
+        # Decide once more without tracing, so a tracing fault alone does not
+        # block every call. If stdin was already consumed, this denies.
+        _log(f"error before a decision, retrying untraced: {type(exc).__name__}: {exc}")
+    if _DECISION_EMITTED:
+        return 0
+    try:
+        _emit(_decide_from_stdin())
+        return 0
+    except Exception as exc:  # noqa: BLE001 — the untraced retry failed too (e.g. stdout gone); exit 2 is the one channel Claude Code always treats as a block
+        sys.stderr.write(f"Blocked: the yadgar PreToolUse guard failed and fails closed: {exc}\n")
+        return 2
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(_entry())
