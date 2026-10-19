@@ -57,6 +57,7 @@ class _Ledger:
         self.patterns: dict[str, dict] = {}
         self.disciplines: dict[str, dict] = {}
         self.list_fails = False
+        self.fail_saves: set[str] = set()
         self.writes: list[tuple[str, str]] = []
 
     @staticmethod
@@ -69,6 +70,9 @@ class _Ledger:
 
     def save_pattern(self, payload: dict) -> dict:
         self.writes.append(("agent_pattern", payload["name"]))
+        if payload["name"] in self.fail_saves:
+            # The real op's failure shape: an envelope, not an exception.
+            return {"ok": False, "error": "simulated engine #2 write failure"}
         return self._upsert(
             self.patterns,
             {
@@ -240,6 +244,18 @@ class TestExistingRowsAreNotRewritten:
 
         assert ledger.writes == [], "a failed read must not be treated as an empty ledger"
         assert result["ledger_error"]
+
+    def test_failed_write_is_reported_not_counted(self, storage, ledger):
+        _seed(storage)
+        ledger.patterns.clear()
+        ledger.disciplines.clear()
+        ledger.fail_saves = {"pr-review"}
+
+        result = _seed(storage)
+
+        assert "pr-review" not in ledger.patterns
+        assert result["ledger_write_failed"] == ["pr-review"]
+        assert result["ledger_rows_created"] == len(_packaged()) - 1
 
 
 class TestEditedPageGetsNoClaimedAncestor:

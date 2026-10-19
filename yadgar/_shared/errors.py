@@ -109,8 +109,10 @@ class UnresolvedPatternError(YadgarError):
 
     def __init__(self, slug: str, detail: str = "") -> None:
         fix = (
-            "agent_prompt_list(limit=200) for the exact pattern names, or pass "
-            'pattern="" to skip the prompt lookup deliberately'
+            "agent_prompt_list(limit=200) for the exact pattern names (under "
+            'YADGAR_PROFILE=minimal, which hides it: recall(type="wiki", '
+            'tags=["agent-prompt"])), or pass pattern="" to skip the prompt '
+            "lookup deliberately"
         )
         payload: dict[str, Any] = {
             "error": self.error_code,

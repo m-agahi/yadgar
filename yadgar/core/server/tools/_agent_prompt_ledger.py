@@ -81,19 +81,24 @@ def _read_ledger_rows() -> dict[str, dict[str, dict]]:
 
 
 @observe(tier="stage", metric="tools.agent_prompt_ledger._write_ledger_row")
-def _write_ledger_row(table: str, row: dict) -> None:
-    """Forward one row upsert in the payload shape each table's op takes."""
+def _write_ledger_row(table: str, row: dict) -> bool:
+    """Forward one row upsert in the payload shape each table's op takes.
+
+    Returns False on the ops' failure envelope (``{"ok": False, ...}``): they
+    report a write failure that way rather than raising, so ignoring the
+    return value would count a row that was never written.
+    """
     if table == "agent_pattern":
-        _ap._forward_admin(
+        result = _ap._forward_admin(
             "save_agent_pattern_row",
             {
                 k: row.get(k)
                 for k in ("name", "body_slug", "content_hash", "purpose", "status", "baseline_hash")
             },
         )
-        return
+        return (result or {}).get("ok") is not False
     meta = {k: row[k] for k in ("purpose", "status", "always_applied", "position") if k in row}
-    _ap._forward_admin(
+    result = _ap._forward_admin(
         "save_agent_discipline_row",
         {
             "name": row["name"],
@@ -103,6 +108,34 @@ def _write_ledger_row(table: str, row: dict) -> None:
             "meta": meta,
         },
     )
+    return (result or {}).get("ok") is not False
+
+
+@observe(tier="stage", metric="tools.agent_prompt_ledger._planned_write")
+def _planned_write(
+    row: dict | None, page: dict, slug: str, seed_purpose: str, packaged: str
+) -> tuple[str, dict] | None:
+    """``(counter, row_to_write)`` for one packaged slug, or ``None`` to leave it.
+
+    ``counter`` is the report key the write increments on success.
+    """
+    live_hash = _ap._content_hash(page["content"])
+    baseline = packaged if live_hash == packaged else None
+    if row is None:
+        return (
+            "ledger_rows_created",
+            {
+                "name": "",  # filled by the caller
+                "body_slug": slug,
+                "content_hash": live_hash,
+                "purpose": _ap._extract_purpose(page["content"]) or seed_purpose,
+                "status": "active",
+                "baseline_hash": baseline,
+            },
+        )
+    if row.get("baseline_hash") is None and baseline is not None:
+        return ("ledger_baselines_set", {**row, "baseline_hash": baseline})
+    return None
 
 
 @observe(tier="stage", metric="tools.agent_prompt_ledger.heal_seeded_ledger_rows")
@@ -117,11 +150,14 @@ def heal_seeded_ledger_rows(storage) -> dict:
       reported, never guessed.
     * Row present: untouched, except a NULL ``baseline_hash`` is filled under
       the same proof, with every other column written back as stored.
+    * A write the backend reports as failed is listed under
+      ``ledger_write_failed`` and not counted.
     """
     report: dict = {
         "ledger_rows_created": 0,
         "ledger_baselines_set": 0,
         "ledger_baseline_unknown": [],
+        "ledger_write_failed": [],
         "ledger_error": None,
     }
     try:
@@ -135,25 +171,15 @@ def heal_seeded_ledger_rows(storage) -> dict:
         page = _ap._read_agent_prompt(slug, storage=storage)
         if page is None:
             continue
-        live_hash = _ap._content_hash(page["content"])
-        baseline = packaged if live_hash == packaged else None
-        row = existing[table].get(name)
-        if row is None:
-            if baseline is None:
-                report["ledger_baseline_unknown"].append(name)
-            _write_ledger_row(
-                table,
-                {
-                    "name": name,
-                    "body_slug": slug,
-                    "content_hash": live_hash,
-                    "purpose": _ap._extract_purpose(page["content"]) or seed_purpose,
-                    "status": "active",
-                    "baseline_hash": baseline,
-                },
-            )
-            report["ledger_rows_created"] += 1
-        elif row.get("baseline_hash") is None and baseline is not None:
-            _write_ledger_row(table, {**row, "baseline_hash": baseline})
-            report["ledger_baselines_set"] += 1
+        plan = _planned_write(existing[table].get(name), page, slug, seed_purpose, packaged)
+        if plan is None:
+            continue
+        counter, row = plan
+        row["name"] = name
+        if not _write_ledger_row(table, row):
+            report["ledger_write_failed"].append(name)
+            continue
+        report[counter] += 1
+        if counter == "ledger_rows_created" and row["baseline_hash"] is None:
+            report["ledger_baseline_unknown"].append(name)
     return report
