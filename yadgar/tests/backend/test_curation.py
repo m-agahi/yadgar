@@ -523,7 +523,15 @@ def memory_curator_at_scale(tmp_path, embeddings, settings):
     """Seed 500 entities + 200 relationships for performance tests.
 
     Returns (MemoryCurator, StorageEngine).  Fixture setup time is NOT counted
-    against the 30-second wall-time assertion — the timer starts after yield.
+    against the 30-second wall-time assertion — the timer starts after yield,
+    and the test's pytest-timeout uses ``func_only=True``.
+
+    Seeding is batched: ids come from ``_reserve_ids`` (one counter UPSERT per
+    table) and the CREATEs go through ``batch_writes`` (BEGIN…COMMIT chunks).
+    The per-row ``insert_entity`` / ``insert_relationship`` path cost ~1,400
+    sequential round-trips and alone could exceed the 60s timeout on a loaded
+    CI disk. The CREATE statements mirror those two methods' columns, and the
+    counters end where per-row inserts would leave them.
     """
     from yadgar._shared.storage import StorageEngine
     from yadgar._shared.thermodynamics import MemoryThermodynamics
@@ -535,18 +543,35 @@ def memory_curator_at_scale(tmp_path, embeddings, settings):
     rng = random.Random(42)
     n_entities = 500
     n_relationships = 200
+    now = engine._now_iso()
 
-    entity_ids = []
-    for i in range(n_entities):
+    entity_ids = engine._reserve_ids("entity", n_entities)
+    entity_stmts: list[tuple[str, dict | None]] = []
+    for i, eid in enumerate(entity_ids):
         heat = rng.uniform(0.0, 1.0)
-        eid = engine.insert_entity({"name": f"entity_{i}", "type": "file", "heat": heat})
-        entity_ids.append(eid)
+        entity_stmts.append(
+            (
+                "CREATE type::record('entity', $id) SET "
+                "name = $name, type = $type, created_at = $created_at, "
+                "last_accessed = $last_accessed, heat = $heat, archived = $archived",
+                {
+                    "id": eid,
+                    "name": f"entity_{i}",
+                    "type": "file",
+                    "created_at": now,
+                    "last_accessed": now,
+                    "heat": heat,
+                    "archived": False,
+                },
+            )
+        )
+    engine.batch_writes(entity_stmts)
 
     rel_types = ["co_occurrence", "derived_from", "semantic_similarity", "caused_by"]
     inserted_pairs: set[tuple[int, int]] = set()
-    count = 0
+    rels: list[tuple[int, int, str, float]] = []
     attempts = 0
-    while count < n_relationships and attempts < n_relationships * 10:
+    while len(rels) < n_relationships and attempts < n_relationships * 10:
         attempts += 1
         src, tgt = rng.sample(entity_ids, 2)
         pair = (min(src, tgt), max(src, tgt))
@@ -555,15 +580,36 @@ def memory_curator_at_scale(tmp_path, embeddings, settings):
         inserted_pairs.add(pair)
         rtype = rng.choice(rel_types)
         weight = rng.uniform(1.0, 15.0)
-        engine.insert_relationship(
-            {
-                "source_entity_id": src,
-                "target_entity_id": tgt,
-                "relationship_type": rtype,
-                "weight": weight,
-            }
-        )
-        count += 1
+        rels.append((src, tgt, rtype, weight))
+
+    rel_ids = engine._reserve_ids("relationship", len(rels))
+    engine.batch_writes(
+        [
+            (
+                "CREATE type::record('relationship', $id) SET "
+                "source_entity_id = $src, target_entity_id = $tgt, "
+                "relationship_type = $rtype, weight = $weight, "
+                "created_at = $created_at, last_reinforced = $last_reinforced, "
+                "valid_from = $vf",
+                {
+                    "id": rid,
+                    "src": src,
+                    "tgt": tgt,
+                    "rtype": rtype,
+                    "weight": weight,
+                    "created_at": now,
+                    "last_reinforced": now,
+                    "vf": now,
+                },
+            )
+            for rid, (src, tgt, rtype, weight) in zip(rel_ids, rels, strict=True)
+        ]
+    )
+
+    # Guard against a silently partial seed (batch_writes chunks are atomic
+    # per chunk, not across chunks).
+    assert engine._q("SELECT count() FROM entity GROUP ALL")[0]["count"] == n_entities
+    assert engine._q("SELECT count() FROM relationship GROUP ALL")[0]["count"] == len(rels)
 
     yield curator, engine
     engine.close()
@@ -573,7 +619,7 @@ def memory_curator_at_scale(tmp_path, embeddings, settings):
 
 
 @pytest.mark.perf
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(60, func_only=True)
 def test_memify_reweight_under_30s_at_500_entities(memory_curator_at_scale):
     """At production-like scale, memify_reweight must not block the cycle.
 
