@@ -231,3 +231,26 @@ def test_save_agent_prompt_upserts_on_name(save_agent_prompt_src):
     assert "on duplicate key update" in src_lower or "update agent_pattern" in src_lower, (
         "save_agent_prompt must upsert on name (Fix 8)"
     )
+
+
+@pytest.fixture(scope="module")
+def save_agent_discipline_src() -> str:
+    return _method_source("save_agent_discipline")
+
+
+@pytest.mark.parametrize("fixture_name", ["save_agent_prompt_src", "save_agent_discipline_src"])
+def test_save_preserves_baseline_hash_when_caller_omits_it(fixture_name, request):
+    """ADR-0217/0218 — ``baseline_hash`` changes ONLY on seed and adopt.
+
+    Every ordinary page save (``agent_prompt_save``, ``discipline_save``)
+    upserts the row WITHOUT a baseline, so ``baseline_hash = VALUES(...)``
+    would null the recorded ancestor on every edit — the three-way merge
+    could then never tell a local edit from a packaged change. The upsert
+    must keep the stored value when the caller sends NULL.
+    """
+    src = request.getfixturevalue(fixture_name)
+    assert re.search(
+        r"baseline_hash\s*=\s*COALESCE\(\s*VALUES\(\s*baseline_hash\s*\)\s*,\s*baseline_hash\s*\)",
+        src,
+        re.IGNORECASE,
+    ), f"{fixture_name}: the upsert must COALESCE baseline_hash, not overwrite it"
