@@ -6,7 +6,7 @@ Covers:
 3. Pattern with no prompts → RAISES (C5 inverted this; it used to be a
    graceful empty section, which the caller read as "no pattern exists for
    this task-shape" and which therefore licensed a bespoke dispatch).
-4. Returns string under 2000 chars (orchestrator budget).
+4. Returns string under _TOTAL_BUDGET chars (orchestrator budget).
 """
 
 from __future__ import annotations
@@ -181,7 +181,7 @@ class TestDispatchHelperNoPatternsGraceful:
 
 
 class TestDispatchHelperSizeBudget:
-    """Output is always ≤ 2000 chars."""
+    """Output is always ≤ _TOTAL_BUDGET chars; a short prelude stays ≤ 2000."""
 
     def test_short_prelude_under_budget(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude
@@ -209,7 +209,21 @@ class TestDispatchHelperSizeBudget:
         prelude = agent_dispatch_prelude(
             "long-pattern", "long topic", storage=storage, project=TEST_PROJECT_ID
         )
-        assert len(prelude) <= 2000
+        # The 5 000-char body is capped at the snippet's own allowance, and the
+        # whole prelude at the base total (the 2 000 figure predates both: the
+        # contract alone now exceeds the old snippet arithmetic — see
+        # _AGENT_PROMPT_BUDGET).
+        import re
+
+        from yadgar.core.server.tools.dispatch_helper import (
+            _AGENT_PROMPT_BUDGET,
+            _TOTAL_BUDGET,
+        )
+
+        longest_run = max(len(m) for m in re.findall(r"x+", prelude))
+        assert longest_run <= _AGENT_PROMPT_BUDGET
+        assert longest_run >= 1000, "the capped body must still be carried"
+        assert len(prelude) <= _TOTAL_BUDGET
 
     def test_returns_string(self, storage):
         from yadgar.core.server.tools.dispatch_helper import agent_dispatch_prelude

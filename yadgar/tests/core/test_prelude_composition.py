@@ -186,7 +186,7 @@ class TestCompositionAssembly:
         assert dropped_warnings, "expected a warning for dropped disciplines"
 
     def test_stacked_car_pattern_and_disciplines_fit_base_budget(self, storage, caplog):
-        """v5.123.0 regression (train Car 1): at the raised base budget (3 500),
+        """v5.123.0 regression (train Car 1): at the base budget (_TOTAL_BUDGET),
         the stacked-car-parallel-build pattern + ALL 3 of its composed disciplines
         must survive assembly. At the old 2 000 budget every discipline was
         dropped — the composition was invisible (observed live 2026-07-10)."""
@@ -277,3 +277,42 @@ class TestMagicMockStorageX1:
         )
         assert isinstance(result, str)
         assert "## Yadgar subagent contract" in result
+
+
+class TestPatternSnippetIndependentOfContract:
+    """The pattern body has its OWN allowance; a longer contract must not eat it.
+
+    The snippet used to be ``_AGENT_PROMPT_BUDGET - (len(contract) + 100)``:
+    sized for a ~676-char contract, it shrank one-for-one as the contract grew
+    and vanished entirely once the contract passed ~1.3 KB — a prelude then
+    carried the contract and the disciplines but NO pattern body, silently.
+    """
+
+    _BODY = "Q" * 4000
+
+    def _snippet_len(self, storage, monkeypatch, contract_len: int | None) -> int:
+        import re
+
+        import yadgar.core.server.tools.dispatch_helper as dh
+
+        if contract_len is not None:
+            monkeypatch.setattr(
+                dh,
+                "_get_contract_text",
+                lambda _s: "## Yadgar subagent contract\n\n" + "C" * contract_len,
+            )
+        dh._prompt_cache.clear()
+        prelude = dh.agent_dispatch_prelude(
+            "snippet-allowance-test", "topic", storage=storage, project=TEST_PROJECT_ID
+        )
+        return max((len(m) for m in re.findall(r"Q+", prelude)), default=0)
+
+    def test_snippet_length_does_not_depend_on_contract(self, storage, monkeypatch):
+        _seed_all(storage)
+        _save_pattern(storage, "snippet-allowance-test", self._BODY)
+        lengths = {
+            label: self._snippet_len(storage, monkeypatch, n)
+            for label, n in (("seeded", None), ("short", 600), ("long", 3000))
+        }
+        assert len(set(lengths.values())) == 1, f"snippet varies with the contract: {lengths}"
+        assert lengths["seeded"] >= 1000, f"snippet too short to carry a body: {lengths}"

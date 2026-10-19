@@ -56,16 +56,21 @@ from yadgar.core.server.tools._project_param import (
 
 logger = logging.getLogger(__name__)
 
-# Budget: contract + recall hint ≈ 700 chars. Leave ~1 300 chars for prompt body.
-# (v5.122.0: contract body now wiki-sourced; genesis is ~676 chars with header.)
-_AGENT_PROMPT_BUDGET = 1_400
-# v5.123.0 (train Car 1): base 2 000 → 3 500 so contract (~676) + a 3-discipline
-# Composes set (~2 000) + pattern snippet + recall hint fit without dropping
-# disciplines (observed live: stacked-car-parallel-build lost ALL disciplines at
-# 2 000 — the composition was invisible; the 2 000 cap predates disciplines).
-# Overflow rule (drop disciplines last-listed-first + warning) stays as the
-# safety valve. With-context total: 3 500 + 2 500 = 6 000 (was 4 000).
-_TOTAL_BUDGET = 3_500
+# The pattern snippet's OWN allowance, independent of the contract's length.
+# It used to be ``1 400 - (len(contract) + 100)``: sized for a ~676-char contract,
+# it shrank one-for-one as the contract grew and was NEGATIVE once the contract
+# passed ~1.3 KB, so the prelude silently carried no pattern body at all.
+_AGENT_PROMPT_BUDGET = 1_300
+# Base total, derived from the composition it must carry without a drop: the
+# packaged contract (~1.6 KB with header) + the heaviest seeded 3-discipline
+# Composes set (stacked-car-parallel-build: process-hygiene + commit-hygiene +
+# plan-lifecycle, ~2.8 KB with headers) + the pattern snippet (1.3 KB) + recall
+# hint and separators (~0.2 KB) ≈ 5.9 KB. (v5.123.0 raised 2 000 → 3 500 for the
+# same reason; that figure assumed the old 100-char snippet.) A contract larger
+# than the packaged one drops disciplines last-listed-first with a warning; the
+# contract and the pattern snippet always survive. With-context total:
+# 6 000 + 2 500 = 8 500.
+_TOTAL_BUDGET = 6_000
 # X1 extension: extra budget for auto-fetched context block
 _CONTEXT_BUDGET = 2_500
 
@@ -465,7 +470,7 @@ def agent_dispatch_prelude(
 
     The prelude contains the Yadgar protocol contract, the latest stored
     agent-prompt for *pattern* (if any), and a recall hint for *task_topic*.
-    Total length is capped at 3 500 characters (orchestrator context budget).
+    Total length is capped at 6 000 characters (orchestrator context budget).
 
     v5.44.0 X1 extension: when include_context=True (opt-in, per DP-X1-1),
     auto-fetches yadgar context using recall(directory) and
@@ -491,7 +496,7 @@ def agent_dispatch_prelude(
                         frontmatter declares prompt_uses_yadgar_context: true.
 
     Returns:
-        Markdown string. Base cap: 3 500 chars. With context: up to 6 000 chars.
+        Markdown string. Base cap: 6 000 chars. With context: up to 8 500 chars.
 
     Raises:
         UnresolvedPatternError: ``pattern`` is non-empty, the library is
@@ -553,12 +558,10 @@ def agent_dispatch_prelude(
                 _composes_for(pattern, raw_content), storage, project
             )
             body = _strip_composes_section(raw_content)
-            # Truncate if needed to respect the pattern-snippet budget
-            used = len(contract_text) + 100  # 100 for separators
-            available = _AGENT_PROMPT_BUDGET - used
-            if available > 80:
-                snippet = body[:available]
-                tail.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
+            # The snippet has its own allowance; the contract's length does not
+            # reduce it (see _AGENT_PROMPT_BUDGET).
+            snippet = body[:_AGENT_PROMPT_BUDGET]
+            tail.append(f"## Agent-prompt [{pattern} v{version}]\n\n{snippet}")
             # Stage 3.4: count the assembly (pattern resolved → real usage).
             _record_pattern_usage(pattern)
         except Exception as _e:  # noqa: BLE001 — prelude assembly spans discipline lookup, budget arithmetic and usage recording; a fault must drop the pattern snippet, never fail the dispatch prelude
