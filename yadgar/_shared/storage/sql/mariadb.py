@@ -1022,6 +1022,10 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         not violate the UNIQUE constraint. ``INSERT ... ON DUPLICATE KEY
         UPDATE`` is the canonical MySQL upsert; the ``name`` column is
         the conflict target via the ``uq_agent_pattern_name`` constraint.
+
+        ``baseline_hash`` is COALESCEd, never overwritten with NULL: it is the
+        seed/adopt ancestor (ADR-0217/0218) and an ordinary page save sends
+        none, so a plain ``VALUES()`` assignment erased it on every edit.
         """
         from sqlalchemy import text  # noqa: PLC0415
 
@@ -1034,7 +1038,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             "body_slug = VALUES(body_slug), "
             "purpose = VALUES(purpose), "
             "status = VALUES(status), "
-            "baseline_hash = VALUES(baseline_hash), "
+            "baseline_hash = COALESCE(VALUES(baseline_hash), baseline_hash), "
             "content_hash = VALUES(content_hash)"
         )
         params = {
@@ -1110,6 +1114,9 @@ class MariaStorageEngine(_ProjectRegistryMixin):
         ``agent_pattern`` (which only carries the prompt). Consumers that
         do not care about ordering or visibility may pass ``meta=None``
         and the defaults match the schema's column defaults.
+
+        ``baseline_hash`` is COALESCEd for the same reason as
+        ``save_agent_prompt``: only a seed or adopt may move it.
         """
         from sqlalchemy import text  # noqa: PLC0415
 
@@ -1131,7 +1138,7 @@ class MariaStorageEngine(_ProjectRegistryMixin):
             "always_applied = VALUES(always_applied), "
             "position = VALUES(position), "
             "status = VALUES(status), "
-            "baseline_hash = VALUES(baseline_hash), "
+            "baseline_hash = COALESCE(VALUES(baseline_hash), baseline_hash), "
             "content_hash = VALUES(content_hash)"
         )
         params = {

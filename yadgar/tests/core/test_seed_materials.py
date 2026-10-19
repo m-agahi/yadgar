@@ -31,7 +31,7 @@ _EXPECTED: list[tuple[str, str, str]] = [
     (
         "pr-review",
         "Review any PR against its base by its real effect — universal core checks + conditional stack lenses (code/infra/migration/API), evidence-gated, read-only.",
-        "DISPATCH: model=opus (fallback=sonnet for small/mechanical PRs) — review depth scales with blast radius — canonical: model-tier-dispatch\n\n## Purpose\nReview ANY pull request against its base branch by its REAL effect, not just the visible\ndiff. Adapt the depth and the lenses to what the PR actually touches. READ-ONLY.\n\n## Safety (hard, non-negotiable)\nA review MUTATES NOTHING. Allowed: `git diff/show/log -p`, read files, run the repo's\nexisting tests/lint/type/build, render/dry-run (`kubectl kustomize`, `helm template`,\n`--dry-run=client`). FORBIDDEN: any apply/deploy/push/merge, `kubectl apply/delete`,\n`helm install/upgrade`, `flux reconcile`, `argocd sync`, `terraform apply/import/state`\n(never run terraform at all unless the repo already sanctions `plan`), `digger ...`, DB\nwrites. If a check would mutate, don't run it.\n\n## Method\n1. ELIGIBILITY: closed/draft/superseded → say so, stop.\n2. MAP THE CHANGE SURFACE from `git diff <base>...<head>` (three-dot / merge-base):\n   app code · tests · public API/contract · DB migration · infra/IaC\n   (k8s/helm/kustomize/terraform) · config/secrets · CI/build · deps · docs. This selects\n   which LENSES apply. Scale effort to blast radius.\n3. CONTEXT: read the PR body + root and directory-scoped CLAUDE.md / conventions / OWNERS.\n   Observed code ALWAYS wins over the PR description.\n4. LOOK BEYOND THE VISIBLE DIFF where an edit has amplified effect: rendered manifests\n   (kustomize/helm), generated code, a config value that changes runtime behavior, a\n   migration that reshapes the schema, a shared helper now called differently.\n5. CORE CHECKS (every PR) + 6. TRIGGERED LENSES (only for touched surfaces) — below.\n7. RUN THE REPO'S OWN CHECKS (never author new infra): tests/lint/types/build/schema/\n   policy it already ships; report pass/fail. Surface pre-existing failures separately.\n8. VERIFY each finding against the actual code/rendered output BEFORE flagging.\n\n## Core checks (every PR)\nCorrectness (bugs, off-by-one, null, wrong operator, unhandled error) · Security\n(injection, secrets in the diff, authz gaps) · Tests (fails-before/passes-after, or\nuntested?) · Completeness (a caller/companion resource/flag/doc/enum-case not updated;\nwhat the diff implies but doesn't do) · PR-desc vs diff (undisclosed / scope-creep\nchanges) · Compat (breaking public API/schema/CLI/config key? versioned?) · Conventions\n(quote the CLAUDE.md/project rule violated).\n\n## Triggered lenses (apply only if that surface is touched)\n- INFRA/IaC: render BASE vs PR and DIFF the output (the real change surface); trace every\n  base/patch/HelmRelease/valuesFrom/secretRef. Ownership conflict: a resource managed by\n  TWO controllers (Flux vs Argo vs raw vs Terraform) = drift/flap. Missing\n  limits/probes/PDB/NetworkPolicy, `:latest` tags, privileged/hostPath, RBAC over-grant.\n  State the live-cluster impact.\n- DB MIGRATION: reversible? locking/blocking on a big table? backfill safe? data-loss?\n  forward/backward-compatible with the running app during rollout?\n- PUBLIC API/CONTRACT: breaking for consumers? versioned/deprecated cleanly?\n- CONCURRENCY/ASYNC: races, deadlocks, unclosed resources, event-loop-bound primitives.\n- DEPENDENCIES: new dep justified + not a lighter option? lockfile updated? supply-chain?\n- FRONTEND: a11y, XSS/injection, bundle-size cliff.\n\n## Severity + confidence\nTag every finding; score confidence 0-100; surface only >=80.\n  BLOCKER  — breaks prod / data-loss / security / ownership conflict / secret leak\n  CONCERN  — fragile: missing guard/test, drift risk, unpinned dep, perf cliff\n  NIT      — style/naming (only when a thorough review is requested)\n  QUESTION — need author intent before judging\n0-25 likely false-positive/pre-existing · 26-50 minor · 51-75 valid-low · 76-90 important\n· 91-100 critical. Drop <80.\n\n## Do NOT flag (false-positive guards)\nPre-existing issues not in this diff · lint/type/compiler-catchable (assume CI) · pedantic\nnits · findings on lines the PR didn't touch · intentional-and-explained changes ·\nanything you did NOT verify · the author's rationale on faith (verify it). If unsure, ask\n(QUESTION) rather than assert a BLOCKER.\n\n## Output\n1. Findings by severity: `<file>:<line>: <severity>: <problem>. <impact>. <fix>.` Cite the\n   rule when one applies; permalink (SHA + #Lstart-Lend) for a remote PR.\n2. `## PR-desc vs diff` — matches / diverges.\n3. `## Checks` — tests/lint/render/policy pass/fail (pre-existing failures noted separately).\n4. `## Verdict` — REQUEST-CHANGES (any blocker) · COMMENT (only concerns/questions) ·\n   APPROVE (clean) + a concise, ready-to-paste review comment.\nTerse by default; security, data-loss, ownership, and breaking-change findings get a full\nparagraph (cause + reference). No praise, no restating the code.",
+        'DISPATCH: model=opus (fallback=sonnet for small/mechanical PRs) — review depth scales with blast radius — canonical: model-tier-dispatch\n\n## Purpose\nReview ANY pull request against its base branch by its REAL effect, not just the visible\ndiff. Adapt the depth and the lenses to what the PR actually touches. READ-ONLY.\n\n## Safety (hard, non-negotiable)\nA review MUTATES NOTHING. Allowed: `git diff/show/log -p`, read files, run the repo\'s\nexisting tests/lint/type/build, render/dry-run (`kubectl kustomize`, `helm template`,\n`--dry-run=client`). FORBIDDEN: any apply/deploy/push/merge, `kubectl apply/delete`,\n`helm install/upgrade`, `flux reconcile`, `argocd sync`, `terraform apply/import/state`\n(never run terraform at all unless the repo already sanctions `plan`), `digger ...`, DB\nwrites. If a check would mutate, don\'t run it.\n\n## gh identity check (when reading the PR through `gh`)\nBefore ANY `gh` call, run `gh auth status` (and `unset GH_TOKEN` if a stale token env var\ncould mask the real session). If the PR\'s repo is owned by a DIFFERENT account than the\ndefault session, `gh pr view` / `gh pr diff` on a private repo fails or silently returns\nnothing useful — it reads as "no access", not as an auth mismatch. Use the right account\'s\ntoken from the operator\'s secrets manager instead of assuming the default is right.\n\n## SELF-AUTHORED PR MODE (whenever the dispatcher wrote the PR under review)\nThe dispatcher is the blind spot. Say so to the agent explicitly:\n- **The PR body is a CLAIM, not evidence.** Re-derive every assertion in it (counts,\n  "verified", "nothing else changes", "X needs no change") from the repo and the live\n  system. Report each body claim as TRUE / FALSE / UNVERIFIABLE in its own table. A claim\n  the diff cannot check is UNVERIFIABLE, not TRUE.\n- **Contradicting the dispatcher is the most valuable output.** Without that sentence the\n  agent anchors on the author\'s framing and reports agreement.\n- **Add a "what did the author NOT think of" finding class and rank it highest.** List\n  candidate blind spots for the change type so the agent has somewhere to look.\n- **The dispatcher NAMES their own top worry**, to be checked first. It either surfaces a\n  real defect fast or retires an unfounded fear.\n- **Ask what applies IMMEDIATELY vs on success.** In GitOps especially, part of a PR can\n  reconcile the moment it merges while another part waits on a controller. A change that\n  is safe "once everything is up" can still break the RUNNING system in the window.\n  Classify each changed object by when it takes effect.\n\n## Method\n1. ELIGIBILITY: closed/draft/superseded → say so, stop.\n2. MAP THE CHANGE SURFACE from `git diff <base>...<head>` (three-dot / merge-base):\n   app code · tests · public API/contract · DB migration · infra/IaC\n   (k8s/helm/kustomize/terraform) · config/secrets · CI/build · deps · docs. This selects\n   which LENSES apply. Scale effort to blast radius.\n3. CONTEXT: read the PR body + root and directory-scoped CLAUDE.md / conventions / OWNERS.\n   Observed code ALWAYS wins over the PR description.\n4. LOOK BEYOND THE VISIBLE DIFF where an edit has amplified effect: rendered manifests\n   (kustomize/helm), generated code, a config value that changes runtime behavior, a\n   migration that reshapes the schema, a shared helper now called differently.\n5. CORE CHECKS (every PR) + 6. TRIGGERED LENSES (only for touched surfaces) — below.\n7. RUN THE REPO\'S OWN CHECKS (never author new infra): tests/lint/types/build/schema/\n   policy it already ships; report pass/fail. Surface pre-existing failures separately.\n8. VERIFY each finding against the actual code/rendered output BEFORE flagging.\n\n## Core checks (every PR)\nCorrectness (bugs, off-by-one, null, wrong operator, unhandled error) · Security\n(injection, secrets in the diff, authz gaps) · Tests (fails-before/passes-after, or\nuntested?) · Completeness (a caller/companion resource/flag/doc/enum-case not updated;\nwhat the diff implies but doesn\'t do) · PR-desc vs diff (undisclosed / scope-creep\nchanges) · Compat (breaking public API/schema/CLI/config key? versioned?) · Conventions\n(quote the CLAUDE.md/project rule violated).\n- SECRET HYGIENE: no hardcoded credentials/tokens/keys anywhere in the diff — tests,\n  fixtures, comments and committed config included; no shell-out built from interpolated\n  input (command injection, path traversal) in new code.\n- TESTS THAT EXECUTE: a test that string-matches the SOURCE of generated code/config can\n  pass 100% while the real integration is broken. Prefer tests that run the artifact.\n- CONTRACT MISMATCH: when the PR wires A to call B (new CLI invocation, API call, RPC\n  path), read B\'s ACTUAL signature in the current tree. Wrong flag names, argument order\n  or stdin-vs-flag often fail silently at runtime when the caller ignores non-zero exits.\n\n## Triggered lenses (apply only if that surface is touched)\n- INFRA/IaC: render BASE vs PR and DIFF the output (the real change surface); trace every\n  base/patch/HelmRelease/valuesFrom/secretRef. Ownership conflict: a resource managed by\n  TWO controllers (Flux vs Argo vs raw vs Terraform) = drift/flap. Missing\n  limits/probes/PDB/NetworkPolicy, `:latest` tags, privileged/hostPath, RBAC over-grant.\n  State the live-cluster impact.\n- DB MIGRATION: reversible? locking/blocking on a big table? backfill safe? data-loss?\n  forward/backward-compatible with the running app during rollout?\n- PUBLIC API/CONTRACT: breaking for consumers? versioned/deprecated cleanly?\n- CONCURRENCY/ASYNC: races, deadlocks, unclosed resources, event-loop-bound primitives.\n- DEPENDENCIES: new dep justified + not a lighter option? lockfile updated? supply-chain?\n- FRONTEND: a11y, XSS/injection, bundle-size cliff.\n\n## Severity + confidence\nTag every finding; score confidence 0-100; surface only >=80.\n  BLOCKER  — breaks prod / data-loss / security / ownership conflict / secret leak\n  CONCERN  — fragile: missing guard/test, drift risk, unpinned dep, perf cliff\n  NIT      — style/naming (only when a thorough review is requested)\n  QUESTION — need author intent before judging\n0-25 likely false-positive/pre-existing · 26-50 minor · 51-75 valid-low · 76-90 important\n· 91-100 critical. Drop <80.\n\n## Do NOT flag (false-positive guards)\nPre-existing issues not in this diff · lint/type/compiler-catchable (assume CI) · pedantic\nnits · findings on lines the PR didn\'t touch · intentional-and-explained changes ·\nanything you did NOT verify · the author\'s rationale on faith (verify it). If unsure, ask\n(QUESTION) rather than assert a BLOCKER.\n\n## Output\n1. Findings by severity: `<file>:<line>: <severity>: <problem>. <impact>. <fix>.` Cite the\n   rule when one applies; permalink (SHA + #Lstart-Lend) for a remote PR.\n2. `## PR-desc vs diff` — matches / diverges.\n3. `## Checks` — tests/lint/render/policy pass/fail (pre-existing failures noted separately).\n4. `## Verdict` — REQUEST-CHANGES (any blocker) · COMMENT (only concerns/questions) ·\n   APPROVE (clean) + a concise, ready-to-paste review comment.\nTerse by default; security, data-loss, ownership, and breaking-change findings get a full\nparagraph (cause + reference). No praise, no restating the code.',
     ),
     (
         "debug-investigate",
@@ -239,6 +239,9 @@ _BACKFLOW_MARKERS: dict[str, list[str]] = {
         "ROOT CAUSE ONLY",
         "mode=prod-crash",
         "PROVE or EXCLUDE",
+        "mode=infra-green",
+        "competing hypotheses",
+        "STOP condition",
     ],
     "plan-audit": [
         "INDEPENDENT skeptic",
@@ -250,11 +253,16 @@ _BACKFLOW_MARKERS: dict[str, list[str]] = {
         "PLAN for <change>",
         "measure_first=true",
         "domain=perf-lever",
+        "Never commit to the default branch directly",
     ],
     "build-car": [
         "WORK LOCATION",
         "plan_spec=",
-        "the final full pass is the authoritative gate",
+        # The car runs TARGETED tests only; the full suite belongs to the
+        # integration step (replaces the old "final full pass" marker).
+        "never the full suite inside a car",
+        "PROVE YOUR TESTS DISCRIMINATE",
+        "DIAGNOSED defect",
     ],
     "drift-audit": [
         "PHANTOM",
@@ -272,6 +280,7 @@ _BACKFLOW_MARKERS: dict[str, list[str]] = {
         "zero residue",
         "docs/plans/archive/",
         "[[agent-discipline-branch-state]]",
+        "pull_request_template",
     ],
     "dispatch-fix-test-migration": [
         "NO TEST BENDING",
@@ -281,7 +290,9 @@ _BACKFLOW_MARKERS: dict[str, list[str]] = {
     "mechanical-refactor-chunk-commit-early": [
         "ONE chunk",
         "COMMIT immediately",
-        "sys.modules",
+        # Forward-only: the chunk rewrites importers, it never leaves a shim
+        # (replaces the old "sys.modules" alias-shim marker).
+        "NO RE-EXPORT SHIMS",
     ],
     "stacked-car-parallel-build": [
         "ADR-0088",
@@ -358,3 +369,33 @@ def test_anchors_yaml_loads_from_materials():
     assert len(entries) >= 6
     for e in entries:
         assert "content" in e and "tags" in e
+
+
+# ── ADR-0419: shipped seeds carry no personal / host-specific workflow ────────
+
+_PERSONAL_RESIDUE = (
+    "codeberg",
+    "forgejo",
+    "bot identity",
+    "direct to master",
+    "no template exists",
+)
+
+
+def test_seed_bodies_carry_no_personal_workflow_residue():
+    """Every packaged body ships to strangers on a fresh install (ADR-0419).
+
+    A maintainer's forge, bot account or "commit straight to master" licence
+    is a personal rule; a seed that carries one teaches it to every install.
+    """
+    from yadgar.core.server.tools.agent_prompts import (
+        CONTRACT_GENESIS,
+        DISCIPLINES,
+        STARTER_PROMPTS,
+    )
+
+    entries = [*STARTER_PROMPTS, CONTRACT_GENESIS, *DISCIPLINES]
+    for name, purpose, content in entries:
+        text = f"{purpose}\n{content}".lower()
+        for needle in _PERSONAL_RESIDUE:
+            assert needle not in text, f"{needle!r} in packaged seed {name!r}"

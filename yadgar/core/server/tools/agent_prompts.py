@@ -36,6 +36,7 @@ import re
 from yadgar._shared.errors import UnresolvedProjectError
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.security.secrets import gate_or_reject
+from yadgar._shared.storage.directory import GLOBAL_REACH_TAG
 from yadgar._shared.wiki.prompt_guard import removed_prompt_lines
 from yadgar._shared.wiki.wiki_meta import (
     PAGE_TYPE_AGENT_DISCIPLINE,
@@ -106,6 +107,19 @@ def _extract_purpose(wrapped_content: str) -> str | None:
     """
     m = _PURPOSE_EXTRACT_RE.match(wrapped_content.lstrip())
     return m.group(1).strip() if m else None
+
+
+@observe(tier="hot", metric="tools.agent_prompts._wrap_prompt_page")
+def _wrap_prompt_page(purpose: str, content: str) -> str:
+    """The ONE canonical page body for an agent-library write (ADR-0218).
+
+    ``content_hash`` and ``baseline_hash`` are both ``_content_hash`` of this
+    string, so every writer — ``agent_prompt_save``, ``_save_discipline_page``
+    and the seeder's packaged-baseline computation — must build it here. Two
+    spellings of the wrap would manufacture phantom desync between page, row
+    and package.
+    """
+    return f"## Purpose\n\n{purpose}\n\n## Prompt\n\n{_unwrap_purpose_prompt(content)}"
 
 
 # R3 Car 3c: the TOC-upsert + library-anchor writes (previously _upsert_toc_row /
@@ -181,13 +195,14 @@ def agent_prompt_save(
 
     slug = f"agent-prompt-{pattern}"
     title = f"Agent Prompt: {pattern}"
-    tags = ["agent-prompt", f"task:{pattern}"]
+    # Car C7: reach is the ``global`` TAG. Attached here rather than left to
+    # ``WikiStore.add``'s storage-scope rule, because the backend op's
+    # ``_st._wiki is None`` arm writes these tags verbatim.
+    tags = ["agent-prompt", f"task:{pattern}", GLOBAL_REACH_TAG]
     _purpose = purpose or f"Agent prompt for {pattern} tasks."
-    # Strip any pre-existing Purpose/Prompt wrapper before composing — prevents
-    # double-wrapping when the caller passes already-wrapped content (#68).
-    content = _unwrap_purpose_prompt(content)
-    # Wrap content with required headings so wiki_lint passes for page_type="agent_prompt"
-    full_content = f"## Purpose\n\n{_purpose}\n\n## Prompt\n\n{content}"
+    # Strips any pre-existing Purpose/Prompt wrapper (#68) and adds the
+    # required headings so wiki_lint passes for the library page types.
+    full_content = _wrap_prompt_page(_purpose, content)
 
     # R3 Car 3c: directory-validation + I26 secret-gate + content-wrap stay core;
     # the wiki body write forwards to the backend /admin op. The `storage=` test
@@ -427,9 +442,8 @@ def _save_discipline_page(
 
     slug = f"{DISCIPLINE_SLUG_PREFIX}{name}"
     title = f"Agent Discipline: {name}"
-    tags = ["agent-prompt", "agent-discipline", f"discipline:{name}"]
-    content = _unwrap_purpose_prompt(content)
-    full_content = f"## Purpose\n\n{purpose}\n\n## Prompt\n\n{content}"
+    tags = ["agent-prompt", "agent-discipline", f"discipline:{name}", GLOBAL_REACH_TAG]
+    full_content = _wrap_prompt_page(purpose, content)
     page_result = _forward_admin(
         "agent_prompt_save",
         {
@@ -491,7 +505,7 @@ def discipline_save(
     """Save (upsert) a discipline page under agent-discipline-<name>.
 
     This is the MCP write path ADR-0208 calls a hard prerequisite: disciplines
-    are the rule sets that bind every future dispatch (see agent-prompt-toc /
+    are the rule sets that bind every future dispatch (see agent_prompt_list /
     the prelude contract's ``covers:`` list), and until now the only writer was
     the seeder's create-if-absent path (_seed_discipline_pages) — updating a
     discipline required a code change plus a release.
@@ -675,6 +689,15 @@ def seed_agent_prompts(
         storage=storage, project=project
     )
 
+    # ADR-0217/0218: rows for packaged pages that have none, baselines where
+    # provable. Runs after the page writes so a just-created page is covered.
+    # Function-local: the heal module imports this one.
+    from yadgar.core.server.tools._agent_prompt_ledger import (
+        heal_seeded_ledger_rows,
+    )
+
+    ledger = heal_seeded_ledger_rows(storage)
+
     return {
         "seeded": True,
         "created": created,
@@ -683,6 +706,7 @@ def seed_agent_prompts(
         "disciplines_created": disciplines_created,
         "disciplines_skipped": disciplines_skipped,
         "disciplines": [n for n, _, _ in DISCIPLINES],
+        **ledger,
     }
 
 

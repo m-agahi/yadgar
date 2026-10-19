@@ -101,7 +101,7 @@ class UnresolvedPatternError(YadgarError):
     subsystem: ``agent_dispatch_prelude`` used to answer an unknown ``pattern``
     with a prelude containing the contract and NO prompt, which the caller reads
     as "no pattern exists for this task-shape" and which therefore licenses a
-    bespoke dispatch. The TOC carries exact slugs and the agent reads BY slug —
+    bespoke dispatch. The ledger listing carries exact names and the agent reads BY slug —
     an unavailable slug must fail loud rather than let the agent invent one.
     """
 
@@ -109,8 +109,10 @@ class UnresolvedPatternError(YadgarError):
 
     def __init__(self, slug: str, detail: str = "") -> None:
         fix = (
-            'wiki_read("agent-prompt-toc") for the exact slugs, or pass '
-            'pattern="" to skip the prompt lookup deliberately'
+            "agent_prompt_list(limit=200) for the exact pattern names (under "
+            'YADGAR_PROFILE=minimal, which hides it: recall(type="wiki", '
+            'tags=["agent-prompt"])), or pass pattern="" to skip the prompt '
+            "lookup deliberately"
         )
         payload: dict[str, Any] = {
             "error": self.error_code,

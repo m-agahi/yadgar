@@ -33,6 +33,11 @@ contract:
     ## Yadgar findings
     - <fact/anchor/insight> or "none"
 
+    HANDBACK — above the findings footer, also include:
+    - Opened a PR? `## Review requested` — `<org>/<repo>#<number> — <where you are least confident>`. Green CI is not review.
+    - Always: `## Task list` — one line per task touched (done / partly done + what remains / does not reproduce) and one per new defect found but not fixed, actionable cold. Unnamed work is lost.
+    - A task that did not reproduce is a result. Say so; do not manufacture a change.
+
 # prompts: the generic (any-project) starter dispatch patterns.
 # v5.124.0 consolidation (34→18 live map; generic subset here). Selection criterion:
 # GENERIC by content (no yadgar arch/paths/harness/identity) AND satisfies the seed
@@ -43,7 +48,7 @@ contract:
 # perf-measure-live is yadgar-harness-specific (live-wiki only).
 # EXCLUDED as yadgar-session-specific (live-wiki only): perf-measure-live,
 # perf-anomaly-metrics, profile-latency-standalone, relocate-tool-group-to-backend-forward,
-# viz-frontend-fix, cleanup (yadgar release-audit), integrate-train-and-pr (yadgar/codeberg
+# viz-frontend-fix, cleanup (yadgar release-audit), integrate-train-and-pr (yadgar
 # release harness), deep-investigation-build-vs-buy, debug-flaky-ci-via-local-repro,
 # drift-axis-remediation-sweep.
 # RETIRED/merged (no longer seeded): crash-rca (→ rca-diagnose mode=prod-crash),
@@ -66,6 +71,30 @@ prompts:
     `helm install/upgrade`, `flux reconcile`, `argocd sync`, `terraform apply/import/state`
     (never run terraform at all unless the repo already sanctions `plan`), `digger ...`, DB
     writes. If a check would mutate, don't run it.
+
+    ## gh identity check (when reading the PR through `gh`)
+    Before ANY `gh` call, run `gh auth status` (and `unset GH_TOKEN` if a stale token env var
+    could mask the real session). If the PR's repo is owned by a DIFFERENT account than the
+    default session, `gh pr view` / `gh pr diff` on a private repo fails or silently returns
+    nothing useful — it reads as "no access", not as an auth mismatch. Use the right account's
+    token from the operator's secrets manager instead of assuming the default is right.
+
+    ## SELF-AUTHORED PR MODE (whenever the dispatcher wrote the PR under review)
+    The dispatcher is the blind spot. Say so to the agent explicitly:
+    - **The PR body is a CLAIM, not evidence.** Re-derive every assertion in it (counts,
+      "verified", "nothing else changes", "X needs no change") from the repo and the live
+      system. Report each body claim as TRUE / FALSE / UNVERIFIABLE in its own table. A claim
+      the diff cannot check is UNVERIFIABLE, not TRUE.
+    - **Contradicting the dispatcher is the most valuable output.** Without that sentence the
+      agent anchors on the author's framing and reports agreement.
+    - **Add a "what did the author NOT think of" finding class and rank it highest.** List
+      candidate blind spots for the change type so the agent has somewhere to look.
+    - **The dispatcher NAMES their own top worry**, to be checked first. It either surfaces a
+      real defect fast or retires an unfounded fear.
+    - **Ask what applies IMMEDIATELY vs on success.** In GitOps especially, part of a PR can
+      reconcile the moment it merges while another part waits on a controller. A change that
+      is safe "once everything is up" can still break the RUNNING system in the window.
+      Classify each changed object by when it takes effect.
 
     ## Method
     1. ELIGIBILITY: closed/draft/superseded → say so, stop.
@@ -90,6 +119,14 @@ prompts:
     what the diff implies but doesn't do) · PR-desc vs diff (undisclosed / scope-creep
     changes) · Compat (breaking public API/schema/CLI/config key? versioned?) · Conventions
     (quote the CLAUDE.md/project rule violated).
+    - SECRET HYGIENE: no hardcoded credentials/tokens/keys anywhere in the diff — tests,
+      fixtures, comments and committed config included; no shell-out built from interpolated
+      input (command injection, path traversal) in new code.
+    - TESTS THAT EXECUTE: a test that string-matches the SOURCE of generated code/config can
+      pass 100% while the real integration is broken. Prefer tests that run the artifact.
+    - CONTRACT MISMATCH: when the PR wires A to call B (new CLI invocation, API call, RPC
+      path), read B's ACTUAL signature in the current tree. Wrong flag names, argument order
+      or stdin-vs-flag often fail silently at runtime when the caller ignores non-zero exits.
 
     ## Triggered lenses (apply only if that surface is touched)
     - INFRA/IaC: render BASE vs PR and DIFF the output (the real change surface); trace every
@@ -211,7 +248,7 @@ prompts:
     - Commit gates per [[agent-discipline-commit-hygiene]].
     - Types per [[agent-discipline-strict-typing]] — annotate every signature; seams carry a dataclass/TypedDict, never a bare dict; coerce at the boundary. The type ratchet FAILS the commit if a file you touched gains errors.
     - DB access: backend pipelines only (ADR-0078) — a new core-side DB read is STOP-AND-ASK.
-    - Ship: push, PR via codeberg API (base master, no template exists), VERIFY body via GET after create. Leave worktree for main thread.
+    - Ship: push to a branch (never the default branch). Detect the remote host and open the PR with its own CLI/API. Search for a PR template first (`find . -maxdepth 4 -iname "pull_request_template*"`); if one exists, extend EVERY section rather than replacing it. After create, re-read the PR body from the host and confirm it matches. Leave worktree for main thread.
     - End report with ## Yadgar findings.
 
     ## Composes
@@ -227,7 +264,7 @@ prompts:
 # carry a ## Modes section documenting absorbed variants as dispatch args. Bodies are
 # verbatim copies of the live wiki page (unwrapped form, starting at the DISPATCH line).
 - pattern: rca-diagnose
-  purpose: 'Root-cause a bug/regression/crash with evidence — diagnose ONLY, no fix. mode=regression (default) | prod-crash (off-prod controlled repro + mechanism-exclusion).'
+  purpose: 'Root-cause a bug/regression/crash with evidence — diagnose ONLY, no fix. mode=regression (default) | prod-crash (off-prod controlled repro + mechanism-exclusion) | infra-green (a job/guard that reports success while doing nothing).'
   content: |-
     DISPATCH: model=opus (fallback=sonnet) — RCA needs reasoning over divergent evidence; sonnet only for shallow single-seam bugs — canonical: model-tier-dispatch
 
@@ -258,6 +295,13 @@ prompts:
     - Standalone hotfix vs fold into current train — recommend.
     - Do NOT implement. Report only. End with `## Yadgar findings`.
 
+    ## The dispatcher's half — competing hypotheses, not a conclusion
+    The most valuable thing a dispatch can carry is the SET of candidate answers and the discriminator between them. State them as H1/H2/… and say: "These have DIFFERENT fixes. Your first job is to DISCRIMINATE, empirically, not by reading." Name the cheapest experiment that separates them.
+    - **Label your own claims as inference vs measurement.** "My read, verify it" gets corrected in minutes; an asserted mechanism the agent then disproves wastes a cycle.
+    - **Give a STOP condition.** "If it is (B), report and stop — do not patch the test over a broken production path." Without it an agent helpfully fixes the wrong layer.
+    - **Forbid the bar-lowering shortcut you can foresee**, by name and with the reason (e.g. aliasing a binary to satisfy a lookup, catching the new exception to keep a test green, widening an allowlist to match code).
+    - **Demand an explicit unverified list.** "State plainly what you could NOT determine" turns a confident report into an actionable one.
+
     ## Modes
     - `mode=regression` (DEFAULT): the steps above — trace, stderr-visible repro, branch-isolation, file:line root cause. For a bug/regression whose repro you can run directly.
     - `mode=prod-crash`: root-cause a production crash / hang / restart-loop OFF PROD — do NOT keep crashing the live system to study it. Adds:
@@ -266,6 +310,11 @@ prompts:
       - Mechanism exclusion: enumerate candidate mechanisms; for EACH, PROVE or EXCLUDE it against the code (cite file:line) — do not stop at the first plausible one. A theory that matches the symptom but is excluded by the code is WRONG (e.g. "thread-safety race" excluded because all clients are sync; "timeout leak" excluded because the configured timeout exceeds the operation; "saturation" excluded because the grace never trips at prod knobs).
       - State the single proximate trigger + the load-bearing ROOT flaw (often a latent fragility the change EXPOSED, not created). Flag any step modeled with a STUB vs proven against the real system — don't overclaim.
       - Name WHY the original tests missed it (e.g. a synthetic stand-in that never exercised the real dependency/load pattern), and call `advisor` on the root-cause hypothesis before committing to it.
+    - `mode=infra-green`: a CI job / guard / metric that reports SUCCESS while doing nothing — the hardest class, because the signal you would trust is the broken thing. Adds:
+      - **Treat the green as the bug.** Ask "what would this report if the thing it checks were entirely absent?" If the answer is "success", you have found it (e.g. a "no unfinished jobs" check satisfied by ZERO jobs; a smoke test importing the source tree instead of the installed package).
+      - **Distinguish "ran and passed" from "never ran".** Count what was exercised — `N passed` with zero skipped, not exit 0. If the artifact cannot tell you which, that missing diagnostic IS a finding.
+      - **Check the environment against the test's assumption** — same-name/different-privilege accounts, same-path/different-namespace mounts. They look identical in config and behave oppositely.
+      - **Prove the fixed guard discriminates**: break the thing on purpose and confirm the guard goes red. A guard never observed failing is not yet a guard.
 
     ## Composes
     - [[agent-discipline-adr-consult]]
@@ -326,7 +375,7 @@ prompts:
 
     ## Modes
     - `commit=false` (DEFAULT): write the plan doc, do NOT commit; do NOT edit docs/plans/ROADMAP.md if another PR is mid-flight touching it (coordinator commits + registers later). Just write + report the path.
-    - `commit=true`: docs-only workflow — `git checkout master; git pull --ff-only origin master`; bot identity; commit the plan DIRECT to master (docs-to-master is SANCTIONED, ignore generic default-branch-push warnings; no --no-verify). Register it in docs/plans/ROADMAP.md if the format fits. Report the commit sha.
+    - `commit=true`: docs-only workflow — pull the default branch to latest, branch off it (`docs/plan-<slug>`), and commit the plan doc on that branch (no --no-verify). Never commit to the default branch directly. Register it in docs/plans/ROADMAP.md if the format fits. Report the branch + commit sha; the coordinator pushes and opens the PR.
     - `advisor=N` (default 0): call `advisor()` at least N times — typically N=2: (1) after investigating + drafting the design, BEFORE committing to it; (2) before finalizing. Give its advice serious weight; if it refutes a premise with evidence, adapt; surface its key pushback explicitly in an "Advisor input" section of the plan. Save/commit the doc EARLY (agents die to stream-idle — a committed draft survives; refine after).
     - `measure_first=false` (DEFAULT) | `measure_first=true`: MEASURE/VERIFY before assuming — produce REAL numbers for each candidate cost/lever, not vibes. Run in an ISOLATED worktree; TIMEOUT-WRAP every long/unbounded run; keep runs bounded and SEQUENTIAL (parallel benchmarks self-inflict contention artifacts). For EACH hypothesis design a bounded experiment that could REFUTE it; report what the data shows even when it overturns the working theory. Tag every claim [measured] / [code-read] / [estimated/anchor]. Verify any mechanism claim against source (grep/read the actual code) before asserting it. Size each lever against your measurements (expected win + effort + risk); mark low-value/phantom levers EXPLICITLY (never silently drop a candidate — say why it lost). Output a measured cost-breakdown table → prioritized levers → recommended sequence → open questions.
     - `domain=generic` (DEFAULT) | `domain=perf-lever`: plan for a single perf/optimization lever. State HARD CONSTRAINTS up front (e.g. "backend pinned --cpus 2, no more cores"). Cite the measured problem with real numbers. QUALITY IS CO-EQUAL WITH SPEED — every change gated on the real quality harness, no regression or it aborts. Investigate WHY prior attempts failed (read archived plan/memory — a "wrong knob" or "venv artifact" trap often lurks) and whether the hypothesis even holds at the mechanism level (is cost ∝ the knob, or fixed-batch?). Add to the plan: (a) root-cause of prior failure + how this avoids it; (b) a QUALITY GATE section (harness, metric, threshold, flip-vs-abort criteria — watch dual-knob / metric-invalidation traps); (c) a LATENCY/measure plan (the user-POV path, on the constrained resource, quiet host); (d) an adversarial AUDIT section (risks, what could make this NOT worth it, is the hypothesis even true, cheap-config rollback?, go/no-go). If the lever is infeasible / a no-op / a likely quality-loss, SAY SO with evidence and propose alternatives.
@@ -351,10 +400,13 @@ prompts:
     - ruff-format py3.14 rewrites `except (A,B):` tuples → AST hooks reject; use a single base or a named `_ERR=(A,B)` constant.
 
     ## TDD + TEST-RUN DISCIPLINE (critical for wall-clock)
-    - Red → green: write the failing test FIRST, confirm red, implement to green. Refactor with tests green.
+    - Red → green: write the failing test FIRST, confirm red FOR THE RIGHT REASON, implement to green. Refactor with tests green.
     - Between iterations, run ONLY the targeted tests for the change you just made (fast — seconds).
-    - Run the FULL relevant suite + `make e2e` ONCE at the very end, before reporting — NOT after every fix. Re-running the whole suite + e2e each iteration wastes wall-clock for zero added safety (the final full pass is the authoritative gate).
-    - The final broad pass MUST cover ALL call-sites of anything whose SIGNATURE or a shared PATH you changed — grep repo-wide and include every dir that references it (signature/path changes break assert-sites in untouched dirs — a repeated real failure).
+    - Your test obligation is TARGETED tests over the symbols you changed — never the full suite inside a car. The full suite / CI-parity run belongs to the integration step, once, for the whole train.
+    - The final targeted pass MUST cover ALL call-sites of anything whose SIGNATURE or a shared PATH you changed — `git grep -l <symbol>` repo-wide and include every test file that references it (signature/path changes break assert-sites in untouched dirs — a repeated real failure).
+    - **NEVER pipe a test run through `| tail` / `| grep` and then read `$?`** — you get the PIPE's exit code, so a failing run reports success. Redirect to a file, capture the exit code, then read the file.
+    - **A/B every failure against the clean base before calling it pre-existing.** Re-run the same files on the base tree. "Probably environmental" is not a finding; an identical failure set on the base is.
+    - **PROVE YOUR TESTS DISCRIMINATE.** For any guard, mutate your own implementation (flip a comparison, make the failure branch return OK) and confirm the test goes RED, then revert. A check that cannot run must report UNAVAILABLE, never OK.
     - Full-round-trip / deploy-gated criteria that can't be unit-tested are documented as [manual], not faked.
     - Loop until clean; surface pre-existing flakes, don't silence them. Same fix fails 2× → STOP + report.
     - Do NOT push. Do NOT open a PR (the train integrates + bumps + PRs once). Do NOT touch plan archival (the main thread archives at integration).
@@ -363,11 +415,18 @@ prompts:
     <the specific car spec — what to build, the exact fix, acceptance criteria>
 
     ## Report
-    Commit hashes, what changed (files/functions), test evidence (targeted red→green + the ONE final full-suite result), backend-bump-needed flag, anything integration must know. End with `## Yadgar findings`.
+    Commit hashes, what changed (files/functions), test evidence (targeted red→green with a REAL exit code), any mutation check performed, backend-bump-needed flag, anything integration must know — especially traps a sibling car will hit too. End with `## Yadgar findings`.
 
     ## Modes
     - goal-driven (DEFAULT): the TASK block above is the spec — build to the stated acceptance criteria.
     - `plan_spec=<docs/plans/<car>.md>`: spec-driven. Read that plan file IN FULL — the reworked body above any `## AUDIT` section is the AUDITED-ready spec; implement exactly that (write the plan's failing acceptance tests FIRST). Observed state ALWAYS wins over plan text — if the tree contradicts the plan, follow the tree + note the drift. Plan lifecycle per [[agent-discipline-plan-lifecycle]] on partial vs completing scope (the main thread handles archival at integration).
+
+    ## Dispatching a car off a DIAGNOSED defect
+    When the dispatcher has already measured the defect, the car starts at implementation, not investigation:
+    1. **Supply the measured diagnosis and say "verify, do not re-derive".** Paste the file:line, the offending expression and the measurement that proves it.
+    2. **Say the dispatcher's mechanism may be WRONG, and correcting it is part of the job.** A mechanism inferred from an error message is often wrong; a car that trusts it ships a test that passes against unfixed code.
+    3. **Name the artifact the test must assert on — often NOT the return value.** Write tools whose success payload describes something they did not do are a recurring defect shape. Require the test to read back the row / page / written key.
+    4. **Require TWO-DIRECTION pinning for anything that scopes, filters or diverges.** "The new case now works" is half a test; "the old case did not regress" is the other half. The mutation check then has two arms: the right one goes red, the other stays green.
 
     ## Composes
     - [[agent-discipline-adr-consult]]
@@ -433,7 +492,7 @@ prompts:
     3. ROADMAP.md rows updated. MIGRATION_NOTES if a knob dies (state unknown-knob behavior — pydantic extra=ignore → silent).
     4. Version bump per convention if code removed (backend vs core by location; check_versions/check_backend_bump arbitrate; version pre-claim per [[agent-discipline-branch-state]]); docs-only → none.
     5. Gates before commit: ruff check+format + commit rules per [[agent-discipline-commit-hygiene]]; pytest-quiet wait per [[agent-discipline-process-hygiene]]; affected tests -n0.
-    6. PR via codeberg API, verify body via GET. Kill your own monitors per [[agent-discipline-process-hygiene]]. Leave worktree for main thread.
+    6. Push the branch. Detect the remote host and open the PR with its own CLI/API. Search for a PR template first (`find . -maxdepth 4 -iname "pull_request_template*"`) and extend EVERY section of it. After create, re-read the PR body from the host and confirm it matches. Kill your own monitors per [[agent-discipline-process-hygiene]]. Leave worktree for main thread.
     Report: surface found+removed (with live-vs-dead verdicts), archived/flagged plans, bump y/n, PR URL. End with ## Yadgar findings.
 
     ## Composes
@@ -467,15 +526,15 @@ prompts:
 
     Caveman prose; code normal. TIGHT SCOPE — do ONLY <THIS CHUNK> then COMMIT. Do NOT do later chunks (<LIST>). A prior mega-agent doing everything at once timed out at ~75 tool calls with ZERO commits → all work lost + half-broken worktree. You do ONE chunk and COMMIT before returning. Entry per [[agent-discipline-recall-first]]: ONE `recall("<TOPIC>", directory="<REPO>", project="<owner/repo>")`.
 
-    ⚠️ BEHAVIOR-NEUTRAL (git mv + import-path rewrites only). ⚠️ SHIM = sys.modules ALIAS (`sys.modules[__name__]=_m`) for leaf modules (write-through, patch-compatible) — NOT `__getattr__` (read-only, breaks test patch()); PACKAGES = `__init__` getattr shim (preserve `__path__`) + per-submodule `sys.modules` alias (aliasing the pkg object → `__path__` double-load → two instances → desync). ⚠️ REPOINT path-keyed guards proactively (they silently vacuously-pass against shim files: complexity baseline/allowlist, observe-allowlist, ruff per-file-ignores, capability-coverage, metric-writers, three-way-sync globs). ⚠️ import-linter catches FUNCTION-LOCAL imports (AST) — func-local does NOT hide the edge. ⚠️ SAFETY: import-smoke + targeted only (final CI is the gate) — per [[agent-discipline-process-hygiene]]. Commit rules per [[agent-discipline-commit-hygiene]]. WORK IN worktree `<PATH>` — branch `<BRANCH>` @ <SHA>. Confirm branch+HEAD. STACK a commit. Do NOT push. guards WITHOUT cd out of the worktree.
+    ⚠️ BEHAVIOR-NEUTRAL (git mv + import-path rewrites only). ⚠️ NO RE-EXPORT SHIMS at the old path: rewrite EVERY importer (code, tests, `patch("old.path...")` strings, docs) to the new path in the same chunk, so the old module simply stops existing. A shim leaves two import paths for one object and the next refactor inherits both. If the repo explicitly requires a deprecation window, the dispatcher says so — never add one on your own. ⚠️ REPOINT path-keyed guards proactively (they silently vacuously-pass against a stale path: complexity baseline/allowlist, observe-allowlist, ruff per-file-ignores, capability-coverage, metric-writers, three-way-sync globs). ⚠️ import-linter catches FUNCTION-LOCAL imports (AST) — func-local does NOT hide the edge. ⚠️ SAFETY: import-smoke + targeted only (final CI is the gate) — per [[agent-discipline-process-hygiene]]. Commit rules per [[agent-discipline-commit-hygiene]]. WORK IN worktree `<PATH>` — branch `<BRANCH>` @ <SHA>. Confirm branch+HEAD. STACK a commit. Do NOT push. guards WITHOUT cd out of the worktree.
 
     CHUNK (this dispatch only): <WHAT MOVES / WHAT CODEMODS>. Method: `git mv` + codemod (sed/libcst), isolate mechanical diff from logic.
 
-    VERIFY (light — next chunks do the rest): broad import-smoke (`python -c "import <new+old paths>"` → NO ImportError/cycle/double-load; for aliases assert `new is old` identity + write-through). Do NOT run the full suite.
+    VERIFY (light — next chunks do the rest): broad import-smoke (`python -c "import <new paths>"` → NO ImportError/cycle) and a repo-wide grep for the OLD path → zero hits outside history/changelog. Do NOT run the full suite.
 
-    COMMIT immediately ("<clear chunk msg>") before returning. If a circular import/double-load the shim pattern can't fix appears → STOP + report (don't hack).
+    COMMIT immediately ("<clear chunk msg>") before returning. If a circular import appears that a move alone cannot fix → STOP + report (don't hack).
 
-    REPORT: what moved/rewrote (+ skipped/ambiguous), shim mechanism per module/package, import-smoke result (cycle/double-load check), guards repointed, commit sha, + what's LEFT for the next chunks.
+    REPORT: what moved/rewrote (+ skipped/ambiguous), old-path grep result, import-smoke result (cycle check), guards repointed, commit sha, + what's LEFT for the next chunks.
 
     ## Yadgar findings
     - (facts or "none")
@@ -527,8 +586,14 @@ disciplines:
     Do NOT call memorize() — emit findings in your report instead.
     REQUIRED: final message ends with a `## Yadgar findings` section (facts/insights, or "none").
 - name: process-hygiene
-  purpose: 'Background-process hygiene: pytest gate bracket form, monitor cleanup, long push timeout.'
+  purpose: 'Background-process hygiene: test tiering, worktree setup, pipe-exit and scratch-path traps, pytest gate bracket form, monitor cleanup, long push timeout.'
   content: |-
+    NEVER run the full unit suite in a dispatch. Test the SYMBOLS you changed (`git grep -l <symbol>`); add the repo's e2e tier only if runtime behaviour changed. Wider runs are pre-push/CI's job — this overrides a dispatch that asks for more.
+    Fresh worktree: create its OWN env first (e.g. `uv sync --extra test --extra dev`). A borrowed env's editable install points at the main tree.
+    Never read `$?` after `| tail`/`| grep` — that is the pipe's exit code. Use `set -o pipefail` or capture it directly.
+    Scratch paths, ports, worktrees: unique to you — parallel agents share `/tmp` and clobber generic names.
+    Never `git checkout -- <file>` to undo a scratch edit (it drops your own edits); never set `core.hooksPath` in a worktree (hooks silently skip).
+    `pre-commit run --all-files` skips UNTRACKED files yet reports Passed — `git add` new files by path first.
     pytest-wait gate ONLY as a SEPARATE command or script file, GENERIC bracket form:
     `until ! pgrep -f "python -m [p]ytest" >/dev/null; do sleep 15; done`.
     NEVER embed gate+pytest in one background command string — the string self-matches the
@@ -536,7 +601,7 @@ disciplines:
     Check pgrep BEFORE launching a suite; NEVER start a second run. `-n 4` max; targeted tests, no full sweeps.
     Don't park on a dead monitor — on wake, verify box state (did the prior run finish? exit marker?) before re-arming; never relaunch blindly.
     Kill your own monitors/background wait-shells BEFORE the final report (zombie notification loops).
-    Push with a LONG timeout (pre-push e2e ~8min).
+    Push with a LONG timeout (pre-push hooks may run an e2e tier for several minutes).
 - name: branch-state
   purpose: 'The 3 branch-state checks before any feature-branch edit + the version pre-claim rule.'
   content: |-
@@ -558,7 +623,7 @@ disciplines:
 - name: commit-hygiene
   purpose: 'Commit-gate discipline: no hook bypass, no co-author trailers, venv on PATH, explicit adds.'
   content: |-
-    NEVER --no-verify / --no-gpg-sign — hook failure = signal, fix the root cause. No Co-Authored-By trailers. Bot identity on codeberg.
+    NEVER --no-verify / --no-gpg-sign — hook failure = signal, fix the root cause. No Co-Authored-By trailers.
     Commit with the worktree venv on PATH (`PATH=<worktree>/.venv/bin:$PATH git commit` — lint-imports is language:system).
     `git add` explicit paths only (never -A); no staged file >2MB.
     Pre-commit gotchas: py314 except-tuple parens; I13 caps (nesting ≤4, cyclomatic ≤15, params ≤8); I33 observe-coverage (`@observe(span=False)` for hot-loop/per-item helpers, ADR-0074).

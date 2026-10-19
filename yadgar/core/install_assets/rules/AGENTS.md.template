@@ -35,7 +35,8 @@ ONE shared MCP server at `http://127.0.0.1:8765/mcp` — all clients connect her
    `agent_dispatch_prelude(pattern, task_topic)` and build the dispatch on the
    returned contract; register a good reusable prompt with `agent_prompt_save(...)`.
    A guessed pattern that misses returns an EMPTY fallback, not an error — that
-   is NOT proof no pattern exists. Check `wiki_read("agent-prompt-toc")` before
+   is NOT proof no pattern exists. List the library with `agent_prompt_list(limit=200)`
+   (and `recall(type="wiki", tags=["agent-prompt"])` for a topic search) before
    concluding none fits and writing a dispatch bespoke.
 6. **Yadgar findings footer**: every subagent's final message MUST end with a
    `## Yadgar findings` section (facts/insights, or "none").

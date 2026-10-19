@@ -51,7 +51,7 @@ page_types:
         agent_dispatch_prelude at assembly time (Stage 3 composition).
       applies_to: >-
         Task shapes this prompt applies to (free text; surfaced in the
-        agent-prompt-toc purpose column).
+        agent_prompt_list purpose field).
   agent_pattern:
     # ADR-0209: dispatch-pattern pages (agent-prompt-<pattern>). Same document
     # shape as the pre-split agent_prompt type — the split is about GOVERNANCE
@@ -65,7 +65,7 @@ page_types:
         agent_dispatch_prelude at assembly time (Stage 3 composition).
       applies_to: >-
         Task shapes this prompt applies to (free text; surfaced in the
-        agent-prompt-toc purpose column).
+        agent_prompt_list purpose field).
   agent_discipline:
     # ADR-0209: cross-cutting rule pages (agent-discipline-<name>) PLUS the
     # prelude contract, which stays inside this type per ADR-0198's refusal of

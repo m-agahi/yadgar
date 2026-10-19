@@ -172,8 +172,9 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    implement, etc.). Skip one-offs and trivial prompts.
    - Read existing patterns FIRST — actually CALL recall now and judge from the
      RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"],
-     directory="{directory}", project="{project}") (or
-     wiki_read the agent-prompt-toc page). See which task-shapes already have a
+     directory="{directory}", project="{project}") AND
+     agent_prompt_list(project="{project}", limit=200) — the ledger listing (the
+     agent-prompt-toc page is retired). See which task-shapes already have a
      pattern.
    - If an EXISTING pattern already covers this task-shape, IMPROVE/extend it:
      agent_prompt_save the SAME pattern slug — agent_prompt_save versions it.
@@ -589,7 +590,9 @@ def test_agent_prompt_step_is_read_first():
     # on one contiguous string — a whitespace-sensitive pin would break on every
     # reflow while a substring-free pin would stop asserting read-first at all.
     assert 'recall(type="wiki", tags=["agent-prompt"]' in content
-    assert 'project="{project}") (or' in content
+    # The second read is the ledger listing, not the retired TOC page.
+    assert 'agent_prompt_list(project="{project}", limit=200)' in content
+    assert "wiki_read the agent-prompt-toc" not in content
     # Extend a match on the SAME slug (versioning) rather than clone it.
     assert "SAME pattern slug" in content
     # Explicit no-near-duplicate guard.

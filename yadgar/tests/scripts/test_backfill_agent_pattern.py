@@ -531,3 +531,71 @@ class _FakeStorage:
         if limit:
             rows = rows[:limit]
         return rows
+
+
+class TestRowsMatchTheCoreWritePath:
+    """A backfilled row must be the row core would have written for that page."""
+
+    def test_contract_row_goes_to_agent_pattern(self):
+        """``agent_prompt_save`` writes the contract's row to ``agent_pattern``.
+
+        The contract PAGE is typed ``agent_discipline`` (ADR-0209), so a
+        page_type-keyed backfill would mint a second ``contract`` row in the
+        other table, a desync of its own making.
+        """
+        assert _classify_page_type("agent-prompt-contract", "agent_discipline") == "agent_pattern"
+
+    def test_toc_pointer_page_is_never_a_pattern(self):
+        assert _classify_page_type("agent-prompt-toc", None) == ""
+
+    def test_purpose_is_taken_from_the_page(self):
+        wiki = [
+            {
+                "slug": "agent-prompt-x",
+                "content": "## Purpose\n\nDo the x thing.\n\n## Prompt\n\nbody",
+                "page_type": "agent_pattern",
+            },
+            {"slug": "agent-prompt-y", "content": "bare body", "page_type": "agent_pattern"},
+        ]
+        out, _ = _build_rows_for_apply(wiki, page_type_filter="both")
+        by_name = {r["name"]: r for r in out}
+        assert by_name["x"]["purpose"] == "Do the x thing."
+        assert by_name["y"]["purpose"] is None
+
+    def test_insert_payload_carries_purpose(self, monkeypatch):
+        import backfill_agent_pattern_from_wiki as mod
+
+        sent: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            "yadgar.core.forward._forward_admin",
+            lambda op, payload: sent.append((op, payload)),
+        )
+        mod._insert_one(
+            row={
+                "name": "x",
+                "body_slug": "agent-prompt-x",
+                "content_hash": "h",
+                "purpose": "Do the x thing.",
+                "page_type": "agent_pattern",
+            }
+        )
+        mod._insert_one(
+            row={
+                "name": "d",
+                "body_slug": "agent-discipline-d",
+                "content_hash": "h",
+                "purpose": "A rule.",
+                "page_type": "agent_discipline",
+            }
+        )
+        assert sent[0] == (
+            "save_agent_pattern_row",
+            {
+                "name": "x",
+                "body_slug": "agent-prompt-x",
+                "content_hash": "h",
+                "purpose": "Do the x thing.",
+                "status": "active",
+            },
+        )
+        assert sent[1][1]["meta"] == {"purpose": "A rule.", "status": "active"}
