@@ -145,7 +145,17 @@ agent_prompt_list(status=None, limit=0, project="PROJECT_ID")
 ## What this procedure does NOT do
 
 - It does not write `agent_pattern_composes` edges (which disciplines a pattern composes).
-- It does not derive `baseline_hash`; rows land with it NULL and the first mutation sets it.
+- It does not derive `baseline_hash`; rows land with it NULL. Only a seed or an adopt sets
+  it (ADR-0217/0218). For the packaged slugs, run `seed_agent_prompts(project="PROJECT_ID")`
+  BEFORE Step 2: since core 5.194.5 the seeder writes the missing rows for every slug it owns
+  and records `baseline_hash` wherever the live page still matches the package. Those rows
+  then read as `already_present` here. Every other page was never seeded, so NULL is correct.
+- It does not add the `global` reach tag to a library page that lacks one. That is
+  `scripts/heal_global_reach_scope_drift.py` (dry run first, then `--apply`); run it in the
+  same session, because an untagged page is readable only from its owning project.
 - It does not repair a `content_hash` disagreement on an existing row — only reports it.
-- It does not regenerate `agent-prompt-toc` (task 90). That page is separately frozen and
-  `agent_prompt_list` treats it as retired; the two surfaces still disagree.
+- It does not touch `agent-prompt-toc`. That page is a retired pointer; the script skips
+  it. The contract page (`agent-prompt-contract`) is backfilled into `agent_pattern` under
+  `name="contract"`, where `agent_prompt_save` writes it, even though its page_type is
+  `agent_discipline`.
+- Rows carry the page's `## Purpose` text as `purpose` (since core 5.194.5).

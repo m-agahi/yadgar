@@ -68,10 +68,11 @@ OUT OF SCOPE
 * ``agent_pattern_composes`` edge rows. The script seeds ``agent_pattern`` /
   ``agent_discipline`` rows only; the composition edges (which disciplines a
   pattern composes) come from a later car.
-* ``baseline_hash`` derivation. The core write path derives
-  ``baseline_hash`` on the first write; this backfill leaves it NULL and the
-  operator's first pattern mutation will set it (the schema column is
-  nullable).
+* ``baseline_hash``. It is the hash of the PACKAGED content a page was seeded
+  from (ADR-0217/0218) and only a seed or an adopt may set it; an ordinary
+  save never does. This backfill leaves it NULL. For the packaged slugs,
+  ``seed_agent_prompts`` records it whenever the live page still matches the
+  package; every other page was never seeded, so NULL is its correct value.
 * Repairing a ``content_hash`` disagreement. Already-present rows whose hash
   disagrees with the wiki body are REPORTED (``content_hash_mismatches``) and
   never rewritten — the row may be newer than the page.
@@ -95,6 +96,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -204,16 +206,46 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+#: The contract page is typed ``agent_discipline`` (ADR-0209), but its ledger
+#: row has always been written to ``agent_pattern`` (name ``contract``) by
+#: ``agent_prompt_save``, which ``_seed_contract_page`` calls. The backfill
+#: follows the write path, or it would mint a second ``contract`` row.
+_CONTRACT_SLUG = "agent-prompt-contract"
+
+#: The retired TOC pointer page. Typed ``agent_index`` by migration, so the
+#: page_type rule already skips it; named here so an untyped copy is skipped too.
+_TOC_SLUG = "agent-prompt-toc"
+
+_PURPOSE_RE = re.compile(r"^##\s+Purpose\b\s*\n+(.*?)\n##\s+Prompt\b", re.DOTALL | re.IGNORECASE)
+
+
+def _extract_purpose(content: str) -> str | None:
+    """The ``## Purpose`` text of a wrapped library page, or ``None``.
+
+    Same rule as core's ``_extract_purpose`` in
+    ``yadgar/core/server/tools/agent_prompts.py``, re-derived (no import) for
+    the same reason ``_content_hash`` is. Without it every backfilled row
+    lands with an empty purpose and ``agent_prompt_list`` shows a blank column.
+    """
+    m = _PURPOSE_RE.match(content.lstrip())
+    return m.group(1).strip() if m else None
+
+
 def _classify_page_type(slug: str, page_type: str | None) -> str:
     """Decide whether a wiki page is an agent_pattern or agent_discipline target.
 
     Returns one of ``"agent_pattern"``, ``"agent_discipline"``, or ``""``
-    (skip). An explicit ``page_type`` wins. Absent it, the SLUG PREFIX decides
+    (skip). The contract and the TOC are fixed first (see their constants).
+    Then an explicit ``page_type`` wins. Absent it, the SLUG PREFIX decides
     — the scan is prefix-driven, so a row that reached this function without a
     type still carries the prefix that selected it. Only when neither is
     conclusive does it fall back to ``agent_pattern``, because the legacy
     ``agent_prompt_save`` write path predates the type split.
     """
+    if slug == _CONTRACT_SLUG:
+        return "agent_pattern"
+    if slug == _TOC_SLUG:
+        return ""
     if page_type in PAGE_TYPE_SLUG_PREFIX:
         return str(page_type)
     if page_type not in (None, "", "agent_prompt"):
@@ -264,6 +296,7 @@ def _build_rows_for_apply(
                 "body_slug": slug,
                 "content": content,
                 "content_hash": _content_hash(content),
+                "purpose": _extract_purpose(content),
                 "page_type": page_type,
             }
         )
@@ -372,6 +405,7 @@ def _insert_one(*, row: dict) -> None:
             "name": row["name"],
             "body_slug": row["body_slug"],
             "content_hash": row["content_hash"],
+            "purpose": row.get("purpose"),
             "status": "active",
         }
     else:
@@ -380,6 +414,7 @@ def _insert_one(*, row: dict) -> None:
             "name": row["name"],
             "body_slug": row["body_slug"],
             "content_hash": row["content_hash"],
+            "meta": {"purpose": row.get("purpose"), "status": "active"},
         }
     _forward_admin(op, payload)
 
