@@ -629,11 +629,21 @@ def _make_merge_duplicates_storage(tmp_path, n: int, high_sim_pairs: int = 5):
     The first `high_sim_pairs * 2` memories are near-identical pairs (sim ≈ 1.0)
     so the merge path actually has work to do. The remainder are orthogonal-ish
     vectors so they stay below the 0.95 threshold.
+
+    Seeding is batched: ids come from one ``_reserve_ids`` call and each row's
+    CREATE is built by ``_build_memory_insert_clause`` (the same builder
+    ``insert_memory`` uses), then sent through ``batch_writes``. Per-row
+    ``insert_memory`` cost ~1,500 sequential round-trips (counter UPSERT +
+    CREATE + a redundant embedding UPDATE), which inside the test body could
+    exceed the 60s timeout on a loaded CI disk.
     """
     rng = np.random.default_rng(42)
     engine = StorageEngine(str(tmp_path / "merge_scale.db"))
+    now = engine._now_iso()
+    mids = engine._reserve_ids("memory", n)
+    stmts: list[tuple[str, dict | None]] = []
 
-    for i in range(n):
+    for i, mid in enumerate(mids):
         if i < high_sim_pairs * 2 and i % 2 == 1:
             # Make this embedding nearly identical to the previous one (cosine ≈ 1.0)
             # by copying and adding tiny noise
@@ -644,16 +654,24 @@ def _make_merge_duplicates_storage(tmp_path, n: int, high_sim_pairs: int = 5):
         else:
             vec = rng.standard_normal(384).astype(np.float32)
         vec = vec / np.linalg.norm(vec)
-        engine.insert_memory(
-            {
-                "project_id": _TEST_PROJECT,
-                "content": f"memory content {i}",
-                "embedding": vec.tobytes(),
-                "directory_context": "/proj",
-                "heat": float(rng.uniform(0.1, 1.0)),
-            }
+        memory = {
+            "project_id": _TEST_PROJECT,
+            "content": f"memory content {i}",
+            "embedding": vec.tobytes(),
+            "directory_context": "/proj",
+            "heat": float(rng.uniform(0.1, 1.0)),
+        }
+        engine._validate_memory_secrets(memory)
+        stmts.append(
+            engine._build_memory_insert_clause(
+                memory, mid, now, engine._bytes_to_floats(memory["embedding"])
+            )
         )
 
+    engine.batch_writes(stmts)
+    # Guard against a silently partial seed (batch_writes chunks are atomic
+    # per chunk, not across chunks).
+    assert engine._q("SELECT count() FROM memory GROUP ALL")[0]["count"] == n
     return engine
 
 
