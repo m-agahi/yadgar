@@ -126,8 +126,9 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
    implement, etc.). Skip one-offs and trivial prompts.
    - Read existing patterns FIRST — actually CALL recall now and judge from the
      RETURNED patterns, not memory: recall(type="wiki", tags=["agent-prompt"],
-     directory="{directory}", project="{project}") (or
-     wiki_read the agent-prompt-toc page). See which task-shapes already have a
+     directory="{directory}", project="{project}") AND
+     agent_prompt_list(project="{project}", limit=200) — the ledger listing (the
+     agent-prompt-toc page is retired). See which task-shapes already have a
      pattern.
    - If an EXISTING pattern already covers this task-shape, IMPROVE/extend it:
      agent_prompt_save the SAME pattern slug — agent_prompt_save versions it.

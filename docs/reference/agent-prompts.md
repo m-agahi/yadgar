@@ -22,11 +22,16 @@ and stable across versions (only the `vN` suffix changes).
 
 Every agent-prompt page is tagged:
 ```
-["agent-prompt", "task:<pattern>"]
+["agent-prompt", "task:<pattern>", "global"]
 ```
 
 The `agent-prompt` tag enables broad enumeration; `task:<pattern>` enables
-pattern-specific lookup.
+pattern-specific lookup. `global` is the Car C7 reach tag: without it a page is
+readable only from the project that saved it. `agent_prompt_save` and
+`discipline_save` attach it themselves (core 5.194.5); before that only
+`WikiStore.add`'s storage-scope rule did, and the backend op's no-wiki fallback
+wrote the payload tags verbatim. `scripts/heal_global_reach_scope_drift.py`
+repairs pages saved without it.
 
 ## Category
 
@@ -84,6 +89,36 @@ as a tag on the page, never as a project identity.
 via the internal deterministic slug-read (`agent-prompt-<pattern>`), injects it
 plus the yadgar protocol into the subagent's instructions, then the orchestrator
 processes the subagent's `## Yadgar findings` section on return.
+
+Budgets (`dispatch_helper.py`): the pattern snippet has its own 1 300-char
+allowance; the whole prelude is capped at 6 000 chars (8 500 with
+`include_context=True`). Before core 5.194.5 the snippet was the allowance MINUS
+the contract's length, so a contract longer than ~1.3 KB left no pattern body in
+the prelude at all. A contract larger than the packaged one now drops composed
+disciplines last-listed-first (with a warning); the contract and the pattern
+snippet always survive.
+
+## Ledger rows and seeding
+
+The `agent_pattern` / `agent_discipline` ledger rows are the discovery surface
+(`agent_prompt_list` / `agent_prompt_get`); the wiki page is the body. Every
+save writes the page first, then the row.
+
+`seed_agent_prompts(project=...)` is create-if-absent per page, and since core
+5.194.5 it also heals the rows of the slugs the package owns (starters, the
+contract, the disciplines): a packaged page with no row gets one, pinned to the
+LIVE page bytes. `baseline_hash` (ADR-0217/0218, the ancestor of the three-way
+upgrade merge) is the hash of the packaged content, recorded only when the live
+page still equals it; the result lists the other names under
+`ledger_baseline_unknown`. An ordinary save never moves `baseline_hash` — the
+upsert keeps the stored value when the caller sends none (backend 5.87.6).
+
+The contract's row lives in `agent_pattern` under `name="contract"`, even though
+its page type is `agent_discipline`, because that is where `agent_prompt_save`
+writes it.
+
+Pages the package does not own get their rows through the human-run procedure
+`docs/prompts/backfill-agent-pattern-ledger.md` (ADR-0005), not automatically.
 
 To pull a prompt manually in your own dispatch prompt, use semantic recall:
 

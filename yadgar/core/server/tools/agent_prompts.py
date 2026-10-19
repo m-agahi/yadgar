@@ -505,7 +505,7 @@ def discipline_save(
     """Save (upsert) a discipline page under agent-discipline-<name>.
 
     This is the MCP write path ADR-0208 calls a hard prerequisite: disciplines
-    are the rule sets that bind every future dispatch (see agent-prompt-toc /
+    are the rule sets that bind every future dispatch (see agent_prompt_list /
     the prelude contract's ``covers:`` list), and until now the only writer was
     the seeder's create-if-absent path (_seed_discipline_pages) — updating a
     discipline required a code change plus a release.

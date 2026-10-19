@@ -31,9 +31,9 @@ dropped by a truthiness guard, so the prelude came back as contract + recall
 hint and **no prompt** — which the caller reads as *"no pattern exists for this
 task-shape"* and which therefore **licenses a bespoke dispatch**. That is the
 same defect class as the ``_local_fallback`` ADR-0227 deletes: a fallback
-manufacturing a plausible-looking wrong answer. The TOC carries **exact slugs**
+manufacturing a plausible-looking wrong answer. ``agent_prompt_list`` carries **exact names**
 and the agent reads **by slug**, so an unavailable slug must fail loud rather
-than let the agent invent one. (Pruning dead TOC entries is cleanup that
+than let the agent invent one. (Pruning dead library entries is cleanup that
 FOLLOWS; it is not the fix.) ``pattern=""`` remains the documented skip, and
 ``_build_context_block`` is deliberately untouched — its empty return is
 best-effort enrichment whose caller already drops it.

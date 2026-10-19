@@ -79,7 +79,7 @@ A single `recall()` query searches **both stores at once**, fuses and re-ranks t
 - `adr_add(...)` writes a per-ADR wiki page (`yadgar-adr-NNNN`) enforcing an 11-field schema with auto-incrementing IDs. Each ADR gets its own page indexed in a thin `yadgar-adr-index`; `recall()` IS the read path (pages are recall-visible and immortal — no decay). `adr_get(directory, adr_id)` fetches a single ADR; `adr_list(directory, status=)` reads the index with optional status filter. A stop-hook prompt captures decisions at session end. Yadgar dogfoods its own system with 138 real ADRs.
 
 ### Agent-prompt library
-- Reusable subagent dispatch prompts, stored as tagged wiki pages (`agent-prompt-<pattern>`), versioned and improving over time. `agent_prompt_save(pattern, content, purpose)` upserts one page per pattern; `agent_dispatch_prelude(pattern)` builds a prelude to prepend to a subagent prompt — recall-first contract + mandatory `## Yadgar findings` footer. `seed_agent_prompts()` seeds starter patterns. Lookup is via tagged recall (`recall(type="wiki", tags=["agent-prompt"])`), kept out of normal recall noise.
+- Reusable subagent dispatch prompts, stored as tagged wiki pages (`agent-prompt-<pattern>`), versioned and improving over time. `agent_prompt_save(pattern, content, purpose)` upserts one page per pattern; `agent_dispatch_prelude(pattern)` builds a prelude to prepend to a subagent prompt — recall-first contract + mandatory `## Yadgar findings` footer. `seed_agent_prompts()` seeds starter patterns and repairs the ledger rows (and seed baselines) of the slugs it owns. Discovery is `agent_prompt_list` / `agent_prompt_get` over the `agent_pattern` ledger; topic lookup is tagged recall (`recall(type="wiki", tags=["agent-prompt"])`), kept out of normal recall noise.
 
 ### Knowledge-graph viz (galaxy)
 - `yadgar viz` serves an interactive 3D **galaxy layout** of memories, wiki pages, entities, and relationships at **http://localhost:42069**. The galaxy arranges nodes spatially: loose low-heat memories form the outer halo, recurring semantic clusters spiral as arms, and core/anchor nodes form a central bulge. Heat encodes brightness. The force-directed / 2D engine is removed (ADR-0138) — galaxy is the sole renderer.
@@ -399,7 +399,7 @@ Blocks (Letta-style core memory, all ⚡): `block_create` · `block_get` · `blo
 |---|:---:|---|
 | `agent_dispatch_prelude(pattern, task_topic)` | | Build a subagent prompt prelude from the saved prompt library |
 | `agent_prompt_save(pattern, content, purpose)` | ⚡ | Upsert a reusable dispatch pattern page |
-| `seed_agent_prompts()` | ⚡ | Seed starter patterns into the library |
+| `seed_agent_prompts()` | ⚡ | Seed starter patterns into the library; heal their missing ledger rows |
 
 Patterns are wiki pages tagged `["agent-prompt"]`; lookup: `recall(type="wiki", tags=["agent-prompt"])`.
 
