@@ -1715,18 +1715,18 @@ async def hook_session_context(request: Request) -> JSONResponse:
         if source != "compact":
             render = render + await _checkpoint_resume_hint(directory, source)
 
-        # Task-list mirror restore-nudge (MAIN-THREAD-ONLY; existence-checked).
-        # Gated source != "compact" (inherits the enclosing block). Extracted to
-        # _task_list_restore_nudge to keep this handler under the I13 complexity
-        # cap; that helper is fail-open (returns "" on any error).
+        # Task-list restore-nudge (MAIN-THREAD-ONLY, fail-open). An external-ledger
+        # project (ledger 1791) gets one ledger line instead: no read, nudge or seed.
         if source != "compact":
-            _nudge, _task_rows = await _task_list_restore_nudge(directory, project)
+            from yadgar.core import task_ledger_gate as _tlg
+
+            _pre, _nudge, _task_rows = await _tlg.session_task_section(
+                project, functools.partial(_task_list_restore_nudge, directory, project)
+            )
+            render = _pre + render
             if seed_capable:
                 return JSONResponse(_seed_capable_payload(render, _nudge, _task_rows))
-            # Hoisted FIRST (v5.149): the task-restore nudge led the render so it is
-            # not buried under the project-brief catalog — the advisory tail form was
-            # ignored. Prepend keeps it the first thing the model reads this session.
-            # This arm stays byte-identical for hooks predating Car C.
+            # Hoisted FIRST (v5.149) so it is not buried; same for hooks predating Car C.
             render = _nudge + render
 
         return JSONResponse({"text": render})

@@ -35,7 +35,7 @@ contract:
 
     HANDBACK — above the findings footer, also include:
     - Opened a PR? `## Review requested` — `<org>/<repo>#<number> — <where you are least confident>`. Green CI is not review.
-    - Always: `## Task list` — one line per task touched (done / partly done + what remains / does not reproduce) and one per new defect found but not fixed, actionable cold. Unnamed work is lost.
+    - Always: `## Task list` — one line per task touched (done / partly done + what remains / does not reproduce) and one per new defect found but not fixed, actionable cold. The orchestrator updates the harness list and the project's task ledger from it; unnamed work is lost.
     - A task that did not reproduce is a result. Say so; do not manufacture a change.
 
 # prompts: the generic (any-project) starter dispatch patterns.
