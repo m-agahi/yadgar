@@ -300,8 +300,17 @@ def test_mint_failure_notice_distinguishes_the_registry_failure(tmp_path):
 # unminted left the capture pipeline silently dead for six days. Hence: wired
 # for some client, so patched in both copies (which is what bb131432 did for
 # prompt-recall's two copies before Car 8 established nothing dispatched to it).
+#
+# Ledger 1791 (PR #81 review) adds a SIXTH: `core/hooks/stop-memory-checkpoint.py`.
+# Same category as `session-start-context.py` — a host-side Claude Code hook
+# script with git and the working tree in reach. It mints to choose its
+# checkpoint template for an external-ledger project: the session map is an
+# exact-cwd match, so a `cd` into a subdirectory or a worktree missed it and got
+# the base template, whose catch-up step re-adopts frozen yadgar ledger rows.
+# A failed mint falls back to that map; no key is ever invented.
 _ALLOWED_IMPORTERS = frozenset(
     {
+        "yadgar/core/hooks/stop-memory-checkpoint.py",
         "yadgar/core/hooks/session-start-context.py",
         "yadgar/core/hooks/session-end-capture.py",
         "yadgar/core/hooks/post-tool-capture.py",

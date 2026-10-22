@@ -33,6 +33,10 @@ repeated ``config_get(key, dir)`` is a single-lookup hit.
 
 Fail-safe: ANY forward exception → return ``default`` (never raise out of a
 config read — a config lookup must not crash its caller). Logged at warning.
+A forward error is NOT an answer, so nothing is cached for it: the next read
+forwards again. ``config_get(..., raise_on_error=True)`` raises
+``ConfigReadError`` instead, for a caller that must tell "unreadable" from
+"absent" (``core.task_ledger_gate``).
 """
 
 from __future__ import annotations
@@ -50,6 +54,10 @@ logger = logging.getLogger(__name__)
 _KEY_SEP = "\x00"
 
 _cache: Any = None
+
+
+class ConfigReadError(RuntimeError):
+    """The backend forward failed, so the value is unknown (not absent)."""
 
 
 @observe(tier="stage", metric="tools._runtime_config._make_cache")
@@ -100,17 +108,17 @@ def _fetch_from_backend(key: str, directory: str | None) -> dict | None:
     """Single-row forward to backend ``get_config_row``.
 
     Returns the row dict, or None when absent (per-dir miss / global miss).
-    Any forward exception is logged and yields None — the resolver treats it
-    as 'no row → default'.
+    Any forward exception is logged and re-raised as ``ConfigReadError``: an
+    error is not an absent row, and must not be resolved or cached as one.
     """
     try:
         result = _forward_admin(
             "get_config_row",
             {"key": key, "directory": directory},
         )
-    except Exception as exc:  # noqa: BLE001 — a config read must never crash its caller
+    except Exception as exc:  # noqa: BLE001 — any transport/backend fault means "unknown"; re-raised as the one typed error config_get handles
         logger.warning("runtime_config forward failed for key=%s dir=%s: %s", key, directory, exc)
-        return None
+        raise ConfigReadError(f"runtime_config read failed for key={key}: {exc}") from exc
     return result.get("row") if isinstance(result, dict) else None
 
 
@@ -118,7 +126,8 @@ def _fetch_from_backend(key: str, directory: str | None) -> dict | None:
 def _resolve_from_storage(key: str, directory: str | None, default: Any) -> Any:
     """Per-dir → global → default resolution via the backend forward.
 
-    Fail-safe: any forward exception → ``default`` (never raises).
+    Raises ``ConfigReadError`` when EITHER forward fails: a per-dir error must
+    not fall through to the global row, which could be the wrong answer.
     """
     if directory is not None:
         row = _fetch_from_backend(key, directory)
@@ -131,7 +140,9 @@ def _resolve_from_storage(key: str, directory: str | None, default: Any) -> Any:
 
 
 @observe(tier="hot", metric="tools._runtime_config.config_get")
-def config_get(key: str, directory: str | None = None, default: Any = None) -> Any:
+def config_get(
+    key: str, directory: str | None = None, default: Any = None, *, raise_on_error: bool = False
+) -> Any:
     """Resolve a config value: per-dir override → global fallback → ``default``.
 
     PTC read-through: a cache hit returns the cached resolved value without
@@ -139,7 +150,8 @@ def config_get(key: str, directory: str | None = None, default: Any = None) -> A
     under the REQUESTED ``(key, directory)`` pair, and returns it.
 
     Fail-safe: any forward error yields ``default`` and is NOT cached (so a
-    transient backend blip does not pin a wrong value).
+    transient backend blip does not pin a wrong value). With
+    ``raise_on_error=True`` the error raises ``ConfigReadError`` instead.
     """
     ck = _cache_key(key, directory)
     cache = _get_cache()
@@ -147,12 +159,15 @@ def config_get(key: str, directory: str | None = None, default: Any = None) -> A
     if cached is not None:
         return cached
 
-    resolved = _resolve_from_storage(key, directory, default)
+    try:
+        resolved = _resolve_from_storage(key, directory, default)
+    except ConfigReadError:
+        if raise_on_error:
+            raise
+        return default
     # Cache the resolved value under the requested (key, dir). Caching a genuine
     # miss's ``default`` is correct — absence is a stable answer, busted on the
-    # next write's whole-flush. The rare forward-error path also returns
-    # ``default`` here; a stale-default from that path is bounded by the next
-    # write's flush.
+    # next write's whole-flush. A forward error never reaches this line.
     cache.put(ck, resolved)
     return resolved
 

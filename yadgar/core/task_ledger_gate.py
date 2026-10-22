@@ -18,11 +18,15 @@ runtime config store, never a second config system:
 
 Both satisfy ``(key, directory, default) -> value``. The read always uses the
 GLOBAL scope (``directory=None``): the prefixes name projects, so a per-directory
-override of the list would mean nothing.
+override of the list would mean nothing. Prefixes match case-insensitively.
 
-Fail-open to TODAY'S behaviour: an unreadable, absent or malformed value is the
-empty list, and the empty list matches nothing. A project that does not match
-takes exactly the code path it took before this module existed.
+Fail-open to TODAY'S behaviour: an absent or malformed value is the empty list,
+and the empty list matches nothing. A malformed value logs one warning per
+process. A FAILED read (the daemon resolver's backend forward raised) also
+matches nothing for that call, logs a warning, and is not cached, so the next
+read retries: an external-ledger project falls back to the yadgar ledger only
+while the read keeps failing. A project that does not match takes exactly the
+code path it took before this module existed.
 """
 
 from __future__ import annotations
@@ -45,6 +49,10 @@ Resolver = Callable[[str, "str | None", Any], Any]
 
 logger = logging.getLogger(__name__)
 
+#: Set once a malformed value has been reported, so a bad row warns once per
+#: process instead of on every SessionStart and ``task_write``.
+_malformed_warned = False
+
 
 @observe(tier="hot", metric="core.task_ledger_gate.daemon_resolver")
 def daemon_resolver(key: str, _scope: str | None, default: Any) -> Any:
@@ -53,10 +61,14 @@ def daemon_resolver(key: str, _scope: str | None, default: Any) -> Any:
     Imported lazily so the host-side stop hook, which never runs in the
     daemon, does not pull in the server package, and so a test that patches
     ``_runtime_config.config_get`` is seen by every daemon-side gate.
+
+    ``raise_on_error=True``: a failed backend forward raises
+    ``ConfigReadError`` (nothing cached) instead of answering ``default``, so
+    the gate can log that the read failed rather than read it as "unset".
     """
     from yadgar.core.server.tools import _runtime_config
 
-    return _runtime_config.config_get(key, None, default)
+    return _runtime_config.config_get(key, None, default, raise_on_error=True)
 
 
 @observe(tier="stage", metric="core.task_ledger_gate.prefixes")
@@ -67,21 +79,42 @@ def external_ledger_prefixes(resolver: Resolver) -> tuple[str, ...]:
     resolver caches a resolved value, and a ``None`` result reads as a cache
     miss, which would cost two backend forwards on every call.
 
-    Only non-blank strings survive. A blank prefix would match every project,
-    so it is dropped rather than honoured.
+    Only non-blank strings survive, casefolded. A blank prefix would match
+    every project, so it is dropped rather than honoured. A value that is not
+    a list, or a list holding a non-string, logs one warning per process.
     """
     try:
         raw = resolver(EXTERNAL_LEDGER_PREFIXES_KEY, None, [])
-    except Exception:  # noqa: BLE001 — a config read must never break SessionStart, the stop hook or task_write; unreadable means "no external ledger", i.e. today's behaviour
+    except Exception:  # noqa: BLE001 — a config read must never break SessionStart, the stop hook or task_write; a failed read matches nothing for this call only (not cached)
         logger.warning(
-            "%s unreadable; treating it as unset (no external task ledger)",
+            "%s read failed; no external task ledger for this call (not cached, "
+            "the next read retries)",
             EXTERNAL_LEDGER_PREFIXES_KEY,
             exc_info=True,
         )
         return ()
-    if not isinstance(raw, list):
+    if raw is None:
         return ()
-    return tuple(p for p in raw if isinstance(p, str) and p.strip())
+    if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
+        _warn_malformed(raw)
+        if not isinstance(raw, list):
+            return ()
+    return tuple(p.casefold() for p in raw if isinstance(p, str) and p.strip())
+
+
+@observe(tier="stage", metric="core.task_ledger_gate.warn_malformed")
+def _warn_malformed(raw: Any) -> None:
+    """Warn once per process that the key holds something other than a string list."""
+    global _malformed_warned
+    if _malformed_warned:
+        return
+    _malformed_warned = True
+    logger.warning(
+        "%s is malformed (want a list of project_id prefix strings, got %r); "
+        "non-string entries are ignored",
+        EXTERNAL_LEDGER_PREFIXES_KEY,
+        raw,
+    )
 
 
 @observe(tier="stage", metric="core.task_ledger_gate.is_external")
@@ -93,7 +126,8 @@ def is_external_ledger_project(project_id: str | None, resolver: Resolver) -> bo
     """
     if not isinstance(project_id, str) or not project_id:
         return False
-    return any(project_id.startswith(p) for p in external_ledger_prefixes(resolver))
+    project = project_id.casefold()
+    return any(project.startswith(p) for p in external_ledger_prefixes(resolver))
 
 
 @observe(exempt="pure f-string render of one constant line; no I/O, no branch, no error path")

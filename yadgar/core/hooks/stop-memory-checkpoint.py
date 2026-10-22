@@ -211,21 +211,44 @@ def _checkpoint_is_due(count: int, session_state: dict, cwd: str | None = None) 
     return count - int(session_state.get("last_save", 0)) >= INTERVAL
 
 
+def _session_project(cwd: str) -> str | None:
+    """The session's project for ``cwd``: the host-side mint, else the session map.
+
+    The mint is the one SessionStart runs (``resolve_session_project``, ADR-0227:
+    host-side hook entry points only). It walks up from ``cwd``, so a ``cd`` into a
+    subdirectory or a git worktree resolves the same project; the session map is
+    an exact-``cwd`` match and misses both. The map stays as the fallback for a
+    tree the mint cannot resolve. Neither source is a guess.
+    """
+    try:
+        from yadgar.core.hooks._identity_mint import resolve_session_project
+
+        project_id, _notice = resolve_session_project(cwd)
+    except Exception:  # noqa: BLE001 — a stop hook must never crash; a failed mint falls back to the session map, which is not a guess
+        project_id = None
+    if project_id:
+        return project_id
+    from yadgar._shared.runtime.session_map import lookup_project_for_directory
+
+    return lookup_project_for_directory(cwd)
+
+
 def _uses_external_task_ledger(cwd: str | None) -> bool:
     """True when the session's project keeps its tasks outside yadgar (ledger 1791).
 
-    The project is the one the SessionStart hook registered for ``cwd`` — read
-    from the session map, never derived (ADR-0227). No registered project → no
-    config read. The key is read through the fail-open host client, so a dead
-    daemon yields the base template, exactly as before the gate.
+    No ``cwd`` or no project → no config read. The key is read through the
+    fail-open host client, so a dead daemon yields the base template, exactly
+    as before the gate.
     """
+    if not cwd:
+        return False
     try:
-        from yadgar._shared.runtime.session_map import lookup_project_for_directory
         from yadgar.core.runtime_config_client import get as rc_get
         from yadgar.core.task_ledger_gate import is_external_ledger_project
+
+        project_id = _session_project(cwd)
     except ImportError:
         return False
-    project_id = lookup_project_for_directory(cwd)
     return bool(project_id) and is_external_ledger_project(project_id, rc_get)
 
 

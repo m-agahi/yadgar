@@ -16,6 +16,7 @@ rather than only checking that some text is absent.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from unittest.mock import patch
 
@@ -52,7 +53,7 @@ def config_value(monkeypatch):
 
     state: dict = {"value": None}
 
-    def _fake_config_get(key, directory=None, default=None):
+    def _fake_config_get(key, directory=None, default=None, **_kwargs):
         if key == _KEY and state["value"] is not None:
             return state["value"]
         return default
@@ -96,6 +97,78 @@ class TestPredicate:
         r = _resolver_for(["yadgarhq/"])
         assert gate.is_external_ledger_project(project, r) is False
         assert r.calls == []
+
+    def test_match_ignores_case_on_both_sides(self) -> None:
+        assert gate.is_external_ledger_project("YadgarHQ/Docs", _resolver_for(["yadgarhq/"]))
+        assert gate.is_external_ledger_project("yadgarhq/docs", _resolver_for(["YADGARHQ/"]))
+
+    @pytest.mark.parametrize("value", ["yadgarhq/", {"a": 1}, 7, ["yadgarhq/", 3]])
+    def test_malformed_value_warns_once(self, value, caplog) -> None:
+        r = _resolver_for(value)
+        with caplog.at_level(logging.WARNING, logger=gate.__name__):
+            gate.external_ledger_prefixes(r)
+            gate.external_ledger_prefixes(r)
+        warnings = [rec for rec in caplog.records if "malformed" in rec.getMessage()]
+        assert len(warnings) == 1
+
+    @pytest.mark.parametrize("value", [None, [], ["yadgarhq/"]])
+    def test_unset_or_wellformed_value_does_not_warn(self, value, caplog) -> None:
+        with caplog.at_level(logging.WARNING, logger=gate.__name__):
+            gate.external_ledger_prefixes(_resolver_for(value))
+        assert not [rec for rec in caplog.records if "malformed" in rec.getMessage()]
+
+
+@pytest.fixture(autouse=True)
+def _reset_warn_once(monkeypatch):
+    """Each test starts with the once-per-process malformed warning unspent."""
+    monkeypatch.setattr(gate, "_malformed_warned", False, raising=False)
+
+
+# ── the daemon resolver across a backend blip (PR #81 review, blocking) ──────
+
+
+@pytest.fixture
+def blippy_backend(monkeypatch):
+    """The REAL daemon resolver over a fake backend that can be down or up.
+
+    Only ``_forward_admin`` is patched: ``config_get``, its cache and the gate
+    run as shipped. ``state["down"]`` makes every forward raise.
+    """
+    from yadgar.core.server.tools import _runtime_config as rc
+
+    state = {"down": True, "forwards": 0}
+
+    def fake_forward(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
+        state["forwards"] += 1
+        if state["down"]:
+            raise RuntimeError("backend down")
+        if payload["key"] == _KEY and payload["directory"] is None:
+            return {"row": {"key": _KEY, "directory": None, "value": ["yadgarhq/"]}}
+        return {"row": None}
+
+    rc._get_cache().clear()
+    monkeypatch.setattr(rc, "_forward_admin", fake_forward)
+    yield state
+    rc._get_cache().clear()
+
+
+class TestDaemonResolverAcrossABackendBlip:
+    def test_down_then_up_gate_recovers_and_nothing_is_cached(self, blippy_backend, caplog):
+        from yadgar.core.server.tools import _runtime_config as rc
+
+        with caplog.at_level(logging.WARNING, logger=gate.__name__):
+            assert gate.is_external_ledger_project(_EXTERNAL, gate.daemon_resolver) is False
+        assert rc._get_cache().get(rc._cache_key(_KEY, None)) is None
+        assert [r for r in caplog.records if r.name == gate.__name__ and _KEY in r.getMessage()]
+
+        blippy_backend["down"] = False
+        assert gate.is_external_ledger_project(_EXTERNAL, gate.daemon_resolver) is True
+
+    def test_a_good_read_is_cached(self, blippy_backend):
+        blippy_backend["down"] = False
+        assert gate.is_external_ledger_project(_EXTERNAL, gate.daemon_resolver) is True
+        assert gate.is_external_ledger_project(_EXTERNAL, gate.daemon_resolver) is True
+        assert blippy_backend["forwards"] == 1
 
 
 # ── task_write refuses, task_list / task_get still read ─────────────────────

@@ -5,7 +5,7 @@
                           emitted at SessionStart as `yadgar: project_id=<owner/repo>`.
                           It is NOT the basename of {directory}: the basename is not an
                           identity (two checkouts named `yadgar` are two projects), and
-                          the task ledger is keyed on the minted value (ADR-0227).
+                          the ADR ledger is keyed on the minted value (ADR-0227).
                           If you cannot find that line, scroll for the `current_project`
                           memory block, which carries the same value.
 
@@ -14,7 +14,7 @@
      sanctioned path precisely BECAUSE deriving one is forbidden.
        MODE 1 — no key at all (neither the banner nor the `current_project` block).
          The SessionStart mint failed: no git `origin` remote, or no repo. SKIP
-         the ledger steps below rather than inventing a key.
+         the ADR ledger step below (step 1) rather than inventing a key.
          Tell the user which yadgar writes are blocked and hand over the fix —
          add an `origin` remote, or pin the key explicitly with
          `mkdir -p .yadgar && echo owner/repo > .yadgar/project-id` — then a NEW
