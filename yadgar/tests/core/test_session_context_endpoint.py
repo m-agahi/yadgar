@@ -35,6 +35,27 @@ def _make_client(token: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(BearerAuthMiddleware(asgi_app), raise_server_exceptions=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_config_reads(monkeypatch):
+    """Keep every runtime config read in-process: no forward to a live backend.
+
+    SessionStart reads ``tasks.external_ledger_prefixes`` (ledger 1791) and
+    ``code_graph.enabled`` through ``_runtime_config.config_get``. Unstubbed,
+    each cold read forwards to whatever backend ``YADGAR_EMBED_URL`` names.
+    The stub answers every key as unset; a forward that still escapes fails loud.
+    """
+    from yadgar.core.server.tools import _runtime_config
+
+    def _unset(key, directory=None, default=None, **_kwargs):
+        return default
+
+    def _no_forward(op, payload, timeout_s=30.0):
+        raise AssertionError(f"session-context test forwarded {op!r} to a backend")
+
+    monkeypatch.setattr(_runtime_config, "config_get", _unset)
+    monkeypatch.setattr(_runtime_config, "_forward_admin", _no_forward)
+
+
 @pytest.fixture(autouse=True, scope="module")
 def _engines(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("session_context_endpoint")

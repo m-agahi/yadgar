@@ -93,6 +93,11 @@ def _resolve_prompt_template_path(filename: str = "stop_checkpoint_prompt.md") -
 _PROMPT_TEMPLATE_PATH = _resolve_prompt_template_path("stop_checkpoint_prompt.md")
 _ANCHOR_AUDIT_TEMPLATE_PATH = _resolve_prompt_template_path("anchor_audit_prompt.md")
 _CODE_GRAPH_REFRESH_TEMPLATE_PATH = _resolve_prompt_template_path("code_graph_refresh_prompt.md")
+# Ledger 1791: the checkpoint protocol minus the task-list mirror step, for a
+# project whose tasks live in an external ledger (core.task_ledger_gate).
+_EXTERNAL_LEDGER_TEMPLATE_PATH = _resolve_prompt_template_path(
+    "stop_checkpoint_prompt_external_ledger.md"
+)
 
 
 @observe(tier="hot")
@@ -199,25 +204,66 @@ def _subagent_sweep_state_path() -> Path:
 #   is_due      — (count, session_state, cwd) -> bool. ``cwd`` is the session's
 #                 working directory (from the stop payload); only the dir-aware
 #                 code_graph predicate uses it — the others ignore it.
-#   reason      — (count) -> str; the {decision: block} reason string.
+#   reason      — (count, cwd) -> str; the {decision: block} reason string.
 
 
 def _checkpoint_is_due(count: int, session_state: dict, cwd: str | None = None) -> bool:
     return count - int(session_state.get("last_save", 0)) >= INTERVAL
 
 
-def _checkpoint_reason(count: int) -> str:
-    return (
-        f"[yadgar] Checkpoint due. Read {_PROMPT_TEMPLATE_PATH}"
-        " and follow all the instructions in it."
+def _session_project(cwd: str) -> str | None:
+    """The session's project for ``cwd``: the host-side mint, else the session map.
+
+    The mint is the one SessionStart runs (``resolve_session_project``, ADR-0227:
+    host-side hook entry points only). It walks up from ``cwd``, so a ``cd`` into a
+    subdirectory or a git worktree resolves the same project; the session map is
+    an exact-``cwd`` match and misses both. The map stays as the fallback for a
+    tree the mint cannot resolve. Neither source is a guess.
+    """
+    try:
+        from yadgar.core.hooks._identity_mint import resolve_session_project
+
+        project_id, _notice = resolve_session_project(cwd)
+    except Exception:  # noqa: BLE001 — a stop hook must never crash; a failed mint falls back to the session map, which is not a guess
+        project_id = None
+    if project_id:
+        return project_id
+    from yadgar._shared.runtime.session_map import lookup_project_for_directory
+
+    return lookup_project_for_directory(cwd)
+
+
+def _uses_external_task_ledger(cwd: str | None) -> bool:
+    """True when the session's project keeps its tasks outside yadgar (ledger 1791).
+
+    No ``cwd`` or no project → no config read. The key is read through the
+    fail-open host client, so a dead daemon yields the base template, exactly
+    as before the gate.
+    """
+    if not cwd:
+        return False
+    try:
+        from yadgar.core.runtime_config_client import get as rc_get
+        from yadgar.core.task_ledger_gate import is_external_ledger_project
+
+        project_id = _session_project(cwd)
+    except ImportError:
+        return False
+    return bool(project_id) and is_external_ledger_project(project_id, rc_get)
+
+
+def _checkpoint_reason(count: int, cwd: str | None = None) -> str:
+    path = (
+        _EXTERNAL_LEDGER_TEMPLATE_PATH if _uses_external_task_ledger(cwd) else _PROMPT_TEMPLATE_PATH
     )
+    return f"[yadgar] Checkpoint due. Read {path} and follow all the instructions in it."
 
 
 def _anchor_audit_is_due(count: int, session_state: dict, cwd: str | None = None) -> bool:
     return count - int(session_state.get("last_anchor_audit", 0)) >= ANCHOR_AUDIT_STOP_INTERVAL
 
 
-def _anchor_audit_reason(count: int) -> str:
+def _anchor_audit_reason(count: int, cwd: str | None = None) -> str:
     return (
         f"[yadgar] Anchor-audit maintenance due. Read {_ANCHOR_AUDIT_TEMPLATE_PATH}"
         " and follow all the instructions in it."
@@ -258,7 +304,7 @@ def _code_graph_refresh_is_due(count: int, session_state: dict, cwd: str | None 
     )
 
 
-def _code_graph_refresh_reason(count: int) -> str:
+def _code_graph_refresh_reason(count: int, cwd: str | None = None) -> str:
     return (
         f"[yadgar] code_graph-refresh maintenance due. Read {_CODE_GRAPH_REFRESH_TEMPLATE_PATH}"
         " and follow all the instructions in it."
@@ -347,7 +393,7 @@ def main() -> None:
         state[session_id] = session_state
         _save_state(state)
 
-        print(json.dumps({"decision": "block", "reason": chosen["reason"](current_count)}))
+        print(json.dumps({"decision": "block", "reason": chosen["reason"](current_count, cwd)}))
     finally:
         shutdown_tracing()
 

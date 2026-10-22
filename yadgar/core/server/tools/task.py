@@ -71,6 +71,7 @@ from yadgar.core.server.tools._project_param import (
     InvalidProjectOverrideError,
     resolve_effective_project,
 )
+from yadgar.core.task_ledger_gate import write_refusal_for
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +352,38 @@ def _validate_write_inputs(
     return project_id, _validate_title(title)
 
 
+@observe(tier="stage", metric="tools.task._write_project_or_refusal")
+def _write_project_or_refusal(project_id: str, project: str | None) -> tuple[str, dict | None]:
+    """Return ``task_write``'s effective project_id and its refusal (None = proceed).
+
+    Car M (0047 §7, §16.6): the optional ``project=`` override beats the
+    explicit ``project_id`` arg (precedence: project > project_id arg).
+    The override is the namespace stamp on the ledger row. Car 5: core
+    enforces the shape guard (sentinels included); the registry check runs
+    inside ``create_task_row`` → ``assert_project_registered``.
+
+    Ledger 1791: a project whose tasks live in an external ledger (yaadgaar)
+    is frozen. The gate reads the EFFECTIVE project, after the override.
+    Extracted from ``task_write`` for the I13 function-LOC cap.
+    """
+    if project is not None:
+        try:
+            project_id = resolve_effective_project(
+                project=project,
+                directory=None,  # task tools do not derive from directory
+                session_project=None,
+                tool="task",
+            )
+            # Re-validate the resolved override against the strict-typed
+            # validator (mirrors the project_id arg path). Car D's validator
+            # enforces non-string / empty — same guards apply to the
+            # override.
+            project_id = _validate_project_id(project_id)
+        except (InvalidProjectOverrideError, ValueError) as exc:
+            return project_id, {"ok": False, "error": f"task_write: {exc}"}
+    return project_id, write_refusal_for(project_id)
+
+
 # ── task_write ──────────────────────────────────────────────────────────────
 
 
@@ -441,26 +474,9 @@ def task_write(
     if clear_error is not None:
         return {"ok": False, "error": clear_error}
 
-    # Car M (0047 §7, §16.6): the optional ``project=`` override beats the
-    # explicit ``project_id`` arg (precedence: project > project_id arg).
-    # The override is the namespace stamp on the ledger row. Car 5: core
-    # enforces the shape guard (sentinels included); the registry check runs
-    # inside ``create_task_row`` → ``assert_project_registered``.
-    if project is not None:
-        try:
-            project_id = resolve_effective_project(
-                project=project,
-                directory=None,  # task tools do not derive from directory
-                session_project=None,
-                tool="task",
-            )
-            # Re-validate the resolved override against the strict-typed
-            # validator (mirrors the project_id arg path). Car D's validator
-            # enforces non-string / empty — same guards apply to the
-            # override.
-            project_id = _validate_project_id(project_id)
-        except (InvalidProjectOverrideError, ValueError) as exc:
-            return {"ok": False, "error": f"task_write: {exc}"}
+    project_id, refusal = _write_project_or_refusal(project_id, project)
+    if refusal is not None:
+        return refusal
 
     try:
         if is_update:

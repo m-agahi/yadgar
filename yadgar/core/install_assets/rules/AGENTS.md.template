@@ -82,7 +82,9 @@ it "useful at exactly two moments — restore, and end-of-session completeness
 — inert in between." Discoveries died in chat, three tasks sat `in_progress`
 across four review rounds, and the same list re-rendered into context
 unprompted many times over. These rules keep the ledger live in between, not
-just at the edges:
+just at the edges. A project whose tasks live in another ledger (SessionStart
+names it, e.g. yaadgaar) uses that ledger, and these `task_*` rules do not
+apply to it:
 
 - **List light**: at session start and after compaction, read `task_list` at
   its default shape (`id` + `title` + `status`), never `verbose=True`. The

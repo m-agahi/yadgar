@@ -155,6 +155,46 @@ class TestFailSafe:
         _install(monkeypatch, _FakeBackend({}, raise_on_get=True))
         assert rc.config_get("k", _PROJ_DIR, default="safe") == "safe"
 
+    def test_forward_exception_is_not_cached(self, monkeypatch, fresh_cache):
+        """A forward error is not an answer: the next read forwards again.
+
+        Caching the default on error pinned it until the next config write's
+        flush, so one backend blip on a cold read turned a gate off for the
+        daemon's lifetime (PR #81 review).
+        """
+        backend = _install(monkeypatch, _FakeBackend({("k", None): "v"}, raise_on_get=True))
+        assert rc.config_get("k", default="safe") == "safe"
+        assert rc._get_cache().get(rc._cache_key("k", None)) is None
+        backend.raise_on_get = False
+        assert rc.config_get("k", default="safe") == "v"
+
+    def test_per_dir_forward_error_does_not_fall_through_to_global(self, monkeypatch, fresh_cache):
+        """An error on the per-dir read must not resolve (and cache) the global row."""
+        calls: list[str | None] = []
+
+        def fake_forward(op: str, payload: dict, timeout_s: float = 30.0) -> dict:
+            calls.append(payload.get("directory"))
+            if payload.get("directory") is not None:
+                raise RuntimeError("boom")
+            return {"row": {"key": "k", "directory": None, "value": "global"}}
+
+        monkeypatch.setattr(rc, "_forward_admin", fake_forward)
+        assert rc.config_get("k", _PROJ_DIR, default="safe") == "safe"
+        assert rc._get_cache().get(rc._cache_key("k", _PROJ_DIR)) is None
+
+    def test_raise_on_error_surfaces_the_forward_failure(self, monkeypatch, fresh_cache):
+        _install(monkeypatch, _FakeBackend({}, raise_on_get=True))
+        with pytest.raises(rc.ConfigReadError):
+            rc.config_get("k", default="safe", raise_on_error=True)
+        assert rc._get_cache().get(rc._cache_key("k", None)) is None
+
+    def test_absent_row_default_is_still_cached(self, monkeypatch, fresh_cache):
+        """Absence IS a stable answer; only errors skip the cache."""
+        backend = _install(monkeypatch, _FakeBackend({}))
+        assert rc.config_get("k", default=[]) == []
+        assert rc.config_get("k", default=[]) == []
+        assert backend.calls == 1
+
 
 # ---------------------------------------------------------------------------
 # E. Invalidation
