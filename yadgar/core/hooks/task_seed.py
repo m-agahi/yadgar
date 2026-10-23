@@ -1,7 +1,7 @@
 """Mechanical harness task-list seeder — SessionStart (Car C, ADR-0137 Option A).
 
 Writes the Claude Code harness's own on-disk task records
-(``<config_dir>/tasks/<session_id>/<N>.json``) so the ledger's open tasks are
+(``<config_dir>/tasks/<list_id>/<N>.json``) so the ledger's open tasks are
 present in the harness task list the moment a session opens, at zero model
 cost.
 
@@ -38,12 +38,21 @@ dirs, 400 task files:
 * ``id`` is a JSON string equal to the file stem.
 * ``status`` is only ever ``pending`` / ``in_progress`` / ``completed``.
 * ``.highwatermark`` holds a bare integer.
+
+Store dir name (ledger 1797): Claude Code names the dir by
+``CLAUDE_CODE_TASK_LIST_ID`` when that env var is set ("To share a task list
+across sessions, set ``CLAUDE_CODE_TASK_LIST_ID`` to use a named directory in
+``~/.claude/tasks/``", interactive-mode docs), else by the session id. This
+module runs in the SessionStart hook process (``hook_runner.py`` dispatches
+in-process to ``yadgar.core.cli.hook``), which Claude Code spawns with its own
+env, so ``os.environ`` here is the client's env, not the daemon's.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -51,6 +60,10 @@ from pathlib import Path
 from typing import Any
 
 __all__ = ["seed_harness_task_list", "tasks_root"]
+
+logger = logging.getLogger(__name__)
+
+_TASK_LIST_ID_ENV = "CLAUDE_CODE_TASK_LIST_ID"
 
 # A session id is a bare uuid-ish token. Anything with a separator in it would
 # let a malformed payload address ANOTHER live session's task store.
@@ -206,12 +219,30 @@ def _write_atomic(path: Path, payload: str) -> None:
         raise
 
 
+def _store_dir_name(session_id: Any) -> tuple[str, str]:
+    """Return (dir name, "") — or ("", reason) when no safe name exists.
+
+    The harness reads the named dir when ``CLAUDE_CODE_TASK_LIST_ID`` is set, so
+    an invalid name must not fall back to ``session_id``: that dir is never read.
+    """
+    if not isinstance(session_id, str) or not _SESSION_ID_RE.match(session_id):
+        return "", "bad_session_id"
+    list_id = os.environ.get(_TASK_LIST_ID_ENV) or session_id
+    if not _SESSION_ID_RE.match(list_id):
+        # stderr only: hook stdout is injected into the model context.
+        logger.warning("harness seed skipped: %s is not a bare token", _TASK_LIST_ID_ENV)
+        return "", "bad_task_list_id"
+    return list_id, ""
+
+
 def seed_harness_task_list(
     session_id: Any,
     rows: Any,
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Seed the harness task store for ``session_id`` from ledger ``rows``.
+
+    The store dir is ``$CLAUDE_CODE_TASK_LIST_ID`` when set, else ``session_id``.
 
     Returns ``{"ok", "seeded", "already_present", "skipped", "reason", "dir"}``.
     ``ok`` is the caller's signal to SUPPRESS the fallback nudge: a partial
@@ -232,8 +263,9 @@ def seed_harness_task_list(
         if os.environ.get("YADGAR_HARNESS_SEED_DISABLED", "").strip() not in ("", "0"):
             result["reason"] = "disabled"
             return result
-        if not isinstance(session_id, str) or not _SESSION_ID_RE.match(session_id):
-            result["reason"] = "bad_session_id"
+        list_id, bad = _store_dir_name(session_id)
+        if bad:
+            result["reason"] = bad
             return result
 
         base = root if root is not None else tasks_root()
@@ -252,7 +284,7 @@ def seed_harness_task_list(
             result["reason"] = "no_rows" if skipped == 0 else "no_valid_rows"
             return result
 
-        session_dir = base / session_id
+        session_dir = base / list_id
         result["dir"] = str(session_dir)
         existing, hwm, trip = _inspect_dir(session_dir)
         if trip:
