@@ -39,6 +39,8 @@ def tasks_root(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
     cfg.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
     monkeypatch.delenv("YADGAR_HARNESS_SEED_DISABLED", raising=False)
+    # A runner session with a named list set would otherwise redirect every test.
+    monkeypatch.delenv("CLAUDE_CODE_TASK_LIST_ID", raising=False)
     return cfg / "tasks"
 
 
@@ -268,6 +270,57 @@ def test_env_kill_switch(tasks_root, monkeypatch):
     assert result["ok"] is False
     assert result["reason"] == "disabled"
     assert not (tasks_root / _SID).exists()
+
+
+# ── CLAUDE_CODE_TASK_LIST_ID (ledger 1797) ────────────────────────────────────
+#
+# Claude Code names the task store dir by CLAUDE_CODE_TASK_LIST_ID when it is
+# set ("To share a task list across sessions, set CLAUDE_CODE_TASK_LIST_ID to use
+# a named directory in ~/.claude/tasks/"). The hook process inherits the client
+# env, so the seeder reads it from os.environ.
+
+
+def test_named_task_list_id_wins_over_session_id(tasks_root, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_TASK_LIST_ID", "yadgarhq-docs")
+
+    result = _seed()
+
+    assert result["ok"] is True, result
+    assert result["dir"] == str(tasks_root / "yadgarhq-docs")
+    written = sorted(p.name for p in (tasks_root / "yadgarhq-docs").glob("*.json"))
+    assert written == ["41.json", "55.json", "92.json"]
+    assert not (tasks_root / _SID).exists()
+
+
+@pytest.mark.parametrize("unset", [None, ""])
+def test_unset_or_empty_task_list_id_uses_session_id(tasks_root, monkeypatch, unset):
+    if unset is None:
+        monkeypatch.delenv("CLAUDE_CODE_TASK_LIST_ID", raising=False)
+    else:
+        monkeypatch.setenv("CLAUDE_CODE_TASK_LIST_ID", unset)
+
+    result = _seed()
+
+    assert result["ok"] is True, result
+    assert result["dir"] == str(tasks_root / _SID)
+    assert (tasks_root / _SID / "41.json").is_file()
+
+
+@pytest.mark.parametrize("bad", ["..", "../../escape", "a/b", "with space", ".hidden"])
+def test_invalid_task_list_id_writes_nothing(tasks_root, monkeypatch, bad, caplog):
+    """No fallback to session_id: the harness reads the named dir, not that one.
+
+    ok=False lets the caller print the nudge instead.
+    """
+    monkeypatch.setenv("CLAUDE_CODE_TASK_LIST_ID", bad)
+
+    with caplog.at_level("WARNING", logger="yadgar.core.hooks.task_seed"):
+        result = _seed()
+
+    assert result["ok"] is False
+    assert result["reason"] == "bad_task_list_id"
+    assert not tasks_root.exists() or not list(tasks_root.rglob("*.json"))
+    assert any("CLAUDE_CODE_TASK_LIST_ID" in r.getMessage() for r in caplog.records)
 
 
 # ── row validation ────────────────────────────────────────────────────────────

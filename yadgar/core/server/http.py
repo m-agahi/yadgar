@@ -1664,6 +1664,9 @@ async def hook_session_context(request: Request) -> JSONResponse:
     # compaction note (a one-line marker restore() does not emit) and skip the
     # catalog. Placed AFTER the recall-throttle write (:869) and sentinel import
     # (:875) so those side effects still fire on every compact.
+    # Also skips the harness task seed. Safe (ledger 1798): compaction keeps the
+    # sessionId and its task dir (52/52 local compact boundaries, 2026-10-23).
+    # Evidence: docs/reference/hooks.md "SessionStart task-list seed".
     if source == "compact":
         return JSONResponse({"text": _SOURCE_PREFIX["compact"]})
 
