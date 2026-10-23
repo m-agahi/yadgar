@@ -221,9 +221,12 @@ the global runtime config key `tasks.external_ledger_prefixes`. Each decision
 logs one INFO line from `yadgar.core.task_ledger_gate` with the structured
 field `ledger_source` set to `registry` or `fallback-prefix`.
 
-Claude Code runs SessionStart hooks in parallel. On a project's first session
-the yaadgaar record can land after yadgar's hook has read it, so that session
-uses the prefix and the next one uses the registry.
+Claude Code runs SessionStart hooks in parallel, so the yaadgaar record can
+land after yadgar's hook has read it. A registry change can therefore reach the
+gate one session late. On a project's first session that means the prefix
+decides. The mirror file is read, changed and rewritten; two sessions that
+start at the same moment can lose one entry, which falls back to the prefix
+until the next session.
 
 ---
 

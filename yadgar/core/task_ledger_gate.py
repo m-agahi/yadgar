@@ -187,7 +187,7 @@ def _log_decision(project_id: str, source: str, external: bool) -> None:
         project_id,
         "yaadgaar" if external else "yadgar",
         source,
-        extra={"project_id": project_id, "ledger_source": source, "external": external},
+        extra={"ledger_project": project_id, "ledger_source": source, "external": external},
     )
 
 

@@ -450,7 +450,7 @@ def _registry_for(answer):
 
 def _decisions(caplog) -> list[tuple[str, str, bool]]:
     return [
-        (r.project_id, r.ledger_source, r.external)
+        (r.ledger_project, r.ledger_source, r.external)
         for r in caplog.records
         if r.name == "yadgar.core.task_ledger_gate" and hasattr(r, "ledger_source")
     ]
