@@ -409,3 +409,254 @@ def test_packaged_contract_names_the_projects_task_ledger_not_yadgars() -> None:
     assert "the project's task ledger" in content
     assert "yadgar ledger" not in content.lower()
     assert "yadgar task ledger" not in content.lower()
+
+
+# ── ledger 1803: the yaadgaar project registry decides, the prefix is fallback ─
+#
+# yadgarhq/docs ADR-1000: "this project's tasks live in yaadgaar" follows the
+# yaadgaar gateway project registry. The yaadgaar client's SessionStart hook
+# records the gateway's answer per project (the record contract lives in
+# ``core.task_ledger_registry``); yadgar's host hook mirrors it into the yadgar
+# data dir, which the daemon container mounts. The prefix key is consulted ONLY
+# when no registry answer exists.
+
+_NEW_YADGARHQ = "yadgarhq/newrepo"
+_REGISTERED_ELSEWHERE = "acme/widget"
+
+
+def _write_record(project: str, registered, **extra) -> None:
+    """Write a yaadgaar registry record exactly as the client contract specifies."""
+    import json as _json
+
+    from yadgar.core import task_ledger_registry as reg
+
+    path = reg.record_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {"project": project, "registered": registered, "checked_at": "2026-10-23T10:00:00Z"}
+    body.update(extra)
+    path.write_text(_json.dumps(body))
+
+
+def _registry_for(answer):
+    calls: list[str] = []
+
+    def _lookup(project_id):
+        calls.append(project_id)
+        return answer
+
+    _lookup.calls = calls  # type: ignore[attr-defined]
+    return _lookup
+
+
+def _decisions(caplog) -> list[tuple[str, str, bool]]:
+    return [
+        (r.project_id, r.ledger_source, r.external)
+        for r in caplog.records
+        if r.name == "yadgar.core.task_ledger_gate" and hasattr(r, "ledger_source")
+    ]
+
+
+class TestRegistryDecides:
+    def test_a_unregistered_yadgarhq_project_is_not_gated(self, caplog) -> None:
+        """(a) A ``yadgarhq/`` project the gateway does not register: yadgar owns its tasks."""
+        caplog.set_level(logging.INFO, logger="yadgar.core.task_ledger_gate")
+        r = _resolver_for(["yadgarhq/"])
+        assert gate.is_external_ledger_project(_NEW_YADGARHQ, r, _registry_for(False)) is False
+        assert r.calls == []  # a registry answer means no prefix read at all
+        assert _decisions(caplog) == [(_NEW_YADGARHQ, "registry", False)]
+
+    def test_b_a_registered_project_outside_yadgarhq_is_gated(self, caplog) -> None:
+        """(b) Registered but outside every prefix: its tasks live in yaadgaar."""
+        caplog.set_level(logging.INFO, logger="yadgar.core.task_ledger_gate")
+        r = _resolver_for(["yadgarhq/"])
+        assert gate.is_external_ledger_project(_REGISTERED_ELSEWHERE, r, _registry_for(True))
+        assert _decisions(caplog) == [(_REGISTERED_ELSEWHERE, "registry", True)]
+
+    def test_c_registry_unavailable_falls_back_to_the_prefix(self, caplog) -> None:
+        """(c) No registry answer: the prefix decides, and the log says so."""
+        caplog.set_level(logging.INFO, logger="yadgar.core.task_ledger_gate")
+        r = _resolver_for(["yadgarhq/"])
+        assert gate.is_external_ledger_project(_NEW_YADGARHQ, r, _registry_for(None)) is True
+        assert (
+            gate.is_external_ledger_project(_REGISTERED_ELSEWHERE, r, _registry_for(None)) is False
+        )
+        assert _decisions(caplog) == [
+            (_NEW_YADGARHQ, "fallback-prefix", True),
+            (_REGISTERED_ELSEWHERE, "fallback-prefix", False),
+        ]
+
+    def test_a_crashing_registry_lookup_falls_back_to_the_prefix(self, caplog) -> None:
+        caplog.set_level(logging.INFO, logger="yadgar.core.task_ledger_gate")
+
+        def _boom(_project_id):
+            raise OSError("unreadable")
+
+        r = _resolver_for(["yadgarhq/"])
+        assert gate.is_external_ledger_project(_NEW_YADGARHQ, r, _boom) is True
+        assert _decisions(caplog) == [(_NEW_YADGARHQ, "fallback-prefix", True)]
+
+    def test_the_default_registry_is_the_mirror(self) -> None:
+        """No ``registry`` argument: the gate reads the mirror the host hook wrote."""
+        from yadgar.core import task_ledger_registry as reg
+
+        _write_record(_REGISTERED_ELSEWHERE, True)
+        assert reg.mirror_registry_answer(_REGISTERED_ELSEWHERE) is True
+        assert gate.is_external_ledger_project(_REGISTERED_ELSEWHERE, _resolver_for([])) is True
+
+
+class TestYaadgaarRecord:
+    """The record contract: what the yaadgaar client writes, what yadgar accepts."""
+
+    def test_path_is_state_dir_registry_escaped_casefolded_key(self, monkeypatch, tmp_path):
+        from yadgar.core import task_ledger_registry as reg
+
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "st"))
+        monkeypatch.delenv("YAADGAAR_STATE_DIR", raising=False)
+        assert reg.record_path("Acme/Widget") == (
+            tmp_path / "st" / "yaadgaar" / "registry" / "acme%2Fwidget.json"
+        )
+        monkeypatch.setenv("YAADGAAR_STATE_DIR", str(tmp_path / "override"))
+        assert reg.record_path("acme/widget") == (
+            tmp_path / "override" / "registry" / "acme%2Fwidget.json"
+        )
+
+    @pytest.mark.parametrize("registered", [True, False])
+    def test_an_explicit_answer_is_read(self, registered) -> None:
+        from yadgar.core import task_ledger_registry as reg
+
+        _write_record(_NEW_YADGARHQ, registered)
+        assert reg.read_yaadgaar_record(_NEW_YADGARHQ) is registered
+
+    def test_no_record_is_unavailable(self) -> None:
+        from yadgar.core import task_ledger_registry as reg
+
+        assert reg.read_yaadgaar_record(_NEW_YADGARHQ) is None
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "not json",
+            "[]",
+            '{"project": "yadgarhq/newrepo"}',
+            '{"project": "yadgarhq/newrepo", "registered": "yes"}',
+        ],
+    )
+    def test_a_malformed_record_is_unavailable(self, body) -> None:
+        from yadgar.core import task_ledger_registry as reg
+
+        path = reg.record_path(_NEW_YADGARHQ)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+        assert reg.read_yaadgaar_record(_NEW_YADGARHQ) is None
+
+    def test_a_record_naming_another_project_is_unavailable(self) -> None:
+        import json as _json
+
+        from yadgar.core import task_ledger_registry as reg
+
+        path = reg.record_path(_NEW_YADGARHQ)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_json.dumps({"project": "other/repo", "registered": True}))
+        assert reg.read_yaadgaar_record(_NEW_YADGARHQ) is None
+
+
+class TestMirror:
+    """Host hook copies the record into the yadgar data dir; the daemon reads it."""
+
+    def test_mirror_carries_the_answer_into_the_data_dir(self) -> None:
+        from yadgar.core import task_ledger_registry as reg
+
+        _write_record(_NEW_YADGARHQ, False)
+        assert reg.mirror_registry_answer(_NEW_YADGARHQ) is False
+        assert reg.read_mirror(_NEW_YADGARHQ) is False
+        assert reg.mirror_path().is_file()
+
+    def test_a_vanished_record_clears_the_mirror_entry(self) -> None:
+        from yadgar.core import task_ledger_registry as reg
+
+        _write_record(_REGISTERED_ELSEWHERE, True)
+        assert reg.mirror_registry_answer(_REGISTERED_ELSEWHERE) is True
+        reg.record_path(_REGISTERED_ELSEWHERE).unlink()
+        assert reg.mirror_registry_answer(_REGISTERED_ELSEWHERE) is None
+        assert reg.read_mirror(_REGISTERED_ELSEWHERE) is None
+
+    def test_mirror_lookup_is_case_insensitive(self) -> None:
+        from yadgar.core import task_ledger_registry as reg
+
+        _write_record("acme/widget", True)
+        reg.mirror_registry_answer("acme/widget")
+        assert reg.read_mirror("Acme/Widget") is True
+
+    def test_no_mirror_file_is_unavailable(self) -> None:
+        from yadgar.core import task_ledger_registry as reg
+
+        assert reg.read_mirror(_NEW_YADGARHQ) is None
+
+    def test_the_cli_hook_mirrors_after_minting(self) -> None:
+        """The live SessionStart hook (``yadgar hook session-start-context``) mirrors."""
+        from yadgar.core import task_ledger_registry as reg
+        from yadgar.core.cli import hook as cli_hook
+
+        _write_record(_REGISTERED_ELSEWHERE, True)
+        cli_hook._register_directory_identity("/tmp/some-checkout", _REGISTERED_ELSEWHERE)
+        assert reg.read_mirror(_REGISTERED_ELSEWHERE) is True
+
+
+class TestRegistryEndToEnd:
+    """Daemon-side callers read the mirror: SessionStart seeding and ``task_write``."""
+
+    def test_b_registered_outside_prefix_session_start_seeds_nothing(
+        self, config_value, session_context
+    ):
+        from yadgar.core import task_ledger_registry as reg
+
+        config_value["value"] = ["yadgarhq/"]
+        _write_record(_REGISTERED_ELSEWHERE, True)
+        reg.mirror_registry_answer(_REGISTERED_ELSEWHERE)
+
+        body = session_context(_REGISTERED_ELSEWHERE, seed=True)
+
+        assert body["text"].startswith(
+            f"[yadgar] Tasks for {_REGISTERED_ELSEWHERE} live in yaadgaar"
+        )
+        assert body["task_nudge"] == ""
+        assert body["tasks"] == []
+        assert session_context.nudge_calls == []
+
+    def test_a_unregistered_yadgarhq_session_start_seeds_from_yadgar(
+        self, config_value, session_context
+    ):
+        from yadgar.core import task_ledger_registry as reg
+
+        config_value["value"] = ["yadgarhq/"]
+        _write_record(_NEW_YADGARHQ, False)
+        reg.mirror_registry_answer(_NEW_YADGARHQ)
+
+        body = session_context(_NEW_YADGARHQ, seed=True)
+
+        assert "live in yaadgaar" not in body["text"]
+        assert body["tasks"] == _ROWS
+        assert len(session_context.nudge_calls) == 1
+
+    def test_b_registered_outside_prefix_task_write_refuses(self, config_value, forward_calls):
+        from yadgar.core import task_ledger_registry as reg
+        from yadgar.core.server.tools.task import task_write
+
+        config_value["value"] = ["yadgarhq/"]
+        _write_record(_REGISTERED_ELSEWHERE, True)
+        reg.mirror_registry_answer(_REGISTERED_ELSEWHERE)
+
+        result = task_write(project_id=_REGISTERED_ELSEWHERE, title="new work")
+
+        assert result["error"] == "external_task_ledger"
+        assert forward_calls == []
+
+    def test_a_unregistered_yadgarhq_task_write_is_allowed(self, config_value, forward_calls):
+        from yadgar.core import task_ledger_registry as reg
+        from yadgar.core.server.tools.task import task_write
+
+        config_value["value"] = ["yadgarhq/"]
+        _write_record(_NEW_YADGARHQ, False)
+        reg.mirror_registry_answer(_NEW_YADGARHQ)
+
+        assert task_write(project_id=_NEW_YADGARHQ, title="new work") == {"ok": True, "id": 501}

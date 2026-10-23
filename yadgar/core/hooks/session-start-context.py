@@ -102,6 +102,15 @@ def _emit_project_id(cwd):
             register_session_project(cwd, project_id)
         except Exception:  # noqa: BLE001
             pass
+        # Ledger 1803: mirror the yaadgaar registry answer for this project into
+        # the data dir, where the daemon's external task ledger gate reads it.
+        # Best-effort — a failure leaves the gate on its prefix fallback.
+        try:
+            from yadgar.core.task_ledger_registry import mirror_registry_answer
+
+            mirror_registry_answer(project_id)
+        except Exception:  # noqa: BLE001 — never brick SessionStart over the registry mirror
+            pass
     return project_id
 
 

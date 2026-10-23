@@ -217,6 +217,25 @@ def _register_directory_identity(cwd: str, project_id: str | None) -> None:
 
         register_session_project(cwd, project_id)
     except Exception:  # noqa: BLE001 — never brick the hook over telemetry
+        pass
+    _mirror_ledger_registry(project_id)
+
+
+def _mirror_ledger_registry(project_id: str) -> None:
+    """Copy the yaadgaar registry answer for ``project_id`` where the daemon reads it.
+
+    Ledger 1803: the external task ledger gate follows the yaadgaar project
+    registry. Only this host-side process can read the yaadgaar client's record;
+    the daemon reads the mirror in the shared data dir. Best-effort: a failure
+    leaves the gate on its prefix fallback, never breaks SessionStart.
+    """
+    try:
+        from yadgar.core.task_ledger_registry import (
+            mirror_registry_answer,
+        )
+
+        mirror_registry_answer(project_id)
+    except Exception:  # noqa: BLE001 — never brick SessionStart over the registry mirror; the gate falls back to the prefix
         return
 
 

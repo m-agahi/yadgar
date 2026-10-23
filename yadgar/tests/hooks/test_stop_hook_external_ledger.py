@@ -191,6 +191,39 @@ def test_external_project_gets_the_variant(hook) -> None:
     assert hook.state["reads"] == [(_KEY, None, [])]
 
 
+def _mirror(project: str, registered: bool) -> None:
+    """Record a yaadgaar registry answer and mirror it, as SessionStart does (ledger 1803)."""
+    from yadgar.core import task_ledger_registry as reg
+
+    path = reg.record_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"project": project, "registered": registered}))
+    assert reg.mirror_registry_answer(project) is registered
+
+
+def test_registered_project_outside_the_prefix_gets_the_variant(hook) -> None:
+    """Ledger 1803: the yaadgaar registry decides; the prefix is not read."""
+    hook.state["map"]["/w/widget"] = "acme/widget"
+    hook.state["value"] = ["yadgarhq/"]
+    _mirror("acme/widget", True)
+
+    reason = hook._checkpoint_reason(25, "/w/widget")
+
+    assert str(hook._EXTERNAL_LEDGER_TEMPLATE_PATH) in reason
+    assert hook.state["reads"] == []
+
+
+def test_unregistered_yadgarhq_project_gets_the_base_template(hook) -> None:
+    hook.state["map"]["/w/new"] = "yadgarhq/newrepo"
+    hook.state["value"] = ["yadgarhq/"]
+    _mirror("yadgarhq/newrepo", False)
+
+    reason = hook._checkpoint_reason(25, "/w/new")
+
+    assert str(hook._PROMPT_TEMPLATE_PATH) in reason
+    assert hook.state["reads"] == []
+
+
 @pytest.mark.parametrize("cwd", ["/w/aws", "/w/unmapped", None])
 def test_other_projects_get_the_identical_base_reason(hook, cwd) -> None:
     hook.state["map"]["/w/aws"] = "quinyx/aws-work"

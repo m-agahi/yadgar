@@ -6,7 +6,13 @@ yadgar task ledger is FROZEN: SessionStart does not nudge or seed from it, the
 stop-hook checkpoint has no ledger-mirror step, and ``task_write`` refuses.
 ``task_list`` / ``task_get`` stay readable, because the frozen rows are history.
 
-Which projects: the GLOBAL runtime config key ``tasks.external_ledger_prefixes``
+Which projects (ledger 1803, yadgarhq/docs ADR-1000): the yaadgaar gateway's
+project registry decides. Its answer reaches the gate as a per-project record
+the yaadgaar client writes, mirrored into the yadgar data dir by yadgar's host
+SessionStart hook (``core.task_ledger_registry`` holds the contract). Only when
+the registry has no answer for a project does the FALLBACK apply.
+
+Fallback: the GLOBAL runtime config key ``tasks.external_ledger_prefixes``
 (a list of project_id prefixes, default ``[]``). A project matches when its
 project_id starts with any listed prefix. The key is read through the existing
 runtime config store, never a second config system:
@@ -46,6 +52,10 @@ EXTERNAL_LEDGER_ERROR = "external_task_ledger"
 #: Resolver signature: ``(key, directory, default) -> value``. The gate always
 #: passes ``None`` as the second argument: it reads the GLOBAL scope only.
 Resolver = Callable[[str, "str | None", Any], Any]
+
+#: Registry lookup: ``project_id -> True | False | None``. ``None`` means "no
+#: answer" and sends the gate to the prefix fallback.
+RegistryLookup = Callable[[str], "bool | None"]
 
 logger = logging.getLogger(__name__)
 
@@ -117,17 +127,68 @@ def _warn_malformed(raw: Any) -> None:
     )
 
 
-@observe(tier="stage", metric="core.task_ledger_gate.is_external")
-def is_external_ledger_project(project_id: str | None, resolver: Resolver) -> bool:
-    """True when ``project_id`` starts with a configured external-ledger prefix.
+@observe(tier="stage", metric="core.task_ledger_gate.mirror_registry")
+def mirror_registry(project_id: str) -> bool | None:
+    """The default registry lookup: the mirror the host SessionStart hook wrote.
 
-    No project, no read: an empty or absent project_id never matches, and the
-    resolver is not called for it.
+    Imported at call time so importing the gate stays cheap for the stop hook.
+    """
+    from yadgar.core.task_ledger_registry import read_mirror
+
+    return read_mirror(project_id)
+
+
+@observe(tier="stage", metric="core.task_ledger_gate.registry_answer")
+def _registry_answer(project_id: str, registry: RegistryLookup) -> bool | None:
+    """The registry's answer, or None when it has none or the lookup fails."""
+    try:
+        answer = registry(project_id)
+    except Exception:  # noqa: BLE001 — a registry lookup must never break SessionStart, the stop hook or task_write; no answer sends the gate to the prefix fallback
+        logger.warning(
+            "yaadgaar registry lookup failed for %s; using the prefix fallback",
+            project_id,
+            exc_info=True,
+        )
+        return None
+    return answer if isinstance(answer, bool) else None
+
+
+@observe(tier="stage", metric="core.task_ledger_gate.is_external")
+def is_external_ledger_project(
+    project_id: str | None, resolver: Resolver, registry: RegistryLookup = mirror_registry
+) -> bool:
+    """True when ``project_id``'s tasks live in yaadgaar (ledger 1803, ADR-1000).
+
+    The yaadgaar project registry decides. The configured prefixes decide only
+    when the registry has no answer for this project (no record yet, a fault).
+    Each decision logs one INFO line naming its source: ``registry`` or
+    ``fallback-prefix``.
+
+    No project, no read: an empty or absent project_id never matches, and
+    neither the registry nor the resolver is called for it.
     """
     if not isinstance(project_id, str) or not project_id:
         return False
+    answer = _registry_answer(project_id, registry)
+    if answer is not None:
+        _log_decision(project_id, "registry", answer)
+        return answer
     project = project_id.casefold()
-    return any(project.startswith(p) for p in external_ledger_prefixes(resolver))
+    external = any(project.startswith(p) for p in external_ledger_prefixes(resolver))
+    _log_decision(project_id, "fallback-prefix", external)
+    return external
+
+
+@observe(tier="stage", metric="core.task_ledger_gate.log_decision")
+def _log_decision(project_id: str, source: str, external: bool) -> None:
+    """One INFO line per decision, with the source as a structured field."""
+    logger.info(
+        "task ledger for %s: %s (decided by %s)",
+        project_id,
+        "yaadgaar" if external else "yadgar",
+        source,
+        extra={"project_id": project_id, "ledger_source": source, "external": external},
+    )
 
 
 @observe(exempt="pure f-string render of one constant line; no I/O, no branch, no error path")
