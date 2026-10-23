@@ -116,6 +116,39 @@ Replace `/HOOKS_DIR/` with the directory where you copied the hook scripts
 
 ---
 
+## SessionStart task-list seed
+
+`hook_runner.py session-start-context` (implemented in
+`yadgar/core/cli/hook.py`) writes the ledger's open tasks straight into the
+Claude Code task store, so `TaskList` is populated at zero model cost. The
+hook runs on the host, in the process Claude Code spawns, so it sees the
+client's environment.
+
+- **Trigger.** The payload carries `session_id`. The hook then sends `seed=1`.
+  The daemon returns `task_nudge` and `tasks` beside `text`. The opencode plugin
+  sends no `session_id`, so opencode gets the nudge inside `text` as before.
+- **Store dir.** `<CLAUDE_CONFIG_DIR or ~/.claude>/tasks/<list_id>/`.
+  `list_id` is `$CLAUDE_CODE_TASK_LIST_ID` when set, else `session_id`. This is
+  the same rule Claude Code uses for a named, shared task list. A list id that
+  is not a bare token (`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`) writes nothing.
+  The hook then prints the nudge.
+- **Idempotent.** A task id already on disk is left alone. A re-seed into a
+  non-empty dir adds only the missing ledger ids. `.highwatermark` is raised to
+  the top seeded id and never lowered.
+- **Fallback.** Any guard trip (unknown file format, non-empty `.lock`, bad id,
+  `YADGAR_HARNESS_SEED_DISABLED=1`) prints the hand-mirror nudge instead.
+- **Compact skips the seed.** On `source=compact` the daemon returns before it
+  builds the nudge or the rows. This is safe, because compaction keeps the
+  session id and the task dir. Measured 2026-10-23 on local transcripts: 52 of
+  52 `compact_boundary` records keep the same `sessionId` before and after, and
+  156 `SessionStart:compact` records carry the transcript's own id. The
+  Claude Code docs also say "Tasks persist across context compactions".
+- **Resume and fork are seeded.** The daemon reads `resume` as a known source
+  and coerces `fork` to `startup`. One measured `--resume` kept its session id
+  and its task dir (n=1). A fork gets a new id and a fresh dir.
+
+---
+
 ## InstructionsLoaded hook (v5.3.2)
 
 Fires when Claude Code loads a CLAUDE.md file. Throttled: only fires on

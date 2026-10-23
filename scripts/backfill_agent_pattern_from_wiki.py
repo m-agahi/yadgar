@@ -416,7 +416,12 @@ def _insert_one(*, row: dict) -> None:
             "content_hash": row["content_hash"],
             "meta": {"purpose": row.get("purpose"), "status": "active"},
         }
-    _forward_admin(op, payload)
+    reply = _forward_admin(op, payload)
+    # ``_forward_admin`` RETURNS refusals (``{"ok": False, "error": ...}``)
+    # instead of raising, so a dropped reply counted a refused insert as
+    # success. Raise: the caller's per-row handler tallies it as a failure.
+    if isinstance(reply, dict) and (reply.get("ok") is False or reply.get("error")):
+        raise RuntimeError(f"{op} failed: {reply.get('error') or reply.get('reason') or reply!r}")
 
 
 def _hash_mismatches(candidates: list[dict], existing: dict[str, dict[str, dict]]) -> list[dict]:

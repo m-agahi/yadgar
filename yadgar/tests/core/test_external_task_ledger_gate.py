@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -660,3 +661,77 @@ class TestRegistryEndToEnd:
         reg.mirror_registry_answer(_NEW_YADGARHQ)
 
         assert task_write(project_id=_NEW_YADGARHQ, title="new work") == {"ok": True, "id": 501}
+
+
+_SID = "11111111-2222-3333-4444-555555555555"
+
+
+@pytest.fixture
+def live_hook(config_value, session_context, tmp_path, monkeypatch):
+    """Drive the LIVE hook (``cli.hook.hook_session_start_context``) against the endpoint.
+
+    Only the yaadgaar record is written by the test. The hook mints (stubbed),
+    mirrors, and calls ``/hooks/session-context`` in-process; the harness seed
+    store is pinned under ``tmp_path`` (never the real ``~/.claude/tasks``).
+    """
+    import io
+    import json as _json
+
+    import yadgar.core.cli.hook as hk
+    from yadgar.core import task_ledger_registry as reg
+
+    home = tmp_path / "claude-home"
+    home.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    monkeypatch.delenv("YADGAR_HARNESS_SEED_DISABLED", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_TASK_LIST_ID", raising=False)
+    config_value["value"] = ["yadgarhq/"]
+
+    def _run(project: str) -> Path:
+        monkeypatch.setattr(
+            "yadgar.core.hooks._identity_mint.resolve_session_project",
+            lambda cwd: (project, f"yadgar: project_id={project}"),
+        )
+        mirrored_before_call: list = []
+
+        def _fake_get(path, params=None, timeout=2.0):
+            assert path == "/hooks/session-context"
+            # The mirror must already hold this session's answer when the
+            # daemon decides whether to hand back rows to seed.
+            mirrored_before_call.append(reg.read_mirror(project))
+            return session_context(params["project"], seed=params.get("seed") == "1")
+
+        monkeypatch.setattr(hk, "_http_get", _fake_get)
+        monkeypatch.setattr(
+            sys, "stdin", io.StringIO(_json.dumps({"cwd": str(tmp_path), "session_id": _SID}))
+        )
+        hk.hook_session_start_context()
+        _run.mirrored_before_call = mirrored_before_call  # type: ignore[attr-defined]
+        return home / "tasks" / _SID
+
+    return _run
+
+
+class TestLiveHookSeed:
+    """The live hook's harness seed is off for exactly the registry's set."""
+
+    def test_a_registered_project_gets_no_seed(self, live_hook, session_context, capsys):
+        _write_record(_REGISTERED_ELSEWHERE, True)
+
+        task_dir = live_hook(_REGISTERED_ELSEWHERE)
+
+        assert live_hook.mirrored_before_call == [True]
+        assert not task_dir.exists() or list(task_dir.glob("*.json")) == []
+        assert session_context.nudge_calls == []
+        out = capsys.readouterr().out
+        assert "Task list seeded from the ledger" not in out
+        assert f"Tasks for {_REGISTERED_ELSEWHERE} live in yaadgaar" in out
+
+    def test_an_unregistered_yadgarhq_project_is_seeded(self, live_hook, capsys):
+        _write_record(_NEW_YADGARHQ, False)
+
+        task_dir = live_hook(_NEW_YADGARHQ)
+
+        assert live_hook.mirrored_before_call == [False]
+        assert (task_dir / f"{_ROWS[0]['id']}.json").is_file()
+        assert "Task list seeded from the ledger" in capsys.readouterr().out

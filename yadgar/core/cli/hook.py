@@ -239,15 +239,47 @@ def _mirror_ledger_registry(project_id: str) -> None:
         return
 
 
+def _seed_or_nudge(session_id: str, result: dict) -> None:
+    """Seed the harness task store from the daemon's rows; print the nudge on failure.
+
+    ``task_nudge`` is present only when the daemon honoured ``seed=1``. A
+    partial seed counts as success: a short list beats one the model
+    duplicates by hand.
+    """
+    nudge = result.get("task_nudge", "")
+    if not nudge:
+        return
+    tasks = result.get("tasks") or []
+    ok = False
+    if tasks:
+        try:
+            from yadgar.core.hooks.task_seed import seed_harness_task_list
+
+            ok = bool(seed_harness_task_list(session_id, tasks).get("ok"))
+        except Exception:  # noqa: BLE001 — seeding must never brick SessionStart; the nudge is the fallback
+            ok = False
+    if ok:
+        print(
+            f"[yadgar] Task list seeded from the ledger "
+            f"({len(tasks)} open task(s)) — already in TaskList, do not re-create."
+        )
+    else:
+        print(nudge)
+
+
 def hook_session_start_context() -> None:
     """SessionStart — inject project context into Claude's conversation."""
     try:
         data = json.load(sys.stdin)
         cwd = data.get("cwd", os.getcwd())
         source = data.get("source", "")
+        # Names the harness task store to seed. Claude Code sends it; the
+        # opencode plugin does not, so opencode keeps the pre-seed shape.
+        session_id = data.get("session_id") or ""
     except (AttributeError, OSError, ValueError):  # fmt: skip
         cwd = os.getcwd()
         source = ""
+        session_id = ""
 
     params: dict = {"directory": cwd}
     project_id = _emit_project_id(cwd)
@@ -255,9 +287,15 @@ def hook_session_start_context() -> None:
         params["project"] = project_id
     if source:
         params["source"] = source
+    if session_id:
+        # Capability flag: the daemon returns the open task rows out of band
+        # and keeps the hand-mirror nudge out of ``text``.
+        params["seed"] = "1"
 
     result = _http_get("/hooks/session-context", params)
     if result:
+        if session_id:
+            _seed_or_nudge(session_id, result)
         text = result.get("text", "")
         if text:
             print(text)

@@ -264,7 +264,7 @@
 
             backendVersion = lib.mkOption {
               type = lib.types.str;
-              default = "5.87.8";
+              default = "5.88.0";
               description = "Container image tag for the yadgar-backend service.";
             };
 
