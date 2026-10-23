@@ -599,3 +599,60 @@ class TestRowsMatchTheCoreWritePath:
             },
         )
         assert sent[1][1]["meta"] == {"purpose": "A rule.", "status": "active"}
+
+
+class TestInsertOneRefusalEnvelope:
+    """``_forward_admin`` RETURNS (does not raise) ``{"ok": False, ...}`` refusals.
+
+    ``_insert_one`` used to drop the reply, so a refused insert counted as
+    ``rows_inserted`` and the run exited 0.
+    """
+
+    _ROW = {
+        "name": "x",
+        "body_slug": "agent-prompt-x",
+        "content_hash": "h",
+        "purpose": None,
+        "page_type": "agent_pattern",
+    }
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            {"ok": False, "error": "engine #2 not composed"},
+            {"ok": False, "refused": True, "reason": "x"},
+            {"error": "boom"},
+        ],
+    )
+    def test_insert_one_raises_on_failure_envelope(self, monkeypatch, reply):
+        import backfill_agent_pattern_from_wiki as mod
+
+        monkeypatch.setattr("yadgar.core.forward._forward_admin", lambda op, payload: reply)
+        with pytest.raises(RuntimeError):
+            mod._insert_one(row=self._ROW)
+
+    def test_insert_one_accepts_ok_envelope(self, monkeypatch):
+        import backfill_agent_pattern_from_wiki as mod
+
+        monkeypatch.setattr("yadgar.core.forward._forward_admin", lambda op, payload: {"ok": True})
+        mod._insert_one(row=self._ROW)
+
+    def test_refused_insert_counts_as_failed(self, monkeypatch):
+        wiki = [
+            {"slug": "agent-prompt-x", "content": "body", "page_type": "agent_pattern"},
+        ]
+
+        class _Storage:
+            def list_wiki_pages(self, **kw):
+                return wiki
+
+        def _fwd(op, payload):
+            if op == "list_agent_prompt_rows":
+                return {"ok": True, "rows": []}
+            return {"ok": False, "error": "refused"}
+
+        monkeypatch.setattr("yadgar.core.forward._forward_admin", _fwd)
+        result = backfill(_Storage(), apply_changes=True, page_type="agent_pattern")
+        assert result["rows_failed"] == 1
+        assert result["rows_inserted"] == 0
+        assert "refused" in result["flagged"][0]["error"]
