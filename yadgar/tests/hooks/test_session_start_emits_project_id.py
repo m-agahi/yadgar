@@ -73,6 +73,23 @@ def test_session_start_hook_emits_the_project_id_banner(capsys):
     )
 
 
+def test_session_start_hook_mirrors_the_yaadgaar_registry_answer():
+    """Ledger 1803: the script hook mirrors the registry record before the daemon call."""
+    from yadgar.core import task_ledger_registry as reg
+
+    record = reg.record_path("acme/widget")
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({"project": "acme/widget", "registered": True}))
+    with patch(
+        "yadgar.core.hooks._identity_mint.resolve_session_project",
+        return_value=("acme/widget", "yadgar: project_id=acme/widget"),
+    ):
+        hook_mod = _load_hook()
+        _run_hook(hook_mod, "/repo")
+
+    assert reg.read_mirror("acme/widget") is True
+
+
 def test_session_start_hook_passes_project_to_the_daemon():
     """The minted value travels to /hooks/session-context as ``project=``.
 

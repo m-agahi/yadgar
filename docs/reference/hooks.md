@@ -223,6 +223,46 @@ handle the team_inbox and docs/PLAN_* filtering.
 
 ---
 
+## External task ledger: the yaadgaar project registry
+
+Some projects keep their tasks in yaadgaar (`mcp__yaadgaar__*`). For them the
+yadgar task ledger is frozen: SessionStart prints one ledger line and seeds
+nothing, the stop-hook checkpoint has no task-list mirror step, and
+`task_write` refuses. The gate is `yadgar/core/task_ledger_gate.py`.
+
+The yaadgaar gateway's project registry decides which projects these are. The
+answer travels in two files (`yadgar/core/task_ledger_registry.py`):
+
+1. **Record (written by the yaadgaar client).** Its SessionStart hook asks the
+   gateway about the session's project and writes
+   `${YAADGAAR_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/yaadgaar}/registry/<key>.json`,
+   where `<key>` is `urllib.parse.quote(project.casefold(), safe="")`
+   (`acme/widget` → `acme%2Fwidget.json`). Body:
+   `{"project": "<key sent>", "registered": true|false, "checked_at": "<ISO-8601 UTC>", "client_version": "<x.y.z>"}`.
+   `registered: false` only on an explicit "the gateway registers no project"
+   answer. On a network, auth or gateway fault the client writes nothing. The
+   write is atomic (temp file + rename). The project key follows yadgar's mint
+   rule: `.yadgar/project-id`, else the `origin` remote.
+2. **Mirror (written by yadgar's host SessionStart hook).** After the mint, the
+   hook copies the record's answer into `external_ledger_registry.json` in the
+   yadgar data dir, which the daemon container mounts as `/data`. A missing
+   record removes the mirror entry.
+
+Every gate caller reads the mirror. A registry answer decides. No answer (no
+record yet, an unreadable or malformed record) sends the gate to the fallback:
+the global runtime config key `tasks.external_ledger_prefixes`. Each decision
+logs one INFO line from `yadgar.core.task_ledger_gate` with the structured
+field `ledger_source` set to `registry` or `fallback-prefix`.
+
+Claude Code runs SessionStart hooks in parallel, so the yaadgaar record can
+land after yadgar's hook has read it. A registry change can therefore reach the
+gate one session late. On a project's first session that means the prefix
+decides. The mirror file is read, changed and rewritten; two sessions that
+start at the same moment can lose one entry, which falls back to the prefix
+until the next session.
+
+---
+
 ## Environment variables
 
 | Variable | Default | Purpose |
