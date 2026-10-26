@@ -86,7 +86,7 @@
     },
     "yadgar/core/hooks/**": {
       "category": "generated",
-      "rationale": "standalone Claude Code hook scripts (pretooluse-router, stop/session-end/subagent capture): short-lived per-tool-call procs invoked by Claude Code, installed as dependency-optional global scripts whose observability import is best-effort (try/except ImportError); their spans cannot flush before the proc exits, so per-function tri-signal instrumentation is cosmetic per the obs-standard hooks/short-proc caveat (same class as hook_runner under core/scripts)."
+      "rationale": "standalone Claude Code hook scripts (stop/session-end/subagent capture): short-lived per-tool-call procs invoked by Claude Code, installed as dependency-optional global scripts whose observability import is best-effort (try/except ImportError); their spans cannot flush before the proc exits, so per-function tri-signal instrumentation is cosmetic per the obs-standard hooks/short-proc caveat (same class as hook_runner under core/scripts)."
     },
     "yadgar/core/export/**": {
       "category": "generated",

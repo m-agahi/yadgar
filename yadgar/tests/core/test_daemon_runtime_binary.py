@@ -718,8 +718,8 @@ def _literal_runtime_argv_heads(path: Path, *, root: Path | None = None) -> list
     """Return ``path:line`` for every argv LIST in *path* headed by a runtime binary.
 
     ``ast.List`` only — an ``ast.Tuple`` headed by "docker"/"podman" is never an
-    argv (``subprocess`` is always handed a list here); the two tuples in the repo
-    are a detection-candidate loop and a membership test in the PreToolUse router.
+    argv (``subprocess`` is always handed a list here); the tuple in the repo is
+    a detection-candidate loop.
     Keyed on every list node rather than only inline ``subprocess.run`` arguments,
     because ``build()`` / ``exec_in_container()`` bind their argv to a local first.
     """

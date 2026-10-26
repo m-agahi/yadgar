@@ -23,7 +23,8 @@ import pytest
 
 from yadgar.core.install.install_hooks_lib import install_hooks_impl
 
-#: Every hook event install_hooks_impl writes under ``scope=global``.
+#: Every hook event install_hooks_impl writes under ``scope=global``, plus
+#: PreToolUse, which it only touches to strip the retired router-guard entry.
 _ALL_EVENTS = [
     "PreCompact",
     "SessionStart",

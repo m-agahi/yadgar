@@ -21,7 +21,7 @@ from pathlib import Path
 
 from yadgar._shared.observability.observe import observe
 
-from ._hook_scripts import _copy_hook
+from ._hook_scripts import _RETIRED_ROUTER_BASENAME, _copy_hook
 from ._interpreter import _stable_python
 
 logger = logging.getLogger(__name__)
@@ -161,42 +161,55 @@ def _install_global_scripts(
     global_hooks_dir: Path,
     dry_run: bool,
     shebang_python: str | None = None,
-) -> tuple[Path, Path, Path]:
-    """Copy always-global hook scripts; return (stop_dst, session_end_dst, router_dst)."""
+) -> tuple[Path, Path]:
+    """Copy always-global hook scripts; return (stop_dst, session_end_dst)."""
     stop_dst = global_hooks_dir / _STOP_HOOK_BASENAME
     _copy_hook(package_hooks / "stop-memory-checkpoint.py", stop_dst, dry_run, shebang_python)
 
     session_end_dst = global_hooks_dir / _SESSION_END_HOOK_BASENAME
     _copy_hook(package_hooks / "session-end-capture.py", session_end_dst, dry_run, shebang_python)
 
-    # HOOKS train Car 1: standalone PreToolUse router-guard — subsumes the old
-    # db-lockdown-check.py and adds the git-commit-bypass / terraform-family /
-    # git-push-to-default guards. Not routed through hook_runner.py (keeps the
-    # deny path dependency-free + crash-isolated), same install-path class.
-    router_dst = global_hooks_dir / "yadgar-pretooluse-router.py"
-    _copy_hook(package_hooks / "pretooluse-router.py", router_dst, dry_run, shebang_python)
+    # #64: the db-lockdown orphan unlink + the non-prefixed vestige sweep live
+    # in the single `_sweep_stale_hook_scripts` helper, called from
+    # `install_hooks_impl` after the global scripts are copied.
 
-    if not dry_run:
-        # Seed the exceptions config create-if-absent — NEVER clobber (a
-        # reinstall must preserve user-added push_default_allowlist entries).
-        exceptions_dst = global_hooks_dir.parent / "yadgar-hook-exceptions.json"
-        if not exceptions_dst.exists():
-            exceptions_dst.write_text(
-                json.dumps(
-                    {
-                        "version": 1,
-                        "push_default_allowlist": ["nix", "ledger", "ostad"],
-                        "disabled_guards": [],
-                    },
-                    indent=2,
-                )
-                + "\n"
+    return stop_dst, session_end_dst
+
+
+@observe(tier="stage")
+def _strip_retired_router(hooks_config: dict) -> None:
+    """Drop the retired PreToolUse router-guard from *hooks_config*, foreign-preserving.
+
+    The engine shipped a PreToolUse agent guard until 2026-10-26 (Max's ruling:
+    yadgar is a memory system; the guard is harness-level control). A host that
+    ran an older install still carries its entry. This removes every hook whose
+    command names the router script, drops an entry that has no hook left, and
+    deletes the ``PreToolUse`` key when nothing remains. A foreign hook, also
+    one that shares an entry with the router, survives.
+    """
+    entries = hooks_config.get("PreToolUse")
+    if not isinstance(entries, list):
+        return
+    kept: list = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            kept.append(entry)
+            continue
+        hooks = [
+            hook
+            for hook in entry["hooks"]
+            if not (
+                isinstance(hook, dict) and _RETIRED_ROUTER_BASENAME in str(hook.get("command", ""))
             )
-        # #64: the db-lockdown orphan unlink + the non-prefixed vestige sweep now
-        # live in the single `_sweep_stale_hook_scripts` helper, called from
-        # `install_hooks_impl` after the global scripts are copied.
-
-    return stop_dst, session_end_dst, router_dst
+        ]
+        if len(hooks) == len(entry["hooks"]):
+            kept.append(entry)
+        elif hooks:
+            kept.append({**entry, "hooks": hooks})
+    if kept:
+        hooks_config["PreToolUse"] = kept
+    else:
+        del hooks_config["PreToolUse"]
 
 
 @observe(tier="stage")
@@ -204,19 +217,20 @@ def _build_core_hooks(
     hooks_config: dict,
     runner: str,
     env_block: dict,
-    router_dst: Path,
     python: str | None = None,
 ) -> None:
-    """Register the five core hook events, foreign-preserving (ADR-0161).
+    """Register the four core hook events, foreign-preserving (ADR-0161).
 
-    The five events (PreCompact, SessionStart, PostToolUse, UserPromptSubmit,
-    PreToolUse) used to be hard-replaced (``hooks_config[event] = [...]``), which
+    The four events (PreCompact, SessionStart, PostToolUse, UserPromptSubmit)
+    used to be hard-replaced (``hooks_config[event] = [...]``), which
     discarded any foreign entry a different tool had written under the same key.
     This now strips ONLY yadgar's own entries per event (via
     ``_replace_managed_entries``, keyed on the managed script basename) and
     appends the fresh yadgar entries, so foreign hooks (e.g. nix's
     ``plugins/cache/caveman`` SessionStart hook) survive. Idempotent across
-    reinstalls.
+    reinstalls. It also strips the retired PreToolUse router-guard entry an
+    older install left (``_strip_retired_router``); yadgar registers no
+    PreToolUse hook.
     """
 
     # Pin the python interpreter to a DURABLE path — settings.json carries
@@ -271,22 +285,7 @@ def _build_core_hooks(
         _runner_basename,
         [_runner_entry("prompt-recall")],
     )
-
-    # HOOKS train Car 1: direct-command entry (router-guard) so hookEventName is
-    # always emitted. Matcher covers Bash (G1-G4, all Bash-string guards) plus
-    # Edit/Write/NotebookEdit (G5: 2026-07-28 incident — an agent used Edit, not
-    # Bash, to add itself to push_default_allowlist in yadgar-hook-exceptions.json,
-    # pushed to master, then reverted the file to conceal it; the Bash-only
-    # matcher never even routed that Edit call to the guard). yadgar-managed
-    # identity here is the router script basename (NOT the runner), since
-    # PreToolUse dispatches the standalone router, not hook_runner.py.
-    router_cmd = f"{_python} {shlex.quote(str(router_dst))}"
-    _replace_managed_entries(
-        hooks_config,
-        "PreToolUse",
-        router_dst.name,
-        [_make_hook_entry(router_cmd, "Bash|Edit|Write|NotebookEdit", env_block)],
-    )
+    _strip_retired_router(hooks_config)
 
 
 @observe(tier="stage")
@@ -385,6 +384,9 @@ def _write_global_stop_hooks(
             global_settings = {}
     global_hooks = global_settings.get("hooks", {})
     _register_global_stop_hooks(global_hooks, stop_entry, session_end_entry)
+    # A project-scope install must also clear a router entry an older
+    # global-scope install left in the global settings.json.
+    _strip_retired_router(global_hooks)
     global_settings["hooks"] = global_hooks
     _atomic_write(global_claude_dir, global_settings_path, global_settings)
 

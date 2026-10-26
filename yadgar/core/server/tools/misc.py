@@ -456,8 +456,8 @@ def install_hooks(project_directory: str = "", scope: str = "project") -> dict:
 
     project_directory: The project root. Defaults to cwd.
     scope: "project" (default) writes hooks to project .claude/settings.json;
-           "global" writes SessionStart, PreCompact, PostToolUse, UserPromptSubmit,
-           and PreToolUse hooks to ~/.claude/settings.json and scripts to ~/.claude/hooks/.
+           "global" writes SessionStart, PreCompact, PostToolUse and UserPromptSubmit
+           hooks to ~/.claude/settings.json and scripts to ~/.claude/hooks/.
            Stop hook is always global regardless of scope.
     """
     from yadgar.core.install.install_hooks_lib import is_running_in_container

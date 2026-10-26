@@ -236,45 +236,34 @@ def test_load_settings_empty_file(tmp_path):
 
 def test_build_core_hooks_sets_required_events(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert "PreCompact" in cfg
     assert "SessionStart" in cfg
     assert "PostToolUse" in cfg
     assert "UserPromptSubmit" in cfg
-    assert "PreToolUse" in cfg
+    # The PreToolUse router-guard is retired: yadgar registers no PreToolUse hook.
+    assert "PreToolUse" not in cfg
 
 
 def test_build_core_hooks_session_start_has_two_entries(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert len(cfg["SessionStart"]) == 2
 
 
 def test_build_core_hooks_post_tool_use_has_two_entries(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert len(cfg["PostToolUse"]) == 2
-
-
-def test_build_core_hooks_pre_tool_use_matcher_covers_bash_and_edit_family(tmp_path):
-    runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
-    cfg: dict = {}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
-    assert cfg["PreToolUse"][0]["matcher"] == "Bash|Edit|Write|NotebookEdit"
 
 
 def test_build_core_hooks_runner_in_commands(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     # At least one command should reference the runner path
     all_commands = [
         entry["hooks"][0]["command"]
@@ -288,23 +277,21 @@ def test_build_core_hooks_runner_in_commands(tmp_path):
 def test_build_core_hooks_precompact_hook_is_async(tmp_path):
     """PreCompact inner hook must have async=True (fire-and-forget drain)."""
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert cfg["PreCompact"][0]["hooks"][0].get("async") is True
 
 
 def test_build_core_hooks_blocking_hooks_have_no_async_key(tmp_path):
-    """SessionStart, PostToolUse, UserPromptSubmit, PreToolUse must NOT have async key.
+    """SessionStart, PostToolUse, UserPromptSubmit must NOT have async key.
 
-    These events inject stdout (prompt-recall, session-start-context) or gate
-    execution (PreToolUse deny). Making them async would break injection/deny.
+    These events inject stdout (prompt-recall, session-start-context). Making
+    them async would break injection.
     """
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
-    blocking_events = ("SessionStart", "PostToolUse", "UserPromptSubmit", "PreToolUse")
+    _build_core_hooks(cfg, runner, {})
+    blocking_events = ("SessionStart", "PostToolUse", "UserPromptSubmit")
     for event in blocking_events:
         for entry in cfg.get(event, []):
             inner = entry.get("hooks", [{}])[0]
@@ -338,18 +325,16 @@ def _yadgar_marker_present(entries: list, marker: str) -> bool:
 
 def test_build_core_hooks_preserves_foreign_precompact(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {"PreCompact": [_foreign_entry()]}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert _has_foreign(cfg["PreCompact"]), "foreign PreCompact hook was clobbered"
     assert _yadgar_marker_present(cfg["PreCompact"], "pre-compact-drain")
 
 
 def test_build_core_hooks_preserves_foreign_session_start(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {"SessionStart": [_foreign_entry()]}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert _has_foreign(cfg["SessionStart"]), "foreign SessionStart (caveman) hook was clobbered"
     assert _yadgar_marker_present(cfg["SessionStart"], "session-start-context")
     assert _yadgar_marker_present(cfg["SessionStart"], "post-compact-rehydrate")
@@ -357,9 +342,8 @@ def test_build_core_hooks_preserves_foreign_session_start(tmp_path):
 
 def test_build_core_hooks_preserves_foreign_post_tool_use(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {"PostToolUse": [_foreign_entry()]}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert _has_foreign(cfg["PostToolUse"]), "foreign PostToolUse hook was clobbered"
     assert _yadgar_marker_present(cfg["PostToolUse"], "post-tool-capture")
     assert _yadgar_marker_present(cfg["PostToolUse"], "block-reflect")
@@ -367,21 +351,18 @@ def test_build_core_hooks_preserves_foreign_post_tool_use(tmp_path):
 
 def test_build_core_hooks_preserves_foreign_user_prompt_submit(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {"UserPromptSubmit": [_foreign_entry()]}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert _has_foreign(cfg["UserPromptSubmit"]), "foreign UserPromptSubmit hook was clobbered"
     assert _yadgar_marker_present(cfg["UserPromptSubmit"], "prompt-recall")
 
 
 def test_build_core_hooks_preserves_foreign_pre_tool_use(tmp_path):
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {"PreToolUse": [_foreign_entry(matcher="Bash")]}
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
     assert _has_foreign(cfg["PreToolUse"]), "foreign PreToolUse hook was clobbered"
-    # router marker = router_dst basename (db-lockdown.py in tests).
-    assert _yadgar_marker_present(cfg["PreToolUse"], "db-lockdown.py")
+    assert not _yadgar_marker_present(cfg["PreToolUse"], "yadgar-pretooluse-router.py")
 
 
 def test_build_core_hooks_foreign_preserved_is_idempotent(tmp_path):
@@ -391,7 +372,6 @@ def test_build_core_hooks_foreign_preserved_is_idempotent(tmp_path):
     but proves the strip-then-append marker round-trips with a foreign entry present).
     """
     runner = str(tmp_path / "hook_runner.py")
-    db_lockdown_dst = tmp_path / "db-lockdown.py"
     cfg: dict = {
         "PreCompact": [_foreign_entry()],
         "SessionStart": [_foreign_entry()],
@@ -399,14 +379,14 @@ def test_build_core_hooks_foreign_preserved_is_idempotent(tmp_path):
         "UserPromptSubmit": [_foreign_entry()],
         "PreToolUse": [_foreign_entry(matcher="Bash")],
     }
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
-    _build_core_hooks(cfg, runner, {}, db_lockdown_dst)
+    _build_core_hooks(cfg, runner, {})
+    _build_core_hooks(cfg, runner, {})
     # 1 foreign + N yadgar per event; no yadgar duplication on the second run.
     assert len(cfg["PreCompact"]) == 2
     assert len(cfg["SessionStart"]) == 3
     assert len(cfg["PostToolUse"]) == 3
     assert len(cfg["UserPromptSubmit"]) == 2
-    assert len(cfg["PreToolUse"]) == 2
+    assert len(cfg["PreToolUse"]) == 1  # foreign only: yadgar registers no PreToolUse hook
     for event in ("PreCompact", "SessionStart", "PostToolUse", "UserPromptSubmit", "PreToolUse"):
         assert _has_foreign(cfg[event]), f"foreign {event} hook lost after two installs"
 
@@ -655,6 +635,7 @@ _CANONICAL_SURFACE = (
     "_is_nix_symlink",
     "_sha256_file",
     "_sweep_stale_hook_scripts",
+    "_sweep_retired_router_script",
     # settings.json manipulation
     "_make_hook_entry",
     "_entry_command",

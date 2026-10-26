@@ -87,7 +87,6 @@
   "yadgar/core/daemon/system_metrics.py": 1,
   "yadgar/core/hooks/file-changed.py": 1,
   "yadgar/core/hooks/instructions-loaded.py": 1,
-  "yadgar/core/hooks/pretooluse-router.py": 2,
   "yadgar/core/hooks/session-start-context.py": 2,
   "yadgar/core/hooks/subagent-start.py": 1,
   "yadgar/core/server/_app.py": 11,

@@ -161,9 +161,11 @@ def test_reinstall_converges_zero_nonprefixed(tmp_path, monkeypatch):
     present = {p.name for p in hooks_dir.iterdir()}
     assert not (present & _MANAGED_NONPREFIXED), f"non-prefixed dupes after reinstall: {present}"
     assert "yadgar-db-lockdown-check.py" not in present
+    # The retired PreToolUse router-guard is no longer installed.
+    assert "yadgar-pretooluse-router.py" not in present
     # Managed set intact.
     assert "hook_runner.py" in present
-    assert "yadgar-pretooluse-router.py" in present
+    assert "yadgar-stop-memory-checkpoint.py" in present
 
 
 def test_packaged_sources_exist_for_all_managed_names():
