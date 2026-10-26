@@ -30,6 +30,11 @@ def _load_hook():
     spec = importlib.util.spec_from_file_location("_pretooluse_router_hook", _HOOK)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    # Protected mode is off for these tests: on a host where /etc/yaadgaar
+    # exists, the real protected file would otherwise replace the tmp configs
+    # they inject. Protected mode has its own tests
+    # (test_hook_router_protected_exceptions.py).
+    mod._protected_location = lambda: None
     return mod
 
 

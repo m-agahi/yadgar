@@ -45,6 +45,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 try:
     from yadgar._shared.observability.observe import observe
@@ -99,14 +100,8 @@ def _log(msg: str) -> None:
     sys.stderr.write(f"[yadgar-pretooluse-router] {msg}\n")
 
 
-def _read_config_bytes(p: Path) -> bytes | None:
-    """Read at most _MAX_CONFIG_BYTES from a REGULAR file; None when absent."""
-    try:
-        fd = os.open(p, _CONFIG_OPEN_FLAGS)
-    except FileNotFoundError:
-        return None
-    except OSError as exc:  # ELOOP (a symlink under O_NOFOLLOW), EACCES, EISDIR, ...
-        raise ConfigRejectedError(f"cannot open it ({exc.strerror or exc})") from exc
+def _read_open_fd(fd: int) -> bytes:
+    """At most _MAX_CONFIG_BYTES from the open *fd*, judged by fstat on that fd."""
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
@@ -126,8 +121,136 @@ def _read_config_bytes(p: Path) -> bytes | None:
         return b"".join(chunks)
     except OSError as exc:
         raise ConfigRejectedError(f"cannot read it ({exc.strerror or exc})") from exc
+
+
+def _read_config_bytes(p: Path) -> bytes | None:
+    """Read at most _MAX_CONFIG_BYTES from a REGULAR file; None when absent."""
+    try:
+        fd = os.open(p, _CONFIG_OPEN_FLAGS)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:  # ELOOP (a symlink under O_NOFOLLOW), EACCES, EISDIR, ...
+        raise ConfigRejectedError(f"cannot open it ({exc.strerror or exc})") from exc
+    try:
+        return _read_open_fd(fd)
     finally:
         os.close(fd)
+
+
+# --------------------------------------------------------------------------- #
+# Protected mode (ADR-1028, yaadgaar v0.1.31): one exceptions file for both guards
+# --------------------------------------------------------------------------- #
+# The home copy is writable by anything running as the user, an agent included.
+# When the protected DIRECTORY exists, its root-owned file is verified exactly as
+# yaadgaar verifies it and the home copy is ignored. absent (lstat → NotFound
+# only) → home copy; valid → protected file; invalid (anything else, a directory
+# without the file included) → no exception from either file. Path and uid are
+# FIXED: a configurable path is one an agent can redirect. Contract:
+# docs/reference/hooks.md § "PreToolUse hook exceptions file".
+
+
+class ProtectedLocation(NamedTuple):
+    """Where the protected exceptions file is, and whom to trust."""
+
+    anchor: str  # the first directory judged ("/" in production)
+    dirs: tuple[str, ...]  # directories between the anchor and the file, top down
+    file: str
+    trusted_uid: int  # the uid that must own every component
+    current_uid: int | None  # the uid this guard runs as; None when unknown
+
+
+# macOS's /etc is a symlink, which the walk refuses, so its real path is used.
+_PROTECTED_DIR = "/private/etc/yaadgaar" if sys.platform == "darwin" else "/etc/yaadgaar"
+_TRUSTED_UID = 0  # root: the one owner an agent running as the user cannot be
+_GROUP_OR_OTHER_WRITE = stat.S_IWGRP | stat.S_IWOTH
+_DIR_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
+def _protected_location() -> ProtectedLocation | None:
+    """The production location; None where there is no protected mode (not POSIX)."""
+    if os.name != "posix":
+        return None
+    return ProtectedLocation(
+        anchor="/",
+        dirs=tuple(_PROTECTED_DIR.strip("/").split("/")),
+        file=_HOOK_CONFIG_BASENAME,
+        trusted_uid=_TRUSTED_UID,
+        current_uid=os.geteuid(),
+    )
+
+
+def _judge(what: str, st: os.stat_result, trusted: int) -> None:
+    """One component: owned by *trusted* and not writable by group or others."""
+    if st.st_uid != trusted:
+        raise ConfigRejectedError(f"{what} is owned by uid {st.st_uid}, not uid {trusted}")
+    if st.st_mode & _GROUP_OR_OTHER_WRITE:
+        raise ConfigRejectedError(
+            f"{what} is writable by its group or by others (mode {st.st_mode & 0o7777:04o})"
+        )
+
+
+def _open_judged(name: str, flags: int, dir_fd: int | None, what: str, trusted: int) -> int:
+    """Open *name* (relative to *dir_fd*) refusing symlinks; judge the fd; return it."""
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except OSError as exc:  # ELOOP / EMLINK (symlink), ENOTDIR, EACCES, ENOENT, ...
+        raise ConfigRejectedError(
+            f"cannot open {what} ({exc.strerror or exc}); a symlink is refused"
+        ) from exc
+    try:
+        _judge(what, os.fstat(fd), trusted)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _walk_protected(location: ProtectedLocation) -> bytes:
+    """Judge each component from the anchor down (dir_fd chained), then read the file."""
+    trusted = location.trusted_uid
+    if location.current_uid is None:
+        raise ConfigRejectedError("the guard cannot tell which user it runs as")
+    if location.current_uid == trusted:
+        raise ConfigRejectedError(
+            f"the guard runs as uid {trusted}, which owns the protected tree and can write it"
+        )
+    what = location.anchor
+    fd = _open_judged(location.anchor, _DIR_OPEN_FLAGS, None, what, trusted)
+    try:
+        for name in location.dirs:
+            what = os.path.join(what, name)
+            child = _open_judged(name, _DIR_OPEN_FLAGS, fd, what, trusted)
+            os.close(fd)
+            fd = child
+        what = os.path.join(what, location.file)
+        ffd = _open_judged(location.file, _CONFIG_OPEN_FLAGS, fd, what, trusted)
+    finally:
+        os.close(fd)
+    try:
+        return _read_open_fd(ffd)
+    finally:
+        os.close(ffd)
+
+
+class Verified(NamedTuple):
+    state: str  # "absent" | "invalid" | "valid"
+    text: bytes = b""  # the file's bytes when valid
+    why: str = ""  # the reason when invalid
+
+
+def verify_protected(location: ProtectedLocation) -> Verified:
+    """Absent, invalid (with why) or valid (with the file's bytes) for *location*."""
+    pdir = os.path.join(location.anchor, *location.dirs)
+    try:
+        os.lstat(pdir)  # NOT followed: a symlink there, even dangling, is present
+    except FileNotFoundError:
+        return Verified("absent")
+    except OSError as exc:
+        return Verified("invalid", why=f"cannot inspect {pdir} ({exc.strerror or exc})")
+    try:
+        return Verified("valid", text=_walk_protected(location))
+    except ConfigRejectedError as exc:
+        return Verified("invalid", why=str(exc))
 
 
 def _parse_config(data: bytes) -> dict:
@@ -150,14 +273,28 @@ def _parse_config(data: bytes) -> dict:
 
 
 def load_config(path: Path | None = None) -> dict:
-    """Load the exceptions config. Absent → defaults; untrusted → defaults + notice.
+    """Load the exceptions config — the ONE reader every guard goes through.
+
+    Protected mode first (ADR-1028); the home copy (*path*) only when absent.
 
     Fail-closed (ledger 1567): a file that is not a regular file, is larger
     than 64 KiB, is not valid JSON, or holds a field of the wrong shape is
     ignored as a WHOLE — no field of it is honoured — so every guard stays on.
     """
-    p = path or _config_path()
     cfg = {key: list(val) if isinstance(val, list) else val for key, val in _DEFAULT_CONFIG.items()}
+    location = _protected_location()
+    if location is not None:
+        verified = verify_protected(location)
+        if verified.state == "invalid":
+            _log(f"protected exceptions file not trusted ({verified.why}); every guard stays on")
+            return cfg
+        if verified.state == "valid":
+            try:
+                cfg.update(_parse_config(verified.text))
+            except ConfigRejectedError as exc:
+                _log(f"ignoring the protected exceptions file: {exc}; every guard stays on")
+            return cfg
+    p = path or _config_path()
     try:
         data = _read_config_bytes(p)
         if data is None:

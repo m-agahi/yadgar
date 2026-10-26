@@ -263,6 +263,54 @@ until the next session.
 
 ---
 
+## PreToolUse hook exceptions file: one file for both guards
+
+The PreToolUse router (`yadgar-pretooluse-router.py`, source
+`yadgar/core/hooks/pretooluse-router.py`) and the yaadgaar pre-tool-guard read
+the same hook exceptions file. All router reads go through one loader,
+`load_config()`. Both call sites use it: `_decide_bash` (G1–G5) and
+`_decide_edit_family` (G5, Edit/Write/NotebookEdit).
+
+**Protected mode (ADR-1028, yaadgaar v0.1.31).** The home copy
+(`~/.claude/yadgar-hook-exceptions.json`) is writable by any process that runs
+as the user, an agent included. When the protected directory
+(`/etc/yaadgaar`, or `/private/etc/yaadgaar` on macOS) exists, the router uses
+the file in it and ignores the home copy. The router verifies that file the
+same way yaadgaar does:
+
+- The walk starts at `/`. Each directory is opened with
+  `O_DIRECTORY | O_NOFOLLOW`, relative to the fd of its parent, which has
+  already been judged. The file is opened with `O_NOFOLLOW | O_NONBLOCK`.
+- `fstat` on each open fd must show owner uid 0 and no `S_IWGRP` / `S_IWOTH`
+  bit. The file must be a regular file of at most 64 KiB, read from the same fd.
+- The guard must not run as uid 0. Root can write the file, so nothing would
+  protect it from root's agent.
+
+| Mode | When | What the router honours |
+|------|------|-------------------------|
+| absent | `lstat` on the protected directory gives NotFound (not followed) | The home copy, as before |
+| valid | Every check above passes and the JSON parses | The protected file only |
+| invalid | Anything else: the directory exists without the file, a symlink at any component, wrong owner, group/other-writable, a non-NotFound error, malformed JSON | No exception from either file: the built-in defaults, exactly as with no file at all. A warning goes to stderr |
+
+The path and the uid are fixed in code. The router reads no environment
+variable or setting to change them, because an agent could redirect one.
+
+**Schema.** One JSON object holds the keys of both guards. Neither reader
+rejects an unknown key. Both reject the whole file if the top level is not an
+object, or if `push_default_allowlist` or `disabled_guards` is not a list of
+strings.
+
+| Key | Read by | Values honoured |
+|-----|---------|-----------------|
+| `version` | neither (informational) | — |
+| `push_default_allowlist` | router (G3) | repo names; yaadgaar shape-checks it only |
+| `disabled_guards` | both | router: `git_commit_flags`, `terraform_family`, `git_push_default`, `db_lockdown`, `hook_config_tamper`. yaadgaar: `terraform_family`, `git_commit_flags`, `hook_config_tamper` |
+
+G5 (`hook_config_tamper`) still refuses agent writes to the home copy in
+protected mode.
+
+---
+
 ## Environment variables
 
 | Variable | Default | Purpose |
