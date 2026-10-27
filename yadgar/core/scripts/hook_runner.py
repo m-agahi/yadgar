@@ -10,7 +10,7 @@ present in the previous inline `python3 -c "..."` approach.
 Car 0 collapsed the two hook code paths into ONE implementation living in
 ``yadgar.core.cli.hook`` (the ``yadgar hook <event>`` CLI body). This module is
 now a shim: it re-exports that module's full surface (so external importers and
-the characterization test-suite that import ``hook_*`` / ``hook_db_lockdown_check``
+the characterization test-suite that import ``hook_*``
 from ``yadgar.core.scripts.hook_runner`` are byte-unaffected) and delegates
 ``main()`` to the shared dispatcher IN-PROCESS (no subprocess — same interpreter,
 same stdin, identical behavior).
@@ -35,7 +35,7 @@ import sys
 # ON THIS MODULE (`monkeypatch.setattr(hr, "_http_post", ...)`) — but the suite
 # was repointed at ``yadgar.core.cli.hook`` in Car 0, so the canonical patch
 # target is that module. These re-exports keep import-only back-compat
-# (`from yadgar.core.scripts.hook_runner import hook_db_lockdown_check`).
+# (`from yadgar.core.scripts.hook_runner import hook_block_reflect`).
 #
 # Car 9: `_AUTH_TOKEN` dropped from this list — it is no longer a module-level
 # constant on the impl module (resolve_auth_token() is now called inside
@@ -43,7 +43,6 @@ import sys
 # re-export under that name.
 from yadgar.core.cli.hook import (  # noqa: F401
     _BLOCK_REFLECT_TOOLS,
-    _BLOCKED_EXEC_PATTERNS,
     _HOOKS,
     _PORT,
     _auth_headers,
@@ -53,7 +52,6 @@ from yadgar.core.cli.hook import (  # noqa: F401
     _log_hook_error,
     dispatch,
     hook_block_reflect,
-    hook_db_lockdown_check,
     hook_post_compact_rehydrate,
     hook_post_tool_capture,
     hook_pre_compact_drain,
