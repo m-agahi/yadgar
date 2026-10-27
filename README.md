@@ -2,6 +2,8 @@
 
 <img src="docs/assets/yadgar.svg" alt="yadgar logo" width="320">
 
+[![yadgar](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fm-agahi%2Fyadgar%2Fmaster%2Fserver.json&query=%24.version&label=yadgar&color=blue&cacheSeconds=300)](https://github.com/m-agahi/yadgar/blob/master/server.json)
+[![yadgar-backend](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fm-agahi%2Fyadgar%2Fmaster%2Fserver.json&query=%24.backend_version&label=yadgar-backend&color=blue&cacheSeconds=300)](https://github.com/m-agahi/yadgar/blob/master/server.json)
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
