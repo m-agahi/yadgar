@@ -17,7 +17,6 @@ Coverage targets:
 - hook_post_compact_rehydrate: fallback on bad stdin
 - hook_pre_compact_drain: posts data
 - hook_prompt_recall: short prompt skipped, long prompt fires
-- hook_db_lockdown_check: allow + deny patterns
 - hook_block_reflect: only fires for block tools
 - main: unknown hook type exits 1
 """
@@ -496,37 +495,6 @@ def test_prompt_recall_degrades_silently_on_mint_failure(capsys):
         "a mint failure must never forward a guessed project"
     )
     assert "42" in capsys.readouterr().out, "the hook must still fire without project"
-
-
-# ── hook_db_lockdown_check ────────────────────────────────────────────────────
-
-
-def test_db_lockdown_check_allows_normal_command(capsys):
-    data = {"tool_input": {"command": "git status"}}
-    _run_hook_with_stdin(hr.hook_db_lockdown_check, data)
-    out = json.loads(capsys.readouterr().out)
-    assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
-
-
-def test_db_lockdown_check_denies_blocked_exec(capsys):
-    data = {"tool_input": {"command": "docker exec yadgar-backend bash"}}
-    _run_hook_with_stdin(hr.hook_db_lockdown_check, data)
-    out = json.loads(capsys.readouterr().out)
-    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-
-def test_db_lockdown_check_denies_yadgar_db(capsys):
-    data = {"tool_input": {"command": "docker exec yadgar-db surreal sql"}}
-    _run_hook_with_stdin(hr.hook_db_lockdown_check, data)
-    out = json.loads(capsys.readouterr().out)
-    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-
-def test_db_lockdown_check_allows_bad_json(capsys):
-    with patch("sys.stdin", io.StringIO("not json at all")):
-        hr.hook_db_lockdown_check()
-    out = json.loads(capsys.readouterr().out)
-    assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 # ── hook_block_reflect ────────────────────────────────────────────────────────

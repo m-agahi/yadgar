@@ -23,11 +23,9 @@ so the shim maps 1:1:
     prompt-recall           — UserPromptSubmit handler
     block-reflect           — PostToolUse memory-block re-inject
 
-``db-lockdown-check``'s ``hook_db_lockdown_check`` remains exported (imported by
-the PreToolUse-schema tests) but is NOT a ``yadgar hook`` event, and no
-installer registers it: yadgar wires no PreToolUse hook (the router-guard is
-retired). Stop lives in ``stop-memory-checkpoint.py``, which does not route
-through this dispatcher.
+yadgar wires no PreToolUse hook (the router-guard and the docker-exec lockdown
+guard are retired). Stop lives in ``stop-memory-checkpoint.py``, which does not
+route through this dispatcher.
 """
 
 from __future__ import annotations
@@ -481,49 +479,6 @@ def hook_prompt_recall() -> None:
                 print(msg, file=sys.stderr)
 
 
-_BLOCKED_EXEC_PATTERNS = (
-    "docker exec yadgar-backend",
-    "docker exec yadgar-db",
-)
-
-
-def hook_db_lockdown_check() -> None:
-    """PreToolUse (Bash) — block direct docker exec into yadgar containers.
-
-    Restored in v5.46.5: the standalone yadgar/hooks/db-lockdown-check.py
-    replaced this function in v5.20.0, but test_hook_runner_pretooluse_schema.py
-    still imports hook_db_lockdown_check from this module (B3 CI fix).
-    This function exports the same logic for test compatibility.
-    """
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):  # fmt: skip
-        print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
-        return
-
-    cmd = ""
-    tool_input = data.get("tool_input", {})
-    if isinstance(tool_input, dict):
-        cmd = tool_input.get("command", "")
-
-    for pattern in _BLOCKED_EXEC_PATTERNS:
-        if pattern in cmd:
-            print(
-                json.dumps(
-                    {
-                        "hookSpecificOutput": {"permissionDecision": "deny"},
-                        "systemMessage": (
-                            "Direct docker exec into yadgar DB/backend containers is blocked "
-                            "to prevent data corruption. Use yadgar MCP tools instead."
-                        ),
-                    }
-                )
-            )
-            return
-
-    print(json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}}))
-
-
 _BLOCK_REFLECT_TOOLS = frozenset(
     {
         "mcp__yadgar__block_create",
@@ -579,9 +534,6 @@ _HOOKS = {
     "pre-compact-drain": hook_pre_compact_drain,
     "prompt-recall": hook_prompt_recall,
     "block-reflect": hook_block_reflect,
-    # db-lockdown-check removed in v5.20.0 — migrated to standalone
-    # yadgar/hooks/db-lockdown-check.py, installed as
-    # ~/.claude/hooks/yadgar-db-lockdown-check.py by install_hooks.
 }
 
 

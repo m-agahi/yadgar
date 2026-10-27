@@ -111,14 +111,6 @@ SITES = [
         "server/http_bookmarks.py wiki-search limit int parse",
     ),
     (
-        # Car 0 (multi-client hooks) moved the hook handler bodies out of
-        # scripts/hook_runner.py into the shared cli/hook.py; the runner is now a
-        # thin re-export shim. The parenthesised-except site travelled with the code.
-        "yadgar/core/cli/hook.py",
-        "json.JSONDecodeError, ValueError",
-        "cli/hook.py hook_db_lockdown_check JSON parse",
-    ),
-    (
         "yadgar/tests/core/test_loop_heartbeats.py",
         "StopAsyncIteration, TimeoutError",
         "tests/test_loop_heartbeats.py SSE generator advance",

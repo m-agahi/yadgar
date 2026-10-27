@@ -5,7 +5,7 @@ After Car 0 collapsed the two hook code paths into ``yadgar.core.cli.hook``,
 settings.json entry (`hook_runner.py <event>`) depend on:
 
 1. The public + private handler surface staying importable from the shim path
-   (`from yadgar.core.scripts.hook_runner import hook_db_lockdown_check`, etc.).
+   (`from yadgar.core.scripts.hook_runner import hook_block_reflect`, etc.).
 2. The shim's ``main()`` delegating to the shared dispatcher IN-PROCESS (same
    interpreter, same stdin) — not a subprocess.
 3. Byte-identical dispatch behaviour: unknown event → exit 1; each of the 6
@@ -38,7 +38,6 @@ _REEXPORTED = [
     "hook_pre_compact_drain",
     "hook_prompt_recall",
     "hook_block_reflect",
-    "hook_db_lockdown_check",
 ]
 
 
