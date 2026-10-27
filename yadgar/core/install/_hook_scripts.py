@@ -123,9 +123,12 @@ def _sweep_stale_hook_scripts(
        bytes differ → survives). A nix-store SYMLINK is skipped (deleting it
        would fight home-manager).
 
-    2. The ``yadgar-db-lockdown-check.py`` orphan, superseded by the PreToolUse
-       router — an unconditional unlink (a ``yadgar-`` name, always ours;
-       settings.json no longer references it).
+    2. The ``yadgar-db-lockdown-check.py`` orphan, retired long ago — an
+       unconditional unlink (a ``yadgar-`` name, always ours; settings.json no
+       longer references it).
+
+    The retired PreToolUse router script is NOT swept here: this runs before
+    the settings write. See ``_sweep_retired_router_script``.
 
     Best-effort: any OSError per unlink is swallowed — a missing file or a perms
     error must never fail an install. No-op on dry_run.
@@ -149,9 +152,50 @@ def _sweep_stale_hook_scripts(
             candidate.unlink()
         except OSError:
             pass
-    # db-lockdown orphan — unconditional (yadgar- name, router subsumed it).
+    # db-lockdown orphan — unconditional (yadgar- name, retired).
     orphan = global_hooks_dir / "yadgar-db-lockdown-check.py"
     try:
         orphan.unlink()
+    except OSError:
+        pass
+
+
+# The retired PreToolUse router-guard (removed 2026-10-26: yadgar is a memory
+# system and the agent guard is harness-level control). Named once here because
+# two call sites must agree — ``_settings._strip_retired_router`` (which drops
+# its settings.json entry) and ``_sweep_retired_router_script`` (which deletes
+# the stale copy).
+_RETIRED_ROUTER_BASENAME = "yadgar-pretooluse-router.py"
+
+
+@observe(tier="stage")
+def _sweep_retired_router_script(global_claude_dir: Path, dry_run: bool) -> None:
+    """Delete the retired router script from ``<global_claude_dir>/hooks``.
+
+    Runs AFTER the settings writes. A PreToolUse registration that points at a
+    missing script fails closed and denies every Bash call (2026-07-13
+    incident), so the script stays while the global ``settings.json`` still
+    names it — for example when another tool re-registered it. A nix-store
+    symlink is never touched (deleting it would fight home-manager).
+
+    Best-effort: an OSError on read or delete leaves the file. No-op on dry_run.
+    """
+    if dry_run:
+        return
+    script = global_claude_dir / "hooks" / _RETIRED_ROUTER_BASENAME
+    if not script.exists() and not script.is_symlink():
+        return
+    if _is_nix_symlink(script):
+        return
+    try:
+        settings_text = (global_claude_dir / "settings.json").read_text()
+    except FileNotFoundError:
+        settings_text = ""
+    except OSError:
+        return
+    if _RETIRED_ROUTER_BASENAME in settings_text:
+        return
+    try:
+        script.unlink()
     except OSError:
         pass

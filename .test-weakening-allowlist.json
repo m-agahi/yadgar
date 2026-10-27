@@ -49,5 +49,20 @@
     "allowed_delta": -6,
     "allowed_strict_delta": -4,
     "rationale": "PINS-THE-DELETED-SUBJECT. Car K (ADR-0464): TestStalenessWatcherIntegration asserted detector.start()/stop()/is_running and scan_directory — the watchdog arm this car deleted as unreachable. Nothing else in the file changed."
+  },
+  "yadgar/tests/hooks/test_hook_pretooluse_router_unit.py": {
+    "allowed_delta": -122,
+    "allowed_strict_delta": -101,
+    "rationale": "PINS-THE-DELETED-SUBJECT. Ruling (Max, 2026-10-26): yadgar is a memory system and the PreToolUse agent guard is harness-level control, so the router-guard yadgar/core/hooks/pretooluse-router.py (G1-G5) is deleted. This module unit-tested only that script. Supersedes in effect ADR-0187 and ADR-1030."
+  },
+  "yadgar/tests/hooks/test_install_hooks_lib_module.py": {
+    "allowed_delta": -1,
+    "allowed_strict_delta": -1,
+    "rationale": "PINS-THE-DELETED-SUBJECT. test_build_core_hooks_pre_tool_use_matcher_covers_bash_and_edit_family asserted the matcher of the PreToolUse router-guard entry, which the installer no longer writes (router-guard removed 2026-10-26). The other _build_core_hooks tests now assert PreToolUse is absent."
+  },
+  "yadgar/tests/server/test_server.py": {
+    "allowed_delta": -3,
+    "allowed_strict_delta": -1,
+    "rationale": "PINS-THE-DELETED-SUBJECT. The install_hooks MCP test asserted the PreToolUse router-guard entry (matcher, standalone command, router basename). The router-guard is removed (2026-10-26); the test now asserts the core events are written and PreToolUse is absent."
   }
 }

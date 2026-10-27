@@ -126,7 +126,8 @@ def test_expected_set_is_harvested_from_the_installer(tmp_path):
     assert expected["PostToolUse"] == {"post-tool-capture", "block-reflect"}
     assert expected["PreCompact"] == {"pre-compact-drain"}
     assert expected["SessionStart"] == {"session-start-context", "post-compact-rehydrate"}
-    assert "pretooluse-router" in expected["PreToolUse"]
+    # The PreToolUse router-guard is retired: yadgar registers no PreToolUse hook.
+    assert "PreToolUse" not in expected
     assert "stop-memory-checkpoint" in expected["Stop"]
     assert "session-end-capture" in expected["SessionEnd"]
 
@@ -167,11 +168,20 @@ def test_nix_shaped_entry_counts_present_and_is_flagged_foreign(tmp_path):
 
 
 def test_standalone_scripts_are_not_foreign_when_shapes_agree(tmp_path):
-    """pretooluse-router is a standalone script in BOTH families — same shape,
-    so it must not be smeared as foreign just because nix wrote it."""
+    """stop-memory-checkpoint is a standalone script in BOTH families — same
+    shape, so it must not be smeared as foreign just because nix wrote it."""
     _write_global_settings(tmp_path, _nix_shaped_settings())
     report = verify_managed_hooks(home_dir=tmp_path)
-    assert "pretooluse-router" not in _names(report, "foreign")
+    assert "stop-memory-checkpoint" not in _names(report, "foreign")
+    assert "stop-memory-checkpoint" not in _names(report, "missing")
+
+
+def test_stale_router_wiring_is_reported_unexpected(tmp_path):
+    """A host that still wires the retired PreToolUse router-guard is told so:
+    the hook is wired but this yadgar no longer installs it."""
+    _write_global_settings(tmp_path, _nix_shaped_settings())
+    report = verify_managed_hooks(home_dir=tmp_path)
+    assert "pretooluse-router" in _names(report, "unexpected")
     assert "pretooluse-router" not in _names(report, "missing")
 
 

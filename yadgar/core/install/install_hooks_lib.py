@@ -42,6 +42,7 @@ from ._hook_scripts import (
     _copy_hook,
     _is_nix_symlink,
     _sha256_file,
+    _sweep_retired_router_script,
     _sweep_stale_hook_scripts,
 )
 from ._interpreter import (
@@ -108,6 +109,7 @@ __all__ = [
     "_resolve_scope_paths",
     "_sha256_file",
     "_stable_python",
+    "_sweep_retired_router_script",
     "_sweep_stale_hook_scripts",
     "_write_global_stop_hooks",
     "install_hooks_impl",
@@ -202,7 +204,7 @@ def install_hooks_impl(
     package_hooks = Path(__file__).parents[1] / "hooks"
 
     # Always-global scripts
-    stop_dst, session_end_dst, router_dst = _install_global_scripts(
+    stop_dst, session_end_dst = _install_global_scripts(
         package_hooks, global_hooks_dir, dry_run, _python_path
     )
 
@@ -228,7 +230,7 @@ def install_hooks_impl(
     hooks_config = settings_data.get("hooks", {})
 
     # Core hooks (always replaced)
-    _build_core_hooks(hooks_config, _runner, _env_block, router_dst, _python_path)
+    _build_core_hooks(hooks_config, _runner, _env_block, _python_path)
 
     # Append-if-absent hooks
     _install_append_hooks(package_hooks, hooks_dir, hooks_config, _env_block, dry_run, _python_path)
@@ -261,6 +263,11 @@ def install_hooks_impl(
     if scope == "project":
         _write_global_stop_hooks(global_claude_dir, _stop_entry, _session_end_entry)
 
+    # The retired PreToolUse router script goes only AFTER both settings writes
+    # have dropped its entry: a registration naming a missing script fails
+    # closed and denies every Bash call.
+    _sweep_retired_router_script(global_claude_dir, dry_run)
+
     global_settings_file = (
         str(settings_path) if scope == "global" else str(global_claude_dir / "settings.json")
     )
@@ -275,7 +282,6 @@ def install_hooks_impl(
             "SessionStart (compact restore)",
             "PostToolUse (auto-capture)",
             "UserPromptSubmit (auto-recall)",
-            "PreToolUse (router-guard)",
             "Stop (memory checkpoint — global)",
             "SessionEnd (sentinel capture — global)",
             "InstructionsLoaded (recall on CLAUDE.md load — append-if-absent)",

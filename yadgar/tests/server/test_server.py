@@ -452,27 +452,22 @@ def test_check_invariants_nonfixable_stays_in_violations():
 # to `install_client("claude-code", mcp=False, rules=False, hooks=True,
 # scope=scope, project_dir=project_directory, home_dir=Path.home(),
 # dry_run=False)`. The end-to-end behaviour is unchanged: settings.json
-# is written to the right path for the scope, the 5 hook types are
-# present, the PreToolUse routing goes through the standalone
-# yadgar-pretooluse-router.py (not the legacy hook_runner.py dispatcher).
+# is written to the right path for the scope and the core hook types are
+# present. The PreToolUse router-guard is retired (2026-10-26: yadgar is a
+# memory system, the agent guard is harness-level control), so no PreToolUse
+# entry is written.
 #
 # The 4 tests in this section that asserted the LEGACY return shape
 # (result["hooks_directory"], result["files"], result["status"] == "ok")
 # are now obsolete: the new MCP return is
 #   {status: "installed", scope, result: {client, mcp, rules, hooks: {path, content: None}, dry_run}}
 # The same behaviour (settings.json written with 5 hook types) is now
-# tested by the retained test below. The pre-existing `pretooluse_direct_command_not_dispatcher`
-# test is the load-bearing behavioural test — it checks the actual
-# written settings.json file (not the return shape) and is unchanged.
+# tested by the retained test below. It checks the actual written
+# settings.json file (not the return shape).
 
 
-def test_install_hooks_pretooluse_direct_command_not_dispatcher(tmp_path, monkeypatch):
-    """v5.20.0: PreToolUse hook uses standalone script, NOT hook_runner.py dispatcher.
-
-    The old wiring routed through hook_runner.py which emitted JSON missing
-    hookEventName, causing repeated PreToolUse validation errors in Claude Code 2026.
-    The new wiring calls yadgar-db-lockdown-check.py directly.
-    """
+def test_install_hooks_writes_core_hooks_and_no_pretooluse(tmp_path, monkeypatch):
+    """The MCP install_hooks tool writes the core hooks and no PreToolUse entry."""
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     from pathlib import Path as _Path
@@ -486,26 +481,9 @@ def test_install_hooks_pretooluse_direct_command_not_dispatcher(tmp_path, monkey
     data = json.loads(global_settings.read_text())
     hooks = data.get("hooks", {})
 
-    # PreToolUse must exist. ADR-0175 (guard G5) widened the matcher from "Bash"
-    # to also cover the file-write tools — an Edit call bypassed the router
-    # entirely while the matcher was Bash-only.
-    assert "PreToolUse" in hooks
-    pre_tool_entries = hooks["PreToolUse"]
-    assert len(pre_tool_entries) >= 1
-    entry = pre_tool_entries[0]
-    assert entry.get("matcher") == "Bash|Edit|Write|NotebookEdit"
-    cmd = entry["hooks"][0]["command"]
-
-    # Must NOT route through hook_runner.py dispatcher
-    assert "hook_runner.py" not in cmd, (
-        f"PreToolUse should use standalone script, not hook_runner.py dispatcher. Got: {cmd}"
-    )
-    # Must reference the yadgar-pretooluse-router.py standalone script.
-    # HOOKS train Car1 subsumed db-lockdown's docker-exec guard into the router
-    # (guard G4); PreToolUse now points at the router, still a standalone script.
-    assert "yadgar-pretooluse-router.py" in cmd, (
-        f"PreToolUse must reference yadgar-pretooluse-router.py. Got: {cmd}"
-    )
+    for event in ("PreCompact", "SessionStart", "PostToolUse", "UserPromptSubmit", "Stop"):
+        assert event in hooks, f"{event} missing from installed settings.json"
+    assert "PreToolUse" not in hooks, f"retired PreToolUse guard still wired: {hooks['PreToolUse']}"
 
 
 # Helpers that call the async list methods on FastMCP

@@ -56,12 +56,6 @@ Replace `/HOOKS_DIR/` with the directory where you copied the hook scripts
         "hooks": [{ "type": "command", "command": "python3 '/HOOKS_DIR/hook_runner.py' prompt-recall" }]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "python3 '/HOOKS_DIR/hook_runner.py' db-lockdown-check" }]
-      }
-    ],
     "SubagentStop": [
       {
         "matcher": "",
@@ -107,12 +101,19 @@ Replace `/HOOKS_DIR/` with the directory where you copied the hook scripts
 | `PreCompact` | `hook_runner.py pre-compact-drain` | Drain pending context before compaction |
 | `UserPromptSubmit` | `hook_runner.py prompt-recall` | Auto-recall relevant memories on every prompt |
 | `PostToolUse` | `hook_runner.py post-tool-capture` | Capture Write/Edit/Bash/Agent actions to action log |
-| `PreToolUse` | `hook_runner.py db-lockdown-check` | Block direct `docker exec` into yadgar DB containers |
 | `SubagentStop` | `yadgar-subagent-stop.py` | Extract `## Yadgar findings` bullets from agent reports |
 | `InstructionsLoaded` | `yadgar-instructions-loaded.py` | Inject recalled context when CLAUDE.md loads (v5.3.2) |
 | `SubagentStart` | `yadgar-subagent-start.py` | Pre-populate subagent context via recall at dispatch (v5.3.2) |
 | `FileChanged` | `yadgar-file-changed.py` | Mirror team_inbox JSONL → action_log; memorize PLAN_*.md changes (v5.3.6) |
 | `Stop` | `yadgar-stop-memory-checkpoint.py` | Persist session checkpoint on Claude Code exit |
+
+Yadgar registers no `PreToolUse` hook. The PreToolUse router-guard
+(`yadgar-pretooluse-router.py`) is retired: yadgar is a memory system, and an
+agent guard is harness-level control. `yadgar install --hooks` removes the
+router's `PreToolUse` entry from `settings.json` and keeps foreign entries.
+After that write, it deletes the stale script, unless the global
+`settings.json` still names the script or the script is a nix-store symlink. It never creates or
+deletes `~/.claude/yadgar-hook-exceptions.json`.
 
 ---
 

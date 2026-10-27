@@ -24,9 +24,10 @@ so the shim maps 1:1:
     block-reflect           — PostToolUse memory-block re-inject
 
 ``db-lockdown-check``'s ``hook_db_lockdown_check`` remains exported (imported by
-the PreToolUse-schema tests) but is NOT a ``yadgar hook`` event — the live
-PreToolUse guard is the standalone router, and Stop lives in
-``stop-memory-checkpoint.py`` (neither routes through this dispatcher).
+the PreToolUse-schema tests) but is NOT a ``yadgar hook`` event, and no
+installer registers it: yadgar wires no PreToolUse hook (the router-guard is
+retired). Stop lives in ``stop-memory-checkpoint.py``, which does not route
+through this dispatcher.
 """
 
 from __future__ import annotations
