@@ -184,19 +184,59 @@ def _normalise_remote(url: str) -> str:
 # ── .yadgar/project-id upward walk (§16.1) ─────────────────────────────────
 
 
+class MalformedProjectIdFileError(ValueError):
+    """A ``.yadgar/project-id`` file exists but does not hold exactly one id.
+
+    ADR-1131: the file is an operator's deliberate override, and since that
+    ADR the SessionStart hook REGISTERS what it reads. Using a malformed file
+    whole would register a key with a newline or a comment in it; skipping it
+    for the remote would silently swap the operator's key for another one.
+    Both are worse than an error, so the reader raises and names the file.
+    """
+
+    def __init__(self, path: Path, reason: str) -> None:
+        super().__init__(
+            f"malformed {path}: {reason}. The file must hold exactly one line: "
+            "the project id (owner/repo or local/<name>)"
+        )
+        self.path = path
+
+
+@observe(tier="stage", metric="core.identity._read_project_id_file")
+def _read_project_id_file(path: Path) -> str:
+    """Return the one project id in *path*, or raise ``MalformedProjectIdFileError``.
+
+    Surrounding whitespace and blank lines (a trailing newline) are allowed.
+    An empty file, more than one non-blank line, or a ``#`` comment line is not.
+    """
+    content = path.read_text(encoding="utf-8").strip()
+    if not content:
+        raise MalformedProjectIdFileError(path, "the file is empty")
+    lines = content.splitlines()
+    if len(lines) != 1:
+        raise MalformedProjectIdFileError(path, f"the file holds {len(lines)} lines")
+    if lines[0].startswith("#"):
+        raise MalformedProjectIdFileError(path, "the only line is a comment")
+    return lines[0]
+
+
 @observe(tier="stage", metric="core.identity._walk_project_id_file")
 def _walk_project_id_file(start: str) -> str | None:
     """Walk UP from *start* looking for ``.yadgar/project-id``.
 
-    Return the file's content (whitespace-trimmed), or ``None`` when no
+    Return the file's one id (whitespace-trimmed), or ``None`` when no
     file is found before the filesystem root. A file at any ancestor
     directory overrides remote derivation.
+
+    Raises:
+        MalformedProjectIdFileError: the nearest file is empty, holds more
+            than one line, or holds only a comment (ADR-1131).
     """
     p = Path(start).resolve()
     for candidate in (p, *p.parents):
         project_id_file = candidate / ".yadgar" / "project-id"
         if project_id_file.is_file():
-            return project_id_file.read_text(encoding="utf-8").strip()
+            return _read_project_id_file(project_id_file)
     return None
 
 

@@ -149,6 +149,30 @@ def test_mint_walks_up_for_the_project_id_file(tmp_path):
     assert mint_mod.mint_project_id(str(child)) == "monorepo/sub"
 
 
+def test_mint_fails_loud_on_a_malformed_project_id_file(tmp_path):
+    """ADR-1131 step 5: a malformed override never falls through to the remote.
+
+    Falling through would silently swap the operator's deliberate key for the
+    remote's, which is the opposite of what writing the file asked for.
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "remote", "add", "origin", "git@github.com:acme/widget.git"],
+        check=True,
+    )
+    (tmp_path / ".yadgar").mkdir()
+    path = tmp_path / ".yadgar" / "project-id"
+    path.write_text("# acme/widget\nacme/other\n")
+
+    with pytest.raises(mint_mod.UnresolvableProjectError) as excinfo:
+        mint_mod.mint_project_id(str(tmp_path))
+
+    assert str(path) in str(excinfo.value)
+    project_id, notice = mint_mod.resolve_session_project(str(tmp_path))
+    assert project_id is None
+    assert str(path) in notice
+
+
 def test_mint_derives_owner_repo_from_origin_remote(tmp_path):
     """origin → insteadOf-resolved → host stripped → ``.git`` stripped → lower."""
     config_output = "url.codeberg-agent:.insteadof git@codeberg.org:\n"

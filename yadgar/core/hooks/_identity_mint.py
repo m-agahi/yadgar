@@ -43,6 +43,7 @@ from __future__ import annotations
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.server_helpers.server_helpers import _resolve_project_root
 from yadgar.core.identity import (
+    MalformedProjectIdFileError,
     _insteadof_rules,
     _normalise_remote,
     _origin_remote,
@@ -77,11 +78,18 @@ def mint_project_id(cwd: str) -> str:
            lowercased. Nested namespaces are preserved as an opaque path.
 
     Raises:
-        UnresolvableProjectError: neither source resolved. The message names
+        UnresolvableProjectError: neither source resolved, or the
+            ``.yadgar/project-id`` file is malformed (ADR-1131: it names the
+            file and never falls through to the remote). The message names
             the directory and both remedies — a fail-loud error that does not
             say what to do is only marginally better than a silent fallback.
     """
-    override = _walk_project_id_file(cwd)
+    try:
+        override = _walk_project_id_file(cwd)
+    except MalformedProjectIdFileError as exc:
+        # ADR-1131: never fall through to the remote — the operator wrote the
+        # file to override it, so a broken file is an error, not an absence.
+        raise UnresolvableProjectError(f"cannot resolve a project_id for {cwd!r}: {exc}") from exc
     if override:
         return override
 

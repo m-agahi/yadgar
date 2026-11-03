@@ -780,6 +780,22 @@ def _isolate_yaml_config(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_project_register(monkeypatch):
+    """Stop the SessionStart hook from registering projects in the LIVE registry.
+
+    ADR-1131: ``_emit_project_id`` posts the minted id to the daemon on
+    127.0.0.1:8765. Many tests drive that function, and on a developer box the
+    real daemon is listening, so an unstubbed call would write a real registry
+    row. ``test_hook_project_register.py`` keeps its own reference to the real
+    function to test it with ``_http_post`` faked.
+    """
+    import yadgar.core.cli.hook as _hook
+
+    monkeypatch.setattr(_hook, "_register_minted_project", lambda project_id: None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_file_queue(tmp_path, monkeypatch):
     """Give each test its own file queue directory so queue items from one test
     cannot leak into another test's drain pass.

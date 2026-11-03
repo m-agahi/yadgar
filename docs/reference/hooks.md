@@ -224,6 +224,40 @@ handle the team_inbox and docs/PLAN_* filtering.
 
 ---
 
+## SessionStart project auto-registration
+
+The SessionStart hook (`yadgar hook session-start-context`, also run after
+compaction) mints the session's project id from `.yadgar/project-id` (walked up
+from the working directory) or else the `origin` remote. Since ADR-1131 it
+then makes sure the id has a row in the project registry, so a new repo works
+on its first session with no operator step:
+
+1. The hook checks the id with the shared shape guard
+   (`yadgar/core/project_registration.py::registrable_project_id_error`):
+   `owner/repo[/...]` or `local/<name>`, lowercase, no whitespace, at most 256
+   characters, not `global` / `unresolved` / `system`.
+2. It posts `{"project_id": "<id>"}` to the daemon route
+   `POST /hooks/project-register` with a 3-second timeout. The daemon answers
+   from its registry cache when the row exists. Otherwise it calls the backend
+   admin op `create_project_row` (`kind` is `local` for `local/...`, else
+   `git`). A duplicate is success.
+3. The banner shows one line only when something happened:
+   - `yadgar: registered new project <id>` for a new row;
+   - `[yadgar] WARNING: ...` when the guard rejects the id, the daemon is
+     unreachable, auth is refused, or the backend fails. The session continues.
+
+A `project=` value on any other tool call never creates a row. An unknown id
+there still fails with `unknown project_id: '<id>'`, and the message names the
+fix: `project_register("<id>")` (CLI: `yadgar project register <id>`), or a new
+session in the repo.
+
+**`.yadgar/project-id` format.** The file must hold exactly one non-blank line:
+the id. Surrounding whitespace and a trailing newline are fine. An empty file,
+two or more lines, or a `#` comment line is an error: the banner names the file,
+and the hook does not fall back to the `origin` remote.
+
+---
+
 ## External task ledger: the yaadgaar project registry
 
 Some projects keep their tasks in yaadgaar (`mcp__yaadgaar__*`). For them the

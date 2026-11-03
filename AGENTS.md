@@ -214,7 +214,7 @@ Three-layer split (ADR-0056/0060/0062/0063; import-linter enforced). Each layer 
 | `scripts/` | Pre-commit invariant checks + version sync |
 | `docs/` | Architecture, retrieval, configuration, hooks, benchmark, roadmap |
 
-87 MCP tools across memory, wiki, bookmarks, project, ops, ADR, agent-prompts (89 `@_tool` decorators under `yadgar/core/server/tools/`, minus the 2 test-only stubs in `_test_tools.py`; counted 2026-08-28). Categorized selection in `README.md § MCP tools`; the running server's tool catalog is the authority.
+88 MCP tools across memory, wiki, bookmarks, project, ops, ADR, agent-prompts (90 `@_tool` decorators under `yadgar/core/server/tools/`, minus the 2 test-only stubs in `_test_tools.py`; counted 2026-11-03). Categorized selection in `README.md § MCP tools`; the running server's tool catalog is the authority.
 
 ### Where does new code go?
 

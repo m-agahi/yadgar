@@ -204,6 +204,33 @@ def test_walk_project_id_file_trims_whitespace(tmp_path):
     assert identity._walk_project_id_file(str(tmp_path)) == "m-agahi/yadgar"
 
 
+@pytest.mark.parametrize(
+    ("content", "fragment"),
+    [
+        ("", "empty"),
+        ("   \n\n", "empty"),
+        ("owner/repo\nother/repo\n", "2 lines"),
+        ("# the project id\nowner/repo\n", "2 lines"),
+        ("# owner/repo\n", "comment"),
+    ],
+)
+def test_walk_project_id_file_rejects_malformed_content(tmp_path, content, fragment):
+    """ADR-1131 step 5: a malformed override fails loud and names the file.
+
+    It is never used whole (a multi-line file used to become a key with a
+    newline in it) and never silently skipped in favour of the remote.
+    """
+    (tmp_path / ".yadgar").mkdir()
+    path = tmp_path / ".yadgar" / "project-id"
+    path.write_text(content)
+
+    with pytest.raises(identity.MalformedProjectIdFileError) as excinfo:
+        identity._walk_project_id_file(str(tmp_path))
+
+    assert str(path) in str(excinfo.value)
+    assert fragment in str(excinfo.value)
+
+
 def test_walk_project_id_file_returns_none_when_absent(tmp_path):
     """No ``.yadgar/project-id`` anywhere up → caller falls through to remote."""
     child = tmp_path / "a" / "b" / "c"

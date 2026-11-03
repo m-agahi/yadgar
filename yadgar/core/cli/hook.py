@@ -190,7 +190,56 @@ def _emit_project_id(cwd: str) -> str | None:
     if notice:
         print(notice)
     _register_directory_identity(cwd, project_id)
+    if project_id:
+        try:
+            line = _register_minted_project(project_id)
+        except Exception as exc:  # noqa: BLE001 — registration must never brick SessionStart; the banner carries the failure
+            line = f"[yadgar] WARNING: could not auto-register project {project_id}: {exc}"
+        if line:
+            print(line)
     return project_id
+
+
+#: Bounded: SessionStart waits on this call. A cache hit in the daemon answers
+#: at once; a new row costs one backend INSERT.
+_REGISTER_TIMEOUT_S = 3.0
+
+
+def _register_minted_project(project_id: str) -> str | None:
+    """Create the registry row for the id this hook minted (ADR-1131).
+
+    Returns the one banner line to print, or ``None`` when there is nothing to
+    say (the row already existed). The hook posts to the daemon rather than the
+    backend: this host-side process has no backend URL, and the daemon owns the
+    registry cache a following ``memorize`` reads.
+
+    Never raises on a refusal or an unreachable daemon: those return a
+    ``WARNING`` line naming the manual fix, and the session continues.
+    """
+    from yadgar.core.project_registration import (
+        registrable_project_id_error,
+    )
+
+    shape_error = registrable_project_id_error(project_id)
+    if shape_error is not None:
+        return f"[yadgar] WARNING: project {project_id!r} was not auto-registered: {shape_error}."
+    result = _http_post(
+        "/hooks/project-register", {"project_id": project_id}, timeout=_REGISTER_TIMEOUT_S
+    )
+    if result is None:
+        return (
+            f"[yadgar] WARNING: could not auto-register project {project_id} (daemon "
+            "unreachable or request refused). If writes fail with unknown project_id, "
+            f'call project_register("{project_id}") once the daemon is up.'
+        )
+    if not result.get("ok"):
+        return (
+            f"[yadgar] WARNING: could not auto-register project {project_id}: "
+            f"{result.get('error', 'unknown error')}"
+        )
+    if result.get("created"):
+        return f"yadgar: registered new project {project_id}"
+    return None
 
 
 def _register_directory_identity(cwd: str, project_id: str | None) -> None:
