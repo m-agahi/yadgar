@@ -267,6 +267,9 @@ def test_mint_failure_notice_distinguishes_the_registry_failure(tmp_path):
     assert "yadgar project list" in text, (
         f"the notice must name the diagnostic for that other failure: {text!r}"
     )
+    # ADR-1131: and the fix for it — one register call, MCP or CLI.
+    assert 'project_register("<key>")' in text, text
+    assert "yadgar project register <key>" in text, text
 
 
 # ── 4. The package boundary (C15's residue lint, in embryo) ───────────────

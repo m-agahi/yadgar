@@ -200,46 +200,94 @@ def _emit_project_id(cwd: str) -> str | None:
     return project_id
 
 
-#: Bounded: SessionStart waits on this call. A cache hit in the daemon answers
-#: at once; a new row costs one backend INSERT.
+#: Bounded: SessionStart waits on this call. A warm daemon answers from its
+#: registry cache at once. A cold one can take far longer (a registry list,
+#: one forced re-list, one INSERT; up to 10 s each), and it keeps working after
+#: this hook gives up, so a timeout is reported as pending, not as a failure.
 _REGISTER_TIMEOUT_S = 3.0
+
+#: ``register_project``'s reason for a registry it could not consult at all
+#: (``yadgar.core.project_registration.REASON_REGISTRY_UNAVAILABLE``; repeated
+#: here so the host-side hook does not import the server graph). Writes are
+#: not blocked in that state, so the hook says nothing.
+_REASON_REGISTRY_UNAVAILABLE = "registry_unavailable"
+
+
+def _post_project_register(project_id: str) -> tuple[str, dict | None]:
+    """POST the minted id to the daemon. Returns ``(outcome, body)``.
+
+    ``outcome`` is ``"answered"`` (``body`` is the JSON answer), ``"timeout"``
+    (the daemon took the request and did not answer in time; it may still be
+    working on it) or ``"failed"`` (refused connection, HTTP error, bad JSON).
+
+    A separate helper rather than ``_http_post``: that one folds a timeout
+    into ``None`` with every other failure, and this caller must tell them
+    apart. A timeout reaches here in two shapes: a bare ``TimeoutError`` from
+    the response read, or a ``URLError`` wrapping one from the connect phase.
+    """
+    url = f"http://127.0.0.1:{_PORT}/hooks/project-register"
+    data = json.dumps({"project_id": project_id}).encode()
+    headers = {"Content-Type": "application/json", **_auth_headers()}
+    try:
+        req = urllib.request.Request(url, data=data, headers=headers)
+        with contextlib.closing(urllib.request.urlopen(req, timeout=_REGISTER_TIMEOUT_S)) as resp:
+            body = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        e.close()
+        return "failed", None
+    except urllib.error.URLError as e:
+        return ("timeout" if isinstance(e.reason, TimeoutError) else "failed"), None
+    except TimeoutError:
+        return "timeout", None
+    except (OSError, ValueError):  # fmt: skip
+        return "failed", None
+    return "answered", body if isinstance(body, dict) else None
 
 
 def _register_minted_project(project_id: str) -> str | None:
     """Create the registry row for the id this hook minted (ADR-1131).
 
     Returns the one banner line to print, or ``None`` when there is nothing to
-    say (the row already existed). The hook posts to the daemon rather than the
-    backend: this host-side process has no backend URL, and the daemon owns the
-    registry cache a following ``memorize`` reads.
+    say. The hook posts to the daemon rather than the backend: this host-side
+    process has no backend URL, and the daemon owns the registry cache a
+    following ``memorize`` reads.
 
-    Never raises on a refusal or an unreachable daemon: those return a
-    ``WARNING`` line naming the manual fix, and the session continues.
+    The hook sends the raw id and runs no shape guard of its own: only the
+    daemon knows whether the id is already registered, and an existing row is
+    success even when it would fail the guard a new row must pass.
+
+    Never raises. Banner lines:
+
+    * a new row: ``yadgar: registered new project <id>``;
+    * the row already existed, or the registry cannot be consulted (no engine
+      #2): nothing;
+    * timeout: a neutral "still pending" line, because the daemon may still
+      create the row;
+    * daemon unreachable, a guard rejection or a backend failure: one
+      ``WARNING`` line naming the manual fix.
     """
-    from yadgar.core.project_registration import (
-        registrable_project_id_error,
-    )
-
-    shape_error = registrable_project_id_error(project_id)
-    if shape_error is not None:
-        return f"[yadgar] WARNING: project {project_id!r} was not auto-registered: {shape_error}."
-    result = _http_post(
-        "/hooks/project-register", {"project_id": project_id}, timeout=_REGISTER_TIMEOUT_S
-    )
+    outcome, result = _post_project_register(project_id)
+    if outcome == "timeout":
+        return (
+            f"yadgar: project registration for {project_id} still pending; "
+            "check `yadgar project list`"
+        )
     if result is None:
         return (
             f"[yadgar] WARNING: could not auto-register project {project_id} (daemon "
             "unreachable or request refused). If writes fail with unknown project_id, "
             f'call project_register("{project_id}") once the daemon is up.'
         )
-    if not result.get("ok"):
-        return (
-            f"[yadgar] WARNING: could not auto-register project {project_id}: "
-            f"{result.get('error', 'unknown error')}"
-        )
-    if result.get("created"):
-        return f"yadgar: registered new project {project_id}"
-    return None
+    if result.get("ok"):
+        if result.get("created"):
+            return f"yadgar: registered new project {project_id}"
+        return None
+    if result.get("reason") == _REASON_REGISTRY_UNAVAILABLE:
+        return None
+    return (
+        f"[yadgar] WARNING: could not auto-register project {project_id}: "
+        f"{result.get('error', 'unknown error')}"
+    )
 
 
 def _register_directory_identity(cwd: str, project_id: str | None) -> None:

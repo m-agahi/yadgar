@@ -84,10 +84,19 @@ class _FakeAdmin:
 
 @pytest.fixture
 def registry(monkeypatch):
-    """A fake registry key set; ``state['keys']`` is what the cache answers."""
-    state: dict = {"keys": frozenset(), "invalidated": 0}
+    """A fake registry key set.
+
+    ``state['keys']`` is what the cache answers; ``state['fresh_keys']``, when
+    set, is what a ``refresh=True`` fetch answers instead (a row another
+    process registered after the cache was filled). ``state['refreshes']``
+    counts the forced fetches.
+    """
+    state: dict = {"keys": frozenset(), "invalidated": 0, "refreshes": 0}
 
     def _known(*, refresh: bool = False):
+        if refresh:
+            state["refreshes"] += 1
+            return state.get("fresh_keys", state["keys"])
         return state["keys"]
 
     def _invalidate():
@@ -132,6 +141,48 @@ def test_register_known_id_is_success_without_an_insert(monkeypatch, registry):
     out = pr.register_project("m-agahi/yadgar")
 
     assert out == {"ok": True, "project_id": "m-agahi/yadgar", "created": False}
+    assert fake.calls == []
+
+
+def test_register_known_id_skips_the_guard(monkeypatch, registry):
+    """A row seeded before the guard existed is success, not a guard warning.
+
+    The guard decides what may ENTER the registry. Run before the membership
+    check, it would fail an existing key on every SessionStart.
+    """
+    registry["keys"] = frozenset({"Legacy/Key"})
+    fake = _patch_admin(monkeypatch, _FakeAdmin({"ok": True}))
+
+    out = pr.register_project("Legacy/Key")
+
+    assert out == {"ok": True, "project_id": "Legacy/Key", "created": False}
+    assert fake.calls == []
+
+
+def test_register_stale_cache_miss_refreshes_before_creating(monkeypatch, registry):
+    """A cache filled before another process registered the row is re-fetched once."""
+    registry["keys"] = frozenset()
+    registry["fresh_keys"] = frozenset({"quinyx/daneel"})
+    fake = _patch_admin(monkeypatch, _FakeAdmin({"ok": True}))
+
+    out = pr.register_project("quinyx/daneel")
+
+    assert out == {"ok": True, "project_id": "quinyx/daneel", "created": False}
+    assert registry["refreshes"] == 1
+    assert fake.calls == []
+
+
+def test_register_unconsultable_registry_reports_unavailable(monkeypatch, registry):
+    """No engine #2 (or no backend): a reason code, and no INSERT attempt."""
+    registry["keys"] = None
+    fake = _patch_admin(monkeypatch, _FakeAdmin({"ok": True}))
+
+    out = pr.register_project("quinyx/daneel")
+
+    assert out["ok"] is False
+    assert out["created"] is False
+    assert out["reason"] == pr.REASON_REGISTRY_UNAVAILABLE == "registry_unavailable"
+    assert registry["refreshes"] == 1
     assert fake.calls == []
 
 

@@ -153,7 +153,9 @@ def mint_failure_notice(cwd: str, reason: str) -> str:
         "[yadgar] A DIFFERENT failure looks similar but is not this one: if an "
         'identity IS present and calls answer "unknown project_id", the mint '
         "worked and the project registry has no row — diagnose with "
-        "`yadgar project list`, not with the fix above."
+        "`yadgar project list`, then register the minted key with "
+        '`project_register("<key>")` (MCP) or `yadgar project register <key>` '
+        "(CLI), not with the fix above."
     )
 
 

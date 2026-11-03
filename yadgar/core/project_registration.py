@@ -12,15 +12,17 @@ A ``project=`` on any other tool call never creates a row: the create gate
 (``core/server/tools/_project_registry.assert_project_registered_for_create``)
 still raises ``UnknownProjectError`` for it (ADR-0231).
 
-Both sources pass the same shape guard, ``registrable_project_id_error``. It
-is stricter than the WRITE-side ``project_id_value_error`` on purpose: that
+Both sources reach ``register_project`` and pass the same shape guard,
+``registrable_project_id_error``, on the CREATE path only: an id already in
+the registry is success without the guard. The guard is stricter than the WRITE-side ``project_id_value_error`` on purpose: that
 one only refuses sentinels, because the registry decides membership; this one
 decides what may ENTER the registry, so a free-text value such as
 ``"debugging opsecrets nixos-quinyx"`` (seen as a stored ``directory_context``)
 can never become a namespace.
 
-The module is light at import time (stdlib + one ``_shared`` frozenset) so the
-host-side hook can import the guard without pulling in the server graph.
+The guard runs daemon-side only. The hook posts the raw minted id and lets
+the daemon decide, because only the daemon knows whether the id is already
+registered.
 """
 
 from __future__ import annotations
@@ -75,11 +77,38 @@ def registrable_project_id_error(value: object) -> str | None:
 
 
 @observe(exempt="pure dict builder for the result envelope; no I/O, no storage access")
-def _result(project_id: str, *, ok: bool, created: bool, error: str = "") -> dict[str, Any]:
+def _result(
+    project_id: str, *, ok: bool, created: bool, error: str = "", reason: str = ""
+) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": ok, "project_id": project_id, "created": created}
     if error:
         out["error"] = error
+    if reason:
+        out["reason"] = reason
     return out
+
+
+#: ``reason`` on a result whose registry could not be consulted at all (no
+#: engine #2, no backend URL, backend down). Not a verdict on the id: the
+#: write-side gate degrades the same way and still accepts writes, so the
+#: SessionStart hook stays quiet on it rather than warn every session.
+REASON_REGISTRY_UNAVAILABLE = "registry_unavailable"
+
+
+@observe(tier="stage", metric="core.project_registration.registered_keys")
+def _registered_keys(project_id: str) -> frozenset[str] | None:
+    """The registry key set, re-fetched once when *project_id* is not in the cache.
+
+    The same miss-then-refresh rule as ``assert_project_registered_for_create``:
+    a cache filled before another process registered the row must not send an
+    existing key on to the create path. ``None``: the registry is unconsultable.
+    """
+    from yadgar.core.server.tools import _project_registry
+
+    keys = _project_registry.known_project_ids()
+    if keys is None or project_id not in keys:
+        keys = _project_registry.known_project_ids(refresh=True)
+    return keys
 
 
 @observe(tier="boundary", metric="core.project_registration.register_project")
@@ -87,13 +116,47 @@ def register_project(project_id: str, display_name: str | None = None) -> dict[s
     """Create the registry row for *project_id* if it is absent. Idempotent.
 
     Returns ``{"ok", "project_id", "created"}`` and, when ``ok`` is False,
-    ``"error"``. An id already registered is ``ok`` with ``created: False``;
-    so is a ``DuplicateProjectError`` from a concurrent registration. Never
-    raises: both callers (a hook route and a tool) want an envelope.
+    ``"error"`` (plus ``"reason"`` when one applies). Never raises: both
+    callers (a hook route and a tool) want an envelope.
+
+    Order matters:
+
+    1. An id already in the registry is ``ok`` with ``created: False`` — before
+       the shape guard. The guard decides what may ENTER the registry; a row
+       that is already there (seeded before the guard existed) must not turn
+       into a warning on every session start.
+    2. A registry that cannot be consulted is ``ok: False`` with ``reason:
+       "registry_unavailable"`` and no INSERT attempt.
+    3. Only a CREATE passes the shape guard and the ``display_name`` width check.
+
+    A ``DuplicateProjectError`` from a concurrent registration is ``ok`` with
+    ``created: False``.
     """
+    if not isinstance(project_id, str) or not project_id:
+        return _result(
+            str(project_id),
+            ok=False,
+            created=False,
+            error=str(registrable_project_id_error(project_id)),
+        )
+
+    from yadgar.core.server.tools import _project_registry
+
+    keys = _registered_keys(project_id)
+    if keys is None:
+        return _result(
+            project_id,
+            ok=False,
+            created=False,
+            error="project registry unavailable (no engine #2, or the backend is unreachable)",
+            reason=REASON_REGISTRY_UNAVAILABLE,
+        )
+    if project_id in keys:
+        return _result(project_id, ok=True, created=False)
+
     shape_error = registrable_project_id_error(project_id)
     if shape_error is not None:
-        return _result(str(project_id), ok=False, created=False, error=shape_error)
+        return _result(project_id, ok=False, created=False, error=shape_error)
     if display_name is not None and len(display_name) > DISPLAY_NAME_MAX_CHARS:
         return _result(
             project_id,
@@ -104,13 +167,6 @@ def register_project(project_id: str, display_name: str | None = None) -> dict[s
         )
 
     from yadgar.core.cli.project import infer_kind, is_duplicate_project_error
-    from yadgar.core.server.tools import _project_registry
-
-    # Steady state: the hook calls this on every session start, so a cached
-    # hit answers without an INSERT that would only end in a 409.
-    keys = _project_registry.known_project_ids()
-    if keys is not None and project_id in keys:
-        return _result(project_id, ok=True, created=False)
 
     payload: dict[str, Any] = {"key": project_id, "kind": infer_kind(project_id)}
     if display_name:
@@ -140,6 +196,7 @@ def register_project(project_id: str, display_name: str | None = None) -> dict[s
 __all__ = [
     "DISPLAY_NAME_MAX_CHARS",
     "PROJECT_KEY_MAX_CHARS",
+    "REASON_REGISTRY_UNAVAILABLE",
     "register_project",
     "registrable_project_id_error",
 ]

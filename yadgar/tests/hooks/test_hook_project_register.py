@@ -2,16 +2,22 @@
 
 ``_emit_project_id`` (``yadgar.core.cli.hook``) mints, prints the identity
 banner, then asks the daemon to create the registry row if absent. A new row
-prints one banner line; a duplicate is silent; any failure prints one warning
-line and the session continues.
+prints one banner line; a duplicate or an unconsultable registry is silent; a
+timeout prints a neutral "still pending" line; any other failure prints one
+warning line and the session continues.
 
 SAFETY: the root conftest replaces ``_register_minted_project`` with a no-op
 for every test, so no test can reach the live daemon. This module keeps a
 reference to the REAL function (bound at import, before the fixture runs) and
-drives it with ``_http_post`` faked.
+drives it with ``_post_project_register`` faked, or with ``urlopen`` faked to
+test ``_post_project_register`` itself.
 """
 
 from __future__ import annotations
+
+import email.message
+import io
+import urllib.error
 
 import pytest
 
@@ -22,14 +28,17 @@ _REAL_REGISTER = hk._register_minted_project
 
 @pytest.fixture
 def posts(monkeypatch):
-    """Fake ``_http_post``; ``state['answer']`` is what the daemon returns."""
-    state: dict = {"calls": [], "answer": None}
+    """Fake ``_post_project_register``.
 
-    def _fake_post(path, payload, timeout=1.0):
-        state["calls"].append((path, dict(payload), timeout))
-        return state["answer"]
+    ``state['outcome']`` / ``state['answer']`` are what the helper returns.
+    """
+    state: dict = {"calls": [], "outcome": "answered", "answer": None}
 
-    monkeypatch.setattr(hk, "_http_post", _fake_post)
+    def _fake_post(project_id):
+        state["calls"].append(project_id)
+        return state["outcome"], state["answer"]
+
+    monkeypatch.setattr(hk, "_post_project_register", _fake_post)
     return state
 
 
@@ -39,11 +48,7 @@ def test_new_project_prints_the_registered_line(posts):
     line = _REAL_REGISTER("quinyx/daneel")
 
     assert line == "yadgar: registered new project quinyx/daneel"
-    assert len(posts["calls"]) == 1
-    path, payload, timeout = posts["calls"][0]
-    assert path == "/hooks/project-register"
-    assert payload == {"project_id": "quinyx/daneel"}
-    assert timeout <= 3.0
+    assert posts["calls"] == ["quinyx/daneel"]
 
 
 def test_duplicate_is_silent(posts):
@@ -53,7 +58,7 @@ def test_duplicate_is_silent(posts):
 
 
 def test_daemon_unreachable_warns_and_names_the_fix(posts):
-    posts["answer"] = None  # _http_post: connection refused, 401, 5xx, timeout
+    posts["outcome"], posts["answer"] = "failed", None  # refused, 401, 5xx, bad JSON
 
     line = _REAL_REGISTER("quinyx/daneel")
 
@@ -63,28 +68,138 @@ def test_daemon_unreachable_warns_and_names_the_fix(posts):
     assert 'project_register("quinyx/daneel")' in line
 
 
-def test_backend_refusal_warns_with_its_reason(posts):
+def test_timeout_is_a_neutral_pending_line_not_a_failure(posts):
+    """The daemon keeps working after the hook gives up, so the row may land."""
+    posts["outcome"], posts["answer"] = "timeout", None
+
+    line = _REAL_REGISTER("quinyx/daneel")
+
+    assert line == (
+        "yadgar: project registration for quinyx/daneel still pending; check `yadgar project list`"
+    )
+    assert "WARNING" not in line
+    assert "could not" not in line
+
+
+def test_registry_unavailable_is_silent(posts):
+    """No engine #2: writes are not blocked, so a per-session warning is noise."""
     posts["answer"] = {
         "ok": False,
         "project_id": "quinyx/daneel",
         "created": False,
-        "error": "engine #2 not composed",
+        "reason": "registry_unavailable",
+        "error": "project registry unavailable",
+    }
+
+    assert _REAL_REGISTER("quinyx/daneel") is None
+
+
+def test_backend_create_failure_warns_with_its_reason(posts):
+    posts["answer"] = {
+        "ok": False,
+        "project_id": "quinyx/daneel",
+        "created": False,
+        "error": "Data too long for column 'key'",
     }
 
     line = _REAL_REGISTER("quinyx/daneel")
 
     assert line is not None
     assert "WARNING" in line
-    assert "engine #2 not composed" in line
+    assert "Data too long" in line
 
 
-def test_guard_reject_warns_without_a_daemon_call(posts):
+def test_hook_sends_the_raw_id_and_lets_the_daemon_guard_it(posts):
+    """No hook-side guard: an id already registered must be able to come back
+    ``created: False`` even when it would fail the create-path guard."""
+    posts["answer"] = {"ok": True, "project_id": "Legacy/Key", "created": False}
+
+    assert _REAL_REGISTER("Legacy/Key") is None
+    assert posts["calls"] == ["Legacy/Key"]
+
+
+def test_daemon_guard_reject_warns_with_its_reason(posts):
+    posts["answer"] = {
+        "ok": False,
+        "project_id": "Quinyx/Daneel",
+        "created": False,
+        "error": "project_id 'Quinyx/Daneel' must be lowercase",
+    }
+
     line = _REAL_REGISTER("Quinyx/Daneel")
 
     assert line is not None
     assert "WARNING" in line
     assert "lowercase" in line
-    assert posts["calls"] == []
+
+
+# ── _post_project_register: the outcome classification ──────────────────────
+
+
+class _Resp(io.BytesIO):
+    pass
+
+
+def _fake_urlopen(behaviour, seen: list | None = None):
+    def _urlopen(req, timeout=None):
+        if seen is not None:
+            seen.append((req.full_url, req.data, timeout))
+        if isinstance(behaviour, BaseException):
+            raise behaviour
+        return _Resp(behaviour)
+
+    return _urlopen
+
+
+def test_post_answered_returns_the_body(monkeypatch):
+    seen: list = []
+    fake = _fake_urlopen(b'{"ok": true, "created": true}', seen)
+    monkeypatch.setattr(hk.urllib.request, "urlopen", fake)
+
+    assert hk._post_project_register("quinyx/daneel") == (
+        "answered",
+        {"ok": True, "created": True},
+    )
+    url, data, timeout = seen[0]
+    assert url.endswith("/hooks/project-register")
+    assert data == b'{"project_id": "quinyx/daneel"}'
+    assert timeout == hk._REGISTER_TIMEOUT_S <= 3.0
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError("timed out"),  # the response read (the loopback case)
+        urllib.error.URLError(TimeoutError("timed out")),  # the connect phase
+    ],
+)
+def test_post_timeout_is_classified_as_timeout(monkeypatch, exc):
+    monkeypatch.setattr(hk.urllib.request, "urlopen", _fake_urlopen(exc))
+
+    assert hk._post_project_register("quinyx/daneel") == ("timeout", None)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        urllib.error.URLError(ConnectionRefusedError(111, "refused")),
+        urllib.error.HTTPError("u", 401, "unauthorized", email.message.Message(), io.BytesIO(b"")),
+        ConnectionResetError(),
+    ],
+)
+def test_post_other_failures_are_classified_as_failed(monkeypatch, exc):
+    monkeypatch.setattr(hk.urllib.request, "urlopen", _fake_urlopen(exc))
+
+    assert hk._post_project_register("quinyx/daneel") == ("failed", None)
+
+
+def test_post_bad_json_is_failed(monkeypatch):
+    monkeypatch.setattr(hk.urllib.request, "urlopen", _fake_urlopen(b"not json"))
+
+    assert hk._post_project_register("quinyx/daneel") == ("failed", None)
+
+
+# ── _emit_project_id wiring ─────────────────────────────────────────────────
 
 
 def test_emit_project_id_prints_the_registration_line(monkeypatch, tmp_path, capsys):

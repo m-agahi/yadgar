@@ -223,23 +223,21 @@ def test_header_instructs_asking_the_user():
 def test_header_carries_the_verified_recovery_commands():
     """Commands are pinned against the real parser (yadgar/core/cli/project.py).
 
-    ``project`` registers exactly two subcommands — ``seed`` (with ``--map``)
-    and ``list``. A header naming anything else would be inventing a flag.
+    ``project`` registers ``seed``, ``list`` and (ADR-1131) ``register``. A
+    header naming anything else would be inventing a subcommand.
     """
     header = _identity_recovery_header(_CONTENT)
     assert ".yadgar/project-id" in header, "MODE 1 needs the override-file remedy"
     assert "yadgar project list" in header, "MODE 2 needs the diagnostic"
-    assert "yadgar project seed" in header, "MODE 2 needs the registration path"
-    # ``DEFAULT_MAP_PATH`` in yadgar/core/cli/project.py is ``Path.cwd()`` bound
-    # at IMPORT time, so a relative ``--map`` resolves against the shell's cwd,
-    # not the project root the append instruction targeted. The header must
-    # anchor both halves on {directory} or the two lines disagree.
-    assert "{directory}/.yadgar/project-id-map.tsv" in header, (
-        "the map path must be anchored on {directory}, not left relative"
-    )
-    assert "--map {directory}/.yadgar/project-id-map.tsv" in header, (
-        "the seed command must carry the same anchored path as the append step"
-    )
+    # ADR-1131: MODE 2's fix is one register call, MCP or CLI, for the MINTED
+    # key only — never a key copied out of the failing call.
+    assert 'project_register("{project}")' in header, "MODE 2 needs the MCP fix"
+    assert "yadgar project register\n         {project}" in header or (
+        "yadgar project register {project}" in header
+    ), "MODE 2 needs the CLI fix"
+    assert "typo" in header, "MODE 2 must say a differing key is a typo, not a registration"
+    # The bulk TSV seed is no longer the MODE 2 fix.
+    assert "project-id-map.tsv" not in header
 
 
 def test_header_says_mode_2_surfaces_mid_protocol():

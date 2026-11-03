@@ -94,3 +94,42 @@ def test_cli_register_subcommand_is_wired():
     assert args.func is cmd_project_register
     assert args.project_id == "quinyx/daneel"
     assert args.display_name == "D"
+
+
+async def test_route_registration_finishes_after_the_client_gives_up(monkeypatch):
+    """The hook waits 3 s; a cold registration can take longer. The work must
+    still finish when the waiting request is cancelled, or "still pending"
+    would be a lie.
+
+    ``asyncio.to_thread`` runs the call in the default executor. Cancelling
+    the awaiting coroutine cancels only the asyncio wrapper: a
+    ``concurrent.futures.Future`` that is already running cannot be cancelled
+    (``Future.cancel`` returns False), so the thread runs to the end.
+    """
+    import asyncio
+    import threading
+
+    from yadgar.core.server.routes.project_register import project_register_handler
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def _slow(project_id, display_name=None):
+        started.set()
+        release.wait(5)
+        finished.set()
+        return {"ok": True, "project_id": project_id, "created": True}
+
+    monkeypatch.setattr(pr, "register_project", _slow)
+
+    task = asyncio.create_task(
+        project_register_handler(_request(b'{"project_id": "quinyx/daneel"}'))
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+
+    assert await asyncio.to_thread(finished.wait, 5)

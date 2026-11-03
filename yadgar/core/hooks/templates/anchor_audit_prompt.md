@@ -27,14 +27,13 @@
          `project` registry has no row for it. Diagnose with
          `yadgar project list` (read-only). An `ERROR:` line means the backend is
          unreachable — that is UNDETERMINED, so report it and conclude nothing.
-         If it lists rows and yours is absent, ask the user to append one
-         5-column TAB-separated row (source_directory, project_id, 0, 0, note) to
-         `{directory}/.yadgar/project-id-map.tsv` and run `yadgar project seed
-         --map {directory}/.yadgar/project-id-map.tsv` — the only registration
-         path, and idempotent (existing rows come back `skipped`). The map path
-         must be absolute: `project seed` resolves a relative default against the
-         shell's cwd, not the project root. Do not run `seed` yourself; it writes
-         a shared registry.
+         If it lists rows and yours is absent, the fix is one idempotent call
+         (an existing row comes back `created: false`):
+         `project_register("{project}")` (MCP) or `yadgar project register
+         {project}` (CLI). Register only `{project}`, the minted key. If the
+         refused key differs from `{project}`, it is a typo: pass
+         `project="{project}"` and register nothing. The registry is shared, so
+         confirm with the user before you register.
 -->
 
 Yadgar anchor-audit maintenance. This is a periodic HYGIENE pass over the
