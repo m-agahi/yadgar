@@ -2,18 +2,24 @@
 
 Car A (ADR-0156): read surface for LLM-curated subagent findings.
 
-The daemon runs in a container and cannot see /tmp task symlinks, so this is a
-HOST-SIDE CLI (disk I/O only, no MCP/DB).  The stop-hook checkpoint cadence
-calls this CLI to surface pending subagent findings for LLM curation.
+The daemon runs in a container and cannot see the harness tmp-dir task
+symlinks, so this is a HOST-SIDE CLI (disk I/O only, no MCP/DB).  The stop-hook
+checkpoint cadence calls this CLI to surface pending subagent findings for LLM
+curation.
 
 Usage:
   yadgar pending-findings --transcript-path <path> [--cwd <dir>] [--json] [--advance-state]
 
-- Default: human-readable block (agent_type + bullets + transcript_path per subagent).
-- --json: emit the list as JSON.
-- --advance-state: batch-advance the dedup state for all currently-pending paths
-    (marks them consumed); prints nothing (or a count).
+- Default (LIST): human-readable block (agent_type + bullets + transcript_path
+    per subagent).  Also snapshots exactly the listed paths + mtimes for the
+    session, so a later --advance-state consumes that set and nothing else.
+- --json: emit the list as JSON (also snapshots).
+- --advance-state: mark the set the last LIST showed as consumed.  No re-scan:
+    an agent that finished after LIST stays pending.  No prior LIST → no-op.
+    Prints nothing.
 - Absent/unreadable transcript → empty output, exit 0.
+- ``YADGAR_TASKS_ROOT`` pins the glob to one root; otherwise every root from
+    ``_tasks_roots_default`` (CLAUDE_CODE_TMPDIR, TMPDIR/TMP/TEMP, /tmp).
 """
 
 from __future__ import annotations
@@ -23,22 +29,21 @@ import sys
 
 
 def cmd_pending_findings(args):
-    """List (or consume) pending subagent findings from on-disk .output transcripts."""
+    """List (or consume the listed) pending subagent findings from .output transcripts."""
     import os
 
     from yadgar.core.hooks.findings_capture import (
         _default_sweep_state_path,
-        _tasks_root_default,
-        advance_pending_state,
-        collect_pending_findings,
+        advance_listed_state,
+        list_pending_findings,
     )
 
     transcript_path = args.transcript_path or ""
     cwd = args.cwd or os.getcwd()
     state_path = _default_sweep_state_path()
 
-    # Allow test injection of the tasks root via env (avoids globbing /tmp in tests).
-    tasks_root = os.environ.get("YADGAR_TASKS_ROOT") or _tasks_root_default()
+    # Test / operator pin of the tasks root; unset → union of harness tmp roots.
+    tasks_root = os.environ.get("YADGAR_TASKS_ROOT") or None
 
     # Empty/missing transcript → empty output, exit 0 (graceful no-op).
     if not transcript_path:
@@ -46,12 +51,11 @@ def cmd_pending_findings(args):
             print("[]")
         sys.exit(0)
 
-    pending = collect_pending_findings(transcript_path, cwd, state_path, tasks_root=tasks_root)
-
     if args.advance_state:
-        advance_pending_state(pending, state_path)
-        # Silent on success (only print if something was advanced).
+        advance_listed_state(transcript_path, state_path)
         return
+
+    pending = list_pending_findings(transcript_path, cwd, state_path, tasks_root=tasks_root)
 
     if not pending:
         if args.json:
@@ -105,6 +109,6 @@ def register(subparsers):
         action="store_true",
         default=False,
         dest="advance_state",
-        help="Mark all pending transcript paths as consumed (batch dedup advance)",
+        help="Mark the set the last LIST showed as consumed (no re-scan)",
     )
     p.set_defaults(func=cmd_pending_findings)

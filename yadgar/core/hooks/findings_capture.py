@@ -6,12 +6,16 @@ injects a prompt that has the MAIN INSTANCE curate pending subagent findings
 via its own MCP tools — NO script auto-stores raw bullets to the DB.
 
 Read surface: ``collect_pending_findings`` globs the session's completed
-subagent ``.output`` transcripts (``/tmp/claude-*/<slug>/<session-uuid>/tasks/
-<agentId>.output`` — a JSONL sidechain whose last assistant message holds the
-``## Yadgar findings`` footer), extracts the footer bullets, and returns them
-WITHOUT writing anything. ``advance_pending_state`` marks listed transcripts
-consumed AFTER the caller has curated + cleaned them up, so a crash between LIST
-and CLEANUP re-surfaces pending findings on the next cadence. The
+subagent ``.output`` transcripts (``<tmp>/claude-*/<slug>/<session-uuid>/tasks/
+<agentId>.output``, ``<tmp>`` per ``_tasks_roots_default`` — a JSONL sidechain
+whose last assistant message holds the ``## Yadgar findings`` footer), extracts
+the footer bullets, and returns them WITHOUT writing anything.
+``list_pending_findings`` is the checkpoint LIST: the same scan plus a
+per-session snapshot of exactly what was shown. ``advance_listed_state`` marks
+that snapshot consumed AFTER the caller has curated it, so a crash between LIST
+and advance re-surfaces pending findings on the next cadence, and an agent that
+finishes between the two is not consumed unseen. Nothing deletes the
+``.output`` files: dedup is keyed on mtime, so a delete adds nothing. The
 ``yadgar pending-findings`` CLI (``yadgar/core/cli/pending_findings.py``) is the
 host-side wrapper the checkpoint prompt calls.
 
@@ -149,15 +153,38 @@ def last_assistant_text(transcript_path: str) -> str:
 
 
 @observe(tier="stage")
-def _tasks_root_default(uid: int | None = None) -> str:
-    """Default glob root for subagent .output transcripts.
+def _tasks_roots_default() -> list[str]:
+    """Default glob roots for subagent .output transcripts, in priority order.
 
     Claude Code writes each async subagent's transcript to
-    ``/tmp/claude-<uid>/<project-slug>/<session-uuid>/tasks/<agentId>.output``.
-    We return the ``/tmp/claude-*`` prefix; the session-uuid is globbed in
-    ``collect_pending_findings`` so we do not depend on the slug encoding.
+    ``<root>/claude-<uid>/<project-slug>/<session-uuid>/tasks/<agentId>.output``
+    where ``<root>`` is ``$CLAUDE_CODE_TMPDIR`` when set, else Node's
+    ``os.tmpdir()`` (``$TMPDIR``, then ``$TMP``, then ``$TEMP``, then ``/tmp``).
+
+    This CLI runs as a Bash child of the harness. A sandboxed Bash child gets
+    its own ``TMPDIR``, which is not the harness's, so the roots are returned
+    as a UNION (every distinct candidate, deduped by realpath) instead of a
+    first hit. That is safe: the glob pattern is pinned to the session uuid.
     """
-    return "/tmp"  # noqa: S108 — Claude Code's own transcript root, not our write
+    candidates: list[str] = []
+    cc_tmp = os.environ.get("CLAUDE_CODE_TMPDIR")
+    if cc_tmp:
+        candidates.append(cc_tmp)
+    node_tmp = os.environ.get("TMPDIR") or os.environ.get("TMP") or os.environ.get("TEMP")
+    if node_tmp:
+        candidates.append(node_tmp)
+    candidates.append("/tmp")  # noqa: S108 — Claude Code's own transcript root, not our write
+
+    roots: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        root = raw.rstrip("/") or raw
+        key = os.path.realpath(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(root)
+    return roots
 
 
 @observe(tier="stage")
@@ -176,16 +203,28 @@ def _load_sweep_state(state_path: str) -> dict:
 
 
 @observe(tier="stage")
-def _save_sweep_state(state_path: str, state: dict) -> None:
-    """Atomically write the sweep dedup state. Best-effort; never raises."""
+def _write_json_atomic(path: str, data: dict) -> None:
+    """Write ``data`` as JSON to ``path`` via tmp file + ``os.replace``. May raise OSError."""
     import pathlib  # noqa: PLC0415
 
+    p = pathlib.Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.parent / (p.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    os.replace(str(tmp), str(p))
+
+
+@observe(tier="stage")
+def _save_sweep_state(state_path: str, state: dict) -> None:
+    """Atomically write the sweep dedup state. Best-effort; never raises.
+
+    Prunes keys whose path no longer exists (``os.path.lexists`` is False), so
+    the state does not grow without bound. A dangling symlink still counts as
+    present: its key stays until the link itself is gone.
+    """
     try:
-        p = pathlib.Path(state_path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.parent / (p.name + ".tmp")
-        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-        os.replace(str(tmp), str(p))
+        live = {k: v for k, v in state.items() if isinstance(k, str) and os.path.lexists(k)}
+        _write_json_atomic(state_path, live)
     except (OSError, TypeError, ValueError):  # fmt: skip
         pass
 
@@ -230,9 +269,12 @@ def _scan_pending(
     Returns a list of ``(output_path, mtime, findings_bullets)`` for each
     transcript that has a footer AND has not been recorded in the dedup state.
 
-    READ-ONLY — never writes the state.  Both ``collect_pending_findings`` and
-    ``advance_pending_state`` derive their results from this helper so the
-    mtime used for dedup is exactly the same value seen at scan time.
+    READ-ONLY — never writes the state.  The mtime is stat'ed BEFORE the file is
+    read, so a target that grows between the two re-lists next time (duplicate,
+    never loss).  ``list_pending_findings`` snapshots exactly these mtimes.
+
+    ``tasks_root`` set → that root only (``YADGAR_TASKS_ROOT``, tests).  Unset →
+    every root from ``_tasks_roots_default``.
     """
     import glob as _glob  # noqa: PLC0415
 
@@ -241,9 +283,11 @@ def _scan_pending(
         if not session_uuid:
             return []
 
-        root = tasks_root if tasks_root is not None else _tasks_root_default()
-        pattern = os.path.join(root, "claude-*", "*", session_uuid, "tasks", "*.output")
-        candidates = _glob.glob(pattern)
+        roots = [tasks_root] if tasks_root is not None else _tasks_roots_default()
+        candidates: list[str] = []
+        for root in roots:
+            pattern = os.path.join(root, "claude-*", "*", session_uuid, "tasks", "*.output")
+            candidates.extend(p for p in _glob.glob(pattern) if p not in candidates)
         if not candidates:
             return []
 
@@ -281,19 +325,19 @@ def collect_pending_findings(
     state_path: str,
     tasks_root: str | None = None,
 ) -> list[dict]:
-    """Return pending subagent findings without advancing the dedup state.
+    """Return pending subagent findings without writing anything.
 
-    Car A (ADR-0156) — read surface.  Repurposes ``sweep_subagent_transcripts``
-    logic but returns data instead of POSTing.  Caller decides when to consume
-    (via ``advance_pending_state``), so a crash between LIST and CLEANUP
-    re-surfaces pending findings on the next cadence.
+    Car A (ADR-0156) — read surface.  PURE: writes neither the dedup state nor
+    the LIST snapshot, so other readers (``session-end-capture``) can call it
+    freely.  The checkpoint LIST goes through ``list_pending_findings``.
 
     Args:
         transcript_path: Main session transcript (stem = session-uuid).
         cwd:             Project directory (currently unused; kept for symmetry
                          with ``sweep_subagent_transcripts`` and future use).
         state_path:      Dedup state file (path -> last-captured mtime).
-        tasks_root:      Override for ``/tmp/claude-*`` glob root (tests only).
+        tasks_root:      Pin the glob to this one root (``YADGAR_TASKS_ROOT``,
+                         tests).  ``None`` → ``_tasks_roots_default()``.
 
     Returns:
         ``[{"agent_type": str, "findings": [str, ...], "transcript_path": str}]``
@@ -302,42 +346,87 @@ def collect_pending_findings(
     """
     try:
         pending = _scan_pending(transcript_path, state_path, tasks_root=tasks_root)
-        return [
-            {
-                "agent_type": "general-purpose",
-                "findings": findings,
-                "transcript_path": path,
-            }
-            for path, _mtime, findings in pending
-        ]
+        return _as_entries(pending)
     except (OSError, TypeError, ValueError):  # fmt: skip
         return []
 
 
+@observe(tier="hot")
+def _as_entries(pending: list[tuple[str, float, list[str]]]) -> list[dict]:
+    """Shape ``_scan_pending`` tuples as the public entry dicts."""
+    return [
+        {
+            "agent_type": "general-purpose",
+            "findings": findings,
+            "transcript_path": path,
+        }
+        for path, _mtime, findings in pending
+    ]
+
+
 @observe(tier="stage")
-def advance_pending_state(pending: list[dict], state_path: str) -> None:
-    """Mark all entries returned by collect_pending_findings as consumed.
+def _listed_snapshot_path(state_path: str, session_uuid: str) -> str:
+    """Per-session LIST snapshot file, next to the dedup state file."""
+    directory = os.path.dirname(state_path) or "."
+    return os.path.join(directory, f"pending-findings-listed-{session_uuid}.json")
 
-    Batch-writes the current on-disk mtime for each ``transcript_path`` in
-    ``pending`` into the dedup state so a subsequent ``collect_pending_findings``
-    call skips them.  Best-effort; never raises.
 
-    Designed to be called AFTER the caller has curated and optionally deleted
-    the listed transcripts.
+@observe(tier="boundary")
+def list_pending_findings(
+    transcript_path: str,
+    cwd: str,
+    state_path: str,
+    tasks_root: str | None = None,
+) -> list[dict]:
+    """LIST for the checkpoint: scan, then snapshot exactly what was shown.
+
+    Writes ``{output_path: mtime-as-listed}`` to the per-session snapshot
+    (``_listed_snapshot_path``) so ``advance_listed_state`` consumes the listed
+    set and nothing else.  An empty LIST deletes any older snapshot, so a later
+    advance cannot consume a stale set.  The dedup state is NOT written.
+    Snapshot I/O is best-effort: a failure means the next advance is a no-op
+    and the findings re-list (duplicate, never loss).
     """
-    if not pending:
-        return
+    session_uuid = _session_uuid_from_transcript(transcript_path)
+    pending = _scan_pending(transcript_path, state_path, tasks_root=tasks_root)
+    if session_uuid:
+        snapshot = _listed_snapshot_path(state_path, session_uuid)
+        try:
+            if pending:
+                _write_json_atomic(snapshot, {path: mtime for path, mtime, _ in pending})
+            elif os.path.lexists(snapshot):
+                os.unlink(snapshot)
+        except (OSError, TypeError, ValueError):  # fmt: skip
+            pass
+    return _as_entries(pending)
+
+
+@observe(tier="stage")
+def advance_listed_state(transcript_path: str, state_path: str) -> int:
+    """Mark the set the last LIST showed as consumed; return how many paths.
+
+    Reads the per-session snapshot written by ``list_pending_findings``, merges
+    its listed mtimes into the dedup state, saves, then deletes the snapshot.
+    No re-scan: an agent that finished after LIST stays pending, and a target
+    that grew after LIST re-lists (its recorded mtime is the listed one).
+    No snapshot → no-op, returns 0.  Best-effort; never raises.
+    """
+    session_uuid = _session_uuid_from_transcript(transcript_path)
+    if not session_uuid:
+        return 0
+    snapshot = _listed_snapshot_path(state_path, session_uuid)
+    listed = _load_sweep_state(snapshot)
+    if not listed:
+        return 0
     try:
         state = _load_sweep_state(state_path)
-        for entry in pending:
-            path = entry.get("transcript_path", "")
-            if not path:
-                continue
-            try:
-                mtime = os.stat(path).st_mtime
-            except OSError:
-                continue
-            state[path] = mtime
+        count = 0
+        for path, mtime in listed.items():
+            if isinstance(path, str) and isinstance(mtime, (int, float)):
+                state[path] = mtime
+                count += 1
         _save_sweep_state(state_path, state)
-    except (AttributeError, OSError, TypeError, ValueError):  # fmt: skip
-        pass
+        os.unlink(snapshot)
+        return count
+    except (OSError, TypeError, ValueError):  # fmt: skip
+        return 0
