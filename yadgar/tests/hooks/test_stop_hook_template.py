@@ -73,14 +73,13 @@ _EXPECTED_TEMPLATE = """<!-- YADGAR CHECKPOINT PROTOCOL
          `project` registry has no row for it. Diagnose with
          `yadgar project list` (read-only). An `ERROR:` line means the backend is
          unreachable — that is UNDETERMINED, so report it and conclude nothing.
-         If it lists rows and yours is absent, ask the user to append one
-         5-column TAB-separated row (source_directory, project_id, 0, 0, note) to
-         `{directory}/.yadgar/project-id-map.tsv` and run `yadgar project seed
-         --map {directory}/.yadgar/project-id-map.tsv` — the only registration
-         path, and idempotent (existing rows come back `skipped`). The map path
-         must be absolute: `project seed` resolves a relative default against the
-         shell's cwd, not the project root. Do not run `seed` yourself; it writes
-         a shared registry.
+         If it lists rows and yours is absent, the fix is one idempotent call
+         (an existing row comes back `created: false`):
+         `project_register("{project}")` (MCP) or `yadgar project register
+         {project}` (CLI). Register only `{project}`, the minted key. If the
+         refused key differs from `{project}`, it is a typo: pass
+         `project="{project}"` and register nothing. The registry is shared, so
+         confirm with the user before you register.
 -->
 
 Yadgar checkpoint. CAPTURE FIRST (steps 1-5), THEN maintenance (steps 6-7).
@@ -443,23 +442,21 @@ def test_header_instructs_asking_the_user():
 def test_header_carries_the_verified_recovery_commands():
     """Commands are pinned against the real parser (yadgar/core/cli/project.py).
 
-    ``project`` registers exactly two subcommands — ``seed`` (with ``--map``)
-    and ``list``. A header naming anything else would be inventing a flag.
+    ``project`` registers ``seed``, ``list`` and (ADR-1131) ``register``. A
+    header naming anything else would be inventing a subcommand.
     """
     header = _identity_recovery_header(_TEMPLATE_PATH.read_text(encoding="utf-8"))
     assert ".yadgar/project-id" in header, "MODE 1 needs the override-file remedy"
     assert "yadgar project list" in header, "MODE 2 needs the diagnostic"
-    assert "yadgar project seed" in header, "MODE 2 needs the registration path"
-    # ``DEFAULT_MAP_PATH`` in yadgar/core/cli/project.py is ``Path.cwd()`` bound
-    # at IMPORT time, so a relative ``--map`` resolves against the shell's cwd,
-    # not the project root the append instruction targeted. The header must
-    # anchor both halves on {directory} or the two lines disagree.
-    assert "{directory}/.yadgar/project-id-map.tsv" in header, (
-        "the map path must be anchored on {directory}, not left relative"
-    )
-    assert "--map {directory}/.yadgar/project-id-map.tsv" in header, (
-        "the seed command must carry the same anchored path as the append step"
-    )
+    # ADR-1131: MODE 2's fix is one register call, MCP or CLI, for the MINTED
+    # key only — never a key copied out of the failing call.
+    assert 'project_register("{project}")' in header, "MODE 2 needs the MCP fix"
+    assert "yadgar project register\n         {project}" in header or (
+        "yadgar project register {project}" in header
+    ), "MODE 2 needs the CLI fix"
+    assert "typo" in header, "MODE 2 must say a differing key is a typo, not a registration"
+    # The bulk TSV seed is no longer the MODE 2 fix.
+    assert "project-id-map.tsv" not in header
 
 
 def test_header_says_mode_2_surfaces_mid_protocol():

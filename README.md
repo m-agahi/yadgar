@@ -329,7 +329,7 @@ yadgar context                      # (hook-internal) session-start context inje
 
 ## MCP tools
 
-Yadgar exposes **87 MCP tools** (89 `@_tool` decorators minus 2 test-only stubs; counted 2026-08-28). ⚡ marks `power=True` tools (gated in the minimal MCP profile). A categorized selection — full list via the running server's tool catalog:
+Yadgar exposes **88 MCP tools** (90 `@_tool` decorators minus 2 test-only stubs; counted 2026-11-03). ⚡ marks `power=True` tools (gated in the minimal MCP profile). A categorized selection — full list via the running server's tool catalog:
 
 <details><summary><b>Memory</b></summary>
 
@@ -379,6 +379,7 @@ Blocks (Letta-style core memory, all ⚡): `block_create` · `block_get` · `blo
 | `bootstrap_project(directory, content)` | ⚡ | Set `_project_init` |
 | `update_active_work(directory, content)` | ⚡ | Atomic replace of `_active_work` |
 | `seed_project(directory)` | ⚡ | Bootstrap memory from README + top-level docs |
+| `project_register(project_id, display_name)` | | Register one project id in the registry, create-if-absent (the SessionStart hook does this for the id it mints; ADR-1131) |
 | `install_hooks(project_directory, scope)` | ⚡ | Wire Claude Code hooks (Car 7: now delegates to `yadgar install --client claude-code --hooks`); inject bearer token |
 
 `get_project_context()` is a deprecated alias of `project_brief(mode="catalog")`.

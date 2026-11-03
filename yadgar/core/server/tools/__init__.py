@@ -22,6 +22,7 @@ import yadgar.core.server.tools.adr  # noqa: F401 — side-effects: tool registr
 import yadgar.core.server.tools.db_inspect  # noqa: F401 — side-effects: tool registration (db-inspect, ADR-0078)
 import yadgar.core.server.tools.runtime_config  # noqa: F401 — side-effects: tool registration (ADR-0163, G3)
 import yadgar.core.server.tools.task  # noqa: F401 — side-effects: tool registration (Car D, 0047 spine train)
+import yadgar.core.server.tools.project_register  # noqa: F401 — side-effects: tool registration (ADR-1131)
 
 # Fix A (daemon-offload-A): import triggers register_test_tools() at its module
 # bottom — registers _test_sleep/_test_thread_id only when YADGAR_TEST_TOOLS=1

@@ -121,6 +121,7 @@ import yadgar.core.server.routes.traces  # noqa: F401 — viz-trace-replay: GET 
 import yadgar.core.server.routes.debug_query  # noqa: F401 — db-inspect: POST /api/debug/read_query (ADR-0078 read path)
 import yadgar.core.server.routes.debug_dlq  # noqa: F401 — DLQ inspection: GET /api/debug/dlq (filesystem dlq_inspect wrapper)
 import yadgar.core.server.routes.admin_ops  # noqa: F401 — task:0045: POST /api/check_invariants (vacuum finalize verification)
+import yadgar.core.server.routes.project_register  # noqa: F401 — ADR-1131: POST /hooks/project-register (SessionStart auto-registration)
 
 # Re-export HTTP route functions so 'import yadgar.server as srv; srv.hook_auto_capture'
 # resolves correctly (test_async_handlers_no_block.py, test_sse.py)

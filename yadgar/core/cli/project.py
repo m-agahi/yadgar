@@ -7,9 +7,11 @@ registered
 seeding function is the FIRST operator step on a new deployment — every
 ``task`` / ``adr`` / ``agent_prompt`` ledger row FKs to the ``project``
 table, so with zero rows the engine-#2 ledger refuses every write
-(ADR-0078, ADR-0202/0223). This module exposes one subcommand:
+(ADR-0078, ADR-0202/0223). This module exposes three subcommands:
 
-  * ``yadgar project seed [--map <path>]``
+  * ``yadgar project seed [--map <path>]`` — bulk, from a TSV map
+  * ``yadgar project register <id>`` — one id, create-if-absent (ADR-1131)
+  * ``yadgar project list [--stale]``
 
 Reads the TSV map (default ``.yadgar/project-id-map.tsv``, gitignored —
 see Car D), calls ``create_project_row`` per row over the backend
@@ -392,6 +394,27 @@ def cmd_project_seed(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_project_register(args: argparse.Namespace) -> int:
+    """``yadgar project register <id> [--display-name NAME]`` handler (ADR-1131).
+
+    Registers one project id, create-if-absent, through the same
+    ``register_project`` the ``project_register`` MCP tool and the SessionStart
+    hook route use. Prints the result JSON to stdout. Exit 0 when the row now
+    exists (new or already there), 1 on a guard rejection or backend failure.
+    """
+    from yadgar.core import project_registration
+
+    result = project_registration.register_project(args.project_id, args.display_name)
+    if not result.get("ok"):
+        print(f"ERROR: project register: {result.get('error')}", file=sys.stderr)
+        print(json.dumps(result))
+        return 1
+    state = "registered" if result.get("created") else "already registered"
+    print(f"{result['project_id']}: {state}", file=sys.stderr)
+    print(json.dumps(result))
+    return 0
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     """Register the ``project`` subcommand with the top-level CLI parser."""
     p = subparsers.add_parser(
@@ -427,3 +450,17 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Show only rows whose last_validated_at is older than YADGAR_PROJECT_STALENESS_DAYS",
     )
     list_p.set_defaults(func=cmd_project_list)
+
+    # ADR-1131: register ONE project id, create-if-absent.
+    register_p = project_sub.add_parser(
+        "register",
+        help="Register one project id (owner/repo or local/<name>); idempotent",
+    )
+    register_p.add_argument("project_id", help="owner/repo[/...] or local/<name>, lowercase")
+    register_p.add_argument(
+        "--display-name",
+        dest="display_name",
+        default=None,
+        help="Optional label, at most 64 characters",
+    )
+    register_p.set_defaults(func=cmd_project_register)

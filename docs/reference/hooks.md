@@ -224,6 +224,52 @@ handle the team_inbox and docs/PLAN_* filtering.
 
 ---
 
+## SessionStart project auto-registration
+
+The SessionStart hook (`yadgar hook session-start-context`, also run after
+compaction) mints the session's project id from `.yadgar/project-id` (walked up
+from the working directory) or else the `origin` remote. Since ADR-1131 it
+then makes sure the id has a row in the project registry, so a new repo works
+on its first session with no operator step:
+
+1. The hook posts the raw id, `{"project_id": "<id>"}`, to the daemon route
+   `POST /hooks/project-register` with a 3-second timeout. It runs no check of
+   its own: only the daemon knows whether the id is already registered.
+2. The daemon (`yadgar/core/project_registration.py::register_project`)
+   answers from its registry cache when the row exists, after one forced
+   re-fetch on a miss. An existing row is success even if it would fail the
+   shape guard. The registry cannot be consulted (no engine #2, no backend):
+   the answer carries `reason: "registry_unavailable"`, and nothing is
+   inserted. Otherwise the shape guard (`registrable_project_id_error`:
+   `owner/repo[/...]` or `local/<name>`, lowercase, no whitespace, at most 256
+   characters, not `global` / `unresolved` / `system`) gates a call to the
+   backend admin op `create_project_row` (`kind` is `local` for `local/...`,
+   else `git`). A duplicate is success.
+3. The banner shows one line only when something happened:
+   - `yadgar: registered new project <id>` for a new row;
+   - ``yadgar: project registration for <id> still pending; check `yadgar project list` `` when the 3-second timeout runs out. A cold daemon
+     can take longer than that, and it keeps working after the hook stops
+     waiting (the route runs `register_project` in a worker thread, which a
+     disconnect does not stop);
+   - `[yadgar] WARNING: ...` when the daemon is unreachable or refuses auth,
+     the guard rejects a new id, or the backend create fails. The session
+     continues.
+   An existing row and an unconsultable registry print nothing. Writes are
+   not blocked when the registry cannot be consulted, so a warning there on
+   every session would be noise.
+
+A `project=` value on any other tool call never creates a row. An unknown id
+there still fails with `unknown project_id: '<id>'`, and the message names the
+fix: `project_register("<id>")` (CLI: `yadgar project register <id>`), or a new
+session in the repo.
+
+**`.yadgar/project-id` format.** The file must hold exactly one non-blank line:
+the id. Surrounding whitespace and a trailing newline are fine. An empty file,
+two or more lines, or a `#` comment line is an error: the banner names the file,
+and the hook does not fall back to the `origin` remote.
+
+---
+
 ## External task ledger: the yaadgaar project registry
 
 Some projects keep their tasks in yaadgaar (`mcp__yaadgaar__*`). For them the

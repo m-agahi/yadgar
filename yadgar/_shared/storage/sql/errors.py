@@ -74,7 +74,14 @@ class UnknownProjectError(AdminRefusal, RuntimeError):
     reason = "unknown_project"
 
     def __init__(self, project_id: str) -> None:
-        super().__init__(f"unknown project_id: {project_id!r}")
+        # ADR-1131: the message names the fix. The ``unknown project_id: '<id>'``
+        # prefix is kept verbatim — prompts and callers match on it.
+        super().__init__(
+            f"unknown project_id: {project_id!r}. If this id is right, register it "
+            f'with project_register("{project_id}") (CLI: yadgar project register '
+            f"{project_id}), or start a new session in the repo so the SessionStart "
+            "hook registers it. If it is a typo, pass the correct project="
+        )
         self.project_id = project_id
 
 
