@@ -10,8 +10,8 @@ All evaluation happens in the Claude session via tool calls.
 ADR-0156: subagent findings are NOT auto-stored here. The checkpoint prompt
 (step 4, SUBAGENT FINDINGS CURATION) has the main instance LIST pending
 subagent findings via the ``yadgar pending-findings`` CLI, CURATE them with
-judgment through its own MCP tools, then CLEANUP the consumed on-disk
-transcripts. No script writes raw findings to the DB — the old
+judgment through its own MCP tools, then ADVANCE the dedup state for the listed
+set (nothing is deleted). No script writes raw findings to the DB — the old
 ``_run_subagent_sweep`` auto-store path was ripped.
 
 State: ~/.local/state/yadgar/stop-hook-state.json (keyed by session_id, atomic writes).
@@ -182,7 +182,7 @@ def _subagent_sweep_state_path() -> Path:
 
     ADR-0156: the auto-store sweep was ripped; this path is now the dedup state
     reused by the ``yadgar pending-findings`` CLI (via
-    ``findings_capture._default_sweep_state_path``) so LIST/CLEANUP across
+    ``findings_capture._default_sweep_state_path``) so LIST/ADVANCE across
     checkpoints stays idempotent.
     """
     return _paths.STOP_HOOK_STATE_PATH.parent / "subagent-capture-state.json"

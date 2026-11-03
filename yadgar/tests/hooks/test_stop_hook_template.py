@@ -199,9 +199,9 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
                                         — never store the raw bullet verbatim
        noise/status/one-off/dup     → DISCARD (do nothing)
      Dedup vs what you wrote this checkpoint + existing ADRs/wiki. Storing nothing is valid + common.
-   - CLEANUP: for EACH listed transcript_path:  rm -f -- "<transcript_path>"   (the /tmp .output SYMLINK
-     only — never rm under ~/.claude/projects). Then: yadgar pending-findings --advance-state
-     --transcript-path "<session transcript_path>" (batch-advance all just-listed).
+   - ADVANCE (Bash), after judging: yadgar pending-findings --advance-state
+     --transcript-path "<session transcript_path>" (marks exactly the set LIST showed as consumed;
+     leave the listed .output files in place — do not delete them).
 
 5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to
    the task ledger so it survives session exit / /clear. The ledger is the
@@ -747,7 +747,7 @@ def test_subagent_findings_curation_step_present():
     """Step 4 (SUBAGENT FINDINGS CURATION, ADR-0156) folds subagent-findings
     curation into the checkpoint: LIST via the `yadgar pending-findings` CLI,
     JUDGE each bullet with the same precision bar as ADR/wiki capture, then
-    CLEANUP the consumed /tmp .output symlink + batch-advance state. No script
+    ADVANCE exactly the listed set (no delete step). No script
     auto-stores; the main instance curates with judgment."""
     content = _TEMPLATE_PATH.read_text(encoding="utf-8")
     normalized = " ".join(content.split())
@@ -761,12 +761,15 @@ def test_subagent_findings_curation_step_present():
     assert "REWRITTEN in your words" in content
     assert "never store the raw bullet verbatim" in content
     assert "DISCARD" in content
-    # CLEANUP: rm the /tmp .output SYMLINK only (never under ~/.claude/projects),
-    # then batch-advance dedup state.
-    assert "CLEANUP" in content
-    assert "rm -f --" in content
-    assert "never rm under ~/.claude/projects" in normalized
+    # No delete step: the .output symlinks stay on disk (dedup is mtime-keyed,
+    # so a delete adds nothing and costs a permission prompt per checkpoint).
+    # Only the batch-advance of exactly the listed set remains.
+    assert "CLEANUP" not in content
+    assert "rm -f --" not in content
+    assert "never rm under ~/.claude/projects" not in normalized
     assert "yadgar pending-findings --advance-state" in content
+    for template in _TEMPLATE_PATH.parent.glob("stop_checkpoint_prompt*.md"):
+        assert "rm -f" not in template.read_text(encoding="utf-8"), template.name
 
 
 def test_maintenance_step_is_mandatory_with_closed_allowed_skip_list():

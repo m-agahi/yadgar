@@ -153,9 +153,9 @@ wiki slugs → wiki_read; the tagged agent-prompt library → recall.
                                         — never store the raw bullet verbatim
        noise/status/one-off/dup     → DISCARD (do nothing)
      Dedup vs what you wrote this checkpoint + existing ADRs/wiki. Storing nothing is valid + common.
-   - CLEANUP: for EACH listed transcript_path:  rm -f -- "<transcript_path>"   (the /tmp .output SYMLINK
-     only — never rm under ~/.claude/projects). Then: yadgar pending-findings --advance-state
-     --transcript-path "<session transcript_path>" (batch-advance all just-listed).
+   - ADVANCE (Bash), after judging: yadgar pending-findings --advance-state
+     --transcript-path "<session transcript_path>" (marks exactly the set LIST showed as consumed;
+     leave the listed .output files in place — do not delete them).
 
 5. TASK-LIST MIRROR (always). Persist your Claude Code harness task list to
    the task ledger so it survives session exit / /clear. The ledger is the
