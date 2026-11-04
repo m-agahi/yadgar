@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import email.message
 import io
+import socket
 import urllib.error
 
 import pytest
@@ -180,8 +181,14 @@ def test_post_response_phase_timeout_is_timeout(monkeypatch):
     "exc",
     [
         urllib.error.URLError(TimeoutError("timed out")),
-        urllib.error.URLError(TimeoutError("timed out")),
+        # AC1 boundary: socket.timeout (an alias of TimeoutError on 3.10+)
+        urllib.error.URLError(socket.timeout("timed out")),  # noqa: UP041 - AC1 example is verbatim socket.timeout
         urllib.error.URLError(TimeoutError("connect timed out")),
+    ],
+    ids=[
+        "URLError-TimeoutError",
+        "URLError-socket.timeout-AC1-boundary",
+        "URLError-TimeoutError-triangulation",
     ],
 )
 def test_post_connect_phase_timeout_is_failed(monkeypatch, exc):
