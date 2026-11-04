@@ -166,17 +166,49 @@ def test_post_answered_returns_the_body(monkeypatch):
     assert timeout == hk._REGISTER_TIMEOUT_S <= 3.0
 
 
+def test_post_response_phase_timeout_is_timeout(monkeypatch):
+    # AC1: a bare TimeoutError (response phase) still returns ("timeout", None)
+    monkeypatch.setattr(hk.urllib.request, "urlopen", _fake_urlopen(TimeoutError("timed out")))
+
+    assert hk._post_project_register("quinyx/daneel") == ("timeout", None)
+    # AC1 triangulation: different message, same classification
+    monkeypatch.setattr(hk.urllib.request, "urlopen", _fake_urlopen(TimeoutError("read timed out")))
+    assert hk._post_project_register("quinyx/other") == ("timeout", None)
+
+
 @pytest.mark.parametrize(
     "exc",
     [
-        TimeoutError("timed out"),  # the response read (the loopback case)
-        urllib.error.URLError(TimeoutError("timed out")),  # the connect phase
+        urllib.error.URLError(TimeoutError("timed out")),
+        urllib.error.URLError(TimeoutError("timed out")),
+        urllib.error.URLError(TimeoutError("connect timed out")),
     ],
 )
-def test_post_timeout_is_classified_as_timeout(monkeypatch, exc):
+def test_post_connect_phase_timeout_is_failed(monkeypatch, exc):
+    # AC1: URLError wrapping a TimeoutError (connect phase) returns ("failed", None)
     monkeypatch.setattr(hk.urllib.request, "urlopen", _fake_urlopen(exc))
 
-    assert hk._post_project_register("quinyx/daneel") == ("timeout", None)
+    assert hk._post_project_register("quinyx/daneel") == ("failed", None)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError("t"),
+        urllib.error.URLError(TimeoutError("t")),
+        urllib.error.URLError(ConnectionRefusedError(111, "refused")),
+        ConnectionResetError(),
+        OSError("boom"),
+    ],
+)
+def test_post_never_raises_for_oserror_family(monkeypatch, exc):
+    # AC1 property: never raises for any OSError/URLError/TimeoutError
+    monkeypatch.setattr(hk.urllib.request, "urlopen", _fake_urlopen(exc))
+
+    outcome, body = hk._post_project_register("quinyx/daneel")
+
+    assert outcome in {"timeout", "failed"}
+    assert body is None
 
 
 @pytest.mark.parametrize(
