@@ -247,11 +247,11 @@ on its first session with no operator step:
    else `git`). A duplicate is success.
 3. The banner shows one line only when something happened:
    - `yadgar: registered new project <id>` for a new row;
-   - ``yadgar: project registration for <id> still pending; check `yadgar project list` `` when the 3-second timeout runs out. A cold daemon
+   - ``yadgar: project registration for <id> still pending; check `yadgar project list` `` when the daemon accepted the request and its answer did not arrive within 3 seconds. A cold daemon
      can take longer than that, and it keeps working after the hook stops
      waiting (the route runs `register_project` in a worker thread, which a
      disconnect does not stop);
-   - `[yadgar] WARNING: ...` when the daemon is unreachable or refuses auth,
+   - `[yadgar] WARNING: ...` when the daemon is unreachable (a connect-phase timeout counts) or refuses auth,
      the guard rejects a new id, or the backend create fails. The session
      continues.
    An existing row and an unconsultable registry print nothing. Writes are

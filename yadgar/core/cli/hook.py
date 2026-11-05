@@ -203,7 +203,8 @@ def _emit_project_id(cwd: str) -> str | None:
 #: Bounded: SessionStart waits on this call. A warm daemon answers from its
 #: registry cache at once. A cold one can take far longer (a registry list,
 #: one forced re-list, one INSERT; up to 10 s each), and it keeps working after
-#: this hook gives up, so a timeout is reported as pending, not as a failure.
+#: this hook gives up, so a response-phase timeout is reported as pending, not as
+#: a failure. A connect-phase timeout is a failure: the daemon never took the request.
 _REGISTER_TIMEOUT_S = 3.0
 
 #: ``register_project``'s reason for a registry it could not consult at all
@@ -218,12 +219,14 @@ def _post_project_register(project_id: str) -> tuple[str, dict | None]:
 
     ``outcome`` is ``"answered"`` (``body`` is the JSON answer), ``"timeout"``
     (the daemon took the request and did not answer in time; it may still be
-    working on it) or ``"failed"`` (refused connection, HTTP error, bad JSON).
+    working on it) or ``"failed"`` (refused connection, connect-phase timeout,
+    HTTP error, bad JSON).
 
     A separate helper rather than ``_http_post``: that one folds a timeout
     into ``None`` with every other failure, and this caller must tell them
-    apart. A timeout reaches here in two shapes: a bare ``TimeoutError`` from
-    the response read, or a ``URLError`` wrapping one from the connect phase.
+    apart. Only a bare ``TimeoutError`` from the response read is a timeout. A
+    ``URLError`` wrapping one comes from the connect phase, where the daemon
+    never took the request, so it is a failure (an ``OSError``).
     """
     url = f"http://127.0.0.1:{_PORT}/hooks/project-register"
     data = json.dumps({"project_id": project_id}).encode()
@@ -235,8 +238,6 @@ def _post_project_register(project_id: str) -> tuple[str, dict | None]:
     except urllib.error.HTTPError as e:
         e.close()
         return "failed", None
-    except urllib.error.URLError as e:
-        return ("timeout" if isinstance(e.reason, TimeoutError) else "failed"), None
     except TimeoutError:
         return "timeout", None
     except (OSError, ValueError):  # fmt: skip
@@ -261,9 +262,9 @@ def _register_minted_project(project_id: str) -> str | None:
     * a new row: ``yadgar: registered new project <id>``;
     * the row already existed, or the registry cannot be consulted (no engine
       #2): nothing;
-    * timeout: a neutral "still pending" line, because the daemon may still
-      create the row;
-    * daemon unreachable, a guard rejection or a backend failure: one
+    * response timeout: a neutral "still pending" line, because the daemon may
+      still create the row;
+    * daemon unreachable (a connect-phase timeout too), a guard rejection or a backend failure: one
       ``WARNING`` line naming the manual fix.
     """
     outcome, result = _post_project_register(project_id)
