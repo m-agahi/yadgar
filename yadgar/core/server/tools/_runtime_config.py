@@ -19,9 +19,8 @@ Design:
   * namespace ``runtime_config`` (registered in ``cache._NAMESPACE_WEIGHTS``).
   * ``Manual`` invalidation — writes are rare and small, so a whole-flush on
     every write (``invalidate_config_cache``) is cheaper than tracking per-key
-    busts. Defense-in-depth: a backend scope_version bump on ``config``
-    invalidates the entire namespace via the piggyback envelope field; the
-    cached scope_version key acts as a TTL-less backstop.
+    busts. There is no other invalidation: a cached value lives until the
+    next write through this daemon's ``config_set`` / ``config_delete``.
   * ``deep_copy=True`` — a cached ``list``/``dict`` value is caller-owned /
     mutable.
   * ``obs_tier="cold"`` — low call rate.
@@ -31,9 +30,10 @@ pair, NOT the resolved row's directory. Resolution (per-dir → global) happens
 on the miss path; the resolved value is cached under the requested key so a
 repeated ``config_get(key, dir)`` is a single-lookup hit.
 
-Fail-safe: ANY forward exception → return ``default`` (never raise out of a
+Fail-safe: ANY forward exception, and any backend fault body (``{"ok":
+False}`` or no ``"row"`` key), → return ``default`` (never raise out of a
 config read — a config lookup must not crash its caller). Logged at warning.
-A forward error is NOT an answer, so nothing is cached for it: the next read
+A failed read is NOT an answer, so nothing is cached for it: the next read
 forwards again. ``config_get(..., raise_on_error=True)`` raises
 ``ConfigReadError`` instead, for a caller that must tell "unreadable" from
 "absent" (``core.task_ledger_gate``).
@@ -109,7 +109,9 @@ def _fetch_from_backend(key: str, directory: str | None) -> dict | None:
 
     Returns the row dict, or None when absent (per-dir miss / global miss).
     Any forward exception is logged and re-raised as ``ConfigReadError``: an
-    error is not an absent row, and must not be resolved or cached as one.
+    error is not an absent row, and must not be resolved or cached as one. A
+    fault BODY is the same error: ``{"ok": False, ...}`` or a dict with no
+    ``"row"`` key (the backend's success body always carries ``"row"``).
     """
     try:
         result = _forward_admin(
@@ -119,6 +121,19 @@ def _fetch_from_backend(key: str, directory: str | None) -> dict | None:
     except Exception as exc:  # noqa: BLE001 — any transport/backend fault means "unknown"; re-raised as the one typed error config_get handles
         logger.warning("runtime_config forward failed for key=%s dir=%s: %s", key, directory, exc)
         raise ConfigReadError(f"runtime_config read failed for key={key}: {exc}") from exc
+    if isinstance(result, dict) and (result.get("ok") is False or "row" not in result):
+        # A backend storage fault arrives as HTTP 200 ``{"ok": False, "error"}``
+        # (backend ``get_config_row``). Success always carries ``"row"``, even
+        # when it is None, so a body without it is a fault too (PR #92 B1).
+        logger.warning(
+            "runtime_config backend fault for key=%s dir=%s: %s",
+            key,
+            directory,
+            result.get("error", "no row in response"),
+        )
+        raise ConfigReadError(
+            f"runtime_config read failed for key={key}: {result.get('error', 'no row in response')}"
+        )
     return result.get("row") if isinstance(result, dict) else None
 
 
@@ -149,8 +164,9 @@ def config_get(
     an HTTP call; a miss resolves via the backend forward, caches the result
     under the REQUESTED ``(key, directory)`` pair, and returns it.
 
-    Fail-safe: any forward error yields ``default`` and is NOT cached (so a
-    transient backend blip does not pin a wrong value). With
+    Fail-safe: any failed read (a forward exception or a backend fault body)
+    yields ``default`` and is NOT cached (so a transient backend blip does not
+    pin a wrong value). With
     ``raise_on_error=True`` the error raises ``ConfigReadError`` instead.
     """
     ck = _cache_key(key, directory)
@@ -167,7 +183,7 @@ def config_get(
         return default
     # Cache the resolved value under the requested (key, dir). Caching a genuine
     # miss's ``default`` is correct — absence is a stable answer, busted on the
-    # next write's whole-flush. A forward error never reaches this line.
+    # next write's whole-flush. A failed read never reaches this line.
     cache.put(ck, resolved)
     return resolved
 
