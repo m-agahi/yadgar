@@ -65,7 +65,10 @@ Every scoped tool below takes `project="<owner/repo>"`; pass it on every call.
   + `status` only, roughly a third the size of the full row.
 - `task_get(project_id, id)` — read one task in full, its body included.
 - `task_write(project_id, title, status, id)` — create (`id` omitted) or
-  update (`id` given) a task row.
+  update (`id` given) a task row. It refuses (`external_task_ledger`) for a
+  project whose tasks live in yaadgaar, and for every project while
+  `tasks.ledger_disabled` is true; `task_list` and `task_get` then are
+  read-only history.
 
 ### Memory discipline
 
@@ -84,7 +87,9 @@ across four review rounds, and the same list re-rendered into context
 unprompted many times over. These rules keep the ledger live in between, not
 just at the edges. A project whose tasks live in another ledger (SessionStart
 names it, e.g. yaadgaar) uses that ledger, and these `task_*` rules do not
-apply to it:
+apply to it. When the engine key `tasks.ledger_disabled` is true, that is every
+project: tasks live in yaadgaar (`mcp__yaadgaar__*`), and the yadgar
+`task_list` / `task_get` are read-only history. SessionStart says which applies:
 
 - **List light**: at session start and after compaction, read `task_list` at
   its default shape (`id` + `title` + `status`), never `verbose=True`. The

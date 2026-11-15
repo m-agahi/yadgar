@@ -33,6 +33,7 @@ _BASE = _TEMPLATES / "stop_checkpoint_prompt.md"
 _VARIANT = _TEMPLATES / "stop_checkpoint_prompt_external_ledger.md"
 
 _KEY = "tasks.external_ledger_prefixes"
+_DISABLED_KEY = "tasks.ledger_disabled"
 _TASKS_NOTE = (
     "TASKS: this project's tasks live in yaadgaar (mcp__yaadgaar__*), not in the\n"
     "yadgar task ledger, so this protocol has no task-list mirror step and you do\n"
@@ -95,6 +96,7 @@ def hook(monkeypatch):
         "map": {},
         "mint": {},
         "value": None,
+        "disabled": None,
         "lookups": [],
         "reads": [],
         "real_mint": identity_mint.resolve_session_project,
@@ -112,6 +114,8 @@ def hook(monkeypatch):
         state["reads"].append((key, directory, default))
         if key == _KEY and state["value"] is not None:
             return state["value"]
+        if key == _DISABLED_KEY and state["disabled"] is not None:
+            return state["disabled"]
         return default
 
     monkeypatch.setattr(session_map, "lookup_project_for_directory", _lookup)
@@ -188,7 +192,8 @@ def test_external_project_gets_the_variant(hook) -> None:
         f"[yadgar] Checkpoint due. Read {hook._EXTERNAL_LEDGER_TEMPLATE_PATH}"
         " and follow all the instructions in it."
     )
-    assert hook.state["reads"] == [(_KEY, None, [])]
+    # yaadgaar 699: tasks.ledger_disabled is read first, then the prefix key.
+    assert hook.state["reads"] == [(_DISABLED_KEY, None, False), (_KEY, None, [])]
 
 
 def _mirror(project: str, registered: bool) -> None:
@@ -210,7 +215,8 @@ def test_registered_project_outside_the_prefix_gets_the_variant(hook) -> None:
     reason = hook._checkpoint_reason(25, "/w/widget")
 
     assert str(hook._EXTERNAL_LEDGER_TEMPLATE_PATH) in reason
-    assert hook.state["reads"] == []
+    # yaadgaar 699: the kill-switch read comes first; the prefix is still not read.
+    assert hook.state["reads"] == [(_DISABLED_KEY, None, False)]
 
 
 def test_unregistered_yadgarhq_project_gets_the_base_template(hook) -> None:
@@ -221,7 +227,8 @@ def test_unregistered_yadgarhq_project_gets_the_base_template(hook) -> None:
     reason = hook._checkpoint_reason(25, "/w/new")
 
     assert str(hook._PROMPT_TEMPLATE_PATH) in reason
-    assert hook.state["reads"] == []
+    # yaadgaar 699: the kill-switch read comes first; the prefix is still not read.
+    assert hook.state["reads"] == [(_DISABLED_KEY, None, False)]
 
 
 @pytest.mark.parametrize("cwd", ["/w/aws", "/w/unmapped", None])
@@ -330,4 +337,35 @@ def test_subdir_and_worktree_get_the_variant(hook, monkeypatch, docs_repo, where
 
     assert hook._EXTERNAL_LEDGER_TEMPLATE_PATH in reason
     assert hook.state["lookups"] == []  # no session-map entry was needed
-    assert hook.state["reads"] == [(_KEY, None, [])]
+    # yaadgaar 699: tasks.ledger_disabled is read first, then the prefix key.
+    assert hook.state["reads"] == [(_DISABLED_KEY, None, False), (_KEY, None, [])]
+
+
+# ── yaadgaar 699: tasks.ledger_disabled reaches the hook through the gate ─────
+
+
+@pytest.mark.parametrize(
+    ("cwd", "project", "registered"),
+    [("/w/aws", "quinyx/aws-work", None), ("/w/new", "yadgarhq/newrepo", False)],
+)
+def test_ledger_disabled_gives_every_project_the_variant(hook, cwd, project, registered) -> None:
+    """No hook-file edit: the hook asks the gate, and the gate reads the key."""
+    hook.state["map"][cwd] = project
+    hook.state["value"] = ["yadgarhq/"]
+    hook.state["disabled"] = True
+    if registered is not None:
+        _mirror(project, registered)
+
+    reason = hook._checkpoint_reason(25, cwd)
+
+    assert reason == (
+        f"[yadgar] Checkpoint due. Read {hook._EXTERNAL_LEDGER_TEMPLATE_PATH}"
+        " and follow all the instructions in it."
+    )
+    assert hook.state["reads"] == [(_DISABLED_KEY, None, False)]
+
+
+def test_ledger_disabled_false_keeps_the_base_reason(hook) -> None:
+    hook.state["map"]["/w/aws"] = "quinyx/aws-work"
+    hook.state["disabled"] = False
+    assert str(hook._PROMPT_TEMPLATE_PATH) in hook._checkpoint_reason(25, "/w/aws")

@@ -33,6 +33,16 @@ matches nothing for that call, logs a warning, and is not cached, so the next
 read retries: an external-ledger project falls back to the yadgar ledger only
 while the read keeps failing. A project that does not match takes exactly the
 code path it took before this module existed.
+
+Kill switch (yadgarhq/docs yaadgaar #699, Max 2026-11-15): the GLOBAL runtime
+config key ``tasks.ledger_disabled`` (bool, default ``false``). When it is
+``true`` the yadgar task ledger is off for EVERY project: the gate answers
+"external" before it consults the registry or the prefixes, so every consumer
+above (SessionStart nudge and seed, the stop-hook template, ``task_write``)
+follows it with no change of its own. Only a JSON ``true`` turns it on. An
+absent, ``false``, malformed or unreadable value is off and falls through to
+the registry and the prefix fallback exactly as before; a malformed value
+warns once per process, a failed read warns and is not cached.
 """
 
 from __future__ import annotations
@@ -45,6 +55,10 @@ from yadgar._shared.observability.observe import observe
 
 #: Runtime config key (global scope) — a list of project_id prefixes.
 EXTERNAL_LEDGER_PREFIXES_KEY = "tasks.external_ledger_prefixes"
+
+#: Runtime config key (global scope) — bool; ``true`` turns the yadgar task
+#: ledger off for every project (yaadgaar #699).
+LEDGER_DISABLED_KEY = "tasks.ledger_disabled"
 
 #: The error code ``task_write`` returns for a project whose ledger is external.
 EXTERNAL_LEDGER_ERROR = "external_task_ledger"
@@ -62,6 +76,9 @@ logger = logging.getLogger(__name__)
 #: Set once a malformed value has been reported, so a bad row warns once per
 #: process instead of on every SessionStart and ``task_write``.
 _malformed_warned = False
+
+#: Same once-per-process guard for a malformed ``tasks.ledger_disabled`` value.
+_disabled_malformed_warned = False
 
 
 @observe(tier="hot", metric="core.task_ledger_gate.daemon_resolver")
@@ -127,6 +144,45 @@ def _warn_malformed(raw: Any) -> None:
     )
 
 
+@observe(tier="stage", metric="core.task_ledger_gate.ledger_disabled")
+def ledger_disabled(resolver: Resolver) -> bool:
+    """True only when ``tasks.ledger_disabled`` reads as the JSON value ``true``.
+
+    The default passed to the resolver is ``False``, not ``None``, for the same
+    cache reason as the prefixes read. A failed read is off for this call only
+    (logged, not cached); a value that is neither a bool nor unset warns once
+    per process and is off.
+    """
+    try:
+        raw = resolver(LEDGER_DISABLED_KEY, None, False)
+    except Exception:  # noqa: BLE001 — a config read must never break SessionStart, the stop hook or task_write; a failed read is "off" for this call only (not cached)
+        logger.warning(
+            "%s read failed; the yadgar task ledger stays on for this call (not "
+            "cached, the next read retries)",
+            LEDGER_DISABLED_KEY,
+            exc_info=True,
+        )
+        return False
+    if raw is None or isinstance(raw, bool):
+        return raw is True
+    _warn_disabled_malformed(raw)
+    return False
+
+
+@observe(tier="stage", metric="core.task_ledger_gate.warn_disabled_malformed")
+def _warn_disabled_malformed(raw: Any) -> None:
+    """Warn once per process that ``tasks.ledger_disabled`` is not a bool."""
+    global _disabled_malformed_warned
+    if _disabled_malformed_warned:
+        return
+    _disabled_malformed_warned = True
+    logger.warning(
+        "%s is malformed (want true or false, got %r); the yadgar task ledger stays on",
+        LEDGER_DISABLED_KEY,
+        raw,
+    )
+
+
 @observe(tier="stage", metric="core.task_ledger_gate.mirror_registry")
 def mirror_registry(project_id: str) -> bool | None:
     """The default registry lookup: the mirror the host SessionStart hook wrote.
@@ -159,16 +215,20 @@ def is_external_ledger_project(
 ) -> bool:
     """True when ``project_id``'s tasks live in yaadgaar (ledger 1803, ADR-1000).
 
-    The yaadgaar project registry decides. The configured prefixes decide only
-    when the registry has no answer for this project (no record yet, a fault).
-    Each decision logs one INFO line naming its source: ``registry`` or
-    ``fallback-prefix``.
+    ``tasks.ledger_disabled`` = ``true`` decides first, for every project
+    (yaadgaar #699). Otherwise the yaadgaar project registry decides, and the
+    configured prefixes decide only when the registry has no answer for this
+    project (no record yet, a fault). Each decision logs one INFO line naming
+    its source: ``disabled``, ``registry`` or ``fallback-prefix``.
 
     No project, no read: an empty or absent project_id never matches, and
     neither the registry nor the resolver is called for it.
     """
     if not isinstance(project_id, str) or not project_id:
         return False
+    if ledger_disabled(resolver):
+        _log_decision(project_id, "disabled", True)
+        return True
     answer = _registry_answer(project_id, registry)
     if answer is not None:
         _log_decision(project_id, "registry", answer)
@@ -197,6 +257,26 @@ def session_start_line(project_id: str) -> str:
     return (
         f"[yadgar] Tasks for {project_id} live in yaadgaar (mcp__yaadgaar__*); "
         "the yadgar task ledger is frozen for this project.\n"
+    )
+
+
+@observe(tier="stage", metric="core.task_ledger_gate.brief_task_line")
+def brief_task_line(resolver: Resolver = daemon_resolver) -> str:
+    """``project_brief``'s empty-state task hint; names yaadgaar when the ledger is off.
+
+    Keyed on ``tasks.ledger_disabled`` ALONE, not the per-project gate, so a
+    false key keeps the pre-#699 line for every project (yaadgaar #699).
+    """
+    if ledger_disabled(resolver):
+        return (
+            "*Tasks live in yaadgaar (mcp__yaadgaar__*): the yadgar task ledger is"
+            " disabled (tasks.ledger_disabled); its task_list and task_get read"
+            " history only.*"
+        )
+    return (
+        "*To track TODOs/tasks use the harness task list (TaskCreate)"
+        " and the yadgar `task_write` tool — the SQL ledger is the source"
+        " of truth, the wiki `{project}-task-list` page is a derived mirror.*"
     )
 
 
