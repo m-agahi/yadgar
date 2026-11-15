@@ -301,6 +301,15 @@ the global runtime config key `tasks.external_ledger_prefixes`. Each decision
 logs one INFO line from `yadgar.core.task_ledger_gate` with the structured
 field `ledger_source` set to `registry` or `fallback-prefix`.
 
+Kill switch: the global runtime config key `tasks.ledger_disabled` (bool,
+default `false`). When it is `true`, the gate answers "tasks live in yaadgaar"
+for every project before it reads the mirror or the prefixes, and logs
+`ledger_source` = `disabled`. `task_write` then refuses everywhere, SessionStart
+neither nudges nor seeds, and the stop hook uses the external-ledger template.
+`task_list` and `task_get` keep reading the frozen history. Only a JSON `true`
+turns it on; any other value, or a failed read, leaves the gate as described
+above. Set it with `config_set("tasks.ledger_disabled", true)`.
+
 Claude Code runs SessionStart hooks in parallel, so the yaadgaar record can
 land after yadgar's hook has read it. A registry change can therefore reach the
 gate one session late. On a project's first session that means the prefix

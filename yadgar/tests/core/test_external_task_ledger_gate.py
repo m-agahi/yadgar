@@ -27,6 +27,7 @@ from starlette.testclient import TestClient
 from yadgar.core import task_ledger_gate as gate
 
 _KEY = "tasks.external_ledger_prefixes"
+_DISABLED_KEY = "tasks.ledger_disabled"
 _EXTERNAL = "yadgarhq/docs"
 _INTERNAL = "quinyx/aws-work"
 
@@ -52,11 +53,13 @@ def config_value(monkeypatch):
     """
     from yadgar.core.server.tools import _runtime_config
 
-    state: dict = {"value": None}
+    state: dict = {"value": None, "disabled": None}
 
     def _fake_config_get(key, directory=None, default=None, **_kwargs):
         if key == _KEY and state["value"] is not None:
             return state["value"]
+        if key == _DISABLED_KEY and state["disabled"] is not None:
+            return state["disabled"]
         return default
 
     monkeypatch.setattr(_runtime_config, "config_get", _fake_config_get)
@@ -70,7 +73,8 @@ class TestPredicate:
     def test_reads_the_global_scope_with_a_list_default(self) -> None:
         r = _resolver_for(["yadgarhq/"])
         assert gate.is_external_ledger_project(_EXTERNAL, r) is True
-        assert r.calls == [(_KEY, None, [])]
+        # yaadgaar 699: the kill switch is read first (global, default False).
+        assert r.calls == [(_DISABLED_KEY, None, False), (_KEY, None, [])]
 
     def test_prefix_match_only(self) -> None:
         r = _resolver_for(["yadgarhq/"])
@@ -123,6 +127,7 @@ class TestPredicate:
 def _reset_warn_once(monkeypatch):
     """Each test starts with the once-per-process malformed warning unspent."""
     monkeypatch.setattr(gate, "_malformed_warned", False, raising=False)
+    monkeypatch.setattr(gate, "_disabled_malformed_warned", False, raising=False)
 
 
 # ── the daemon resolver across a backend blip (PR #81 review, blocking) ──────
@@ -169,7 +174,9 @@ class TestDaemonResolverAcrossABackendBlip:
         blippy_backend["down"] = False
         assert gate.is_external_ledger_project(_EXTERNAL, gate.daemon_resolver) is True
         assert gate.is_external_ledger_project(_EXTERNAL, gate.daemon_resolver) is True
-        assert blippy_backend["forwards"] == 1
+        # One forward per key (tasks.ledger_disabled, then the prefixes), both
+        # cached after: the second gate call forwards nothing (yaadgaar 699).
+        assert blippy_backend["forwards"] == 2
 
 
 # ── task_write refuses, task_list / task_get still read ─────────────────────
@@ -463,7 +470,8 @@ class TestRegistryDecides:
         caplog.set_level(logging.INFO, logger="yadgar.core.task_ledger_gate")
         r = _resolver_for(["yadgarhq/"])
         assert gate.is_external_ledger_project(_NEW_YADGARHQ, r, _registry_for(False)) is False
-        assert r.calls == []  # a registry answer means no prefix read at all
+        # A registry answer means no prefix read; only the kill switch (yaadgaar 699).
+        assert r.calls == [(_DISABLED_KEY, None, False)]
         assert _decisions(caplog) == [(_NEW_YADGARHQ, "registry", False)]
 
     def test_b_a_registered_project_outside_yadgarhq_is_gated(self, caplog) -> None:
@@ -735,3 +743,197 @@ class TestLiveHookSeed:
         assert live_hook.mirrored_before_call == [False]
         assert (task_dir / f"{_ROWS[0]['id']}.json").is_file()
         assert "Task list seeded from the ledger" in capsys.readouterr().out
+
+
+# ── yaadgaar 699: tasks.ledger_disabled turns the yadgar ledger off everywhere ─
+#
+# Max ruled 2026-11-15 (yadgarhq/docs yaadgaar #699): every yadgar ledger task
+# is migrated to yaadgaar. The GLOBAL key ``tasks.ledger_disabled`` (bool,
+# default false) makes the gate answer "external" for EVERY project, beating
+# both the registry mirror and the prefix fallback. Unset, false, malformed or
+# unreadable = off, which is exactly the behaviour pinned above.
+
+
+def _resolver_with(prefixes, disabled):
+    """A resolver answering both gate keys, recording each call."""
+    calls: list[tuple] = []
+
+    def _resolve(key, directory, default):
+        calls.append((key, directory, default))
+        if key == _KEY:
+            return prefixes if prefixes is not None else default
+        if key == _DISABLED_KEY:
+            return disabled if disabled is not None else default
+        return default
+
+    _resolve.calls = calls  # type: ignore[attr-defined]
+    return _resolve
+
+
+class TestLedgerDisabledPredicate:
+    def test_true_gates_a_project_no_prefix_matches(self) -> None:
+        r = _resolver_with([], True)
+        reg = _registry_for(None)
+        assert gate.is_external_ledger_project(_INTERNAL, r, reg) is True
+        # Short-circuit: one global read of the key, no registry, no prefix read.
+        assert r.calls == [(_DISABLED_KEY, None, False)]
+        assert reg.calls == []
+
+    def test_true_beats_a_registry_no(self) -> None:
+        r = _resolver_with(["yadgarhq/"], True)
+        assert gate.is_external_ledger_project(_NEW_YADGARHQ, r, _registry_for(False)) is True
+
+    def test_true_beats_the_prefix_fallback(self) -> None:
+        r = _resolver_with(["yadgarhq/"], True)
+        assert gate.is_external_ledger_project(_INTERNAL, r, _registry_for(None)) is True
+
+    @pytest.mark.parametrize("value", [None, False, "true", 1, [True], {"on": True}])
+    def test_anything_but_true_is_todays_behaviour(self, value) -> None:
+        r = _resolver_with(["yadgarhq/"], value)
+        assert gate.is_external_ledger_project(_INTERNAL, r, _registry_for(None)) is False
+        assert gate.is_external_ledger_project(_EXTERNAL, r, _registry_for(None)) is True
+        assert gate.is_external_ledger_project(_NEW_YADGARHQ, r, _registry_for(False)) is False
+
+    def test_the_key_is_read_globally_with_a_false_default(self) -> None:
+        r = _resolver_with(["yadgarhq/"], None)
+        gate.is_external_ledger_project(_EXTERNAL, r, _registry_for(None))
+        assert r.calls[0] == (_DISABLED_KEY, None, False)
+
+    def test_a_failed_read_falls_through_to_the_registry_and_prefix(self, caplog) -> None:
+        def _resolve(key, directory, default):
+            if key == _DISABLED_KEY:
+                raise RuntimeError("daemon down")
+            return ["yadgarhq/"] if key == _KEY else default
+
+        with caplog.at_level(logging.WARNING, logger=gate.__name__):
+            assert gate.is_external_ledger_project(_EXTERNAL, _resolve, _registry_for(None))
+            assert not gate.is_external_ledger_project(_INTERNAL, _resolve, _registry_for(None))
+        assert [r for r in caplog.records if _DISABLED_KEY in r.getMessage()]
+
+    @pytest.mark.parametrize("value", ["true", 1, [True]])
+    def test_a_malformed_value_warns_once(self, value, caplog) -> None:
+        r = _resolver_with([], value)
+        with caplog.at_level(logging.WARNING, logger=gate.__name__):
+            gate.ledger_disabled(r)
+            gate.ledger_disabled(r)
+        warnings = [rec for rec in caplog.records if _DISABLED_KEY in rec.getMessage()]
+        assert len(warnings) == 1
+
+    def test_the_decision_logs_its_source(self, caplog) -> None:
+        caplog.set_level(logging.INFO, logger="yadgar.core.task_ledger_gate")
+        gate.is_external_ledger_project(_INTERNAL, _resolver_with([], True), _registry_for(None))
+        assert _decisions(caplog) == [(_INTERNAL, "disabled", True)]
+
+    @pytest.mark.parametrize("project", ["", None])
+    def test_no_project_still_means_no_read(self, project) -> None:
+        r = _resolver_with([], True)
+        assert gate.is_external_ledger_project(project, r) is False
+        assert r.calls == []
+
+
+class TestLedgerDisabledDaemonSide:
+    def test_task_write_create_and_update_refuse_everywhere(self, config_value, forward_calls):
+        from yadgar.core.server.tools.task import task_write
+
+        config_value["disabled"] = True
+        for project in (_INTERNAL, _EXTERNAL, _NEW_YADGARHQ):
+            assert task_write(project_id=project, title="new") == gate.task_write_refusal(project)
+            assert task_write(project_id=project, title="t", id=3, status="completed") == (
+                gate.task_write_refusal(project)
+            )
+        assert forward_calls == []
+        refusal = gate.task_write_refusal(_INTERNAL)
+        assert refusal["error"] == "external_task_ledger"
+        assert "mcp__yaadgaar__" in refusal["message"]
+
+    def test_a_registry_no_does_not_reopen_writes(self, config_value, forward_calls):
+        from yadgar.core import task_ledger_registry as reg
+        from yadgar.core.server.tools.task import task_write
+
+        config_value["disabled"] = True
+        _write_record(_NEW_YADGARHQ, False)
+        reg.mirror_registry_answer(_NEW_YADGARHQ)
+
+        assert task_write(project_id=_NEW_YADGARHQ, title="x")["error"] == "external_task_ledger"
+        assert forward_calls == []
+
+    def test_reads_stay_open(self, config_value, forward_calls):
+        from yadgar.core.server.tools.task import task_get, task_list
+
+        config_value["disabled"] = True
+        assert task_list(project_id=_INTERNAL) == [{"id": 1, "title": "old", "status": "pending"}]
+        assert task_get(project_id=_INTERNAL, id=1)["id"] == 1
+        assert [op for op, _ in forward_calls] == ["list_task_rows", "get_task_row"]
+
+    def test_false_is_todays_task_write(self, config_value, forward_calls):
+        from yadgar.core.server.tools.task import task_write
+
+        config_value["disabled"] = False
+        assert task_write(project_id=_INTERNAL, title="t") == {"ok": True, "id": 501}
+
+    @pytest.mark.parametrize("seed", [False, True])
+    def test_session_start_names_yaadgaar_and_reads_no_ledger(
+        self, config_value, session_context, seed
+    ):
+        config_value["disabled"] = True
+        body = session_context(_INTERNAL, seed=seed)
+
+        line = (
+            f"[yadgar] Tasks for {_INTERNAL} live in yaadgaar (mcp__yaadgaar__*); "
+            "the yadgar task ledger is frozen for this project.\n"
+        )
+        assert body["text"].startswith(line)
+        assert "NUDGE" not in body["text"]
+        assert session_context.nudge_calls == []
+        if seed:
+            assert body["task_nudge"] == ""
+            assert body["tasks"] == []
+
+    def test_live_hook_seeds_nothing(self, live_hook, config_value, session_context, capsys):
+        config_value["disabled"] = True
+        _write_record(_NEW_YADGARHQ, False)
+
+        task_dir = live_hook(_NEW_YADGARHQ)
+
+        assert not task_dir.exists() or list(task_dir.glob("*.json")) == []
+        assert session_context.nudge_calls == []
+        out = capsys.readouterr().out
+        assert "Task list seeded from the ledger" not in out
+        assert f"Tasks for {_NEW_YADGARHQ} live in yaadgaar" in out
+
+
+class TestLedgerDisabledBriefRender:
+    """The catalog render (part of SessionStart text) must not send agents to task_write."""
+
+    _BRIEF = {"project": _INTERNAL, "init_memory_present": True, "active_work_present": False}
+
+    def test_true_names_yaadgaar_and_not_task_write(self, config_value) -> None:
+        from yadgar.core.server.tools.project import _render_project_brief
+
+        config_value["disabled"] = True
+        render = _render_project_brief(dict(self._BRIEF))
+        assert "task_write" not in render
+        assert "mcp__yaadgaar__" in render
+        assert "task_list" in render and "task_get" in render
+
+    @pytest.mark.parametrize("value", [None, False])
+    def test_off_keeps_todays_line(self, config_value, value) -> None:
+        from yadgar.core.server.tools.project import _render_project_brief
+
+        config_value["disabled"] = value
+        render = _render_project_brief(dict(self._BRIEF))
+        assert (
+            "*To track TODOs/tasks use the harness task list (TaskCreate)"
+            " and the yadgar `task_write` tool — the SQL ledger is the source"
+            " of truth, the wiki `{project}-task-list` page is a derived mirror.*"
+        ) in render
+        assert "yaadgaar" not in render
+
+
+def test_rules_template_says_tasks_live_in_yaadgaar_and_reads_are_history() -> None:
+    from yadgar.core.install.clients.rules_render import load_template
+
+    text = load_template()
+    assert "tasks.ledger_disabled" in text
+    assert "mcp__yaadgaar__" in text
+    assert "read-only history" in text
