@@ -103,3 +103,39 @@ def list_config_rows(payload: dict) -> dict:
         logger.warning("list_config_rows error: %s", exc)
         return {"ok": False, "error": str(exc)}
     return {"rows": rows}
+
+
+#: The GLOBAL runtime config key that turns the yadgar task ledger off for
+#: every project (yaadgaar #699). Mirrors core ``task_ledger_gate.LEDGER_DISABLED_KEY``
+#: (backend never imports core; a test pins the two strings equal).
+LEDGER_DISABLED_KEY = "tasks.ledger_disabled"
+
+
+@observe(tier="stage", metric="backend.admin.runtime_config.task_ledger_disabled")
+def task_ledger_disabled() -> bool:
+    """True only when the global ``tasks.ledger_disabled`` row holds JSON ``true``.
+
+    The backend half of the kill switch: the core gate refuses ``task_write``
+    first, and this read lets the backend ledger ops and the nightly sweep
+    refuse too, so a raw ``POST /admin`` caller cannot write a frozen ledger.
+
+    Reads through ``get_config_row`` above (global scope: no directory in the
+    payload), so it shares that op's storage call and fault model. Same
+    semantics as the core gate: absent, ``false``, malformed or an unreadable
+    row is off. A failed read (an exception, or the op's ``{"ok": False}``
+    fault body) logs a warning and is off for this call only; nothing is
+    cached here.
+    """
+    try:
+        result = get_config_row({"key": LEDGER_DISABLED_KEY})
+    except Exception as exc:  # noqa: BLE001 — a config read must never break a ledger op or the sweep; a failed read is "off" for this call only, logged below
+        result = {"ok": False, "error": repr(exc)}
+    if "row" not in result:
+        logger.warning(
+            "%s read failed (%s); the yadgar task ledger stays on for this call",
+            LEDGER_DISABLED_KEY,
+            result.get("error"),
+        )
+        return False
+    row = result["row"]
+    return isinstance(row, dict) and row.get("value") is True

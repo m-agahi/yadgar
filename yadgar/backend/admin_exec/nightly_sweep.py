@@ -69,6 +69,7 @@ from typing import Any
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.storage._project_id_writer import observe_project_id_skip
+from yadgar.backend.admin_exec.runtime_config import task_ledger_disabled
 
 logger = logging.getLogger("yadgar.backend.admin_exec.nightly_sweep")
 
@@ -297,6 +298,10 @@ async def run_nightly_archive_sweep(payload: dict[str, Any]) -> dict[str, Any]:
     if sql is None or surreal is None:
         return _empty_stats(retention_days, error="storage not initialised")
 
+    # yaadgaar #699: a disabled yadgar task ledger is read-only frozen history,
+    # so its task rows are neither counted nor archived. ADRs etc. still sweep.
+    skip_tasks = task_ledger_disabled()
+
     # Count candidates FIRST for the circuit-breaker. Exceeding the limit
     # aborts the sweep and archives nothing — mirrors the memory archive
     # purge's circuit-breaker at cleanup.py:278.
@@ -305,6 +310,7 @@ async def run_nightly_archive_sweep(payload: dict[str, Any]) -> dict[str, Any]:
         retention_days=retention_days,
         now_dt=now_dt,
         target_project=target_project,
+        skip_tasks=skip_tasks,
     )
     total_candidates = sum(candidates)
     if total_candidates > circuit_breaker_limit:
@@ -318,7 +324,7 @@ async def run_nightly_archive_sweep(payload: dict[str, Any]) -> dict[str, Any]:
     projects = await _resolve_projects(sql, target_project)
 
     archived_tasks, archived_adrs, skipped_immutable = await _sweep_tasks_and_adrs(
-        sql, surreal, projects, retention_days, now_dt
+        sql, surreal, projects, retention_days, now_dt, skip_tasks=skip_tasks
     )
     archived_patterns, skipped_immutable_p, _ = await _sweep_patterns(
         sql, surreal, retention_days, now_dt
@@ -391,8 +397,12 @@ async def _sweep_tasks_and_adrs(
     projects: list[str],
     retention_days: int,
     now_dt: datetime,
+    *,
+    skip_tasks: bool = False,
 ) -> tuple[int, int, int]:
     """Sweep task + adr rows for each project. Returns (tasks, adrs, skipped).
+
+    ``skip_tasks`` (``tasks.ledger_disabled``) leaves every task row untouched.
 
     ``span=False`` per ADR-0074, not ``exempt=``. The previous rationale
     claimed "each leaf already carries its own @observe span" while both
@@ -406,7 +416,9 @@ async def _sweep_tasks_and_adrs(
     skipped_immutable = 0
     cutoff = now_dt - _days(retention_days)
     for project_id in projects:
-        t_archived, t_skipped = await _sweep_project_tasks(sql, surreal, project_id, cutoff)
+        t_archived, t_skipped = (
+            (0, 0) if skip_tasks else await _sweep_project_tasks(sql, surreal, project_id, cutoff)
+        )
         a_archived, a_skipped = await _sweep_project_adrs(sql, surreal, project_id, cutoff)
         archived_tasks += t_archived
         archived_adrs += a_archived
@@ -489,8 +501,12 @@ async def _count_candidates(
     retention_days: int,
     now_dt: datetime,
     target_project: str | None,
+    skip_tasks: bool = False,
 ) -> tuple[int, int, int, int]:
     """Return (task, adr, pattern, discipline) candidate counts for the circuit-breaker.
+
+    ``skip_tasks`` counts no task rows, matching the sweep, so frozen tasks
+    never trip the breaker for the corpora that still sweep.
 
     Mirrors the selection logic in ``run_nightly_archive_sweep`` but does
     not perform any writes. The body-page mutability check is NOT done
@@ -512,11 +528,8 @@ async def _count_candidates(
         project_ids, _ = _dedupe_projects(all_tasks)
 
     for project_id in project_ids:
-        tasks = await sql.list_task_rows(project_id=project_id, status=[_STATUS_COMPLETED])
-        for t in tasks:
-            ts = _task_retired_at(t)
-            if ts is not None and ts < cutoff:
-                task_count += 1
+        if not skip_tasks:
+            task_count += await _count_task_candidates(sql, project_id, cutoff)
         for adr_status in _ADR_SWEEP_STATUSES:
             adrs = await sql.list_adr_rows(project_id=project_id, status=adr_status)
             for a in adrs:
@@ -537,6 +550,13 @@ async def _count_candidates(
         and not bool(d.get("always_applied", False))
     )
     return task_count, adr_count, pat_count, disc_count
+
+
+@observe(tier="hot", span=False)
+async def _count_task_candidates(sql: Any, project_id: str, cutoff: datetime) -> int:
+    """Completed task rows of one project retired before ``cutoff`` (breaker count)."""
+    tasks = await sql.list_task_rows(project_id=project_id, status=[_STATUS_COMPLETED])
+    return sum(1 for t in tasks if (ts := _task_retired_at(t)) is not None and ts < cutoff)
 
 
 @observe(tier="stage", metric="backend.admin.nightly_sweep.sweep_patterns")

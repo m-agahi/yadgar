@@ -307,8 +307,15 @@ for every project before it reads the mirror or the prefixes, and logs
 `ledger_source` = `disabled`. `task_write` then refuses everywhere, SessionStart
 neither nudges nor seeds, and the stop hook uses the external-ledger template.
 `task_list` and `task_get` keep reading the frozen history. Only a JSON `true`
-turns it on; any other value, or a failed read, leaves the gate as described
-above. Set it with `config_set("tasks.ledger_disabled", true)`.
+turns it on; any other value leaves the gate as described above. A failed read
+(the backend is unreachable, or answers a storage fault such as SurrealDB not
+yet ready) also leaves the gate as described above for that one call. It is
+not cached, so the key takes effect on the first read after the backend
+recovers. The backend enforces the key too: its `create_task_row` and
+`update_task_row` admin ops refuse with HTTP 409 and reason
+`external_task_ledger`, so a raw `POST /admin` caller such as the backfill CLI
+cannot write the frozen ledger, and the nightly archive sweep neither counts
+nor archives task rows. Set it with `config_set("tasks.ledger_disabled", true)`.
 
 Claude Code runs SessionStart hooks in parallel, so the yaadgaar record can
 land after yadgar's hook has read it. A registry change can therefore reach the

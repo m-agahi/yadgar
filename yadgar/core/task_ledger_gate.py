@@ -28,9 +28,9 @@ override of the list would mean nothing. Prefixes match case-insensitively.
 
 Fail-open to TODAY'S behaviour: an absent or malformed value is the empty list,
 and the empty list matches nothing. A malformed value logs one warning per
-process. A FAILED read (the daemon resolver's backend forward raised) also
-matches nothing for that call, logs a warning, and is not cached, so the next
-read retries: an external-ledger project falls back to the yadgar ledger only
+process. A FAILED read (the daemon resolver's backend forward raised, or the
+backend answered a storage-fault body ``{"ok": false}``) also matches nothing
+for that call, logs a warning, and is not cached, so the next read retries: an external-ledger project falls back to the yadgar ledger only
 while the read keeps failing. A project that does not match takes exactly the
 code path it took before this module existed.
 
@@ -42,7 +42,11 @@ above (SessionStart nudge and seed, the stop-hook template, ``task_write``)
 follows it with no change of its own. Only a JSON ``true`` turns it on. An
 absent, ``false``, malformed or unreadable value is off and falls through to
 the registry and the prefix fallback exactly as before; a malformed value
-warns once per process, a failed read warns and is not cached.
+warns once per process. A failed read (a forward error, or a backend
+storage-fault body) warns, is off for that call only and is not cached, so the
+key takes effect on the first read after the backend recovers. The backend
+also refuses ``create_task_row`` / ``update_task_row`` and skips task archiving
+in the nightly sweep while the key is true (``backend.admin_exec``).
 """
 
 from __future__ import annotations
