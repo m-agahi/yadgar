@@ -89,7 +89,8 @@ just at the edges. A project whose tasks live in another ledger (SessionStart
 names it, e.g. yaadgaar) uses that ledger, and these `task_*` rules do not
 apply to it. When the engine key `tasks.ledger_disabled` is true, that is every
 project: tasks live in yaadgaar (`mcp__yaadgaar__*`), and the yadgar
-`task_list` / `task_get` are read-only history. SessionStart says which applies:
+`task_list` / `task_get` are read-only history. SessionStart says which applies.
+Otherwise these rules apply:
 
 - **List light**: at session start and after compaction, read `task_list` at
   its default shape (`id` + `title` + `status`), never `verbose=True`. The

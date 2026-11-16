@@ -113,7 +113,10 @@ from typing import Any
 
 from yadgar._shared.observability.observe import observe
 from yadgar._shared.refusal import AdminRefusal
-from yadgar.backend.admin_exec.refusals import TaskEdgePartialStateError
+from yadgar.backend.admin_exec.refusals import (
+    TaskEdgePartialStateError,
+    refuse_if_task_ledger_disabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +365,7 @@ async def list_task_rows_all_projects(payload: dict) -> dict:
 @observe(tier="boundary", metric="backend.admin.ledger.create_task_row")
 async def create_task_row(payload: dict) -> dict:
     """INSERT one ``task`` row. payload keys (see module docstring)."""
+    refuse_if_task_ledger_disabled(project_id=payload.get("project_id"))
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
@@ -396,6 +400,7 @@ async def create_task_row(payload: dict) -> dict:
 @observe(tier="boundary", metric="backend.admin.ledger.update_task_row")
 async def update_task_row(payload: dict) -> dict:
     """UPDATE one ``task`` row. payload: {id, <col>: <val>, ...}."""
+    refuse_if_task_ledger_disabled(task_id=payload.get("id"))
     storage = _get_sql_storage()
     if storage is None:
         return {"ok": False, "error": "engine #2 not composed (MariaStorageEngine is None)"}
