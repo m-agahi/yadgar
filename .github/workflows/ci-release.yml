@@ -47,6 +47,8 @@ jobs:
       core:     ${{ steps.detect.outputs.core }}
       backend:  ${{ steps.detect.outputs.backend }}
       version:  ${{ steps.detect.outputs.version }}
+      build_matrix: ${{ steps.matrix.outputs.build_matrix }}
+      merge_matrix: ${{ steps.matrix.outputs.merge_matrix }}
     steps:
       - name: Checkout (full history for tag detection)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -172,116 +174,195 @@ jobs:
           echo "backend=$backend_changed" >> "$GITHUB_OUTPUT"
           echo "core_changed=$core_changed backend_changed=$backend_changed (core_tag=${core_code:-err} backend_tag=${backend_code:-err})"
 
+      - name: Compute image build matrices
+        id: matrix
+        # One entry per image x arch for build-images; one per image for
+        # merge-images. An image with no change gets no entry, so no runner is
+        # spent on it. amd64 and arm64 build natively on GitHub-hosted runners.
+        env:
+          CORE: ${{ steps.detect.outputs.core }}
+          BACKEND: ${{ steps.detect.outputs.backend }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          images = []
+          if os.environ["CORE"] == "true":
+              images.append({"image": "core", "repo": "yadgar", "file": "Dockerfile",
+                             "target": "prod", "cache_mode": "min"})
+          if os.environ["BACKEND"] == "true":
+              images.append({"image": "backend", "repo": "yadgar-backend",
+                             "file": "Dockerfile.backend", "target": "", "cache_mode": "max"})
+          runners = {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
+          build = [{**i, "arch": a, "runner": r} for i in images for a, r in runners.items()]
+          merge = [{"image": i["image"], "repo": i["repo"]} for i in images]
+          print("build_matrix=" + json.dumps(build, separators=(",", ":")))
+          print("merge_matrix=" + json.dumps(merge, separators=(",", ":")))
+          PY
+
   # ── Build Docker images ───────────────────────────────────────────────────
+  # One job per image x arch, each on a NATIVE GitHub-hosted runner (amd64 on
+  # ubuntu-24.04, arm64 on ubuntu-24.04-arm) — no QEMU, no remote builder.
+  # Each job pushes its single-arch image BY DIGEST (no tag); the merge-images
+  # job below stitches the digests into one multi-arch manifest per tag.
+  # The matrix is computed by `changes` so an unchanged image gets no job at all.
+  # RISK: GitHub-hosted runners have ~14 GB free disk; the backend arm64 build
+  # is the heaviest and could exhaust it. Watch the first run.
   build-images:
     needs: changes
-    if: needs.changes.outputs.release == 'true'
-    runs-on: [self-hosted, linux, x64, yadgar]
-    # Self-hosted runner hosts the docker:cli container which has the docker CLI
-    # + buildx. The yadgar-ci image is NOT used here (buildx + build-cloud
-    # driver, not Python tooling). TODO(migration): if the self-hosted runner
-    # gets docker installed directly, drop the docker:cli container entirely.
-    container:
-      image: docker:cli
+    if: needs.changes.outputs.release == 'true' && needs.changes.outputs.build_matrix != '[]'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.build_matrix) }}
     steps:
-      - name: Install minimal tools
-        # docker:cli already has the docker CLI. bash for heredocs, python3 for
-        # version extraction, nodejs+git for JS actions, curl for runtime.
-        run: apk add --no-cache bash python3 nodejs git curl
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Trust workspace (container runs as a different UID than checkout)
-        run: git config --global --add safe.directory '*'
+        with:
+          persist-credentials: false
 
       - name: Check every bundled third-party binary is catalogued and shipped
         # THE GATE IS PUBLISH, NOT MERGE. The obligation to reproduce a bundled
         # component's license attaches when an image is DISTRIBUTED, so the
         # pre-commit hook and the ci-pr guard job are both upstream of the point
         # that actually matters. This step is the one on the publish path: it
-        # runs before the registry login and the buildx setup, so an
-        # uncatalogued binary fails the release job without pushing anything.
-        # Stdlib-only — python3 is installed by "Install minimal tools" above.
+        # runs before the registry login, so an uncatalogued binary fails the
+        # release job without pushing anything.
+        # Stdlib-only — the runner's system python3 is enough.
         run: python3 scripts/check_third_party_licenses.py
 
-      # Log in BEFORE setting up buildx: the `cloud` driver fetches a Docker Hub
-      # token to reach the remote builder (openfantasy/builder), so credentials
-      # must already be present.
       - name: Log in to Docker Hub
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7  # v4.5.1
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Docker Buildx (Build Cloud)
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
-        with:
-          driver: cloud
-          endpoint: openfantasy/builder
 
-      - name: Get version from pyproject.toml
+      # core: pyproject.toml version. backend: server.json:backend_version, so
+      # core and backend can be bumped independently.
+      - name: Get image version
         id: get-version
+        env:
+          IMAGE: ${{ matrix.image }}
         run: |
-          echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+          if [ "$IMAGE" = "core" ]; then
+            echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(python3 -c "import json; print(json.load(open('server.json'))['backend_version'])")" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Get backend version from server.json
-        id: get-backend-version
-        run: |
-          echo "version=$(python3 -c "import json; print(json.load(open('server.json'))['backend_version'])")" >> "$GITHUB_OUTPUT"
-
-      # Generate tags for core image: latest + exact version on master, semver on tags
-      - name: Docker metadata (core)
-        id: meta-core
+      # Only the OCI labels are used here; tags are applied in merge-images.
+      - name: Docker metadata
+        id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
-          images: openfantasy/yadgar
+          images: openfantasy/${{ matrix.repo }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ steps.get-version.outputs.version }},enable={{is_default_branch}}
 
-      # Generate tags for backend image — version read from server.json:backend_version
-      # so core and backend can be bumped independently.
-      - name: Docker metadata (backend)
-        id: meta-backend
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=openfantasy/${{ matrix.repo }},push-by-digest=true,name-canonical=true,push=true
+          # Registry-based BuildKit cache on Docker Hub, one tag per arch so the
+          # two native builders do not overwrite each other's cache.
+          cache-from: type=registry,ref=openfantasy/${{ matrix.repo }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=openfantasy/${{ matrix.repo }}:buildcache-${{ matrix.arch }},mode=${{ matrix.cache_mode }}
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── Merge per-arch digests into multi-arch tags ───────────────────────────
+  merge-images:
+    needs: [changes, build-images]
+    if: needs.changes.outputs.release == 'true' && needs.build-images.result == 'success'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.merge_matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7  # v4.5.1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
+
+      - name: Get image version
+        id: get-version
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          if [ "$IMAGE" = "core" ]; then
+            echo "version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(python3 -c "import json; print(json.load(open('server.json'))['backend_version'])")" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tag rules: latest + exact version on master, semver on tags.
+      - name: Docker metadata
+        id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
-          images: openfantasy/yadgar-backend
+          images: openfantasy/${{ matrix.repo }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ steps.get-backend-version.outputs.version }},enable={{is_default_branch}}
+            type=raw,value=${{ steps.get-version.outputs.version }},enable={{is_default_branch}}
 
-      - name: Build and push core image
-        if: needs.changes.outputs.core == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
-        with:
-          context: .
-          file: Dockerfile
-          target: prod
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta-core.outputs.tags }}
-          labels: ${{ steps.meta-core.outputs.labels }}
-          # Registry-based BuildKit cache on dockerhub. Reused across runs on
-          # the same builder; survives runner restarts unlike actions/cache.
-          cache-from: type=registry,ref=openfantasy/yadgar:buildcache
-          cache-to: type=registry,ref=openfantasy/yadgar:buildcache,mode=min
+      - name: Create multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          REPO: openfantasy/${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${REPO}@sha256:%s " *)
 
-      - name: Build and push backend image
-        if: needs.changes.outputs.backend == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
-        with:
-          context: .
-          file: Dockerfile.backend
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta-backend.outputs.tags }}
-          labels: ${{ steps.meta-backend.outputs.labels }}
-          cache-from: type=registry,ref=openfantasy/yadgar-backend:buildcache
-          cache-to: type=registry,ref=openfantasy/yadgar-backend:buildcache,mode=min
+      - name: Inspect manifest
+        env:
+          REPO: openfantasy/${{ matrix.repo }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools inspect "${REPO}:${VERSION}"
 
   # ── Build wheel + sdist ───────────────────────────────────────────────────
   build-wheel:
@@ -496,8 +577,10 @@ jobs:
   # tag (at the current commit) AND the release AND uploads assets in one step,
   # idempotently (safe to re-run — it updates the existing release/assets).
   tag-and-release:
-    needs: [changes, publish-pypi, build-images]
-    if: needs.changes.outputs.release == 'true'
+    needs: [changes, publish-pypi, build-images, merge-images]
+    # build-images / merge-images are skipped when neither image changed; a
+    # skipped need must not skip the release, a failed one must.
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.release == 'true' }}
     runs-on: [self-hosted, linux, x64, yadgar]
     permissions:
       contents: write
