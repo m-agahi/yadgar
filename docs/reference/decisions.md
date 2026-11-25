@@ -62,7 +62,7 @@
 
 **Rationale:** User direction 2026-06-06: "no our internal development workflow is different from ci workflow. internal was put in place to prevent burning minutes while we fast developing. ... when pushing tags, tests start to run. that is wrong. tests should ONLY run in pr."
 
-Forgejo workflows currently consume 500 prepaid Docker Build Cloud minutes per multi-arch image build (linux/amd64+linux/arm64 in single buildx run). v5.46.7 tag push hit the limit. Internal dev workflow per anchors 490140 + 491179 already established local-only amd64 build + skip dockerhub push. PD-45 codifies that the Forgejo CI surface is PRODUCTION-only and stays disabled until production-ready.
+Forgejo workflows currently consumed 500 prepaid Docker Build Cloud minutes per multi-arch image build (linux/amd64+linux/arm64 in single buildx run); v5.46.7 tag push hit that limit. Release image builds now run on GitHub-hosted runners (amd64 on `ubuntu-24.04`, arm64 native on `ubuntu-24.04-arm`), so there is no Build Cloud quota. Internal dev workflow per anchors 490140 + 491179 already established local-only amd64 build + skip dockerhub push. PD-45 codifies that the Forgejo CI surface is PRODUCTION-only and stays disabled until production-ready.
 
 **Affected workflows:**
 - `.forgejo/workflows/ci.yaml` — `on.push.tags` removed (tests no longer fire on tag push); `build` job gated to `workflow_dispatch`
@@ -81,7 +81,7 @@ Forgejo workflows currently consume 500 prepaid Docker Build Cloud minutes per m
 2. Remove the gate header comment block (or update to "production-active")
 3. Re-add `tags: ["v*"]` to ci.yaml `on.push` block if test runs on tag are desired
 4. Verify SBOM cyclonedx-bom install (deferred to production transition)
-5. Verify Build Cloud quota refresh / budget
+5. Verify GitHub-hosted runner minutes / budget
 
 **Reversibility:** Per-workflow per-job — remove `if:` gates to restore push/tag triggers. Per-event — re-add `tags: ["v*"]` to ci.yaml.
 

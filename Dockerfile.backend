@@ -48,9 +48,11 @@ RUN mkdir -p /app/yadgar && touch /app/yadgar/__init__.py
 # Install torch + sentence-transformers + uvicorn (for embed service).
 # CPU-only torch on BOTH arches: this is a CPU embedding service, so the CUDA
 # wheel set is useless. Plain `pip install torch` on arm64 pulls the full
-# CUDA-bundled aarch64 wheels (>2GB) → the long silent install tripped Docker
-# Build Cloud's gRPC keepalive and failed the arm64 build (v5.57.2). The cpu
-# index has cp314 wheels for both aarch64 and x86_64.
+# CUDA-bundled aarch64 wheels (>2GB) → a long silent install that is slow and
+# bloats the image (it failed the arm64 build under the old remote builder's gRPC
+# keepalive, v5.57.2). Release builds now run arm64 natively on GitHub-hosted
+# runners, but the cpu index is still right. It has cp314 wheels for both
+# aarch64 and x86_64.
 # This two-step order is also why uv.lock is unusable here: the lock pins torch
 # from PyPI, whose metadata drags in cuda-toolkit / nvidia-* / triton — exactly
 # the closure the cpu index exists to avoid. pip, resolving second, sees the CPU
